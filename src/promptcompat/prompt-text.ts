@@ -5,6 +5,7 @@ export type PromptTextTuple<TSecond = unknown> = [string, TSecond] & {
   tokens?: number;
   counts?: TokenCharCounts & { hasText: boolean };
   latestInputText?: string;
+  files?: unknown;
   hiddenPromptInsertOffset?: number;
   hasToolPrompt?: boolean;
   hasToolInstructions?: boolean;

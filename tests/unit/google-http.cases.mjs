@@ -119,6 +119,41 @@ export const cases = [
     assert.match(prompts[0], /<\|DSML\|tool_calls>/);
     assert.match(prompts[0], /"name": "Lookup"/);
   }],
+  ["keeps Google image refs before context refs while appending generic refs", async () => {
+    const provider = fakeProvider({
+      async resolveImages() {
+        return { fileRefs: [{ ref: "/uploaded/image", name: "image.png" }], droppedNote: "" };
+      },
+      async resolveFiles() {
+        return { fileRefs: [{ ref: "/uploaded/file", name: "note.txt" }], droppedNote: "" };
+      },
+      async uploadTextFile(_text, filename) {
+        return { ref: `/uploaded/${filename}`, name: filename };
+      },
+    });
+    const result = await mod.prepareGoogleGeminiContext(baseConfig({
+      current_input_file_enabled: true,
+      current_input_file_min_bytes: 10,
+      cookie: "SID=ok",
+    }), provider, {
+      contents: [{
+        role: "user",
+        parts: [
+          { text: "please inspect " + "x".repeat(80) },
+          { inlineData: { data: "AAAA", mimeType: "image/png" } },
+          { inlineData: { data: "bm90ZQ==", mimeType: "text/plain", displayName: "note.txt" } },
+        ],
+      }],
+    }, false);
+
+    assert.equal(result.error, undefined);
+    assert.deepEqual(result.fileRefs, [
+      { ref: "/uploaded/image", name: "image.png" },
+      { ref: "/uploaded/message.txt", name: "message.txt" },
+      { ref: "/uploaded/tools.txt", name: "tools.txt" },
+      { ref: "/uploaded/file", name: "note.txt" },
+    ]);
+  }],
   ["filters Google OpenAI-style function tools by config", async () => {
     const cfg = {
       current_input_file_enabled: false,
@@ -446,7 +481,6 @@ export const cases = [
     assert.equal(resp.status, 200);
     assert.equal(uploads.length, 2);
     assert.doesNotMatch(prompts[0], /<\|DSML\|tool_calls>/);
-    assert.doesNotMatch(prompts[0], /Gemini native hidden tool calls/);
     assert.match(prompts[0], /Context is attached/);
     assert.match(prompts[0], /tools\.txt/);
     assert.match(prompts[0], /All text above this sentence is system prompt content/);

@@ -1,5 +1,5 @@
 import { generate, generateStream } from "./client";
-import { resolveImages, uploadTextFile } from "./uploads";
+import { resolveFiles, resolveImages, uploadTextFile } from "./uploads";
 import type { RuntimeConfig } from "../config";
 import type { ResolvedModel } from "../models";
 import type { CompletionProvider, CompletionProviderOptions, CompletionTextInput } from "../completion/ports";
@@ -21,6 +21,9 @@ export function createGeminiCompletionProvider(cfg: RuntimeConfig): CompletionPr
     },
     resolveImages(images: unknown) {
       return resolveImages(cfg, images);
+    },
+    resolveFiles(files: unknown) {
+      return resolveFiles(cfg, files);
     },
     uploadTextFile(text: string, filename: string) {
       return uploadTextFile(cfg, text, filename);

@@ -15,6 +15,7 @@ export type RuntimeConfig = {
   current_input_file_min_bytes: number;
   current_input_file_name: string;
   current_tools_file_name: string;
+  generic_file_upload_max_bytes: number;
   structured_output_stream_mode: string;
   api_keys: string[];
   cookie: string;
@@ -64,6 +65,7 @@ export const CONFIG = {
   CURRENT_INPUT_FILE_MIN_BYTES: 95000,
   CURRENT_INPUT_FILE_NAME: "message.txt",
   CURRENT_TOOLS_FILE_NAME: "tools.txt",
+  GENERIC_FILE_UPLOAD_MAX_BYTES: 20 * 1024 * 1024,
 
   // Reject structured-output streaming by default because this worker can only
   // validate and canonicalize final JSON after the full model output is known.
@@ -148,6 +150,7 @@ export const CONFIG_ENV_KEYS = [
   "CURRENT_INPUT_FILE_MIN_BYTES",
   "CURRENT_INPUT_FILE_NAME",
   "CURRENT_TOOLS_FILE_NAME",
+  "GENERIC_FILE_UPLOAD_MAX_BYTES",
   "STRUCTURED_OUTPUT_STREAM_MODE",
   "API_KEYS",
 ];
@@ -220,6 +223,11 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): RuntimeConfig {
     ),
     current_input_file_name: String(envOr(env, "CURRENT_INPUT_FILE_NAME", CONFIG.CURRENT_INPUT_FILE_NAME)),
     current_tools_file_name: String(envOr(env, "CURRENT_TOOLS_FILE_NAME", CONFIG.CURRENT_TOOLS_FILE_NAME)),
+    generic_file_upload_max_bytes: parseIntMin(
+      envOr(env, "GENERIC_FILE_UPLOAD_MAX_BYTES", CONFIG.GENERIC_FILE_UPLOAD_MAX_BYTES),
+      CONFIG.GENERIC_FILE_UPLOAD_MAX_BYTES,
+      0
+    ),
     structured_output_stream_mode: String(envOr(env, "STRUCTURED_OUTPUT_STREAM_MODE", CONFIG.STRUCTURED_OUTPUT_STREAM_MODE) || "reject").trim().toLowerCase(),
     api_keys: parseApiKeys(envOr(env, "API_KEYS", CONFIG.API_KEYS)),
     cookie,

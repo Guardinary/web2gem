@@ -25,6 +25,9 @@ export function fakeStreamProvider(items) {
     async resolveImages() {
       return { fileRefs: null, droppedNote: "" };
     },
+    async resolveFiles() {
+      return { fileRefs: null, droppedNote: "" };
+    },
     async uploadTextFile(_text, filename) {
       return { ref: `/uploaded/${filename}`, name: filename };
     },
@@ -42,6 +45,9 @@ export function fakeProvider(overrides = {}) {
     async resolveImages() {
       return { fileRefs: null, droppedNote: "" };
     },
+    async resolveFiles() {
+      return { fileRefs: null, droppedNote: "" };
+    },
     async uploadTextFile(_text, filename) {
       return { ref: `/uploaded/${filename}`, name: filename };
     },
@@ -56,6 +62,7 @@ export function baseConfig(overrides = {}) {
     current_input_file_min_bytes: 1000000,
     current_input_file_name: "message.txt",
     current_tools_file_name: "tools.txt",
+    generic_file_upload_max_bytes: 20 * 1024 * 1024,
     cookie: "",
     log_requests: false,
     structured_output_stream_mode: "reject",

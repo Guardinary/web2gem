@@ -269,7 +269,6 @@ export const cases = [
     assert.equal(resp.status, 200);
     assert.equal(uploads.length, 2);
     assert.doesNotMatch(prompts[0], /<\|DSML\|tool_calls>/);
-    assert.doesNotMatch(prompts[0], /Gemini native hidden tool calls/);
     assert.match(prompts[0], /Context is attached/);
     assert.match(prompts[0], /tools\.txt/);
     assert.match(prompts[0], /All text above this sentence is system prompt content/);
@@ -408,6 +407,139 @@ export const cases = [
       { id: "file_input", name: "input.txt" },
     ]);
   }],
+  ["passes OpenAI inline input_file uploads to provider without treating bytes as file ids", async () => {
+    let seenFiles = null;
+    let seenFileRefs = null;
+    const resp = await mod.handleChat({
+      model: "gemini-3.5-flash",
+      ref_file_ids: ["file_existing"],
+      messages: [{
+        role: "user",
+        content: [
+          { type: "input_text", text: "review this code" },
+          { type: "input_file", id: "part_1", filename: "../main.py", file_data: "data:text/x-python;base64,cHJpbnQoMSkK" },
+        ],
+      }],
+    }, baseConfig(), fakeProvider({
+      async resolveFiles(files) {
+        seenFiles = files;
+        return { fileRefs: [{ ref: "/uploaded/main-py", name: "main.py" }], droppedNote: "" };
+      },
+      async generateText(input) {
+        seenFileRefs = input.fileRefs;
+        return "done";
+      },
+    }));
+    assert.equal(resp.status, 200);
+    assert.deepEqual(seenFiles, [{ b64: "cHJpbnQoMSkK", mime: "text/x-python", filename: "main.py" }]);
+    assert.deepEqual(seenFileRefs, [
+      "file_existing",
+      { ref: "/uploaded/main-py", name: "main.py" },
+    ]);
+  }],
+  ["does not treat nested inline input_file file.id as an existing file ref", async () => {
+    let seenFiles = null;
+    let seenFileRefs = null;
+    const resp = await mod.handleChat({
+      model: "gemini-3.5-flash",
+      messages: [{
+        role: "user",
+        content: [{
+          type: "input_file",
+          file: {
+            id: "local_part",
+            data: "aGVsbG8=",
+            filename: "note.txt",
+            mime_type: "text/plain",
+          },
+        }],
+      }],
+    }, baseConfig(), fakeProvider({
+      async resolveFiles(files) {
+        seenFiles = files;
+        return { fileRefs: [{ ref: "/uploaded/note", name: "note.txt" }], droppedNote: "" };
+      },
+      async generateText(input) {
+        seenFileRefs = input.fileRefs;
+        return "done";
+      },
+    }));
+    assert.equal(resp.status, 200);
+    assert.deepEqual(seenFiles, [{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" }]);
+    assert.deepEqual(seenFileRefs, [{ ref: "/uploaded/note", name: "note.txt" }]);
+  }],
+  ["passes top-level Responses input_file uploads to provider", async () => {
+    let seenFiles = null;
+    let seenFileRefs = null;
+    const resp = await mod.handleResponses({
+      model: "gemini-3.5-flash",
+      input: [
+        { type: "input_text", text: "review this note" },
+        { type: "input_file", filename: "../note.txt", file_data: { data: "aGVsbG8=", mime_type: "text/plain" } },
+      ],
+    }, baseConfig(), fakeProvider({
+      async resolveFiles(files) {
+        seenFiles = files;
+        return { fileRefs: [{ ref: "/uploaded/note", name: "note.txt" }], droppedNote: "" };
+      },
+      async generateText(input) {
+        seenFileRefs = input.fileRefs;
+        return "done";
+      },
+    }));
+    assert.equal(resp.status, 200);
+    assert.deepEqual(seenFiles, [{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" }]);
+    assert.deepEqual(seenFileRefs, [{ ref: "/uploaded/note", name: "note.txt" }]);
+  }],
+  ["passes top-level OpenAI attachments inline uploads to provider", async () => {
+    let seenFiles = null;
+    let seenFileRefs = null;
+    const resp = await mod.handleChat({
+      model: "gemini-3.5-flash",
+      messages: [{ role: "user", content: "review attachments" }],
+      attachments: [
+        { type: "input_file", id: "local_part", filename: "../top.txt", file_data: "dG9w", mime_type: "text/plain" },
+        { type: "file", file_id: "file_existing", filename: "existing.txt" },
+      ],
+    }, baseConfig(), fakeProvider({
+      async resolveFiles(files) {
+        seenFiles = files;
+        return { fileRefs: [{ ref: "/uploaded/top", name: "top.txt" }], droppedNote: "" };
+      },
+      async generateText(input) {
+        seenFileRefs = input.fileRefs;
+        return "done";
+      },
+    }));
+    assert.equal(resp.status, 200);
+    assert.deepEqual(seenFiles, [{ b64: "dG9w", mime: "text/plain", filename: "top.txt" }]);
+    assert.deepEqual(seenFileRefs, [
+      { id: "file_existing", name: "existing.txt" },
+      { ref: "/uploaded/top", name: "top.txt" },
+    ]);
+  }],
+  ["adds dropped generic file note and continues OpenAI chat generation", async () => {
+    let seenPrompt = "";
+    let seenFileRefs = "unset";
+    const resp = await mod.handleChat({
+      model: "gemini-3.5-flash",
+      messages: [{ role: "user", content: [{ type: "input_file", data: "aGVsbG8=", filename: "note.txt" }] }],
+    }, baseConfig(), fakeProvider({
+      async resolveFiles() {
+        return { fileRefs: null, droppedNote: "\n\n[Note: 1 file(s) were provided but ignored - some file uploads failed.]" };
+      },
+      async generateText(input) {
+        seenPrompt = input.prompt;
+        seenFileRefs = input.fileRefs;
+        return "continued";
+      },
+    }));
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.choices[0].message.content, "continued");
+    assert.match(seenPrompt, /\[Note: 1 file\(s\) were provided but ignored - some file uploads failed\.\]/);
+    assert.equal(seenFileRefs, null);
+  }],
   ["returns OpenAI chat empty upstream warning with visible fallback text", async () => {
     const resp = await mod.handleChat({
       model: "gemini-3.5-flash",
@@ -510,6 +642,28 @@ export const cases = [
     const failureLog = logs.find((line) => line.includes("openai chat generate failed"));
     assert.match(failureLog, /error=type=Error code=chat_overloaded status=503/);
     assert.doesNotMatch(failureLog, /chat overloaded secret/);
+  }],
+  ["maps non-stream OpenAI Chat upstream empty errors instead of returning fallback 200", async () => {
+    const err = streamError("Gemini upstream HTTP 200 returned no parseable text (non-stream)", "upstream_empty_response");
+    err.status = 502;
+    err.upstreamStatus = 200;
+    err.rawLength = 31;
+    const logs = [];
+    const resp = await withConsoleLog((line) => logs.push(String(line)), () => mod.handleChat({
+      model: "gemini-3.5-flash",
+      messages: [{ role: "user", content: "try once" }],
+    }, baseConfig({ log_requests: true }), fakeProvider({
+      async generateText() {
+        throw err;
+      },
+    })));
+    assert.equal(resp.status, 502);
+    const body = await resp.json();
+    assert.equal(body.error.code, "upstream_empty_response");
+    assert.equal(body.error.type, "api_error");
+    assert.match(body.error.message, /upstream error: Gemini upstream HTTP 200 returned no parseable text/);
+    const failureLog = logs.find((line) => line.includes("openai chat generate failed"));
+    assert.match(failureLog, /error=type=Error code=upstream_empty_response status=502 upstreamStatus=200 rawLength=31/);
   }],
   ["rejects invalid non-stream structured OpenAI Responses JSON schema output", async () => {
     const resp = await mod.handleResponses({

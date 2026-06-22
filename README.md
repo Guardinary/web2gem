@@ -56,6 +56,7 @@ The main compatibility targets are:
 | Structured output            | Validates and canonicalizes final JSON for non-streaming structured responses; streaming structured output is rejected by default.             |
 | Large context handling       | Can upload large prompt context as Gemini text attachments when a Gemini cookie is configured.                                                 |
 | Image handling               | Resolves image inputs through the Gemini provider path where supported by the request shape.                                                   |
+| Generic file attachments     | Request-local `input_file` and inline non-image data can use Gemini Web upload refs for arbitrary filenames and MIME types; `/v1/files` persistence is not implemented. |
 | Worker and Docker deployment | Deploy with Wrangler to Cloudflare Workers, or self-host with Docker / Docker Compose.                                                         |
 | Upstream socket transport    | Uses `cloudflare:sockets` on Workers by default, with Docker using standard `fetch` transport unless a compatible sockets runtime is provided. |
 | CORS and API key gate        | Handles browser preflight requests and optional bearer/API-key authentication.                                                                 |
@@ -212,6 +213,7 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 | `CURRENT_INPUT_FILE_MIN_BYTES`  | `95000`                     | Inline prompt byte threshold before text attachment handling is attempted.                                                                                                                                       |
 | `CURRENT_INPUT_FILE_NAME`       | `message.txt`               | Filename used for large message context attachment.                                                                                                                                                              |
 | `CURRENT_TOOLS_FILE_NAME`       | `tools.txt`                 | Filename used for large tool-definition context attachment.                                                                                                                                                      |
+| `GENERIC_FILE_UPLOAD_MAX_BYTES` | `20971520`                  | Maximum bytes per request-local generic file attachment. Generic file uploads require `GEMINI_COOKIE`; unavailable or failed uploads are ignored with a prompt note.                                             |
 | `STRUCTURED_OUTPUT_STREAM_MODE` | `reject`                    | Use `best_effort` to allow prompt-guided structured output streaming without final JSON validation.                                                                                                              |
 
 When managing a Worker through the Wrangler CLI, optional secrets can be set with:

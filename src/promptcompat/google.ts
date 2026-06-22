@@ -42,6 +42,7 @@ export function googleContentsToPrompt(req: unknown, toolDefsOverride: unknown, 
   const request = isRecord(req) ? req : {};
   const prompt = createPromptPartAccumulator(maxPromptBytes);
   const images: UnknownRecord[] = [];
+  const files: UnknownRecord[] = [];
   const fcMode = String(googleFunctionCallingConfig(req).mode || "AUTO").trim().toUpperCase();
   const promptToolDefs = fcMode !== "NONE"
     ? (Array.isArray(toolDefsOverride) ? toolDefsOverride : openAIToolDefs(request.tools))
@@ -71,7 +72,7 @@ export function googleContentsToPrompt(req: unknown, toolDefsOverride: unknown, 
 
     const flushContentOnly = () => {
       if (!msgContent.length) return;
-      addGooglePromptMessage(prompt, images, role, msgContent, []);
+      addGooglePromptMessage(prompt, images, files, role, msgContent, []);
       msgContent.length = 0;
     };
 
@@ -83,17 +84,31 @@ export function googleContentsToPrompt(req: unknown, toolDefsOverride: unknown, 
         if (role === "user") latestParts.push(String(p.text));
       } else if (p.inlineData || p.inline_data) {
         const inlineData = isRecord(p.inlineData) ? p.inlineData : (isRecord(p.inline_data) ? p.inline_data : {});
-        msgContent.push({
-          type: "image",
-          source: {
-            data: inlineData.data,
-            media_type: inlineData.mimeType || inlineData.mime_type || "image/png",
-          },
-          filename: imageFilenameFromObject(p),
-        });
-        if (role === "user") latestParts.push("[image input]");
+        const mime = inlineData.mimeType || inlineData.mime_type || "image/png";
+        if (String(mime || "").trim().toLowerCase().startsWith("image/")) {
+          msgContent.push({
+            type: "image",
+            source: {
+              data: inlineData.data,
+              media_type: mime,
+            },
+            filename: imageFilenameFromObject(p),
+          });
+          if (role === "user") latestParts.push("[image input]");
+        } else {
+          msgContent.push({
+            type: "file",
+            source: {
+              data: inlineData.data,
+              media_type: mime,
+            },
+            filename: imageFilenameFromObject(p),
+          });
+          if (role === "user") latestParts.push(`[file input${imageFilenameFromObject(p) ? ` ${imageFilenameFromObject(p)}` : ""}]`);
+        }
       } else if (p.fileData || p.file_data) {
         const fileData = isRecord(p.fileData) ? p.fileData : (isRecord(p.file_data) ? p.file_data : {});
+        msgContent.push({ type: "file", fileData, filename: imageFilenameFromObject(p) });
         if (role === "user") latestParts.push(`[file input${fileData.fileUri ? ` ${fileData.fileUri}` : ""}]`);
       } else if (isRecord(p.functionCall)) {
         const fc = p.functionCall;
@@ -105,7 +120,7 @@ export function googleContentsToPrompt(req: unknown, toolDefsOverride: unknown, 
       }
     }
 
-    if (msgContent.length || toolCalls.length) addGooglePromptMessage(prompt, images, role, msgContent, toolCalls);
+    if (msgContent.length || toolCalls.length) addGooglePromptMessage(prompt, images, files, role, msgContent, toolCalls);
     if (role === "user") {
       const latest = latestParts.join("\n").trim();
       if (latest) latestInputText = latest;
@@ -113,6 +128,7 @@ export function googleContentsToPrompt(req: unknown, toolDefsOverride: unknown, 
   }
 
   const result = prompt.result(images);
+  if (files.length) result.files = files;
   if (hiddenPromptInsertOffset != null) result.hiddenPromptInsertOffset = hiddenPromptInsertOffset;
   if (latestInputText) result.latestInputText = latestInputText;
   if (promptToolDefs.length) {
@@ -122,8 +138,8 @@ export function googleContentsToPrompt(req: unknown, toolDefsOverride: unknown, 
   return result;
 }
 
-function addGooglePromptMessage(prompt: ReturnType<typeof createPromptPartAccumulator>, images: UnknownRecord[], role: string, msgContent: UnknownRecord[], toolCalls: GooglePromptToolCall[]): void {
-  const content = messageContentToPrompt(msgContent, images);
+function addGooglePromptMessage(prompt: ReturnType<typeof createPromptPartAccumulator>, images: UnknownRecord[], files: UnknownRecord[], role: string, msgContent: UnknownRecord[], toolCalls: GooglePromptToolCall[]): void {
+  const content = messageContentToPrompt(msgContent, images, files);
   if (role === "assistant") {
     if (toolCalls.length) {
       const blocks = toolCalls.map((tc) => formatPromptToolCallBlock(tc.name, tc.args || {}));
@@ -161,14 +177,29 @@ export function googleContentsToOpenAIMessages(req: unknown): UnknownRecord[] {
         msgContent.push({ type: "text", text: p.text });
       } else if (p.inlineData || p.inline_data) {
         const inlineData = isRecord(p.inlineData) ? p.inlineData : (isRecord(p.inline_data) ? p.inline_data : {});
-        msgContent.push({
-          type: "image",
-          source: {
-            data: inlineData.data,
-            media_type: inlineData.mimeType || inlineData.mime_type || "image/png",
-          },
-          filename: imageFilenameFromObject(p),
-        });
+        const mime = inlineData.mimeType || inlineData.mime_type || "image/png";
+        if (String(mime || "").trim().toLowerCase().startsWith("image/")) {
+          msgContent.push({
+            type: "image",
+            source: {
+              data: inlineData.data,
+              media_type: mime,
+            },
+            filename: imageFilenameFromObject(p),
+          });
+        } else {
+          msgContent.push({
+            type: "file",
+            source: {
+              data: inlineData.data,
+              media_type: mime,
+            },
+            filename: imageFilenameFromObject(p),
+          });
+        }
+      } else if (p.fileData || p.file_data) {
+        const fileData = isRecord(p.fileData) ? p.fileData : (isRecord(p.file_data) ? p.file_data : {});
+        msgContent.push({ type: "file", fileData, filename: imageFilenameFromObject(p) });
       } else if (isRecord(p.functionCall)) {
         const fc = p.functionCall;
         toolCalls.push({ type: "function", function: { name: fc.name || "", arguments: JSON.stringify(fc.args || {}) } });

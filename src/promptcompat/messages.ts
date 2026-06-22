@@ -8,6 +8,7 @@ import { createPromptPartAccumulator } from "./prompt-text";
 export function messagesToPrompt(messages: unknown, tools: unknown, toolChoice: unknown, toolDefsOverride: unknown, toolChoiceInstructionOverride: unknown, maxPromptBytes?: number | null) {
   const prompt = createPromptPartAccumulator(maxPromptBytes);
   const images: UnknownRecord[] = [];
+  const files: UnknownRecord[] = [];
   let latestInputText = "";
   const promptToolDefs = toolChoice !== "none"
     ? (Array.isArray(toolDefsOverride) ? toolDefsOverride : openAIToolDefs(tools))
@@ -23,7 +24,7 @@ export function messagesToPrompt(messages: unknown, tools: unknown, toolChoice: 
   for (const msg of messageList) {
     if (!isRecord(msg)) continue;
     const role = normalizeHistoryRole(msg.role);
-    let content = messageContentToPrompt(msg.content != null ? msg.content : "", images);
+    let content = messageContentToPrompt(msg.content != null ? msg.content : "", images, files);
 
     if (role === "system") {
       prompt.add(`[System instruction]: ${content}`);
@@ -55,6 +56,7 @@ export function messagesToPrompt(messages: unknown, tools: unknown, toolChoice: 
   }
 
   const result = prompt.result(images);
+  if (files.length) result.files = files;
   if (hiddenPromptInsertOffset != null) result.hiddenPromptInsertOffset = hiddenPromptInsertOffset;
   if (latestInputText) result.latestInputText = latestInputText;
   if (promptToolDefs.length) {

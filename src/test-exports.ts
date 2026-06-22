@@ -8,10 +8,16 @@ export { configWithActiveGeminiCookie, mergeSetCookieHeaders, parseCookieHeader,
 export {
   filenameFromUrl,
   firstNonEmptyString,
+  genericFilenameFromMime,
   imageFilenameFromMime,
   imageFilenameFromObject,
+  mimeFromFilename,
+  normalizeUploadFileInput,
+  parseDataUrl,
   parseImageUrl,
+  parseUploadUrl,
   sanitizeUploadFilename,
+  uploadFilenameFromObject,
 } from "./shared/media";
 export {
   abortError,
@@ -51,7 +57,7 @@ export { readJsonRequest } from "./http/core/json";
 export { sseResponse } from "./http/core/sse";
 export { streamErrorText, streamInterruptedWarningText, streamWarningObject, writeStreamWarningEvent } from "./http/core/stream-errors";
 export { httpFetch } from "./gemini/transport/http";
-export { base64ToBytes, getPageTokens, resetGeminiUploadCachesForTest, resolveImages, uploadImage, uploadTextFile } from "./gemini/uploads";
+export { base64ToBytes, getPageTokens, resetGeminiUploadCachesForTest, resolveFiles, resolveImages, uploadFile, uploadImage, uploadTextFile } from "./gemini/uploads";
 export {
   contextFilePromptByteCheck,
   contextFileThreshold,

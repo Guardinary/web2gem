@@ -26,10 +26,14 @@ export type PromptMetadata = {
   hasToolInstructions?: boolean;
 };
 
-export type ImageResolutionResult = {
+export type AttachmentResolutionResult = {
   fileRefs: FileRef[] | null;
   droppedNote: string;
 };
+
+export type ImageResolutionResult = AttachmentResolutionResult;
+
+export type FileResolutionResult = AttachmentResolutionResult;
 
 export type ContextFileResult = {
   fileRefs: FileRef[];

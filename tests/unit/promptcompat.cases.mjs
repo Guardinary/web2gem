@@ -69,6 +69,20 @@ export const cases = [
       content: "ok",
     }), [{ role: "tool", content: "ok", tool_call_id: "call_7", name: "Lookup" }]);
   }],
+  ["preserves top-level Responses input_file items for upload collection", async () => {
+    const messages = mod.normalizeResponsesInputValueAsMessages([
+      { type: "input_text", text: "review this" },
+      { type: "input_file", filename: "../note.txt", data: "aGVsbG8=", mime_type: "text/plain" },
+    ]);
+    assert.deepEqual(messages, [
+      { role: "user", content: "review this" },
+      { role: "user", content: [{ type: "input_file", filename: "../note.txt", data: "aGVsbG8=", mime_type: "text/plain" }] },
+    ]);
+
+    const result = mod.messagesToPrompt(messages, null, "auto", [], "", 1000000);
+    assert.match(result[0], /\[file input note\.txt\]/);
+    assert.deepEqual(result.files, [{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" }]);
+  }],
   ["merges Responses reasoning-only items into following assistant tool calls", async () => {
     const messages = mod.normalizeResponsesInputValueAsMessages([
       { type: "reasoning", text: "first thought" },
@@ -122,7 +136,8 @@ export const cases = [
     assert.match(transcript, /be concise/);
     assert.match(transcript, /\[image input\]/);
     assert.match(transcript, /<tool_calls><invoke name="Lookup">/);
-    assert.match(transcript, /\[Tool result for Lookup\]: \{"ok":true\}/);
+    assert.match(transcript, /\[name=Lookup\]\n\{"ok":true\}/);
+    assert.match(transcript, /\[file input gemini:\/\/file\/1\]\nlatest/);
     assert.equal(mod.latestGoogleUserInputText(req), "[file input gemini://file/1]\nlatest");
   }],
   ["extracts latest Google user text from image and file-only turns", async () => {
@@ -256,6 +271,89 @@ export const cases = [
     assert.deepEqual(images[1], { b64: "AAAA", mime: "image/jpeg", filename: "nested.jpg" });
     assert.deepEqual(images[2], { b64: "BBBB", mime: "image/webp", filename: "data.webp" });
   }],
+  ["collects inline and remote input_file parts as generic upload candidates", async () => {
+    const images = [];
+    const files = [];
+    const text = mod.messageContentToPrompt([
+      { type: "input_text", text: "inspect code" },
+      { type: "input_file", filename: "../main.py", file_data: "data:text/x-python;base64,cHJpbnQoMSkK" },
+      { type: "input_file", filename: "note.txt", file_data: { data: "aGVsbG8=", mime_type: "text/plain" } },
+      { type: "input_file", filename: "empty.txt", file_data: "", mime_type: "text/plain" },
+      { type: "file", file_url: "https://files.example/archive/app.ts?sig=secret", filename: "app.ts" },
+      { type: "input_file", filename: "missing.txt" },
+      { type: "input_file", file_id: "file_existing", filename: "existing.txt" },
+    ], images, files);
+    assert.match(text, /inspect code/);
+    assert.match(text, /\[file input main\.py\]/);
+    assert.match(text, /\[file input note\.txt\]/);
+    assert.match(text, /\[file input empty\.txt\]/);
+    assert.match(text, /\[file input app\.ts\]/);
+    assert.match(text, /\[file input missing\.txt\]/);
+    assert.match(text, /\[file input file_existing\]/);
+    assert.deepEqual(images, []);
+    assert.deepEqual(files, [
+      { b64: "cHJpbnQoMSkK", mime: "text/x-python", filename: "main.py" },
+      { b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" },
+      { b64: "", mime: "text/plain", filename: "empty.txt" },
+      { url: "https://files.example/archive/app.ts?sig=secret", filename: "app.ts" },
+      { invalidReason: "missing generic file upload data", mime: "text/plain", filename: "missing.txt" },
+    ]);
+
+    const result = mod.messagesToPrompt([{
+      role: "user",
+      content: [{ type: "input_file", data: "aGVsbG8=", filename: "note.txt" }],
+    }], null, "auto", [], "", 1000000);
+    assert.deepEqual(result.files, [{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" }]);
+  }],
+  ["preserves Google fileData fileUri and collects inline non-image parts", async () => {
+    const req = {
+      contents: [{
+        role: "user",
+        parts: [
+          { fileData: { fileUri: "https://files.example/main.py", mimeType: "text/x-python", displayName: "main.py" } },
+          { inlineData: { data: "Y29uc29sZS5sb2coMSk=", mimeType: "text/javascript", displayName: "inline.js" } },
+        ],
+      }],
+    };
+    const result = mod.googleContentsToPrompt(req, [], 1000000);
+    assert.deepEqual(result[1], []);
+    assert.deepEqual(result.files, [
+      { b64: "Y29uc29sZS5sb2coMSk=", mime: "text/javascript", filename: "inline.js" },
+    ]);
+    assert.match(result[0], /\[file input main\.py\]/);
+    assert.match(result[0], /\[file input inline\.js\]/);
+
+    const messages = mod.googleContentsToOpenAIMessages(req);
+    assert.equal(messages[0].role, "user");
+    assert.equal(messages[0].content[0].type, "file");
+    assert.deepEqual(messages[0].content[0].fileData, { fileUri: "https://files.example/main.py", mimeType: "text/x-python", displayName: "main.py" });
+    assert.equal(messages[0].content[0].filename, "main.py");
+    assert.equal(messages[0].content[1].type, "file");
+    assert.deepEqual(messages[0].content[1].source, { data: "Y29uc29sZS5sb2coMSk=", media_type: "text/javascript" });
+    assert.equal(messages[0].content[1].filename, "inline.js");
+
+    const transcript = mod.buildGoogleHistoryTranscript(req, "google-files.txt");
+    assert.match(transcript, /\[file input main\.py\]/);
+    assert.match(transcript, /\[file input inline\.js\]/);
+    assert.doesNotMatch(transcript, /\[image input\]/);
+    assert.equal(mod.latestGoogleUserInputText(req), "[file input main.py]\n[file input inline.js]");
+  }],
+  ["uses normalized Google file parts in history for snake case fields", async () => {
+    const req = {
+      contents: [{
+        role: "user",
+        parts: [
+          { file_data: { file_uri: "gemini://file/3", mime_type: "text/plain", display_name: "notes.txt" } },
+          { inline_data: { data: "IyBUaXRsZQ==", mime_type: "text/markdown", display_name: "readme.md" } },
+        ],
+      }],
+    };
+    const transcript = mod.buildGoogleHistoryTranscript(req, "snake-google-files.txt");
+    assert.match(transcript, /\[file input notes\.txt\]/);
+    assert.match(transcript, /\[file input readme\.md\]/);
+    assert.doesNotMatch(transcript, /\[image input\]/);
+    assert.equal(mod.latestGoogleUserInputText(req), "[file input notes.txt]\n[file input readme.md]");
+  }],
   ["handles content text fallbacks and file ref de-duplication", async () => {
     const cyclic = {};
     cyclic.self = cyclic;
@@ -316,6 +414,21 @@ export const cases = [
     assert.equal(mod.imageFilenameFromMime("image/heic", 5), "image-5.heic");
     assert.equal(mod.imageFilenameFromMime("image/heif", 6), "image-6.heif");
     assert.equal(mod.imageFilenameFromMime("application/octet-stream", 7), "image-7.png");
+    assert.equal(mod.genericFilenameFromMime("application/octet-stream", 7), "file-7.bin");
+    assert.equal(mod.genericFilenameFromMime("text/x-python", 2), "file-2.py");
+    assert.equal(mod.mimeFromFilename("main.py"), "text/x-python");
+    assert.deepEqual(mod.parseUploadUrl("data:text/plain;base64,QQ=="), { b64: "QQ==", mime: "text/plain" });
+    assert.deepEqual(mod.normalizeUploadFileInput({
+      type: "input_file",
+      filename: "document.txt",
+      file_data: "data:application/pdf;base64,JVBERi0=",
+    }), { b64: "JVBERi0=", mime: "application/pdf", filename: "document.txt" });
+    assert.deepEqual(mod.normalizeUploadFileInput({
+      type: "input_file",
+      filename: "../nested.py",
+      file_data: { data: "cHJpbnQoMikK", mime_type: "text/x-python" },
+      data: "dG9wLWxldmVs",
+    }), { b64: "cHJpbnQoMikK", mime: "text/x-python", filename: "nested.py" });
   }],
   ["omits OpenAI tool prompt when tool choice is none", async () => {
     const result = mod.messagesToPrompt([

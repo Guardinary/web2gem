@@ -621,6 +621,34 @@ export const cases = [
     });
     assert.equal(calls.some((href) => href === "https://gemini.example/app"), true);
   }],
+  ["throws explicit non-stream upstream empty error for HTTP 200 responses", async () => {
+    const cfg = {
+      gemini_origin: "https://gemini.example",
+      gemini_bl: "stale-bl",
+      cookie: "",
+      sapisid: "",
+      request_timeout_sec: 180,
+      retry_attempts: 1,
+      retry_delay_sec: 0,
+      current_input_file_min_bytes: 1000000,
+      upstream_socket: false,
+      log_requests: false,
+    };
+    await withFetch(async (url) => {
+      if (String(url) === "https://gemini.example/app") return new Response("<html>no fresh build label</html>", { status: 200 });
+      return new Response("upstream completed without wrb text", { status: 200 });
+    }, async () => {
+      try {
+        await mod.generate(cfg, "prompt", 1, 4, null, null);
+        throw new Error("expected upstream empty response");
+      } catch (err) {
+        assert.equal(err.code, "upstream_empty_response");
+        assert.equal(err.status, 502);
+        assert.equal(err.upstreamStatus, 200);
+        assert.equal(err.rawLength, "upstream completed without wrb text".length);
+      }
+    });
+  }],
   ["classifies data-analysis empty responses for uploaded files", async () => {
     const cfg = {
       gemini_origin: "https://gemini.example",
@@ -718,7 +746,10 @@ export const cases = [
         }
         throw new Error("expected empty stream error");
       } catch (err) {
-        assert.match(err.message, /no stream body or parseable text/);
+        assert.equal(err.code, "upstream_empty_response");
+        assert.equal(err.status, 502);
+        assert.equal(err.upstreamStatus, 502);
+        assert.equal(err.rawLength, 0);
       }
     });
   }],
@@ -798,10 +829,43 @@ export const cases = [
         }
         throw new Error("expected parse failure");
       } catch (err) {
-        assert.match(err.message, /no parseable stream text/);
+        assert.equal(err.code, "upstream_empty_response");
+        assert.equal(err.status, 502);
+        assert.equal(err.upstreamStatus, 502);
+        assert.equal(err.rawLength, "not parseable".length);
       }
     });
     assert.equal(calls.some((href) => href === "https://gemini.example/app"), true);
+  }],
+  ["throws explicit stream upstream empty error for HTTP 200 responses", async () => {
+    const cfg = {
+      gemini_origin: "https://gemini.example",
+      gemini_bl: "stale-stream-bl",
+      cookie: "",
+      sapisid: "",
+      request_timeout_sec: 180,
+      retry_attempts: 1,
+      retry_delay_sec: 0,
+      current_input_file_min_bytes: 1000000,
+      upstream_socket: false,
+      log_requests: false,
+    };
+    await withFetch(async (url) => {
+      if (String(url) === "https://gemini.example/app") return new Response("<html>no fresh build label</html>", { status: 200 });
+      return new Response("stream completed without wrb text", { status: 200 });
+    }, async () => {
+      try {
+        for await (const _delta of mod.generateStream(cfg, "prompt", 1, 4, null, null)) {
+          throw new Error("stream should not yield");
+        }
+        throw new Error("expected upstream empty stream response");
+      } catch (err) {
+        assert.equal(err.code, "upstream_empty_response");
+        assert.equal(err.status, 502);
+        assert.equal(err.upstreamStatus, 200);
+        assert.equal(err.rawLength, "stream completed without wrb text".length);
+      }
+    });
   }],
   ["refreshes Gemini build label and retries empty stream bodies", async () => {
     const cfg = {

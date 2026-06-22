@@ -2,6 +2,7 @@ import { parseJsonObject } from "../shared/json";
 import { isRecord } from "../shared/types";
 import { contentTextForHistory, normalizeHistoryRole, reasoningTextForHistory, roleLabelForHistory } from "../toolcall/content";
 import { formatPromptToolCallBlock } from "../toolcall/prompt-format";
+import { googleContentsToOpenAIMessages } from "./google";
 
 type HistoryTranscriptEntry = {
   role: string;
@@ -44,31 +45,7 @@ export function buildOpenAIHistoryTranscript(messages: unknown, filename: unknow
 }
 
 export function buildGoogleHistoryTranscript(req: unknown, filename: unknown = "message.txt"): string {
-  const request = isRecord(req) ? req : {};
-  const messages: HistoryTranscriptEntry[] = [];
-  const sys = isRecord(request.systemInstruction) ? request.systemInstruction : null;
-  if (sys && Array.isArray(sys.parts)) {
-    const text = sys.parts
-      .filter((part) => isRecord(part) && part.text)
-      .map((part) => isRecord(part) ? part.text : "")
-      .join(" ");
-    if (text) messages.push({ role: "system", content: text });
-  }
-  const contents = Array.isArray(request.contents) ? request.contents : [];
-  for (const content of contents) {
-    if (!isRecord(content)) continue;
-    const parts: string[] = [];
-    const contentParts = Array.isArray(content.parts) ? content.parts : [];
-    for (const p of contentParts) {
-      if (!isRecord(p)) continue;
-      if (p.text) parts.push(String(p.text));
-      else if (isRecord(p.functionCall)) parts.push(formatPromptToolCallBlock(p.functionCall.name, p.functionCall.args || {}));
-      else if (isRecord(p.functionResponse)) parts.push(`[Tool result for ${p.functionResponse.name || ""}]: ${JSON.stringify(p.functionResponse.response || {})}`);
-      else if (p.inlineData) parts.push("[image input]");
-    }
-    messages.push({ role: content.role === "model" ? "assistant" : "user", content: parts.join("\n") });
-  }
-  return buildOpenAIHistoryTranscript(messages, filename);
+  return buildOpenAIHistoryTranscript(googleContentsToOpenAIMessages(req), filename);
 }
 
 export function latestOpenAIUserInputText(messages: unknown): string {
@@ -84,22 +61,5 @@ export function latestOpenAIUserInputText(messages: unknown): string {
 }
 
 export function latestGoogleUserInputText(req: unknown): string {
-  const request = isRecord(req) ? req : {};
-  const contents = Array.isArray(request.contents) ? request.contents : [];
-  for (let i = contents.length - 1; i >= 0; i--) {
-    const content = contents[i];
-    if (!isRecord(content) || content.role === "model") continue;
-    const parts: string[] = [];
-    const contentParts = Array.isArray(content.parts) ? content.parts : [];
-    for (const part of contentParts) {
-      if (!isRecord(part)) continue;
-      const fileData = isRecord(part.fileData) ? part.fileData : null;
-      if (part.text) parts.push(String(part.text));
-      else if (part.inlineData) parts.push("[image input]");
-      else if (fileData) parts.push(`[file input${fileData.fileUri ? ` ${fileData.fileUri}` : ""}]`);
-    }
-    const text = parts.join("\n").trim();
-    if (text) return text;
-  }
-  return "";
+  return latestOpenAIUserInputText(googleContentsToOpenAIMessages(req));
 }

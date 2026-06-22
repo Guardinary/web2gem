@@ -1,5 +1,5 @@
 import type { ResolvedModel } from "../models";
-import type { FileRef, ImageResolutionResult } from "./types";
+import type { FileRef, FileResolutionResult, ImageResolutionResult } from "./types";
 
 export type CompletionTextInput = {
   prompt: string;
@@ -15,5 +15,6 @@ export type CompletionProvider = {
   generateText(input: CompletionTextInput): Promise<string>;
   streamText(input: CompletionTextInput, options?: CompletionProviderOptions): AsyncIterable<string>;
   resolveImages(images: unknown): Promise<ImageResolutionResult>;
+  resolveFiles(files: unknown): Promise<FileResolutionResult>;
   uploadTextFile(text: string, filename: string): Promise<FileRef>;
 };

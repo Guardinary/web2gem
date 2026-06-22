@@ -56,6 +56,7 @@ TypeScript 代码位于 `src/`，本地质量检查脚本位于 `scripts/`，`di
 | 结构化输出            | 对非流式结构化响应进行最终 JSON 校验和规范化；默认拒绝流式结构化输出。                                         |
 | 大上下文处理          | 在配置 Gemini cookie 时，可将大段提示上下文作为 Gemini 文本附件上传。                                          |
 | 图片处理              | 在请求形状支持时，通过 Gemini provider 路径解析图片输入。                                                      |
+| 通用文件附件          | 请求内 `input_file` 和非图片内联数据可通过 Gemini Web 上传引用传入，支持任意文件名和 MIME；不实现 `/v1/files` 持久文件服务。 |
 | Worker 和 Docker 部署 | 可通过 Wrangler 部署到 Cloudflare Workers，也可用 Docker / Docker Compose 自托管。                             |
 | 上游 socket 传输      | Workers 上默认使用 `cloudflare:sockets`；Docker 默认使用标准 `fetch` 传输，除非运行时提供兼容的 sockets 能力。 |
 | CORS 和 API key 保护  | 处理浏览器预检请求，并支持可选的 bearer/API-key 认证。                                                         |
@@ -212,6 +213,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 | `CURRENT_INPUT_FILE_MIN_BYTES`  | `95000`                     | 触发文本附件处理前的内联提示字节阈值。                                                                                                                                             |
 | `CURRENT_INPUT_FILE_NAME`       | `message.txt`               | 大消息上下文附件使用的文件名。                                                                                                                                                     |
 | `CURRENT_TOOLS_FILE_NAME`       | `tools.txt`                 | 大工具定义上下文附件使用的文件名。                                                                                                                                                 |
+| `GENERIC_FILE_UPLOAD_MAX_BYTES` | `20971520`                  | 每个请求内通用文件附件的最大字节数。通用文件上传需要 `GEMINI_COOKIE`；不可用或上传失败时会忽略附件并在提示词中追加说明。                                                           |
 | `STRUCTURED_OUTPUT_STREAM_MODE` | `reject`                    | 设置为 `best_effort` 时允许流式结构化输出使用提示词约束，但不做最终 JSON 校验。                                                                                                    |
 
 使用 Wrangler CLI 管理 Worker 时，可通过以下命令设置可选 secrets：

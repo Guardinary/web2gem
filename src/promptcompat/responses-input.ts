@@ -97,11 +97,13 @@ export function normalizeResponsesInputArray(items: readonly unknown[]): Unknown
 
 export function normalizeResponsesInputItem(item: unknown, callNameByID: Record<string, string> | null): UnknownRecord | null {
   if (!isRecord(item)) return null;
+  const itemType = String(item.type || "").trim().toLowerCase();
   const role = normalizeHistoryRole(item.role);
   if (item.role != null && role) {
     if (role === "assistant") return normalizeResponsesAssistantMessage(item);
     let content = item.content;
     if (content == null && typeof item.text === "string" && item.text.trim()) content = item.text;
+    if (content == null && isFileInputType(itemType)) content = [item];
     if (content == null) return null;
     const out: UnknownRecord = { role: role === "function" ? "tool" : role, content };
     if (role === "tool") {
@@ -111,7 +113,7 @@ export function normalizeResponsesInputItem(item: unknown, callNameByID: Record<
     return out;
   }
 
-  const type = String(item.type || "").trim().toLowerCase();
+  const type = itemType;
   if (type === "message" || type === "input_message") {
     const msgRole = normalizeHistoryRole(item.role || "user");
     if (msgRole === "assistant") return normalizeResponsesAssistantMessage(item);
@@ -149,6 +151,10 @@ export function normalizeResponsesInputItem(item: unknown, callNameByID: Record<
   if (type === "reasoning" || type === "thinking") {
     const text = responsesContentToText(item.summary != null ? item.summary : item.content != null ? item.content : item.text);
     return text ? { role: "assistant", content: "", reasoning_content: text } : null;
+  }
+
+  if (isFileInputType(type)) {
+    return { role: "user", content: [item] };
   }
 
   if ((type === "input_text" || type === "text" || type === "output_text" || type === "summary_text") && typeof item.text === "string" && item.text.trim()) {
@@ -213,6 +219,11 @@ export function normalizeResponsesFallbackPart(item: unknown): string {
   const type = String(item.type || "").trim().toLowerCase();
   if ((type === "input_text" || type === "text" || type === "output_text" || type === "summary_text") && typeof item.text === "string" && item.text.trim()) return item.text;
   return "";
+}
+
+function isFileInputType(type: unknown): boolean {
+  const typ = String(type || "").trim().toLowerCase();
+  return typ === "input_file" || typ === "file";
 }
 
 export function stringifyToolCallArguments(value: unknown): string {

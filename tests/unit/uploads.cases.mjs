@@ -11,6 +11,33 @@ export const cases = [
     assert.equal(result.fileRefs, null);
     assert.match(result.droppedNote, /image input requires a configured GEMINI_COOKIE/);
   }],
+  ["returns generic file empty input without refreshing stale cookies", async () => {
+    mod.resetActiveGeminiCookieForTest();
+    const cfg = {
+      gemini_origin: "https://gemini.example",
+      cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+      sapisid: "sapi",
+      request_timeout_sec: 180,
+      upstream_socket: false,
+      log_requests: false,
+      generic_file_upload_max_bytes: 1024,
+    };
+    const originalNow = Date.now;
+    Date.now = () => 0;
+    try {
+      mod.configWithActiveGeminiCookie(cfg);
+      Date.now = () => 11 * 60 * 1000;
+      await withFetch(async (url) => {
+        throw new Error(`unexpected fetch ${url}`);
+      }, async () => {
+        const result = await mod.resolveFiles(cfg, []);
+        assert.deepEqual(result, { fileRefs: null, droppedNote: "" });
+      });
+    } finally {
+      Date.now = originalNow;
+      mod.resetActiveGeminiCookieForTest();
+    }
+  }],
   ["reports missing base64 decoder when no native or atob decoder exists", async () => {
     const original = Object.getOwnPropertyDescriptor(Uint8Array, "fromBase64");
     Object.defineProperty(Uint8Array, "fromBase64", { value: undefined, configurable: true, writable: true });
@@ -210,6 +237,337 @@ export const cases = [
       "https://content-push.googleapis.com/upload/",
       "https://upload.example/url-finalize",
     ]);
+  }],
+  ["uploads generic code files through the Gemini Web upload path", async () => {
+    mod.resetActiveGeminiCookieForTest();
+    mod.resetGeminiUploadCachesForTest();
+    const seen = [];
+    await withFetch(async (url, init = {}) => {
+      const href = String(url);
+      seen.push(href);
+      if (href === "https://gemini.example/app") {
+        return new Response('{"qKIAYe":"push-file","Ylro7b":"pctx-file"}', { status: 200 });
+      }
+      if (href === "https://content-push.googleapis.com/upload/") {
+        assert.equal(init.headers["X-Goog-Upload-Header-Content-Type"], "text/x-python");
+        assert.equal(init.headers["X-Goog-Upload-Header-Content-Length"], "9");
+        return new Response("", { status: 200, headers: { "x-goog-upload-url": "https://upload.example/code" } });
+      }
+      if (href === "https://upload.example/code") {
+        assert.equal(new TextDecoder().decode(init.body), "print(1)\n");
+        return new Response("/uploaded/code-ref", { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${href}`);
+    }, async () => {
+      const result = await mod.resolveFiles({
+        gemini_origin: "https://gemini.example",
+        cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+        sapisid: "sapi",
+        request_timeout_sec: 180,
+        upstream_socket: false,
+        log_requests: false,
+        generic_file_upload_max_bytes: 1024,
+      }, [{ b64: "cHJpbnQoMSkK", mime: "text/x-python", filename: "../main.py" }]);
+      assert.deepEqual(result, { fileRefs: [{ ref: "/uploaded/code-ref", name: "main.py" }], droppedNote: "" });
+    });
+    assert.deepEqual(seen, [
+      "https://gemini.example/app",
+      "https://content-push.googleapis.com/upload/",
+      "https://upload.example/code",
+    ]);
+  }],
+  ["uploads remote generic files with fetched MIME and sanitized URL filenames", async () => {
+    mod.resetActiveGeminiCookieForTest();
+    mod.resetGeminiUploadCachesForTest();
+    const seen = [];
+    await withFetch(async (url, init = {}) => {
+      const href = String(url);
+      seen.push(href);
+      if (href === "https://files.example/src/main.ts?download=1") {
+        return new Response("let x=1;", {
+          status: 200,
+          headers: { "content-type": "text/typescript", "content-length": "8" },
+        });
+      }
+      if (href === "https://gemini.example/app") {
+        return new Response('{"qKIAYe":"push-remote-file","Ylro7b":"pctx-remote-file"}', { status: 200 });
+      }
+      if (href === "https://content-push.googleapis.com/upload/") {
+        assert.equal(init.headers["X-Goog-Upload-Header-Content-Type"], "text/typescript");
+        assert.equal(init.headers["X-Goog-Upload-Header-Content-Length"], "8");
+        return new Response("", { status: 200, headers: { "x-goog-upload-url": "https://upload.example/remote-file" } });
+      }
+      if (href === "https://upload.example/remote-file") {
+        assert.equal(new TextDecoder().decode(init.body), "let x=1;");
+        return new Response("/uploaded/remote-file-ref", { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${href}`);
+    }, async () => {
+      const result = await mod.resolveFiles({
+        gemini_origin: "https://gemini.example",
+        cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+        sapisid: "sapi",
+        request_timeout_sec: 180,
+        upstream_socket: false,
+        log_requests: false,
+        generic_file_upload_max_bytes: 1024,
+      }, [{ url: "https://files.example/src/main.ts?download=1" }]);
+      assert.deepEqual(result, { fileRefs: [{ ref: "/uploaded/remote-file-ref", name: "main.ts" }], droppedNote: "" });
+    });
+    assert.deepEqual(seen, [
+      "https://files.example/src/main.ts?download=1",
+      "https://gemini.example/app",
+      "https://content-push.googleapis.com/upload/",
+      "https://upload.example/remote-file",
+    ]);
+  }],
+  ["prefers remote content-type over filename-inferred generic file MIME", async () => {
+    mod.resetActiveGeminiCookieForTest();
+    mod.resetGeminiUploadCachesForTest();
+    await withFetch(async (url, init = {}) => {
+      const href = String(url);
+      if (href === "https://files.example/download/report.txt") {
+        return new Response("%PDF", {
+          status: 200,
+          headers: { "content-type": "application/pdf", "content-length": "4" },
+        });
+      }
+      if (href === "https://gemini.example/app") {
+        return new Response('{"qKIAYe":"push-mime-conflict","Ylro7b":"pctx-mime-conflict"}', { status: 200 });
+      }
+      if (href === "https://content-push.googleapis.com/upload/") {
+        assert.equal(init.headers["X-Goog-Upload-Header-Content-Type"], "application/pdf");
+        return new Response("", { status: 200, headers: { "x-goog-upload-url": "https://upload.example/mime-conflict" } });
+      }
+      if (href === "https://upload.example/mime-conflict") return new Response("/uploaded/mime-conflict-ref", { status: 200 });
+      throw new Error(`unexpected fetch ${href}`);
+    }, async () => {
+      const result = await mod.resolveFiles({
+        gemini_origin: "https://gemini.example",
+        cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+        sapisid: "sapi",
+        request_timeout_sec: 180,
+        upstream_socket: false,
+        log_requests: false,
+        generic_file_upload_max_bytes: 1024,
+      }, [{ url: "https://files.example/download/report.txt" }]);
+      assert.deepEqual(result, { fileRefs: [{ ref: "/uploaded/mime-conflict-ref", name: "report.txt" }], droppedNote: "" });
+    });
+  }],
+  ["uploads empty inline generic files as zero byte attachments", async () => {
+    mod.resetActiveGeminiCookieForTest();
+    mod.resetGeminiUploadCachesForTest();
+    const seen = [];
+    await withFetch(async (url, init = {}) => {
+      const href = String(url);
+      seen.push(href);
+      if (href === "https://gemini.example/app") {
+        return new Response('{"qKIAYe":"push-empty","Ylro7b":"pctx-empty"}', { status: 200 });
+      }
+      if (href === "https://content-push.googleapis.com/upload/") {
+        assert.equal(init.headers["X-Goog-Upload-Header-Content-Type"], "text/plain");
+        assert.equal(init.headers["X-Goog-Upload-Header-Content-Length"], "0");
+        return new Response("", { status: 200, headers: { "x-goog-upload-url": "https://upload.example/empty" } });
+      }
+      if (href === "https://upload.example/empty") {
+        assert.equal(new TextDecoder().decode(init.body), "");
+        return new Response("/uploaded/empty-ref", { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${href}`);
+    }, async () => {
+      const result = await mod.resolveFiles({
+        gemini_origin: "https://gemini.example",
+        cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+        sapisid: "sapi",
+        request_timeout_sec: 180,
+        upstream_socket: false,
+        log_requests: false,
+        generic_file_upload_max_bytes: 1024,
+      }, [{ type: "input_file", file_data: "", mime: "text/plain", filename: "empty.txt" }]);
+      assert.deepEqual(result, { fileRefs: [{ ref: "/uploaded/empty-ref", name: "empty.txt" }], droppedNote: "" });
+    });
+    assert.deepEqual(seen, [
+      "https://gemini.example/app",
+      "https://content-push.googleapis.com/upload/",
+      "https://upload.example/empty",
+    ]);
+  }],
+  ["does not fetch Google fileData fileUri as a generic upload URL", async () => {
+    mod.resetActiveGeminiCookieForTest();
+    await withFetch(async (url) => {
+      throw new Error(`unexpected fetch ${url}`);
+    }, async () => {
+      const result = await mod.resolveFiles({
+        gemini_origin: "https://gemini.example",
+        cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+        sapisid: "sapi",
+        request_timeout_sec: 180,
+        upstream_socket: false,
+        log_requests: false,
+        generic_file_upload_max_bytes: 1024,
+      }, [{ type: "file", fileData: { fileUri: "https://files.example/main.py", mimeType: "text/x-python", displayName: "main.py" } }]);
+      assert.deepEqual(result, { fileRefs: null, droppedNote: "" });
+    });
+  }],
+  ["drops explicit generic file inputs for missing cookie invalid base64 and oversized data", async () => {
+    const cfg = {
+      gemini_origin: "https://gemini.example",
+      cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+      sapisid: "sapi",
+      request_timeout_sec: 180,
+      upstream_socket: false,
+      log_requests: false,
+      generic_file_upload_max_bytes: 2,
+    };
+    const missingCookie = await mod.resolveFiles({ ...cfg, cookie: "" }, [{ b64: "AA==", mime: "application/octet-stream" }]);
+    assert.equal(missingCookie.fileRefs, null);
+    assert.match(missingCookie.droppedNote, /1 file\(s\).*generic file input requires a configured GEMINI_COOKIE/);
+
+    const invalid = await mod.resolveFiles(cfg, [{ b64: "not base64!?", mime: "text/plain" }]);
+    assert.equal(invalid.fileRefs, null);
+    assert.match(invalid.droppedNote, /1 file\(s\).*some file uploads failed/);
+
+    const tooLarge = await mod.resolveFiles(cfg, [{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" }]);
+    assert.equal(tooLarge.fileRefs, null);
+    assert.match(tooLarge.droppedNote, /1 file\(s\).*some file uploads failed/);
+  }],
+  ["rejects oversized inline generic base64 before invoking runtime decoders", async () => {
+    const cfg = {
+      gemini_origin: "https://gemini.example",
+      cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+      sapisid: "sapi",
+      request_timeout_sec: 180,
+      upstream_socket: false,
+      log_requests: false,
+      generic_file_upload_max_bytes: 2,
+    };
+    const original = Object.getOwnPropertyDescriptor(Uint8Array, "fromBase64");
+    Object.defineProperty(Uint8Array, "fromBase64", {
+      value() {
+        throw new Error("fromBase64 should not be called for oversized input");
+      },
+      configurable: true,
+      writable: true,
+    });
+    try {
+      await withPatchedGlobal("atob", () => {
+        throw new Error("atob should not be called for oversized input");
+      }, async () => {
+        const result = await mod.resolveFiles(cfg, [{ b64: "AAAA", mime: "application/octet-stream" }]);
+        assert.equal(result.fileRefs, null);
+        assert.match(result.droppedNote, /1 file\(s\).*some file uploads failed/);
+      });
+    } finally {
+      if (original) Object.defineProperty(Uint8Array, "fromBase64", original);
+      else delete Uint8Array.fromBase64;
+    }
+  }],
+  ["rejects oversized remote generic files from content-length before reading body", async () => {
+    mod.resetActiveGeminiCookieForTest();
+    await withFetch(async (url) => {
+      const href = String(url);
+      if (href === "https://files.example/large.bin") {
+        return {
+          ok: true,
+          headers: new Headers({ "content-length": "3" }),
+          body: {
+            getReader() {
+              throw new Error("body should not be read for oversized content-length");
+            },
+          },
+        };
+      }
+      throw new Error(`unexpected fetch ${href}`);
+    }, async () => {
+      const result = await mod.resolveFiles({
+        gemini_origin: "https://gemini.example",
+        cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+        sapisid: "sapi",
+        request_timeout_sec: 180,
+        upstream_socket: false,
+        log_requests: false,
+        generic_file_upload_max_bytes: 2,
+      }, [{ url: "https://files.example/large.bin" }]);
+      assert.equal(result.fileRefs, null);
+      assert.match(result.droppedNote, /1 file\(s\).*some file uploads failed/);
+    });
+  }],
+  ["rejects oversized remote generic files while streaming and cancels the body", async () => {
+    mod.resetActiveGeminiCookieForTest();
+    let canceled = false;
+    let released = false;
+    let reads = 0;
+    await withFetch(async (url) => {
+      const href = String(url);
+      if (href === "https://files.example/stream-large.bin") {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "application/octet-stream" }),
+          body: {
+            getReader() {
+              return {
+                async read() {
+                  reads += 1;
+                  if (reads === 1) return { done: false, value: new Uint8Array([1, 2]) };
+                  if (reads === 2) return { done: false, value: new Uint8Array([3, 4]) };
+                  return { done: true };
+                },
+                async cancel() {
+                  canceled = true;
+                },
+                releaseLock() {
+                  released = true;
+                },
+              };
+            },
+          },
+        };
+      }
+      throw new Error(`unexpected fetch ${href}`);
+    }, async () => {
+      const result = await mod.resolveFiles({
+        gemini_origin: "https://gemini.example",
+        cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+        sapisid: "sapi",
+        request_timeout_sec: 180,
+        upstream_socket: false,
+        log_requests: false,
+        generic_file_upload_max_bytes: 3,
+      }, [{ url: "https://files.example/stream-large.bin" }]);
+      assert.equal(result.fileRefs, null);
+      assert.match(result.droppedNote, /1 file\(s\).*some file uploads failed/);
+      assert.equal(canceled, true);
+      assert.equal(released, true);
+      assert.equal(reads, 2);
+    });
+  }],
+  ["uses application octet-stream and file-number bin fallback for unknown generic files", async () => {
+    mod.resetActiveGeminiCookieForTest();
+    mod.resetGeminiUploadCachesForTest();
+    await withFetch(async (url, init = {}) => {
+      const href = String(url);
+      if (href === "https://gemini.example/app") {
+        return new Response('{"qKIAYe":"push-bin","Ylro7b":"pctx-bin"}', { status: 200 });
+      }
+      if (href === "https://content-push.googleapis.com/upload/") {
+        assert.equal(init.headers["X-Goog-Upload-Header-Content-Type"], "application/octet-stream");
+        return new Response("", { status: 200, headers: { "x-goog-upload-url": "https://upload.example/bin" } });
+      }
+      if (href === "https://upload.example/bin") return new Response("/uploaded/bin-ref", { status: 200 });
+      throw new Error(`unexpected fetch ${href}`);
+    }, async () => {
+      const result = await mod.resolveFiles({
+        gemini_origin: "https://gemini.example",
+        cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+        sapisid: "sapi",
+        request_timeout_sec: 180,
+        upstream_socket: false,
+        log_requests: false,
+        generic_file_upload_max_bytes: 1024,
+      }, [{ b64: "AA==" }]);
+      assert.deepEqual(result, { fileRefs: [{ ref: "/uploaded/bin-ref", name: "file-1.bin" }], droppedNote: "" });
+    });
   }],
   ["retries text upload after RotateCookies refreshes an auth failure", async () => {
     mod.resetActiveGeminiCookieForTest();

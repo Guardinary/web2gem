@@ -9,6 +9,7 @@ import {
   isLargePromptEmptyResponseError,
   largePromptEmptyResponseError,
   largePromptEmptyResponseThreshold,
+  upstreamEmptyResponseError,
   unverifiedGeminiCookieError,
 } from "./errors";
 import { buildHeaders, buildPayload, getUrl } from "./protocol";
@@ -98,7 +99,7 @@ export async function generate(
           activeCfg = refreshedCfg;
           continue;
         }
-        if (!resp.ok) throw new Error(`Gemini upstream HTTP ${resp.status} returned no parseable text`);
+        throw upstreamEmptyResponseError(resp.status, raw.length, "non-stream");
       }
       return text;
     } catch (e) {
@@ -162,7 +163,7 @@ export async function* generateStream(
             activeCfg = refreshedCfg;
             continue;
           }
-          if (!resp.ok) throw new Error(`Gemini upstream HTTP ${resp.status} returned no stream body or parseable text`);
+          throw upstreamEmptyResponseError(resp.status, raw.length, "stream without body");
         }
         return;
       }
@@ -239,7 +240,7 @@ export async function* generateStream(
           activeCfg = refreshedCfg;
           continue;
         }
-        if (!resp.ok) throw new Error(`Gemini upstream HTTP ${resp.status} returned no parseable stream text`);
+        throw upstreamEmptyResponseError(resp.status, rawLength, "stream");
       }
       return;
     } catch (e) {

@@ -1,4 +1,4 @@
-import { filenameFromUrl, imageFilenameFromObject, parseImageUrl } from "../shared/media";
+import { filenameFromUrl, firstNonEmptyString, imageFilenameFromObject, normalizeUploadFileInput, parseImageUrl, uploadFilenameFromObject } from "../shared/media";
 import { isRecord, type UnknownRecord } from "../shared/types";
 import { toolDefsFromTools } from "./tool-meta";
 import { isToolBundle } from "./tool-bundle";
@@ -51,7 +51,7 @@ export function contentTextForHistory(content: unknown): string {
       if (!isRecord(c)) continue;
       if (typeof c.text === "string") parts.push(c.text);
       else if (typeof c.input_text === "string") parts.push(c.input_text);
-      else if (c.type === "input_file" || c.type === "file") parts.push(`[file input${c.file_id ? ` ${c.file_id}` : ""}]`);
+      else if (c.type === "input_file" || c.type === "file") parts.push(fileInputPrompt(c));
       else if (c.type === "image_url" || c.image_url || c.inlineData || c.source) parts.push("[image input]");
     }
     return parts.join("\n");
@@ -78,10 +78,27 @@ export function responsesContentToText(content: unknown): string {
   const typ = String(content.type || "").trim();
   if (typ === "text" || typ === "input_text" || typ === "output_text" || typ === "summary_text") return responsesContentToText(content.text);
   if (typ === "input_image" || typ === "image" || typ === "image_url") return "[image input]";
-  if (typ === "input_file" || typ === "file") return `[file input${content.file_id ? ` ${content.file_id}` : ""}]`;
+  if (typ === "input_file" || typ === "file") return fileInputPrompt(content);
   if (content.text != null) return responsesContentToText(content.text);
   if (content.output != null) return responsesContentToText(content.output);
   return "";
+}
+
+function fileInputPrompt(content: UnknownRecord): string {
+  const fileData = isRecord(content.fileData) ? content.fileData : (isRecord(content.file_data) ? content.file_data : null);
+  const label = firstNonEmptyString(
+    content.file_id,
+    uploadFilenameFromObject(content),
+    fileData && (fileData.fileUri || fileData.file_uri),
+    content.id,
+  );
+  return `[file input${label ? ` ${label}` : ""}]`;
+}
+
+function collectUploadFileInput(content: UnknownRecord, files?: UnknownRecord[]): void {
+  if (!files) return;
+  const input = normalizeUploadFileInput(content);
+  if (input) files.push(input);
 }
 
 export function mergeFileRefs<T>(...groups: Array<readonly T[] | null | undefined>): T[] | null {
@@ -104,7 +121,7 @@ export function mergeFileRefs<T>(...groups: Array<readonly T[] | null | undefine
   return out.length ? out : null;
 }
 
-export function messageContentToPrompt(content: unknown, images: UnknownRecord[]): string {
+export function messageContentToPrompt(content: unknown, images: UnknownRecord[], files?: UnknownRecord[]): string {
   if (content == null) return "";
   if (typeof content === "string") return content;
   if (typeof content === "number" || typeof content === "boolean") return String(content);
@@ -136,7 +153,8 @@ export function messageContentToPrompt(content: unknown, images: UnknownRecord[]
         }
         textParts.push("[image input]");
       } else if (t === "input_file" || t === "file") {
-        textParts.push(`[file input${c.file_id ? ` ${c.file_id}` : ""}]`);
+        collectUploadFileInput(c, files);
+        textParts.push(fileInputPrompt(c));
       } else if (c.text != null || c.content != null || c.output != null) {
         const text = responsesContentToText(c.text != null ? c.text : c.content != null ? c.content : c.output);
         if (text) textParts.push(text);
@@ -158,7 +176,10 @@ export function messageContentToPrompt(content: unknown, images: UnknownRecord[]
       }
       return "[image input]";
     }
-    if (t === "input_file" || t === "file") return `[file input${content.file_id ? ` ${content.file_id}` : ""}]`;
+    if (t === "input_file" || t === "file") {
+      collectUploadFileInput(content, files);
+      return fileInputPrompt(content);
+    }
     const text = responsesContentToText(content);
     if (text) return text;
     try { return JSON.stringify(content); } catch (_) { return String(content); }

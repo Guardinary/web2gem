@@ -187,6 +187,10 @@ export const cases = [
     assert.match(mod.errorLogSummary(err), /code=upstream_bad_gateway/);
     assert.match(mod.errorLogSummary(err), /status=502/);
     assert.match(mod.errorLogSummary(err), /upstreamStatus=503/);
+    err.upstreamStatus = 200;
+    err.rawLength = 37;
+    assert.match(mod.errorLogSummary(err), /upstreamStatus=200/);
+    assert.match(mod.errorLogSummary(err), /rawLength=37/);
     assert.match(mod.errorLogSummary("plain failure"), /type=string/);
     assert.equal(mod.canFallbackAfterSocketError("POST", new Error("socket closed")), true);
     assert.equal(mod.canFallbackAfterSocketError("POST", { upstreamStatus: 502 }), false);
@@ -277,10 +281,13 @@ export const cases = [
     assert.equal(mod.getConfig({ LOG_REQUESTS: "true" }).log_requests, true);
   }],
   ["recomputes config when a reused env object changes", async () => {
-    const env = { LOG_REQUESTS: "false" };
+    const env = { LOG_REQUESTS: "false", GENERIC_FILE_UPLOAD_MAX_BYTES: "123" };
     assert.equal(mod.getConfig(env).log_requests, false);
+    assert.equal(mod.getConfig(env).generic_file_upload_max_bytes, 123);
     env.LOG_REQUESTS = "true";
+    env.GENERIC_FILE_UPLOAD_MAX_BYTES = "456";
     assert.equal(mod.getConfig(env).log_requests, true);
+    assert.equal(mod.getConfig(env).generic_file_upload_max_bytes, 456);
   }],
   ["reuses config cache entries after switching env objects", async () => {
     const envA = { LOG_REQUESTS: "true" };
@@ -311,11 +318,13 @@ export const cases = [
       RETRY_DELAY_SEC: "-5",
       REQUEST_TIMEOUT_SEC: "0",
       CURRENT_INPUT_FILE_MIN_BYTES: "-1",
+      GENERIC_FILE_UPLOAD_MAX_BYTES: "-5",
     });
     assert.equal(cfg.retry_attempts, 1);
     assert.equal(cfg.retry_delay_sec, 0);
     assert.equal(cfg.request_timeout_sec, 1);
     assert.equal(cfg.current_input_file_min_bytes, 0);
+    assert.equal(cfg.generic_file_upload_max_bytes, 0);
   }],
   ["resolves model defaults think overrides and invalid model inputs", async () => {
     assert.equal(mod.resolveModel(undefined, "gemini-3.5-flash").name, "gemini-3.5-flash");

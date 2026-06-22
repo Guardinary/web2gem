@@ -5,6 +5,7 @@ export const LARGE_PROMPT_EMPTY_RESPONSE_MIN_BYTES = 95000;
 export const LARGE_PROMPT_EMPTY_RESPONSE_CODE = "large_prompt_empty_response";
 export const DATA_ANALYSIS_EMPTY_RESPONSE_CODE = "data_analysis_empty_response";
 export const INVALID_GEMINI_COOKIE_CODE = "invalid_gemini_cookie";
+export const UPSTREAM_EMPTY_RESPONSE_CODE = "upstream_empty_response";
 
 const AUTH_FAILURE_STATUSES = new Set([401, 403]);
 
@@ -65,6 +66,20 @@ export function dataAnalysisEmptyResponseError(rawSnippet: unknown, fileRefs: un
 
 export function isDataAnalysisEmptyResponseError(e: unknown): boolean {
   return !!e && typeof e === "object" && (e as Partial<ErrorWithMetadata>).code === DATA_ANALYSIS_EMPTY_RESPONSE_CODE;
+}
+
+export function upstreamEmptyResponseError(status: unknown, rawLength: number | null, context: string = ""): ErrorWithMetadata {
+  const httpStatus = Number(status);
+  const err: ErrorWithMetadata = new Error(
+    `Gemini upstream HTTP ${Number.isFinite(httpStatus) ? httpStatus : String(status)} returned no parseable text` +
+    (context ? ` (${context})` : "") +
+    ". The upstream request completed but the Worker could not extract a final model response."
+  );
+  err.code = UPSTREAM_EMPTY_RESPONSE_CODE;
+  err.status = 502;
+  err.upstreamStatus = httpStatus;
+  err.rawLength = rawLength;
+  return err;
 }
 
 export function invalidGeminiCookieError(

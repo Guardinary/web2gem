@@ -141,9 +141,11 @@ export function errorLogSummary(e: unknown): string {
   const status = upstreamErrorStatus(e);
   if (status) parts.push(`status=${status}`);
   const upstreamStatus = Number(err && err.upstreamStatus);
-  if (Number.isInteger(upstreamStatus) && upstreamStatus >= 400 && upstreamStatus <= 599) {
+  if (Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599) {
     parts.push(`upstreamStatus=${upstreamStatus}`);
   }
+  const rawLength = Number(err && err.rawLength);
+  if (Number.isInteger(rawLength) && rawLength >= 0) parts.push(`rawLength=${rawLength}`);
   return parts.join(" ");
 }
 
