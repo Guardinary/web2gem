@@ -13,12 +13,9 @@ export {
   imageFilenameFromObject,
   mimeFromFilename,
   normalizeUploadFileInput,
-  parseDataUrl,
   parseImageUrl,
   parseUploadUrl,
   sanitizeUploadFilename,
-  uploadFilenameFromObject,
-  uploadMimeFromObject,
 } from "./attachments/media";
 export {
   abortError,
@@ -55,7 +52,7 @@ export {
   trimContinuationOverlap,
 } from "./shared/tokens";
 export { readJsonRequest } from "./http/core/json";
-export { inlineContextBodyReadLimit, readRouteJsonPost } from "./http/core/route-json";
+export { readRouteJsonPost } from "./http/core/route-json";
 export { sseResponse } from "./http/core/sse";
 export { streamErrorText, streamInterruptedWarningText, streamWarningObject, writeStreamWarningEvent } from "./http/core/stream-errors";
 export { httpFetch } from "./gemini/transport/http";
@@ -63,9 +60,8 @@ export { base64ToBytes } from "./attachments/media";
 export { collectOpenAIInlineUploadImages, collectOpenAIRequestAttachmentPlan } from "./attachments/collect-openai";
 export { createAttachmentPlan } from "./attachments/plan";
 export { droppedAttachmentNote } from "./attachments/notes";
-export { buildMultipartFileBody, uploadMultipartFile } from "./gemini/uploads/multipart";
 export { getCachedGeminiPushId, getGeminiPushId, getPageTokens, resetGeminiUploadCachesForTest, setCachedGeminiPushId } from "./gemini/uploads/tokens";
-export { resolveAttachments, resolveFiles, resolveImages, uploadFile, uploadImage, uploadTextFile } from "./gemini/uploads/execute";
+export { resolveFiles, resolveImages, uploadImage, uploadTextFile } from "./gemini/uploads/execute";
 export {
   contextFilePromptByteCheck,
   contextFileThreshold,
@@ -97,7 +93,6 @@ export {
   appendStructuredOutputInstructionToPrepared,
   appendStructuredOutputInstructionWithTokens,
   appendTextToPreparedWithTokens,
-  promptWithHiddenToolsPrompt,
   withGeminiNativeHiddenToolsPromptForPrepared,
   withGeminiNativeHiddenToolsPromptWithTokens,
 } from "./promptcompat/prompt-build";
