@@ -1,7 +1,8 @@
 FROM node:26-alpine AS deps
 
 WORKDIR /app
-RUN corepack enable
+ARG PNPM_VERSION=11.6.0
+RUN npm install -g pnpm@${PNPM_VERSION}
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
