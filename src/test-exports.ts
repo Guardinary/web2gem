@@ -1,5 +1,6 @@
 // Internal compatibility surface used by local unit and smoke tests.
 export { buildHeaders, buildPayload, cleanText, extractResponseText, extractTextsFromLine, generate, generateStream, getUrl, wrbResponseShapeSummary } from "./gemini/client";
+export { CONFIG_ENV_KEYS } from "./config";
 export { createGeminiCompletionProvider } from "./gemini/completion-provider";
 export { createStreamTextExtractor, stripArtifacts } from "./gemini/client/parser";
 export { configWithCachedGeminiBuildLabel, getCachedGeminiBuildLabel, getFreshGeminiBuildLabel, resetGeminiBuildLabelCacheForTest, setCachedGeminiBuildLabel, waitBeforeRetry } from "./gemini/client/retry";
@@ -58,7 +59,7 @@ export { httpFetch } from "./gemini/transport/http";
 export { base64ToBytes } from "./attachments/media";
 export { collectOpenAIInlineUploadImages, collectOpenAIRequestAttachmentPlan } from "./attachments/collect-openai";
 export { createAttachmentPlan } from "./attachments/plan";
-export { droppedAttachmentNote } from "./attachments/notes";
+export { attachmentDrop, droppedAttachmentNote } from "./attachments/notes";
 export { getCachedGeminiPushId, getGeminiPushId, getPageTokens, refreshGeminiPushId, resetGeminiUploadCachesForTest, setCachedGeminiPushId } from "./gemini/uploads/tokens";
 export { resolveFiles, resolveImages, uploadImage, uploadTextFile } from "./gemini/uploads/execute";
 export {

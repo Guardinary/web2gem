@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import assert from "./assertions.js";
+import { mod } from "./helpers.js";
 
 export const suiteName = "quality scripts";
 export const cases = [
@@ -37,6 +38,14 @@ export const cases = [
     const compose = await readFile("compose.yaml", "utf8");
     assert.match(compose, /\$\{PORT:-52389\}:\$\{PORT:-52389\}/);
     assert.doesNotMatch(compose, /\$\{PORT:-52389\}:52389/);
+  }],
+  ["keeps runtime config env keys aligned with Docker docs and Compose", async () => {
+    const envExample = parseEnvExampleKeys(await readFile(".env.example", "utf8"));
+    const composeEnv = parseComposeEnvironmentKeys(await readFile("compose.yaml", "utf8"));
+    const configKeys = mod.CONFIG_ENV_KEYS;
+
+    assert.deepEqual(missingKeys(configKeys, envExample), []);
+    assert.deepEqual(missingKeys(configKeys, composeEnv), []);
   }],
 ];
 
@@ -94,4 +103,26 @@ function runNodeScript(script, arg) {
       });
     });
   });
+}
+
+function parseEnvExampleKeys(source) {
+  const keys = new Set();
+  for (const line of source.split(/\r?\n/)) {
+    const match = /^([A-Z0-9_]+)=/.exec(line.trim());
+    if (match) keys.add(match[1]);
+  }
+  return keys;
+}
+
+function parseComposeEnvironmentKeys(source) {
+  const keys = new Set();
+  for (const line of source.split(/\r?\n/)) {
+    const match = /^\s{6}([A-Z0-9_]+):/.exec(line);
+    if (match) keys.add(match[1]);
+  }
+  return keys;
+}
+
+function missingKeys(expected, actual) {
+  return expected.filter((key) => !actual.has(key));
 }

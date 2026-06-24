@@ -13,6 +13,37 @@ export const cases = [
       assert.equal(result.usage.uploadedFiles, 0);
     });
   }],
+  ["uses deterministic default messages for attachment drop reasons", async () => {
+    const reasons = [
+      ["image", "invalid_image_input", "invalid image input"],
+      ["file", "invalid_file_input", "invalid file input"],
+      ["file", "invalid_base64", "invalid base64 payload"],
+      ["file", "invalid_remote_url", "invalid remote URL"],
+      ["file", "file_too_large", "file attachment is too large"],
+      ["image", "image_too_large", "image attachment is too large"],
+      ["file", "too_many_files", "too many attachments"],
+      ["file", "upload_failed", "attachment upload failed"],
+    ];
+
+    for (const [kind, code, message] of reasons) {
+      assert.equal(mod.attachmentDrop(kind, code).message, message);
+    }
+  }],
+  ["groups dropped attachment notes by kind and message", async () => {
+    const drops = [
+      mod.attachmentDrop("file", "invalid_base64", undefined, "../bad\u0000\r\nname.txt"),
+      mod.attachmentDrop("file", "invalid_base64"),
+      mod.attachmentDrop("image", "too_many_files", "custom limit"),
+      mod.attachmentDrop("image", "too_many_files", "custom limit"),
+    ];
+
+    assert.equal(drops[0].filename, "bad  name.txt");
+    assert.equal(
+      mod.droppedAttachmentNote(drops),
+      "\n\n[Note: 2 file(s) were provided but ignored - invalid base64 payload.]" +
+        "\n\n[Note: 2 image(s) were provided but ignored - custom limit.]"
+    );
+  }],
   ["decodes base64 through the native Uint8Array runtime", async () => {
     assert.deepEqual(Array.from(mod.base64ToBytes("aGVsbG8")), [104, 101, 108, 108, 111]);
     assert.deepEqual(Array.from(mod.base64ToBytes("-_8")), [251, 255]);
