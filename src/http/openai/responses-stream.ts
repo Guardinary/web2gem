@@ -4,8 +4,7 @@ import type { RuntimeConfig } from "../../config";
 import type { ResolvedModel } from "../../models";
 import type { FileRef } from "../../completion/types";
 import { errorLogSummary, log, randHex, upstreamErrorCode, upstreamErrorMessage } from "../../shared/runtime";
-import { addTokenCharCounts, createTokenCounter, tokenCountFromCounts } from "../../shared/tokens";
-import type { TokenCharCounts } from "../../shared/tokens";
+import { combinedTokenCount, createTokenCounter, emptyTokenCounts } from "../../shared/tokens";
 import type { OpenAIToolCall } from "../../toolcall/openai-format";
 import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
 import type { SSEWrite } from "../core/sse";
@@ -177,17 +176,4 @@ export async function streamResponsesWithToolSieve(write: SSEWrite, cfg: Runtime
 
 function isPromiseLike(value: unknown): value is Promise<void> {
   return !!value && typeof (value as Promise<void>).then === "function";
-}
-
-function emptyTokenCounts(): TokenCharCounts & { hasText: boolean } {
-  return { asciiChars: 0, nonASCIIChars: 0, hasText: false };
-}
-
-function combinedTokenCount(
-  completionCounts: TokenCharCounts & { hasText: boolean },
-  extraTokenCounter: ReturnType<typeof createTokenCounter>,
-): number {
-  const counts = addTokenCharCounts(emptyTokenCounts(), completionCounts);
-  addTokenCharCounts(counts, extraTokenCounter.counts());
-  return tokenCountFromCounts(counts);
 }

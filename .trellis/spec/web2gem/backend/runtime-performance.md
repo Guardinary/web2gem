@@ -206,3 +206,59 @@ for await (const event of streamPlainCompletionEvents(provider, input, { signal,
 const flushResult = coalescer.flush();
 if (flushResult) await flushResult;
 ```
+
+## Scenario: Tool-Sieve Held Candidate Performance
+
+### 1. Scope / Trigger
+
+Use this contract when changing `src/toolstream/index.ts`, DSML/XML tool-call parsing, streamed tool-call candidate holding, or markdown-protected tool-looking text behavior.
+
+### 2. Signatures
+
+- `processToolSieveChunk(state, chunk)` appends provider text and returns plain text chunks that are safe to emit.
+- `flushToolSieve(state, toolsRaw)` parses any final buffered tool candidate or releases buffered text.
+- `parseCanonicalDSMLToolCallsFast(text)` may parse straightforward canonical XML tool blocks before the tolerant DSML normalization path.
+
+### 3. Contracts
+
+- A held candidate is confirmed by a complete tool opening tag prefix, not by `isPartialToolMarkupPrefix` on the whole buffer. `isPartialToolMarkupPrefix` intentionally remains broad and can return true for complete strings that start with `<tool_calls`.
+- Once a candidate is confirmed, `processToolSieveChunk` must not rescan the entire growing buffer for partial-prefix detection on every provider chunk.
+- Canonical DSML fast parsing may only accept plain canonical `<tool_calls>...<invoke ...>...</invoke></tool_calls>` XML. Confusable, alias, fenced, missing-wrapper, markdown-protected, or backtick-bearing inputs must fall back to the tolerant parser.
+- Malformed but real-looking tool syntax should not leak mid-stream; keep it buffered until flush unless it is proven to be ordinary stale/plain text.
+- Markdown-protected examples such as fenced `<tool_calls>` snippets must be released as plain text, not held as real tool calls.
+
+### 4. Validation & Error Matrix
+
+- 240 KB canonical held candidate split into 1 KB chunks -> no per-chunk full-buffer partial-prefix scan; benchmark should stay materially below the old ~25 ms median baseline.
+- `<tool_calls><invoke></invoke></tool_calls>` in a held state -> remains buffered until flush.
+- Fenced markdown example containing `<tool_calls>` -> released as plain text.
+- Stale holding state with no tool syntax -> releases through the bounded plain-text path.
+- Confusable or alias DSML -> parsed by tolerant path, not fast path.
+
+### 5. Good/Base/Bad Cases
+
+- Good: use a complete-opening-tag check to set `confirmedToolCandidate`.
+- Base: final parsing still delegates parameter handling to existing XML/DSML helpers.
+- Bad: call `isPartialToolMarkupPrefix(state.buffer)` for every chunk after a candidate has already been confirmed.
+- Bad: fast-parse markdown-protected examples or confusable markup.
+
+### 6. Tests Required
+
+- Unit tests for canonical fast-path parsing and fast-path rejection of fenced, alias, confusable, and backtick-bearing inputs.
+- Unit tests for held malformed syntax, markdown-protected examples, and stale holding state recovery.
+- Benchmark `stream_sieve_held_tool` after changing held-candidate logic.
+- Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, `pnpm coverage:ci`, and `pnpm smoke`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+if (isPartialToolMarkupPrefix(state.buffer)) return [];
+```
+
+#### Correct
+
+```typescript
+if (!state.confirmedToolCandidate && isPartialToolMarkupPrefix(state.buffer)) return [];
+```

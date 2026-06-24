@@ -8,8 +8,7 @@ import type { RuntimeConfig } from "../../config";
 import type { ResolvedModel } from "../../models";
 import type { FileRef } from "../../completion/types";
 import { errorLogSummary, log, upstreamErrorCode } from "../../shared/runtime";
-import { addTokenCharCounts, createTokenCounter, tokenCountFromCounts } from "../../shared/tokens";
-import type { TokenCharCounts } from "../../shared/tokens";
+import { combinedTokenCount, createTokenCounter, emptyTokenCounts } from "../../shared/tokens";
 import { formatOpenAIStreamToolCalls } from "../../toolcall/openai-format";
 import type { OpenAIToolCall } from "../../toolcall/openai-format";
 import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
@@ -157,17 +156,4 @@ function openAIStreamToolCallInput(toolCall: OpenAIToolCall): { name: unknown; i
     name: toolCall.function.name,
     input: parseJsonObject(toolCall.function.arguments),
   };
-}
-
-function emptyTokenCounts(): TokenCharCounts & { hasText: boolean } {
-  return { asciiChars: 0, nonASCIIChars: 0, hasText: false };
-}
-
-function combinedTokenCount(
-  completionCounts: TokenCharCounts & { hasText: boolean },
-  extraTokenCounter: ReturnType<typeof createTokenCounter>,
-): number {
-  const counts = addTokenCharCounts(emptyTokenCounts(), completionCounts);
-  addTokenCharCounts(counts, extraTokenCounter.counts());
-  return tokenCountFromCounts(counts);
 }

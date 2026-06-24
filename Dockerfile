@@ -22,7 +22,7 @@ ENV NODE_ENV=production \
     PORT=52389 \
     UPSTREAM_SOCKET=false
 
-COPY --from=build /app/dist ./dist
+COPY --from=build /app/dist/worker.js ./dist/worker.js
 COPY --from=build /app/scripts/docker-server.mjs ./scripts/docker-server.mjs
 
 EXPOSE 52389

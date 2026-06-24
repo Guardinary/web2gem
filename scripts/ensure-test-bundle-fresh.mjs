@@ -6,7 +6,7 @@ const bundlePaths = ["dist/worker.test.js", "dist/worker.js"];
 const sourceGlobs = ["src/**/*.ts", "scripts/build.mjs", "package.json", "tsconfig.json"];
 
 if (needsBuild()) {
-  await run(process.execPath, ["scripts/build.mjs"], process.env);
+  await run(process.execPath, ["scripts/build.mjs", "--test-bundle"], process.env);
 }
 
 function needsBuild() {

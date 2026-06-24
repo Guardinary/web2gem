@@ -6,6 +6,7 @@ const coverageBuildDir = "dist-coverage";
 await runPnpm(["build"], {
   ...process.env,
   BUILD_DIR: coverageBuildDir,
+  BUILD_TEST_BUNDLE: "1",
   COVERAGE: "1",
 });
 

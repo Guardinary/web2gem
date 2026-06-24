@@ -192,6 +192,7 @@ export {
 } from "./toolcall/xml";
 export {
   normalizeDSMLToolCallMarkup,
+  parseCanonicalDSMLToolCallsFast,
   parseDSMLToolCallsDetailed,
   parseMarkupValue,
   parseScalarValue,

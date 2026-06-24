@@ -65,6 +65,8 @@ export function parseDSMLToolCallsDetailed(text: unknown): DSMLToolCallParseResu
   if (containsToolMarkupSyntax(raw) && findToolSieveCandidateStart(raw) < 0) {
     return { cleanText: raw.trim(), calls: [], sawToolCallSyntax: true };
   }
+  const canonical = parseCanonicalDSMLToolCallsFast(raw);
+  if (canonical) return canonical;
   if (shouldSkipToolCallParsingForCodeFenceExample(raw)) return { cleanText: raw.trim(), calls: [], sawToolCallSyntax: true };
   const protectedMarkdown = maskMarkdownProtectedSpans(raw);
   let normalized = normalizeDSMLToolCallMarkup(protectedMarkdown.text).trim();
@@ -89,6 +91,35 @@ export function parseDSMLToolCallsDetailed(text: unknown): DSMLToolCallParseResu
     if (block) clean = clean.slice(0, block.start) + clean.slice(block.end);
   }
   return { cleanText: protectedMarkdown.restore(clean).trim(), calls: restoreToolCallProtectedMarkdown(calls, protectedMarkdown.restore), sawToolCallSyntax: true };
+}
+
+export function parseCanonicalDSMLToolCallsFast(text: unknown): DSMLToolCallParseResult | null {
+  const source = String(text || "").trim();
+  if (!source) return null;
+  if (source.indexOf("`") >= 0 || TOOL_MARKUP_CONFUSABLE_RE.test(source)) return null;
+  if (/<\s*\/?\s*(?:\|?\s*D?SML|tool-calls|toolcalls|[A-Za-z][A-Za-z0-9_$-]*(?:ToolCalls|Invoke|Parameter))\b/.test(source)) {
+    return null;
+  }
+  if (!/^<tool_calls(?:\s[^>]*)?>/i.test(source)) return null;
+  const blocks = findXmlElementBlocks(source, "tool_calls");
+  if (!blocks.length) return null;
+
+  let pos = 0;
+  for (const block of blocks) {
+    if (source.slice(pos, block.start).trim()) return null;
+    pos = block.end;
+  }
+  if (source.slice(pos).trim()) return null;
+
+  const calls: ParsedToolCall[] = [];
+  for (const block of blocks) {
+    for (const invoke of findXmlElementBlocks(block.body, "invoke")) {
+      const parsed = parseMarkupSingleToolCall(invoke);
+      if (parsed) calls.push(parsed);
+    }
+  }
+  if (!calls.length) return null;
+  return { cleanText: "", calls, sawToolCallSyntax: true };
 }
 
 export function restoreToolCallProtectedMarkdown(calls: ParsedToolCall[], restore: MarkdownRestore): ParsedToolCall[] {

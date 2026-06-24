@@ -29,6 +29,7 @@ export function createToolSieveState(): ToolSieveState {
 
 export const TOOL_SIEVE_PLAIN_TEXT_KEEP = 64;
 export const TOOL_SIEVE_MAX_CANDIDATE_CHARS = 256 * 1024;
+const COMPLETE_TOOL_CANDIDATE_OPEN_RE = /^\s*<\s*(?:\|DSML\|)?(?:tool_calls|tool-calls|toolcalls|invoke|parameter)\b[^>]*>/i;
 
 export function hasToolSieveSentinel(text: unknown): boolean {
   return findToolSieveCandidateStart(text) >= 0;
@@ -67,7 +68,7 @@ export function processToolSieveChunk(state: ToolSieveState | null | undefined, 
     state.sawToolClose = hasToolCallCloseSyntax(state.buffer.slice(start));
     state.parsedToolCandidate = false;
     state.candidateStart = 0;
-    state.confirmedToolCandidate = !isPartialToolMarkupPrefix(state.buffer.slice(start));
+    state.confirmedToolCandidate = hasCompleteToolCandidateOpenPrefix(state.buffer.slice(start));
     if (start === 0) return [];
     const out = state.buffer.slice(0, start);
     state.buffer = state.buffer.slice(start);
@@ -94,7 +95,7 @@ export function processToolSieveChunk(state: ToolSieveState | null | undefined, 
 }
 
 function processHeldToolCandidate(state: ToolSieveState): string[] {
-  if (isPartialToolMarkupPrefix(state.buffer)) return [];
+  if (!state.confirmedToolCandidate && isPartialToolMarkupPrefix(state.buffer)) return [];
   if (state.parsedToolCandidate) return [];
   if (!state.confirmedToolCandidate) {
     if (state.sawToolClose && /^\s*<\s*\/\s*(?:\|DSML\|)?tool_calls\s*>\s*$/i.test(state.buffer)) return [];
@@ -118,6 +119,7 @@ function processHeldToolCandidate(state: ToolSieveState): string[] {
     return [];
   }
   if (parsed.sawToolCallSyntax) {
+    if (hasCompleteToolCandidateOpenPrefix(state.buffer)) return [];
     const out = state.buffer;
     resetToolCandidateState(state);
     return out ? [out] : [];
@@ -142,8 +144,14 @@ function resetToolCandidateFlags(state: ToolSieveState): void {
 function ensureToolSieveStateShape(state: ToolSieveState): void {
   if (!Number.isInteger(state.candidateStart)) state.candidateStart = state.holdingToolCandidate ? 0 : -1;
   if (typeof state.confirmedToolCandidate !== "boolean") {
-    state.confirmedToolCandidate = state.holdingToolCandidate && (state.sawToolClose || findToolSieveCandidateStart(state.buffer) === 0);
+    const start = findToolSieveCandidateStart(state.buffer);
+    state.confirmedToolCandidate = state.holdingToolCandidate
+      && ((state.sawToolClose && start < 0) || (start === 0 && hasCompleteToolCandidateOpenPrefix(state.buffer)));
   }
+}
+
+function hasCompleteToolCandidateOpenPrefix(text: unknown): boolean {
+  return COMPLETE_TOOL_CANDIDATE_OPEN_RE.test(String(text || ""));
 }
 
 export function flushToolSieve(state: ToolSieveState | null | undefined, toolsRaw: unknown): ToolSieveFlushResult {

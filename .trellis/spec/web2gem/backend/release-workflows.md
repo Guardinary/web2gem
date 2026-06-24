@@ -8,8 +8,9 @@
 
 - `.github/workflows/quality-gates.yml` runs pull request, `dev`, and `main` quality checks.
 - `.github/workflows/release-artifacts.yml` builds GitHub Release assets and publishes the GHCR image for a release tag.
-- `.github/workflows/release-dockerhub.yml` bumps `package.json`, creates a tag, and publishes Docker Hub images.
-- `.github/workflows/release.yml` bumps `package.json`, creates a tag, and publishes Aliyun Container Registry images.
+- `.github/workflows/reusable-versioned-release.yml` owns shared version calculation, package version update, release gates, commit, tag push, and release revision output.
+- `.github/workflows/release-dockerhub.yml` calls the reusable versioned release workflow, then publishes Docker Hub images.
+- `.github/workflows/release.yml` calls the reusable versioned release workflow, then publishes Aliyun Container Registry images.
 
 Keep workflow names stable unless the GitHub Actions UI and README are updated together.
 
@@ -47,6 +48,14 @@ Docker archive assets should load into a readable local image tag, at minimum `w
 Only one version-bumping registry release workflow should run at a time. Use a shared concurrency group for workflows that update `package.json`, create tags, or push version commits.
 
 Before running expensive release gates, validate that the target tag does not already exist. If a workflow creates a version commit before publishing Docker images, capture `git rev-parse HEAD` after the commit and use that SHA for image revision labels.
+
+Registry-specific release workflows should not duplicate the version bump / tag logic. Call `.github/workflows/reusable-versioned-release.yml` and consume its outputs:
+
+- `new_version`
+- `new_tag`
+- `revision_sha`
+
+Registry publish jobs should check out `revision_sha` before building Docker images so image labels and contents match the version commit.
 
 ---
 

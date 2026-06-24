@@ -267,6 +267,25 @@ export const cases = [
     assert.equal(flushed.toolCalls[0].function.name, "Read");
     assert.match(flushed.toolCalls[0].function.arguments, /README\.md/);
   }],
+  ["uses canonical DSML fast path for plain XML tool blocks", async () => {
+    const longPath = "x".repeat(16 * 1024);
+    const candidate = `<tool_calls><invoke name="Read"><parameter name="path"><![CDATA[${longPath}]]></parameter></invoke></tool_calls>`;
+    const fast = mod.parseCanonicalDSMLToolCallsFast(candidate);
+    assert.equal(fast.cleanText, "");
+    assert.equal(fast.sawToolCallSyntax, true);
+    assert.equal(fast.calls[0].name, "Read");
+    assert.equal(fast.calls[0].input.path, longPath);
+
+    const [clean, toolCalls] = mod.parseToolCalls(candidate, [{ type: "function", function: { name: "Read", parameters: { type: "object" } } }]);
+    assert.equal(clean, "");
+    assert.equal(JSON.parse(toolCalls[0].function.arguments).path, longPath);
+  }],
+  ["declines non-canonical DSML fast path inputs", async () => {
+    assert.equal(mod.parseCanonicalDSMLToolCallsFast("```xml\n<tool_calls><invoke name=\"Read\"></invoke></tool_calls>\n```"), null);
+    assert.equal(mod.parseCanonicalDSMLToolCallsFast("<tool-calls><invoke name=\"Read\"></invoke></tool-calls>"), null);
+    assert.equal(mod.parseCanonicalDSMLToolCallsFast("＜tool_calls＞＜invoke name＝＂Read＂＞＜/invoke＞＜/tool_calls＞"), null);
+    assert.equal(mod.parseCanonicalDSMLToolCallsFast("<tool_calls><invoke name=\"Read\"><parameter name=\"path\">`README.md`</parameter></invoke></tool_calls>"), null);
+  }],
   ["releases oversized unterminated tool candidates as plain text", async () => {
     const state = {
       buffer: "unterminated candidate ",

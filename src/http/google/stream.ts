@@ -4,8 +4,7 @@ import type { RuntimeConfig } from "../../config";
 import type { ResolvedModel } from "../../models";
 import type { FileRef, LooseRequest } from "../../completion/types";
 import { streamGoogleToolCompletionEvents } from "../../completion/google";
-import { addTokenCharCounts, createTokenCounter, tokenCountFromCounts } from "../../shared/tokens";
-import type { TokenCharCounts } from "../../shared/tokens";
+import { combinedTokenCount, createTokenCounter, emptyTokenCounts } from "../../shared/tokens";
 import { errorLogSummary, log, upstreamErrorCode } from "../../shared/runtime";
 import type { SSEWrite } from "../core/sse";
 import { streamInterruptedWarningText, writeStreamWarningEvent } from "../core/stream-errors";
@@ -93,17 +92,4 @@ export async function streamGoogleTools(write: SSEWrite, cfg: RuntimeConfig, par
       await writeGoogleDone(write, rm.name, event.usageMetadata);
     }
   }
-}
-
-function emptyTokenCounts(): TokenCharCounts & { hasText: boolean } {
-  return { asciiChars: 0, nonASCIIChars: 0, hasText: false };
-}
-
-function combinedTokenCount(
-  completionCounts: TokenCharCounts & { hasText: boolean },
-  extraTokenCounter: ReturnType<typeof createTokenCounter>,
-): number {
-  const counts = addTokenCharCounts(emptyTokenCounts(), completionCounts);
-  addTokenCharCounts(counts, extraTokenCounter.counts());
-  return tokenCountFromCounts(counts);
 }

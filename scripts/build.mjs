@@ -2,6 +2,8 @@ import esbuild from "esbuild";
 import { mkdir, rm } from "node:fs/promises";
 
 const coverageBuild = /^(1|true|yes|on)$/i.test(process.env.COVERAGE || "");
+const includeTestBundle = process.argv.includes("--test-bundle")
+  || /^(1|true|yes|on)$/i.test(process.env.BUILD_TEST_BUNDLE || "");
 const outDir = process.env.BUILD_DIR || (coverageBuild ? "dist-coverage" : "dist");
 
 if (coverageBuild) {
@@ -13,6 +15,7 @@ await mkdir(outDir, { recursive: true });
 if (!coverageBuild) {
   await Promise.all([
     rm(`${outDir}/worker.js.map`, { force: true }),
+    rm(`${outDir}/worker.test.js`, { force: true }),
     rm(`${outDir}/worker.test.js.map`, { force: true }),
   ]);
 }
@@ -35,8 +38,10 @@ await esbuild.build({
   outfile: `${outDir}/worker.js`,
 });
 
-await esbuild.build({
-  ...common,
-  entryPoints: ["src/test-index.ts"],
-  outfile: `${outDir}/worker.test.js`,
-});
+if (includeTestBundle || coverageBuild) {
+  await esbuild.build({
+    ...common,
+    entryPoints: ["src/test-index.ts"],
+    outfile: `${outDir}/worker.test.js`,
+  });
+}

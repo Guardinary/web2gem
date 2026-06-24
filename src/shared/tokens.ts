@@ -10,6 +10,12 @@ export type PreparedTokenText = {
   counts: TokenCharCounts & { hasText: boolean };
 };
 
+export type TokenCounter = {
+  append: (text: unknown) => void;
+  tokens: () => number;
+  counts: () => TokenCharCounts & { hasText: boolean };
+};
+
 export type PromptByteLengthBounded = {
   bytes: number;
   exceeded: boolean;
@@ -56,11 +62,7 @@ export function tokenCountFromCharCounts(asciiChars: number, nonASCIIChars: numb
   return n < 1 ? 1 : n;
 }
 
-export function createTokenCounter(): {
-  append: (text: unknown) => void;
-  tokens: () => number;
-  counts: () => TokenCharCounts & { hasText: boolean };
-} {
+export function createTokenCounter(): TokenCounter {
   let asciiChars = 0;
   let nonASCIIChars = 0;
   let hasText = false;
@@ -116,6 +118,16 @@ export function addTokenCharCounts<T extends TokenCharCounts & { hasText: boolea
   target.nonASCIIChars += source.nonASCIIChars || 0;
   target.hasText = true;
   return target;
+}
+
+export function emptyTokenCounts(): TokenCharCounts & { hasText: boolean } {
+  return { asciiChars: 0, nonASCIIChars: 0, hasText: false };
+}
+
+export function combinedTokenCount(completionCounts: TokenCharCounts | null | undefined, extraTokenCounter: Pick<TokenCounter, "counts">): number {
+  const counts = addTokenCharCounts(emptyTokenCounts(), completionCounts);
+  addTokenCharCounts(counts, extraTokenCounter.counts());
+  return tokenCountFromCounts(counts);
 }
 
 export function tokenCountFromCounts(counts: TokenCharCounts | null | undefined): number {

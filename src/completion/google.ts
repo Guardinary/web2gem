@@ -2,8 +2,7 @@ import { streamBufferedToolTextCompletionEvents } from "./runtime";
 import type { CompletionProvider } from "./ports";
 import type { ResolvedModel } from "../models";
 import { upstreamErrorMessage } from "../shared/runtime";
-import { addTokenCharCounts, createTokenCounter, tokenCountFromCounts } from "../shared/tokens";
-import type { TokenCharCounts } from "../shared/tokens";
+import { combinedTokenCount, createTokenCounter, emptyTokenCounts } from "../shared/tokens";
 import { parseGoogleFunctionCalls } from "../toolcall/google";
 import { validateGoogleFunctionCalls } from "../toolcall/policy-google";
 import type { ToolPolicyViolation } from "../toolcall/policy-openai";
@@ -86,17 +85,4 @@ export async function* streamGoogleToolCompletionEvents(provider: CompletionProv
     candidatesTokenCount: candidateTokens,
     totalTokenCount: promptTokenCount + candidateTokens,
   } };
-}
-
-function emptyTokenCounts(): TokenCharCounts & { hasText: boolean } {
-  return { asciiChars: 0, nonASCIIChars: 0, hasText: false };
-}
-
-function combinedTokenCount(
-  completionCounts: TokenCharCounts & { hasText: boolean },
-  extraTokenCounter: ReturnType<typeof createTokenCounter>,
-): number {
-  const counts = addTokenCharCounts(emptyTokenCounts(), completionCounts);
-  addTokenCharCounts(counts, extraTokenCounter.counts());
-  return tokenCountFromCounts(counts);
 }
