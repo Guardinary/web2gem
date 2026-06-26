@@ -1,6 +1,7 @@
 import { getPageTokens } from "../uploads/index";
 import { httpFetch } from "../transport";
-import { abortError, isAbortError, log, throwIfAborted, uuid } from "../../shared/runtime";
+import { GEMINI_WEB_USER_AGENT } from "../constants";
+import { abortError, errorLogSummary, isAbortError, log, throwIfAborted, uuid } from "../../shared/runtime";
 import {
   dataAnalysisEmptyResponseError,
   invalidGeminiCookieError,
@@ -9,11 +10,15 @@ import {
   isLargePromptEmptyResponseError,
   largePromptEmptyResponseError,
   largePromptEmptyResponseThreshold,
+  upstreamImageFetchFailedError,
+  upstreamImageGenerationEmptyError,
+  upstreamImageProviderError,
   upstreamEmptyResponseError,
   unverifiedGeminiCookieError,
 } from "./errors";
 import { buildHeaders, buildPayload, getUrl } from "./protocol";
-import { createStreamTextExtractor, extractResponseText, wrbResponseShapeSummary } from "./parser";
+import { createStreamTextExtractor, extractResponseParts, extractResponseText, richResponseShapeSummary, wrbResponseShapeSummary } from "./parser";
+import type { GeminiParsedImage } from "./parser";
 import { configWithCachedGeminiBuildLabel, refreshGeminiBuildLabelForRetry, waitBeforeRetry } from "./retry";
 import { configWithFreshGeminiCookie, rotateGeminiCookieForRetryWithReason } from "../cookies";
 import type { RuntimeConfig } from "../../config";
@@ -31,7 +36,22 @@ type GeminiStreamOptions = {
   signal?: AbortSignal;
 };
 
-export { cleanText, extractResponseText, extractTextsFromLine, wrbResponseShapeSummary } from "./parser";
+export type GeminiRichImage = GeminiParsedImage & {
+  base64?: string;
+  outputFormat?: "png" | "jpeg" | "gif" | "webp";
+};
+
+export type GeminiRichOutput = {
+  text: string;
+  images: GeminiRichImage[];
+};
+
+type FetchedImageBytes = {
+  base64: string;
+  outputFormat: "png" | "jpeg" | "gif" | "webp";
+};
+
+export { cleanText, extractResponseParts, extractResponseText, extractTextsFromLine, richResponseShapeSummary, wrbResponseShapeSummary } from "./parser";
 export { buildHeaders, buildPayload, getUrl } from "./protocol";
 export { getFreshGeminiBuildLabel } from "./retry";
 
@@ -125,6 +145,199 @@ export async function generate(
     }
   }
   throw lastErr;
+}
+
+export async function generateRich(
+  cfg: RuntimeConfig,
+  prompt: string,
+  modelId: number,
+  thinkMode: number,
+  extra: Record<number, unknown> | null,
+  fileRefs: GeminiFileRef[] | null | undefined,
+  modelHeaders: Record<string, string> | null = null,
+): Promise<GeminiRichOutput> {
+  let lastErr: unknown;
+  let activeCfg = await configWithCachedGeminiBuildLabel(await configWithFreshGeminiCookie(cfg));
+  let refreshedBL = false;
+  let refreshedCookie = false;
+  const requestId = uuid().toUpperCase();
+  const body = buildPayload(prompt, modelId, thinkMode, fileRefs || null, extra, requestId);
+  for (let attempt = 0; attempt < cfg.retry_attempts; attempt++) {
+    try {
+      const resp = await fetchGeminiStreamGenerate(cfg, activeCfg, body, undefined, modelHeaders, requestId);
+      const cookieErr = invalidGeminiCookieError(cfg, resp.status);
+      if (cookieErr) throw cookieErr;
+      const raw = await resp.text();
+      const parts = extractResponseParts(raw);
+      if (parts.fatalCode) throw upstreamImageProviderError(parts.fatalCode);
+      if (!resp.ok || (!parts.text && !parts.images.length)) {
+        const shape = cfg.log_requests ? ` ${richResponseShapeSummary(raw)}` : "";
+        log(cfg, `rich upstream status=${resp.status} rawLen=${raw.length} parsedTextLen=${parts.text.length} images=${parts.images.length}${shape}`);
+      }
+      if (!parts.text && !parts.images.length) {
+        const dataAnalysisErr = dataAnalysisEmptyResponseError(raw, fileRefs);
+        if (dataAnalysisErr) throw dataAnalysisErr;
+        const largePromptErr = largePromptEmptyResponseError(prompt, resp.status, raw.length, largePromptEmptyResponseThreshold(cfg));
+        if (largePromptErr) throw largePromptErr;
+        const refreshedCfg = await refreshGeminiBuildLabelForRetry(cfg, activeCfg, refreshedBL, "");
+        if (refreshedCfg) {
+          refreshedBL = true;
+          activeCfg = refreshedCfg;
+          continue;
+        }
+        throw upstreamImageGenerationEmptyError(resp.status, raw.length, "non-stream");
+      }
+      const images = await hydrateGeneratedImages(cfg, activeCfg, parts.images);
+      return { text: parts.text, images };
+    } catch (e) {
+      if (isInvalidGeminiCookieError(e) && !refreshedCookie) {
+        const rotated = await rotateGeminiCookieForRetryWithReason(activeCfg);
+        if (rotated.config) {
+          refreshedCookie = true;
+          activeCfg = await configWithCachedGeminiBuildLabel(rotated.config);
+          continue;
+        }
+        throw invalidCookieErrorWithRotationReason(cfg, e, rotated.reason);
+      }
+      if (isInvalidGeminiCookieError(e) && refreshedCookie) throw invalidCookieErrorWithRotationReason(cfg, e, "rotation_updated");
+      if (isLargePromptEmptyResponseError(e) || isDataAnalysisEmptyResponseError(e) || isInvalidGeminiCookieError(e)) throw e;
+      lastErr = e;
+      await waitBeforeRetry(cfg, attempt, e, "Rich retry");
+    }
+  }
+  throw lastErr;
+}
+
+async function hydrateGeneratedImages(cfg: RuntimeConfig, activeCfg: RuntimeConfig, images: GeminiParsedImage[]): Promise<GeminiRichImage[]> {
+  const out: GeminiRichImage[] = [];
+  for (const image of images) {
+    if (image.source !== "generated") {
+      out.push(image);
+      continue;
+    }
+    try {
+      const fetched = await fetchGeneratedImageBytes(cfg, activeCfg, image);
+      out.push({ ...image, ...fetched });
+    } catch (e) {
+      log(cfg, `generated image fetch failed; returning source url only ${errorLogSummary(e)}`);
+      out.push(image);
+    }
+  }
+  return out;
+}
+
+async function fetchGeneratedImageBytes(cfg: RuntimeConfig, activeCfg: RuntimeConfig, image: GeminiParsedImage): Promise<FetchedImageBytes> {
+  const headers = generatedImageFetchHeaders(activeCfg);
+  let lastErr: unknown = null;
+  for (const target of generatedImagePreviewFetchUrls(image.url)) {
+    try {
+      return await fetchGeneratedImageBytesFromUrl(cfg, target, headers);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  if (lastErr) throw lastErr;
+  throw upstreamImageFetchFailedError("no generated image URL candidates");
+}
+
+async function fetchGeneratedImageBytesFromUrl(cfg: RuntimeConfig, target: string, headers: Record<string, string>): Promise<FetchedImageBytes> {
+  try {
+    const resp = await httpFetch(target, {
+      method: "GET",
+      headers,
+      timeoutMs: cfg.request_timeout_sec * 1000,
+      socket: false,
+      cfg,
+    });
+    const bytes = await responseBytes(resp);
+    if (!resp.ok) throw upstreamImageFetchFailedError(`upstream HTTP ${resp.status}`, resp.status);
+    const format = imageFormatFromBytes(bytes);
+    if (!format) throw upstreamImageFetchFailedError("response body is not a supported image", resp.status);
+    return {
+      base64: bytesToBase64(bytes),
+      outputFormat: format,
+    };
+  } catch (e) {
+    throw upstreamImageFetchFailedError(e);
+  }
+}
+
+function generatedImagePreviewFetchUrls(url: string): string[] {
+  const upgraded = generatedImageFetchUpsizedUrl(url);
+  if (!upgraded || upgraded === url) return [url];
+  if (url.includes("=s1024-rj")) return [upgraded, url];
+  return [url, upgraded];
+}
+
+function generatedImageFetchUpsizedUrl(url: string): string {
+  if (url.includes("=s1024-rj")) return url.replace("=s1024-rj", "=s2048-rj");
+  if (/=s\d+-rj(?:$|[&#])/.test(url)) return url;
+  return `${url}${url.includes("=") ? "" : "=s2048-rj"}`;
+}
+
+function generatedImageFetchHeaders(cfg: RuntimeConfig): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://gemini.google.com",
+    "Referer": "https://gemini.google.com/app",
+    "User-Agent": GEMINI_WEB_USER_AGENT,
+  };
+  if (cfg.cookie) headers.Cookie = cfg.cookie;
+  return headers;
+}
+
+async function responseBytes(resp: Response | { body: ReadableStream<Uint8Array>; arrayBuffer?: undefined }): Promise<Uint8Array> {
+  if ("arrayBuffer" in resp && typeof resp.arrayBuffer === "function") {
+    return new Uint8Array(await resp.arrayBuffer());
+  }
+  const reader = resp.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    chunks.push(value);
+    total += value.byteLength;
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+function imageFormatFromBytes(bytes: Uint8Array): "png" | "jpeg" | "gif" | "webp" | "" {
+  if (bytes.byteLength >= 8
+    && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+    && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) return "png";
+  if (bytes.byteLength >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg";
+  if (asciiAt(bytes, 0, "GIF87a") || asciiAt(bytes, 0, "GIF89a")) return "gif";
+  if (asciiAt(bytes, 0, "RIFF") && asciiAt(bytes, 8, "WEBP")) return "webp";
+  return "";
+}
+
+function asciiAt(bytes: Uint8Array, offset: number, text: string): boolean {
+  if (offset + text.length > bytes.byteLength) return false;
+  for (let i = 0; i < text.length; i++) {
+    if (bytes[offset + i] !== text.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const native = (bytes as Uint8Array & { toBase64?: () => string }).toBase64;
+  if (typeof native === "function") return native.call(bytes);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 }
 
 export async function* generateStream(

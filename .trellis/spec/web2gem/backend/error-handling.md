@@ -24,6 +24,91 @@ When `GEMINI_COOKIE` is configured, generation requests must also verify the Gem
 
 When Gemini WRB response parsing yields no text, logs under `LOG_REQUESTS` should include safe response-shape diagnostics such as WRB line count, parsed-envelope count, parsed-inner count, text-part count, and a reason class. Do not log raw WRB payload snippets or response text as diagnostics.
 
+## Scenario: Gemini Rich Response Parsing
+
+### 1. Scope / Trigger
+
+Use this contract when changing Gemini non-streaming rich output parsing, image generation parsing, WRB/framed response handling, or upstream empty/error classification for image mode.
+
+### 2. Signatures
+
+- `extractResponseText(raw)` remains the stable text-only parser for existing callers.
+- `extractResponseParts(raw)` returns `{ text, images, fatalCode, candidateCount, generatedImageCount, webImageCount }` for rich callers.
+- `generateRich(...)` must call the rich parser before deciding whether the upstream response is empty.
+
+### 3. Contracts
+
+- Rich parsing must accept both line-oriented WRB JSON envelopes and Gemini length-prefixed frames that may start with `)]}'`.
+- Length markers are JavaScript string lengths / UTF-16 code units, not UTF-8 byte counts.
+- Fatal Gemini part codes can live on the WRB envelope at `[5,2,0,1,0]`; do not only inspect the decoded inner payload.
+- Generated image paths include plain generation `[12,7,0]` and image-to-image `[12,0,"8",0]`.
+- Rich parser text cleanup must strip Gemini internal placeholder URLs such as `http://googleusercontent.com/image_generation_content/0` while preserving real client-usable image URLs such as `https://lh3.googleusercontent.com/...`.
+- Preserve generated vs web image classification, selected-candidate semantics, and safe metadata such as `cid`, `rid`, `rcid`, and `imageId` when present.
+- Generated image byte hydration should fetch the parsed generated image URL directly with Gemini browser headers, Gemini cookie when configured, and an image `Accept` header. Do not send SAPISID-derived `Authorization` to image CDN URLs; Gemini-API downloads images with browser/cookie session semantics, not RPC auth headers. The image byte GET path must force Worker `fetch` (`socket: false`) because Cloudflare socket transport can fail Google image CDN URLs even while `StreamGenerate` needs socket to avoid 429.
+- Generated image bytes must be classified by supported image magic bytes (PNG, JPEG, GIF, WEBP). Do not trust URL suffix or `Content-Type` alone for `image_generation_call.result`, because a 200 HTML/text error page with misleading metadata must not become base64 image output.
+- Image byte GET should rely on Worker `fetch`'s default redirect handling. Do not add a custom redirect loop unless a concrete platform failure requires it. If byte fetching fails, continue to preview candidates (`=s1024-rj` -> `=s2048-rj`, direct `gg-dl` first for direct URLs) without failing the whole rich result.
+- Do not log raw WRB payloads, full image URLs, generated-image objects, or base64 image data in diagnostics.
+
+### 4. Validation & Error Matrix
+
+- OpenAI image generation or image editing request and no `GEMINI_COOKIE` -> 401 `image_generation_requires_cookie` before upstream generation, upload resolution, or generated-image byte fetching.
+- Rich response has no text but at least one generated image -> success, not `upstream_empty_response`.
+- Rich response has neither text nor images after retries -> `upstream_image_generation_empty`.
+- Rich response text only contains `http://googleusercontent.com/<kind>/<number>` placeholders and images are present -> return image output without placeholder text.
+- Fatal part code `1013`, `1037`, `1050`, `1052`, or `1060` -> provider/upstream error code, not empty-image output.
+- Image-to-image generated metadata under `[12,0,"8",0]` -> generated image output.
+- Generated image metadata includes a usable URL -> fetch image bytes/base64 from that URL through Worker `fetch`, not socket transport.
+- Generated image byte URL returns an HTTP redirect -> Worker `fetch` follows it; the Worker validates the final response bytes before returning base64.
+- Generated image byte fetching fails for all preview candidates -> preserve URL markdown instead of failing the whole rich result.
+- Length-prefixed frame with astral Unicode -> parse by UTF-16 code units and preserve text/images.
+
+### 5. Good/Base/Bad Cases
+
+- Good: rich parser first normalizes WRB envelopes from frames, then decodes inner candidate payloads.
+- Good: tests use fixtures for framed responses and the exact `[12,0,"8",0]` image-to-image path.
+- Base: text-only `extractResponseText(raw)` behavior stays unchanged for existing text callers.
+- Bad: only testing simplified `[["wrb.fr", ...]]` lines while live image responses arrive as length-prefixed frames.
+- Bad: checking fatal codes only after decoding the inner candidate payload.
+
+### 6. Tests Required
+
+- Unit test rich generated image parsing for `[12,7,0]`.
+- Unit test image-to-image generated image parsing for `[12,0,"8",0]`.
+- Unit test length-prefixed frames, including astral Unicode text.
+- Unit test fatal response part code mapping when parser or provider error handling changes.
+- Unit test direct `gg-dl` URLs are fetched before suffix mutation.
+- Unit test image byte fetching uses Worker `fetch` even when `StreamGenerate` uses socket transport.
+- Unit test a 200 non-image body with image-looking `Content-Type` is rejected and falls back to URL markdown instead of becoming `image_generation_call.result`.
+- Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+const parts = raw.split("\n").map((line) => JSON.parse(line));
+const code = getNested(decodedInner, [5, 2, 0, 1, 0]);
+```
+
+#### Correct
+
+```typescript
+const envelopes = parseLineOrLengthPrefixedWrbEnvelopes(raw);
+const code = getNested(envelope, [5, 2, 0, 1, 0]);
+```
+
+#### Wrong
+
+```typescript
+await fetchGeneratedImageBytes(image.url);
+```
+
+#### Correct
+
+```typescript
+const bytes = await fetchGeneratedImageBytes(previewUrl, { socket: false });
+```
+
 Streaming paths should keep partial-output behavior intact:
 
 - SSE producers use `sseResponse`.

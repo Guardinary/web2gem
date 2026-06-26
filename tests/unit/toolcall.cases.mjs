@@ -903,7 +903,7 @@ export const cases = [
     assert.equal(result.fileRefs.length, 2);
     assert.equal(uploads[0].filename, "message.txt");
     assert.equal(uploads[1].filename, "tools.txt");
-    assert.match(result.prompt, /Context is attached/);
+    assert.match(result.prompt, /Continue from the latest state in the attached `message\.txt` context/);
     assert.match(result.prompt, /All text above this sentence is system prompt content/);
     assert.doesNotMatch(result.prompt, /<\|DSML\|tool_calls>/);
     assert.doesNotMatch(result.prompt, /must call Read/);

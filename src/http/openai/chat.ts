@@ -1,19 +1,23 @@
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
 import { EMPTY_UPSTREAM_MSG, runCompletionText, upstreamEmptyWarning } from "../../completion";
-import type { CompletionProvider } from "../../completion";
+import type { CompletionProvider, CompletionRichOutput } from "../../completion";
 import type { RuntimeConfig } from "../../config";
+import { prepareOpenAIImageGenerationCompletion } from "../../completion/image-generation";
 import { prepareOpenAICompletion } from "../../completion/openai";
 import { elapsedMs, errorLogSummary, log, logStage, nowMs, nowSec, randHex, upstreamErrorCode } from "../../shared/runtime";
 import { tokenEst } from "../../shared/tokens";
 import { isRecord, type UnknownRecord } from "../../shared/types";
 import { openAIErrorResponse, openAIUpstreamErrorResponse } from "./errors";
-import { finalizeOpenAICompletionResult } from "./format";
+import { finalizeOpenAICompletionResult, imageGenerationChatContent, openAIChatUsageFromCompletionTokens } from "./format";
 import { writeOpenAIChatStreamError } from "./format";
+import { imageGenerationMode } from "./image-generation";
 import { streamOpenAIChatPlain, streamOpenAIChatWithToolSieve } from "./chat-stream";
 
 // POST /v1/chat/completions
 export async function handleChat(req: UnknownRecord, cfg: RuntimeConfig, provider: CompletionProvider) {
+  const imageMode = imageGenerationMode(req);
+  if (imageMode.enabled) return handleImageGenerationChat(req, cfg, provider, imageMode.forced);
   const messages = req.messages || [];
   const logRequests = !!cfg.log_requests;
   const prepareStart = logRequests ? nowMs() : 0;
@@ -121,4 +125,68 @@ export async function handleChat(req: UnknownRecord, cfg: RuntimeConfig, provide
   };
   if (upstreamEmpty) payload.warning = upstreamEmptyWarning(cfg);
   return jsonResponse(payload);
+}
+
+async function handleImageGenerationChat(req: UnknownRecord, cfg: RuntimeConfig, provider: CompletionProvider, forced: boolean): Promise<Response> {
+  if (req.stream) return openAIErrorResponse("streaming image generation is not supported by this worker", 400, "unsupported_image_generation_stream");
+  if (!provider.generateRich) {
+    return openAIErrorResponse("configured completion provider does not support image generation", 502, "image_generation_provider_unsupported");
+  }
+
+  const logRequests = !!cfg.log_requests;
+  const prepareStart = logRequests ? nowMs() : 0;
+  const prepared = await prepareOpenAIImageGenerationCompletion(cfg, provider, req, "chat", forced);
+  if ("error" in prepared) {
+    if (logRequests) logStage(cfg, "openai_chat_image_prepare", { ms: elapsedMs(prepareStart), status: prepared.error.status, code: prepared.error.code });
+    return openAIErrorResponse(prepared.error.message, prepared.error.status, prepared.error.code);
+  }
+  const { rm, prompt, fileRefs, promptTokens } = prepared;
+  if (logRequests) {
+    logStage(cfg, "openai_chat_image_prepare", {
+      ms: elapsedMs(prepareStart),
+      status: 200,
+      model: rm.name,
+      promptChars: prompt.length,
+      promptTokens,
+      fileRefs: fileRefs ? fileRefs.length : 0,
+    });
+  }
+
+  const generationStart = logRequests ? nowMs() : 0;
+  let rich: CompletionRichOutput;
+  try {
+    rich = await provider.generateRich({ prompt, rm, fileRefs });
+  } catch (e) {
+    if (logRequests) logStage(cfg, "openai_chat_image_generate", { ms: elapsedMs(generationStart), status: "error", model: rm.name });
+    log(cfg, `openai chat image generate failed model=${rm.name} code=${upstreamErrorCode(e) || "upstream_error"} error=${errorLogSummary(e)}`);
+    return openAIUpstreamErrorResponse(e);
+  }
+  if (!String(rich.text || "").trim() && !rich.images.length) {
+    return openAIErrorResponse("Gemini returned empty image generation output", 502, "upstream_image_generation_empty");
+  }
+  if (forced && !rich.images.some((image) => image.source === "generated")) {
+    return openAIErrorResponse("Gemini returned no usable generated image", 502, "upstream_image_generation_empty");
+  }
+  if (logRequests) {
+    logStage(cfg, "openai_chat_image_generate", {
+      ms: elapsedMs(generationStart),
+      status: "ok",
+      model: rm.name,
+      completionChars: rich.text.length,
+      images: rich.images.length,
+      promptTokens,
+      fileRefs: fileRefs ? fileRefs.length : 0,
+    });
+  }
+
+  const content = imageGenerationChatContent(rich.text, rich.images);
+  const completionTokens = tokenEst(rich.text);
+  return jsonResponse({
+    id: `chatcmpl-${randHex(12)}`,
+    object: "chat.completion",
+    created: nowSec(),
+    model: rm.name,
+    choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+    usage: openAIChatUsageFromCompletionTokens(promptTokens, completionTokens),
+  });
 }

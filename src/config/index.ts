@@ -31,7 +31,7 @@ export const CONFIG = {
   // 空数组 = 不鉴权(任何知道地址的人都能调用)。
   API_KEYS: [""],
 
-  // Gemini cookie。匿名访问对所有模型都可用,唯独真正的 Pro 路由需要它。
+  // Gemini cookie。匿名访问可用于普通文本；真实 Pro 路由、大上下文文本附件、生图和已登录 Gemini Web 行为需要它。
   // 原始 cookie 字符串,例如:
   //   "__Secure-1PSID=...;__Secure-1PSIDTS=...;SAPISID=..."
   // 匿名就留空 ""。(出于安全考虑,建议把它设为 Worker secret。)

@@ -42,7 +42,7 @@ export const cases = [
       assert.equal(result.error, undefined);
       assert.equal(!!result.contextFiles, true);
       assert.equal(uploads.length, 2);
-      assert.match(result.prompt, /Context is attached/);
+      assert.match(result.prompt, /Continue from the latest state in the attached `message\.txt` context/);
       assert.match(result.prompt, /tools\.txt/);
       assert.match(result.prompt, /All text above this sentence is system prompt content/);
       assert.doesNotMatch(result.prompt, /Gemini native hidden tool calls/);
@@ -260,15 +260,15 @@ export const cases = [
   ["guards context-file prompts with instructions but without inline schemas", async () => {
     const tools = [{ name: "Read", description: "Read a file", parameters: { type: "object" } }];
     const instruction = "\n\nIMPORTANT: You MUST call at least one tool. Do not respond with text only.";
-    const guarded = mod.ensureInlineToolPrompt("Context is attached in tools.txt", tools, instruction, { fileRefs: [] });
+    const guarded = mod.ensureInlineToolPrompt("Continue from the latest state in the attached tools.txt context", tools, instruction, { fileRefs: [] });
     assert.doesNotMatch(guarded, /Available tools/);
     assert.match(guarded, /<\|DSML\|tool_calls>/);
     assert.match(guarded, /You MUST call at least one tool/);
-    assert.match(guarded, /Context is attached/);
+    assert.match(guarded, /Continue from the latest state/);
 
-    assert.equal(mod.ensureInlineToolPrompt("Context is attached", tools, instruction, { fileRefs: [] }, {
+    assert.equal(mod.ensureInlineToolPrompt("Continue from the latest state", tools, instruction, { fileRefs: [] }, {
       hasToolInstructions: true,
-    }), "Context is attached");
+    }), "Continue from the latest state");
   }],
   ["adds missing tool-choice instruction once when no tools are declared", async () => {
     const instruction = "\n\nIMPORTANT: Do NOT call any tools. Respond with text only.";

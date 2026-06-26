@@ -485,7 +485,7 @@ export const cases = [
     assert.equal(resp.status, 200);
     assert.equal(uploads.length, 2);
     assert.doesNotMatch(prompts[0], /<\|DSML\|tool_calls>/);
-    assert.match(prompts[0], /Context is attached/);
+    assert.match(prompts[0], /Continue from the latest state in the attached `message\.txt` context/);
     assert.match(prompts[0], /tools\.txt/);
     assert.match(prompts[0], /All text above this sentence is system prompt content/);
     assert.doesNotMatch(prompts[0], /Gemini native hidden tool calls/);

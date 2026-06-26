@@ -8,6 +8,10 @@ export type ReadJsonRequestResult =
   | { value: UnknownRecord; bytes: number; error?: undefined; status?: undefined; code?: undefined }
   | { error: string; status: number; code?: string; value?: undefined; text?: undefined; bytes?: undefined };
 
+export type ReadRequestBodyBytesResult =
+  | { value: ArrayBuffer; bytes: number; error?: undefined; status?: undefined; code?: undefined }
+  | { error: string; status: number; code?: string; value?: undefined; bytes?: undefined };
+
 export type ReadJsonRequestOptions = {
   maxBodyBytes?: number | null;
   oversizedError?: {
@@ -29,17 +33,9 @@ export function jsonTextResponse(body: string, status: number = 200, extra: Head
 }
 
 export async function readJsonRequest(request: Request, options: ReadJsonRequestOptions = {}): Promise<ReadJsonRequestResult> {
-  let buf: ArrayBuffer;
-  try {
-    const maxBodyBytes = boundedMaxBodyBytes(options.maxBodyBytes);
-    buf = await readRequestBodyBounded(request, maxBodyBytes, options.oversizedError);
-  } catch (e) {
-    if (isReadJsonRequestError(e)) {
-      return e.result;
-    }
-    const err = e as { message?: unknown } | null | undefined;
-    return { error: `failed to read request body: ${(err && err.message) || e}`, status: 400 };
-  }
+  const read = await readRequestBodyBytes(request, options);
+  if (read.error !== undefined) return read;
+  const buf = read.value;
   let bodyText: string;
   try {
     bodyText = UTF8_FATAL_DECODER.decode(buf);
@@ -52,6 +48,20 @@ export async function readJsonRequest(request: Request, options: ReadJsonRequest
     return { error: "request body must be a JSON object", status: 400 };
   }
   return { value: parsed.value as UnknownRecord, bytes: buf.byteLength };
+}
+
+export async function readRequestBodyBytes(request: Request, options: ReadJsonRequestOptions = {}): Promise<ReadRequestBodyBytesResult> {
+  try {
+    const maxBodyBytes = boundedMaxBodyBytes(options.maxBodyBytes);
+    const value = await readRequestBodyBounded(request, maxBodyBytes, options.oversizedError);
+    return { value, bytes: value.byteLength };
+  } catch (e) {
+    if (isReadJsonRequestError(e)) {
+      return e.result;
+    }
+    const err = e as { message?: unknown } | null | undefined;
+    return { error: `failed to read request body: ${(err && err.message) || e}`, status: 400 };
+  }
 }
 
 type ReadJsonRequestError = Error & { result: Extract<ReadJsonRequestResult, { error: string }> };

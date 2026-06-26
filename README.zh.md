@@ -51,12 +51,13 @@ TypeScript 代码位于 `src/`，本地质量检查脚本位于 `scripts/`，`di
 | 功能                  | 说明                                                                                                           |
 | --------------------- | -------------------------------------------------------------------------------------------------------------- |
 | Flash 模型开箱即用   | 无需任何鉴权，也无需任何配置，部署单文件即可开始使用flash模型，无用量限制，完全免费。                          |
-| OpenAI 兼容 API       | Chat Completions 和 Responses 端点，支持流式输出。                                                             |
+| OpenAI 兼容 API       | Chat Completions 和 Responses 端点，文本/工具调用流程支持流式输出。                                             |
 | Google 兼容 API       | 面向 Gemini 风格客户端的 `generateContent` 和 `streamGenerateContent` 路由。                                   |
 | 工具调用              | 将工具定义转换为提示词指令，并把 DSML/XML 风格工具调用输出解析回 API 响应。                                    |
 | 结构化输出            | 对非流式结构化响应进行最终 JSON 校验和规范化；默认拒绝流式结构化输出。                                         |
 | 大上下文处理          | 在配置 Gemini cookie 时，可将大段提示上下文作为 Gemini 文本附件上传。                                          |
-| 图片处理              | 在请求形状支持时，通过 Gemini provider 路径解析图片输入。                                                      |
+| 生图                  | 支持非流式 Chat/Responses 请求中的显式 OpenAI `image_generation` 元数据，以及 `/v1/images/generations`、`/v1/images/edits`。 |
+| 图片输入处理          | 通过 Gemini provider 路径解析用户提供的内联/base64 图片输入；Worker 不抓取远程图片或文件 URL。                 |
 | 通用文件附件          | 请求内 `input_file` 和非图片内联数据可通过 Gemini Web 上传引用传入，支持任意文件名和 MIME；不实现 `/v1/files` 持久文件服务。 |
 | Worker 和 Docker 部署 | 可通过 Wrangler 部署到 Cloudflare Workers，也可用 Docker / Docker Compose 自托管。                             |
 | 上游 socket 传输      | Workers 上默认使用 `cloudflare:sockets`；Docker 默认使用标准 `fetch` 传输，除非运行时提供兼容的 sockets 能力。 |
@@ -89,6 +90,19 @@ curl https://your-web2gem.example/v1/chat/completions \
 
 设置 `"stream": true` 可接收 Server-Sent Events。
 
+生图请求必须使用显式 OpenAI image-generation 元数据。`tool_choice: { "type": "image_generation" }` 或 `tools[]` 中的 `{ "type": "image_generation" }` 会进入 pass-through 生图路径。该模式只使用用户编写的提示词文本和用户提供的内联/已有图片输入；仅有附件没有提示词会被拒绝。Chat Completions 会以 data-image 或 URL markdown 透传上游文本/图片。Worker 不抓取远程图片或文件 URL。生图、图像编辑和图片字节获取都需要配置 `GEMINI_COOKIE`。
+
+```sh
+curl https://your-web2gem.example/v1/chat/completions \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.5-flash",
+    "messages": [{ "role": "user", "content": "Generate a small blue app icon." }],
+    "tool_choice": { "type": "image_generation" }
+  }'
+```
+
 ### OpenAI Responses
 
 ```sh
@@ -100,6 +114,25 @@ curl https://your-web2gem.example/v1/responses \
     "input": "Explain what this worker does in one paragraph."
   }'
 ```
+
+Responses 生图使用相同的显式元数据；当图片字节可用时，会返回带 base64 `result` 的 `image_generation_call` output item；只有 URL metadata 时会以 markdown output text 透传。流式生图暂不支持。
+
+### OpenAI Images API
+
+`POST /v1/images/generations` 和 `POST /v1/images/edits` 作为非流式生图路由提供兼容。它们不需要 `tools` 或 `tool_choice`，但仍然需要配置 `GEMINI_COOKIE`。
+
+```sh
+curl https://your-web2gem.example/v1/images/generations \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.5-flash",
+    "prompt": "Generate a small blue app icon.",
+    "response_format": "b64_json"
+  }'
+```
+
+图片编辑需要同时提供 `prompt` 和至少一个本地图片输入。JSON 和 multipart 编辑输入可使用 `image`、`images`、`image_url` 或 `input_image`，图片内容必须是内联 base64/data URL 字节。远程 `http://` / `https://` 图片 URL 会被拒绝，Worker 不会抓取。图片端点只支持 `n: 1`，`response_format` 默认是 `b64_json`，也接受 `response_format: "url"` 以返回 provider URL，并且拒绝 `stream: true`。
 
 ### Google Gemini API
 
@@ -154,7 +187,7 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 | `web2gem_<tag>_docker_linux_arm64.tar.gz` | `linux/arm64` Docker 镜像归档。 |
 | `sha256sums.txt` | 发布文件校验和。 |
 
-Secrets 是可选项。在 Worker 控制台中打开该 Worker 的设置页，只为需要的功能添加变量或 Secrets。需要保护共享访问时设置 `API_KEYS`；需要 Pro 路由或大上下文文本附件时设置 `GEMINI_COOKIE`。
+Secrets 是可选项。在 Worker 控制台中打开该 Worker 的设置页，只为需要的功能添加变量或 Secrets。需要保护共享访问时设置 `API_KEYS`；需要 Pro 路由、大上下文文本附件或已登录 Gemini Web 行为时设置 `GEMINI_COOKIE`。
 
 ![Cloudflare Worker 设置中的 secrets](./docs/images/cloudflare-worker-settings-secrets-GEMINI_COOKIE.png)
 
@@ -169,7 +202,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-仓库提供的 [`compose.yaml`](compose.yaml) 默认拉取 `ghcr.io/guardinary/web2gem:latest`，映射 `${PORT:-52389}:${PORT:-52389}`，并从 `.env` 传入运行时变量。共享部署时在 `.env` 中设置 `API_KEYS`；需要 Pro 路由或大上下文文本附件时设置 `GEMINI_COOKIE`。如需固定镜像版本，可在 `.env` 中设置 `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:<tag>`。
+仓库提供的 [`compose.yaml`](compose.yaml) 默认拉取 `ghcr.io/guardinary/web2gem:latest`，映射 `${PORT:-52389}:${PORT:-52389}`，并从 `.env` 传入运行时变量。共享部署时在 `.env` 中设置 `API_KEYS`；需要 Pro 路由、大上下文文本附件或已登录 Gemini Web 行为时设置 `GEMINI_COOKIE`。如需固定镜像版本，可在 `.env` 中设置 `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:<tag>`。
 
 容器启动后，可验证本地健康检查路由：
 
@@ -202,7 +235,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 | 变量                            | 默认值                      | 说明                                                                                                                                                                               |
 | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_KEYS`                      | empty                       | 逗号分隔或 JSON 数组形式的 API keys。为空时关闭认证。                                                                                                                              |
-| `GEMINI_COOKIE`                 | empty                       | 原始 Gemini cookie 字符串；或包含 `cookie` 和可选 `sapisid` 的 JSON；或包含 `secure_1psid`、`secure_1psidts` 和可选 `sapisid` 的 JSON。仅在真实 Pro 路由和大上下文文本附件时需要。 |
+| `GEMINI_COOKIE`                 | empty                       | 原始 Gemini cookie 字符串；或包含 `cookie` 和可选 `sapisid` 的 JSON；或包含 `secure_1psid`、`secure_1psidts` 和可选 `sapisid` 的 JSON。真实 Pro 路由、大上下文文本附件和已登录 Gemini Web 行为需要它。 |
 | `SAPISID`                       | empty                       | 可选 SAPISID 覆盖值。为空时会尽量从 `GEMINI_COOKIE` 提取。                                                                                                                         |
 | `GEMINI_BL`                     | bundled value               | 上游请求使用的 Gemini Web build label。如果 Gemini Web 变化导致上游响应为空，需要更新它。                                                                                          |
 | `GEMINI_ORIGIN`                 | `https://gemini.google.com` | 上游源站。可指向你自己的转发服务或代理地址，并保留预期请求语义。                                                                                                                   |
@@ -221,7 +254,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 使用 Wrangler CLI 管理 Worker 时，可通过以下命令设置可选 secrets：
 
 - 共享部署时设置 `API_KEYS`。为空时会关闭认证。
-- 需要 Pro 路由或大上下文文本附件时设置 `GEMINI_COOKIE`。
+- 需要 Pro 路由、大上下文文本附件或已登录 Gemini Web 行为时设置 `GEMINI_COOKIE`。
 
 ```sh
 wrangler secret put API_KEYS

@@ -3,6 +3,7 @@ import type { SSEWrite } from "../core/sse";
 import { nowSec } from "../../shared/runtime";
 import { tokenEst } from "../../shared/tokens";
 import { isRecord } from "../../shared/types";
+import type { GeneratedImage } from "../../completion/ports";
 
 export { finalizeOpenAICompletionResult } from "../../completion/turn";
 
@@ -11,6 +12,8 @@ type OpenAIToolCall = {
   id: string;
   function: { name: string; arguments: string };
 };
+
+export type OpenAIImagesResponseFormat = "b64_json" | "url";
 
 export function openAIChatChunk(id: string, model: unknown, delta: OpenAIChunkDelta | null | undefined, finishReason: string | null) {
   return {
@@ -72,6 +75,63 @@ export function buildResponsesOutput(text: unknown, toolCalls: unknown, mid: str
     output.push({ type: "message", id: mid, role: "assistant", status: "completed", content: [{ type: "output_text", text: text || "", annotations: [] }] });
   }
   return output;
+}
+
+export function buildImageResponsesOutput(text: unknown, images: readonly GeneratedImage[], mid: string, idForIndex: (index: number) => string) {
+  const output: Array<Record<string, unknown>> = [];
+  const imageCalls = images.filter(hasImageCallBytes);
+  const messageText = imageGenerationChatContent(text, imageCalls.length ? images.filter((image) => !hasImageCallBytes(image)) : images);
+  if (messageText || !imageCalls.length) {
+    output.push({ type: "message", id: mid, role: "assistant", status: "completed", content: [{ type: "output_text", text: messageText, annotations: [] }] });
+  }
+  imageCalls.forEach((image, index) => {
+    output.push(imageGenerationCallItem(image, idForIndex(index)));
+  });
+  return output;
+}
+
+export function imageGenerationChatContent(text: unknown, images: readonly GeneratedImage[]): string {
+  const parts: string[] = [];
+  const textValue = String(text || "").trim();
+  if (textValue) parts.push(textValue);
+  for (const image of images) {
+    const source = image.base64 && image.outputFormat
+      ? `data:image/${image.outputFormat};base64,${image.base64}`
+      : image.url;
+    if (!source) continue;
+    parts.push(`![${image.alt || image.title || "image"}](${source})`);
+  }
+  return parts.join("\n\n");
+}
+
+export function buildOpenAIImagesResponse(
+  images: readonly GeneratedImage[],
+  options: { created: number; responseFormat: OpenAIImagesResponseFormat },
+): Record<string, unknown> {
+  const data: Array<Record<string, string>> = [];
+  for (const image of images) {
+    if (options.responseFormat === "b64_json") {
+      if (image.base64) data.push({ b64_json: image.base64 });
+      continue;
+    }
+    if (image.url) data.push({ url: image.url });
+  }
+  return { created: options.created, data };
+}
+
+function hasImageCallBytes(image: GeneratedImage): boolean {
+  return !!(image.base64 && image.outputFormat);
+}
+
+function imageGenerationCallItem(image: GeneratedImage, id: string): Record<string, unknown> {
+  return {
+    type: "image_generation_call",
+    id,
+    status: "completed",
+    result: image.base64 || "",
+    output_format: image.outputFormat || null,
+    revised_prompt: null,
+  };
 }
 
 function isOpenAIToolCall(value: unknown): value is OpenAIToolCall {

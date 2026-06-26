@@ -1,4 +1,4 @@
-import { generate, generateStream } from "./client";
+import { generate, generateRich as generateGeminiRich, generateStream } from "./client";
 import { resolveAttachments, uploadTextFile } from "./uploads";
 import type { RuntimeConfig } from "../config";
 import type { ResolvedModel } from "../models";
@@ -14,6 +14,11 @@ export function createGeminiCompletionProvider(cfg: RuntimeConfig): CompletionPr
       const model = requireResolvedModel(input.rm);
       if (cfg.log_requests) logGeminiRoute(cfg, model, false);
       return generate(cfg, input.prompt, model.modeId, model.thinkMode, model.extra, input.fileRefs, model.modelHeaders);
+    },
+    generateRich(input: CompletionTextInput) {
+      const model = requireResolvedModel(input.rm);
+      if (cfg.log_requests) logGeminiRoute(cfg, model, false);
+      return generateGeminiRich(cfg, input.prompt, model.modeId, model.thinkMode, model.extra, input.fileRefs, model.modelHeaders);
     },
     async *streamText(input: CompletionTextInput, options: CompletionProviderOptions = {}) {
       const model = requireResolvedModel(input.rm);

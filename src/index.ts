@@ -1,6 +1,6 @@
 import { getConfig } from "./config";
 import { authorized, corsHeaders, jsonResponse, jsonTextResponse, openAIErrorResponse, withCORS } from "./http";
-import { handleChat, handleResponses } from "./http/openai";
+import { handleChat, handleImageEdits, handleImageEditsMultipart, handleImageGenerations, handleResponses } from "./http/openai";
 import { handleGoogleGenerate } from "./http/google/handlers";
 import { GOOGLE_MODEL_JSON_BY_ID, GOOGLE_MODEL_LIST_JSON, HEALTH_JSON, NOT_FOUND_JSON, OPENAI_MODEL_JSON_BY_ID, OPENAI_MODEL_LIST_JSON } from "./http/core/model-routes";
 import { googleJsonError, readRouteJsonPost } from "./http/core/route-json";
@@ -67,6 +67,15 @@ export default {
         if (path === "/v1/responses") {
           return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleResponses(body, cfg, createGeminiCompletionProvider(cfg))));
         }
+        if (path === "/v1/images/generations") {
+          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleImageGenerations(body, cfg, createGeminiCompletionProvider(cfg))));
+        }
+        if (path === "/v1/images/edits") {
+          if (isMultipartFormRequest(request)) {
+            return respond(await handleImageEditsMultipart(request, cfg, createGeminiCompletionProvider(cfg)));
+          }
+          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleImageEdits(body, cfg, createGeminiCompletionProvider(cfg))));
+        }
         if (GOOGLE_GENERATE_PATH_RE.test(path)) {
           return respond(await handleGoogleJsonPost(request, cfg, path, (body) => handleGoogleGenerate(body, cfg, createGeminiCompletionProvider(cfg), path, false)));
         }
@@ -109,4 +118,9 @@ async function handleGoogleJsonPost(
   const parsed = await readRouteJsonPost(request, cfg, path);
   if (parsed.error !== undefined) return jsonResponse(googleJsonError(parsed.error, parsed.code), parsed.status || 400);
   return handler(parsed.value);
+}
+
+function isMultipartFormRequest(request: Request): boolean {
+  const contentType = request.headers.get("content-type") || "";
+  return contentType.split(";", 1)[0]?.trim().toLowerCase() === "multipart/form-data";
 }

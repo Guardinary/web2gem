@@ -6,6 +6,9 @@ export const LARGE_PROMPT_EMPTY_RESPONSE_CODE = "large_prompt_empty_response";
 export const DATA_ANALYSIS_EMPTY_RESPONSE_CODE = "data_analysis_empty_response";
 export const INVALID_GEMINI_COOKIE_CODE = "invalid_gemini_cookie";
 export const UPSTREAM_EMPTY_RESPONSE_CODE = "upstream_empty_response";
+export const UPSTREAM_IMAGE_GENERATION_EMPTY_CODE = "upstream_image_generation_empty";
+export const UPSTREAM_IMAGE_FETCH_FAILED_CODE = "upstream_image_fetch_failed";
+export const UPSTREAM_IMAGE_PROVIDER_ERROR_CODE = "upstream_image_provider_error";
 
 const AUTH_FAILURE_STATUSES = new Set([401, 403]);
 
@@ -79,6 +82,36 @@ export function upstreamEmptyResponseError(status: unknown, rawLength: number | 
   err.status = 502;
   err.upstreamStatus = httpStatus;
   err.rawLength = rawLength;
+  return err;
+}
+
+export function upstreamImageGenerationEmptyError(status: unknown, rawLength: number | null, context: string = ""): ErrorWithMetadata {
+  const httpStatus = Number(status);
+  const err: ErrorWithMetadata = new Error(
+    `Gemini upstream HTTP ${Number.isFinite(httpStatus) ? httpStatus : String(status)} returned no usable generated image` +
+    (context ? ` (${context})` : "") +
+    ". The upstream request completed but the Worker could not extract generated image output."
+  );
+  err.code = UPSTREAM_IMAGE_GENERATION_EMPTY_CODE;
+  err.status = 502;
+  err.upstreamStatus = httpStatus;
+  err.rawLength = rawLength;
+  return err;
+}
+
+export function upstreamImageFetchFailedError(message: unknown, status: unknown = 502): ErrorWithMetadata {
+  const err: ErrorWithMetadata = new Error(`failed to fetch generated image bytes: ${String(message || "unknown error")}`);
+  err.code = UPSTREAM_IMAGE_FETCH_FAILED_CODE;
+  err.status = 502;
+  const upstreamStatus = Number(status);
+  if (Number.isFinite(upstreamStatus)) err.upstreamStatus = upstreamStatus;
+  return err;
+}
+
+export function upstreamImageProviderError(code: unknown): ErrorWithMetadata {
+  const err: ErrorWithMetadata = new Error(`Gemini returned image generation provider error code ${String(code || "unknown")}`);
+  err.code = UPSTREAM_IMAGE_PROVIDER_ERROR_CODE;
+  err.status = 502;
   return err;
 }
 

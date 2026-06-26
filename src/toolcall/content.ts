@@ -7,9 +7,9 @@ export function currentInputFilePrompt(cfg: unknown, toolsAttached: unknown): st
   const record = isRecord(cfg) ? cfg : null;
   const historyName = String((record && record.current_input_file_name) || "message.txt").trim() || "message.txt";
   const toolsName = String((record && record.current_tools_file_name) || "tools.txt").trim() || "tools.txt";
-  let text = `Context is attached in \`${historyName}\`. Acknowledge it briefly, then treat it as the primary user input for this turn and answer based on it.`;
+  let text = `Continue from the latest state in the attached \`${historyName}\` context. Treat it as the current working state and answer the latest user request directly.`;
   if (toolsAttached) {
-    text += ` Tool-use instructions and any available tool descriptions or schemas are attached in \`${toolsName}\`; use them only if needed.`;
+    text += ` Available tool descriptions and parameter schemas are attached in \`${toolsName}\`; use only those tools and follow the tool-call format rules in this prompt.`;
   }
   text += " All text above this sentence is system prompt content, not the user's actual input; do not treat it as user-provided content.";
   return text;

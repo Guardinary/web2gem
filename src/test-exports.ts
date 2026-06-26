@@ -1,5 +1,5 @@
 // Internal compatibility surface used by local unit and smoke tests.
-export { buildHeaders, buildPayload, cleanText, extractResponseText, extractTextsFromLine, generate, generateStream, getUrl, wrbResponseShapeSummary } from "./gemini/client";
+export { buildHeaders, buildPayload, cleanText, extractResponseParts, extractResponseText, extractTextsFromLine, generate, generateRich, generateStream, getUrl, richResponseShapeSummary, wrbResponseShapeSummary } from "./gemini/client";
 export { CONFIG_ENV_KEYS } from "./config";
 export { createGeminiCompletionProvider } from "./gemini/completion-provider";
 export { createStreamTextExtractor, stripArtifacts } from "./gemini/client/parser";
@@ -77,6 +77,7 @@ export {
   shouldConsiderContextFiles,
   shouldUseContextFiles,
 } from "./completion/context";
+export { prepareOpenAIImageGenerationCompletion } from "./completion/image-generation";
 export { ensureInlineToolPrompt } from "./completion/tool-prompt-guard";
 export {
   EMPTY_UPSTREAM_MSG,
@@ -235,7 +236,10 @@ export { streamOpenAIChatPlain, streamOpenAIChatWithToolSieve } from "./http/ope
 export { createDeltaCoalescer } from "./http/stream/coalescer";
 export { handleResponses } from "./http/openai/responses";
 export { handleChat } from "./http/openai/chat";
+export { handleImageEdits, handleImageEditsMultipart, handleImageGenerations } from "./http/openai/images";
+export { imageGenerationMode, isImageGenerationRequest } from "./http/openai/image-generation";
 export {
+  buildOpenAIImagesResponse,
   buildResponsesOutput,
   openAIChatChunk,
   openAIChatUsageFromCompletionTokens,

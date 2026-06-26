@@ -51,12 +51,13 @@ The main compatibility targets are:
 | Feature                      | Description                                                                                                                                    |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | Ready-to-use Flash models    | No authentication or configuration is required; deploy the single file to start using Flash models with no usage limits, completely free.       |
-| OpenAI-compatible API        | Chat Completions and Responses endpoints with streaming support.                                                                               |
+| OpenAI-compatible API        | Chat Completions and Responses endpoints with streaming support for text/tool flows.                                                           |
 | Google-compatible API        | `generateContent` and `streamGenerateContent` routes for Gemini-style clients.                                                                 |
 | Tool calling                 | Converts tool definitions into prompt instructions and parses DSML/XML-style tool-call output back into API responses.                         |
 | Structured output            | Validates and canonicalizes final JSON for non-streaming structured responses; streaming structured output is rejected by default.             |
 | Large context handling       | Can upload large prompt context as Gemini text attachments when a Gemini cookie is configured.                                                 |
-| Image handling               | Resolves image inputs through the Gemini provider path where supported by the request shape.                                                   |
+| Image generation             | Supports explicit OpenAI `image_generation` metadata on non-streaming Chat/Responses requests, plus `/v1/images/generations` and `/v1/images/edits`. |
+| Image input handling         | Resolves inline/base64 user image inputs through the Gemini provider path. Remote image/file URLs are not fetched by the Worker.                |
 | Generic file attachments     | Request-local `input_file` and inline non-image data can use Gemini Web upload refs for arbitrary filenames and MIME types; `/v1/files` persistence is not implemented. |
 | Worker and Docker deployment | Deploy with Wrangler to Cloudflare Workers, or self-host with Docker / Docker Compose.                                                         |
 | Upstream socket transport    | Uses `cloudflare:sockets` on Workers by default, with Docker using standard `fetch` transport unless a compatible sockets runtime is provided. |
@@ -89,6 +90,19 @@ curl https://your-web2gem.example/v1/chat/completions \
 
 Set `"stream": true` to receive Server-Sent Events.
 
+For image generation, send explicit OpenAI image-generation metadata with a non-streaming request. The Worker routes requests with either `tool_choice: { "type": "image_generation" }` or a `tools[]` entry `{ "type": "image_generation" }` through a pass-through image path. This mode uses only user-authored prompt text plus user-provided inline/existing image inputs, rejects attachments-only prompts, and returns upstream text/images as data-image or URL markdown in Chat Completions. Remote image/file URLs are not fetched. `GEMINI_COOKIE` is required for image generation, image editing, and image byte fetching.
+
+```sh
+curl https://your-web2gem.example/v1/chat/completions \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.5-flash",
+    "messages": [{ "role": "user", "content": "Generate a small blue app icon." }],
+    "tool_choice": { "type": "image_generation" }
+  }'
+```
+
 ### OpenAI Responses
 
 ```sh
@@ -100,6 +114,25 @@ curl https://your-web2gem.example/v1/responses \
     "input": "Explain what this worker does in one paragraph."
   }'
 ```
+
+Responses image generation uses the same explicit metadata and returns `image_generation_call` output items with base64 `result` values when image bytes are available; URL-only image metadata is passed through as markdown output text. Streaming image generation is not supported.
+
+### OpenAI Images API
+
+`POST /v1/images/generations` and `POST /v1/images/edits` are supported as non-streaming image-generation routes. They do not require `tools` or `tool_choice`, but they still require `GEMINI_COOKIE`.
+
+```sh
+curl https://your-web2gem.example/v1/images/generations \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.5-flash",
+    "prompt": "Generate a small blue app icon.",
+    "response_format": "b64_json"
+  }'
+```
+
+Image edits require `prompt` plus at least one local image input. JSON and multipart edit inputs can use `image`, `images`, `image_url`, or `input_image` with inline base64/data URL image bytes. Remote `http://` / `https://` image URLs are rejected and are not fetched by the Worker. Image endpoints support only `n: 1`, default `response_format` to `b64_json`, also accept `response_format: "url"` for provider URLs, and reject `stream: true`.
 
 ### Google Gemini API
 
@@ -154,7 +187,7 @@ Each release publishes these assets:
 | `web2gem_<tag>_docker_linux_arm64.tar.gz` | Docker image archive for `linux/arm64`. |
 | `sha256sums.txt` | Checksums for the released files. |
 
-Secrets are optional. In the Worker dashboard, open the Worker settings and add variables/secrets only for the features you need. Set `API_KEYS` when you want to protect shared access, and set `GEMINI_COOKIE` when Pro routing or large-context text attachments are needed.
+Secrets are optional. In the Worker dashboard, open the Worker settings and add variables/secrets only for the features you need. Set `API_KEYS` when you want to protect shared access, and set `GEMINI_COOKIE` when Pro routing, large-context text attachments, or signed-in Gemini Web behavior is needed.
 
 ![Cloudflare Worker settings showing secrets](./docs/images/cloudflare-worker-settings-secrets-GEMINI_COOKIE.png)
 
@@ -169,7 +202,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The provided [`compose.yaml`](compose.yaml) pulls `ghcr.io/guardinary/web2gem:latest` by default, maps `${PORT:-52389}:${PORT:-52389}`, and forwards the runtime variables from `.env`. Set `API_KEYS` in `.env` for shared deployments, and set `GEMINI_COOKIE` when Pro routing or large-context text attachments are needed. To pin a specific image tag, set `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:<tag>` in `.env`.
+The provided [`compose.yaml`](compose.yaml) pulls `ghcr.io/guardinary/web2gem:latest` by default, maps `${PORT:-52389}:${PORT:-52389}`, and forwards the runtime variables from `.env`. Set `API_KEYS` in `.env` for shared deployments, and set `GEMINI_COOKIE` when Pro routing, large-context text attachments, or signed-in Gemini Web behavior is needed. To pin a specific image tag, set `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:<tag>` in `.env`.
 
 After the container starts, verify the local health route:
 
@@ -202,7 +235,7 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 | Variable                        | Default                     | Description                                                                                                                                                                                                      |
 | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_KEYS`                      | empty                       | Comma-separated or JSON-array API keys. Empty disables auth.                                                                                                                                                     |
-| `GEMINI_COOKIE`                 | empty                       | Raw Gemini cookie string; JSON with `cookie` and optional `sapisid`; or JSON with `secure_1psid`, `secure_1psidts`, and optional `sapisid`. Needed only for real Pro routing and large-context text attachments. |
+| `GEMINI_COOKIE`                 | empty                       | Raw Gemini cookie string; JSON with `cookie` and optional `sapisid`; or JSON with `secure_1psid`, `secure_1psidts`, and optional `sapisid`. Needed for real Pro routing, large-context text attachments, and signed-in Gemini Web behavior. |
 | `SAPISID`                       | empty                       | Optional SAPISID override. If empty, it is extracted from `GEMINI_COOKIE` when possible.                                                                                                                         |
 | `GEMINI_BL`                     | bundled value               | Gemini Web build label used by upstream requests. Update if Gemini Web changes and upstream responses become empty.                                                                                              |
 | `GEMINI_ORIGIN`                 | `https://gemini.google.com` | Upstream origin. Can point to your own forwarding service or proxy endpoint while preserving expected request semantics.                                                                                         |
@@ -221,7 +254,7 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 When managing a Worker through the Wrangler CLI, optional secrets can be set with:
 
 - Set `API_KEYS` for shared deployments. If it is empty, auth is disabled.
-- Set `GEMINI_COOKIE` when Pro routing or large-context text attachments are needed.
+- Set `GEMINI_COOKIE` when Pro routing, large-context text attachments, or signed-in Gemini Web behavior is needed.
 
 ```sh
 wrangler secret put API_KEYS

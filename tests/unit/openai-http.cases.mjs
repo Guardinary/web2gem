@@ -1,8 +1,692 @@
 import assert from "./assertions.js";
 import { attachmentResult, baseConfig, chunks, collectSSEData, fakeProvider, fakeStreamProvider, mod, resolvedModel, streamError, withConsoleLog, withFetch } from "./helpers.js";
 
+const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+const TINY_PNG_BYTES = Uint8Array.fromBase64(TINY_PNG_BASE64);
+
+function tinyPngFile(name = "input.png") {
+  return new File([TINY_PNG_BYTES], name, { type: "image/png" });
+}
+
 export const suiteName = "openai http";
 export const cases = [
+  ["detects explicit image generation metadata only", async () => {
+    assert.deepEqual(mod.imageGenerationMode({ tool_choice: { type: "image_generation" } }), {
+      enabled: true,
+      forced: true,
+      tool: { type: "image_generation" },
+    });
+    assert.equal(mod.imageGenerationMode({ tools: [{ type: "image_generation", output_format: "png" }] }).enabled, true);
+    assert.equal(mod.imageGenerationMode({ tool_choice: "auto", tools: [{ type: "function", function: { name: "x" } }] }).enabled, false);
+    assert.equal(mod.isImageGenerationRequest({ input: "please generate an image" }), false);
+  }],
+  ["requires cookie for image generation and rejects streaming before upstream work", async () => {
+    let generated = false;
+    const noCookie = await mod.handleResponses({
+      model: "gemini-3.5-flash",
+      input: "draw a red square",
+      tools: [{ type: "image_generation" }],
+    }, baseConfig({ cookie: "" }), fakeProvider({
+      async generateRich() {
+        generated = true;
+        return { text: "upstream no-cookie result", images: [] };
+      },
+    }));
+    assert.equal(noCookie.status, 401);
+    assert.equal((await noCookie.json()).error.code, "image_generation_requires_cookie");
+    assert.equal(generated, false);
+
+    const noCookieEndpoint = await mod.handleImageGenerations({
+      model: "gemini-3.5-flash",
+      prompt: "draw a red square",
+    }, baseConfig({ cookie: "" }), fakeProvider({
+      async generateRich() {
+        generated = true;
+        return { text: "", images: [] };
+      },
+    }));
+    assert.equal(noCookieEndpoint.status, 401);
+    assert.equal((await noCookieEndpoint.json()).error.code, "image_generation_requires_cookie");
+    assert.equal(generated, false);
+
+    const stream = await mod.handleChat({
+      model: "gemini-3.5-flash",
+      stream: true,
+      messages: [{ role: "user", content: "draw a red square" }],
+      tool_choice: { type: "image_generation" },
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        generated = true;
+        return { text: "", images: [] };
+      },
+    }));
+    assert.equal(stream.status, 400);
+    assert.equal((await stream.json()).error.code, "unsupported_image_generation_stream");
+  }],
+  ["routes Responses image generation through user-only prompt and image_generation_call output", async () => {
+    const prompts = [];
+    const plans = [];
+    const provider = fakeProvider({
+      async resolveAttachments(plan) {
+        plans.push(plan);
+        return attachmentResult({ fileRefs: [{ ref: "/uploaded/input.png", name: "input.png" }], imageFileRefs: [{ ref: "/uploaded/input.png", name: "input.png" }] });
+      },
+      async generateRich(input) {
+        prompts.push(input);
+        return {
+          text: "caption",
+          images: [{ url: "https://images.example/generated.png", source: "generated", base64: TINY_PNG_BASE64, outputFormat: "png" }],
+        };
+      },
+    });
+    const resp = await mod.handleResponses({
+      model: "gemini-3.5-flash",
+      instructions: "LEAK instructions",
+      input: [
+        { type: "message", role: "system", content: "LEAK system" },
+        { type: "output_text", text: "LEAK prior output" },
+        { type: "message", role: "assistant", content: [{ type: "input_image", image_url: `data:image/png;base64,${TINY_PNG_BASE64}` }] },
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "draw a small blue logo" },
+            { type: "input_image", image_url: `data:image/png;base64,${TINY_PNG_BASE64}`, filename: "input.png" },
+          ],
+        },
+      ],
+      tools: [
+        { type: "image_generation" },
+        { type: "function", function: { name: "Search", description: "LEAK tool schema" } },
+      ],
+    }, baseConfig({ cookie: "SID=ok" }), provider);
+    assert.equal(resp.status, 200);
+    assert.equal(plans.length, 1);
+    assert.equal(plans[0].candidates.length, 1);
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0].prompt, /draw a small blue logo/);
+    assert.match(prompts[0].prompt, /IMAGE GENERATION ENABLED/);
+    assert.doesNotMatch(prompts[0].prompt, /LEAK|Available tools|<\|DSML\|tool_calls>|\[image input\]/);
+    assert.deepEqual(prompts[0].fileRefs, [{ ref: "/uploaded/input.png", name: "input.png" }]);
+
+    const body = await resp.json();
+    const message = body.output.find((item) => item.type === "message");
+    assert.equal(message.content[0].text, "caption");
+    assert.doesNotMatch(message.content[0].text, /data:image/);
+    const imageCall = body.output.find((item) => item.type === "image_generation_call");
+    assert.equal(!!imageCall, true);
+    assert.equal(imageCall.status, "completed");
+    assert.equal(imageCall.result, TINY_PNG_BASE64);
+    assert.equal(imageCall.output_format, "png");
+  }],
+  ["preserves image-mode user file ref encounter order including duplicates", async () => {
+    const provider = fakeProvider({
+      async resolveAttachments() {
+        return attachmentResult({ fileRefs: [{ ref: "/uploaded/second.png", name: "second.png" }] });
+      },
+    });
+    const prepared = await mod.prepareOpenAIImageGenerationCompletion(baseConfig({ cookie: "SID=ok" }), provider, {
+      model: "gemini-3.5-flash",
+      input: [{
+        role: "user",
+        content: [
+          { type: "input_text", text: "combine the first and second image" },
+          { type: "input_image", file_id: "file_first", filename: "first.png" },
+          { type: "input_image", image_url: `data:image/png;base64,${TINY_PNG_BASE64}`, filename: "second.png" },
+          { type: "input_image", file_id: "file_first", filename: "first-again.png" },
+        ],
+      }],
+    }, "responses", false);
+    assert.equal(!("error" in prepared), true);
+    assert.deepEqual(prepared.fileRefs, [
+      { id: "file_first", name: "first.png" },
+      { ref: "/uploaded/second.png", name: "second.png" },
+      { id: "file_first", name: "first-again.png" },
+    ]);
+  }],
+  ["rejects unsupported image-mode inputs clearly", async () => {
+    const remote = await mod.handleResponses({
+      model: "gemini-3.5-flash",
+      input: [{ role: "user", content: [{ type: "input_text", text: "edit it" }, { type: "input_image", image_url: "https://cdn.example.com/image.png" }] }],
+      tools: [{ type: "image_generation" }],
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({ async generateRich() { return { text: "", images: [] }; } }));
+    assert.equal(remote.status, 400);
+    assert.equal((await remote.json()).error.code, "image_input_unsupported");
+
+    const remoteWithPartID = await mod.handleResponses({
+      model: "gemini-3.5-flash",
+      input: [{ role: "user", content: [{ type: "input_text", text: "edit it" }, { type: "input_image", id: "content_part_1", image_url: "https://cdn.example.com/image.png" }] }],
+      tools: [{ type: "image_generation" }],
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        throw new Error("generateRich should not run for remote image URLs");
+      },
+    }));
+    assert.equal(remoteWithPartID.status, 400);
+    assert.equal((await remoteWithPartID.json()).error.code, "image_input_unsupported");
+
+    const textBytes = await mod.handleResponses({
+      model: "gemini-3.5-flash",
+      input: [{ role: "user", content: [{ type: "input_text", text: "edit it" }, { type: "input_image", image_url: "data:text/plain;base64,aGVsbG8=" }] }],
+      tools: [{ type: "image_generation" }],
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({ async generateRich() { return { text: "", images: [] }; } }));
+    assert.equal(textBytes.status, 400);
+    assert.equal((await textBytes.json()).error.code, "image_input_unsupported");
+
+    const nonImageFile = await mod.handleResponses({
+      model: "gemini-3.5-flash",
+      input: [{ role: "user", content: [{ type: "input_text", text: "edit it" }, { type: "input_file", file_data: "data:application/pdf;base64,JVBERi0=", filename: "not-image.pdf" }] }],
+      tools: [{ type: "image_generation" }],
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        throw new Error("generateRich should not run for non-image file inputs");
+      },
+    }));
+    assert.equal(nonImageFile.status, 400);
+    assert.equal((await nonImageFile.json()).error.code, "image_input_unsupported");
+  }],
+  ["returns client-usable Chat image generation markdown without counting image base64 as tokens", async () => {
+    const resp = await mod.handleChat({
+      model: "gemini-3.5-flash",
+      messages: [
+        { role: "system", content: "LEAK system" },
+        { role: "user", content: "ignored older user" },
+        { role: "assistant", content: "ignored assistant" },
+        { role: "user", content: [{ type: "text", text: "draw a tiny icon" }] },
+      ],
+      tool_choice: { type: "image_generation" },
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich(input) {
+        assert.match(input.prompt, /draw a tiny icon/);
+        assert.doesNotMatch(input.prompt, /LEAK|ignored older user|ignored assistant/);
+        return {
+          text: "done",
+          images: [{ url: "https://images.example/generated.png", source: "generated", base64: TINY_PNG_BASE64, outputFormat: "png" }],
+        };
+      },
+    }));
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.match(body.choices[0].message.content, /^done\n\n!\[image\]\(data:image\/png;base64,/);
+    assert.equal(body.usage.completion_tokens < 10, true);
+  }],
+  ["passes through tools-only image mode text when upstream returns no image", async () => {
+    const resp = await mod.handleResponses({
+      model: "gemini-3.5-flash",
+      input: "generate an image, but upstream replies with text",
+      tools: [{ type: "image_generation" }],
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        return { text: "upstream text only", images: [] };
+      },
+    }));
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.output[0].content[0].text, "upstream text only");
+    assert.equal(body.output.some((item) => item.type === "image_generation_call"), false);
+  }],
+  ["rejects empty tools-only image output instead of returning blank success", async () => {
+    const chat = await mod.handleChat({
+      model: "gemini-3.5-flash",
+      messages: [{ role: "user", content: "generate an image" }],
+      tools: [{ type: "image_generation" }],
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        return { text: "", images: [] };
+      },
+    }));
+    assert.equal(chat.status, 502);
+    assert.equal((await chat.json()).error.code, "upstream_image_generation_empty");
+
+    const responses = await mod.handleResponses({
+      model: "gemini-3.5-flash",
+      input: "generate an image",
+      tools: [{ type: "image_generation" }],
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        return { text: "   ", images: [] };
+      },
+    }));
+    assert.equal(responses.status, 502);
+    assert.equal((await responses.json()).error.code, "upstream_image_generation_empty");
+  }],
+  ["keeps forced image mode no-image failure", async () => {
+    const resp = await mod.handleChat({
+      model: "gemini-3.5-flash",
+      messages: [{ role: "user", content: "generate an image" }],
+      tool_choice: { type: "image_generation" },
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        return { text: "text but no image", images: [] };
+      },
+    }));
+    assert.equal(resp.status, 502);
+    assert.equal((await resp.json()).error.code, "upstream_image_generation_empty");
+
+    const webOnlyChat = await mod.handleChat({
+      model: "gemini-3.5-flash",
+      messages: [{ role: "user", content: "generate an image" }],
+      tool_choice: { type: "image_generation" },
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        return { text: "", images: [{ url: "https://images.example/web.png", source: "web" }] };
+      },
+    }));
+    assert.equal(webOnlyChat.status, 502);
+    assert.equal((await webOnlyChat.json()).error.code, "upstream_image_generation_empty");
+
+    const webOnlyResponses = await mod.handleResponses({
+      model: "gemini-3.5-flash",
+      input: "generate an image",
+      tool_choice: { type: "image_generation" },
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        return { text: "", images: [{ url: "https://images.example/web.png", source: "web" }] };
+      },
+    }));
+    assert.equal(webOnlyResponses.status, 502);
+    assert.equal((await webOnlyResponses.json()).error.code, "upstream_image_generation_empty");
+  }],
+  ["passes through URL-only image output as markdown", async () => {
+    const chat = await mod.handleChat({
+      model: "gemini-3.5-flash",
+      messages: [{ role: "user", content: "show an image" }],
+      tools: [{ type: "image_generation" }],
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        return {
+          text: "see image",
+          images: [{ url: "https://images.example/generated.png", source: "generated", alt: "generated result" }],
+        };
+      },
+    }));
+    assert.equal(chat.status, 200);
+    assert.equal((await chat.json()).choices[0].message.content, "see image\n\n![generated result](https://images.example/generated.png)");
+
+    const responses = await mod.handleResponses({
+      model: "gemini-3.5-flash",
+      input: "show an image",
+      tools: [{ type: "image_generation" }],
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        return {
+          text: "",
+          images: [{ url: "https://images.example/web.png", source: "web", alt: "web result" }],
+        };
+      },
+    }));
+    assert.equal(responses.status, 200);
+    const body = await responses.json();
+    assert.equal(body.output[0].content[0].text, "![web result](https://images.example/web.png)");
+    assert.equal(body.output.some((item) => item.type === "image_generation_call"), false);
+  }],
+  ["routes OpenAI Images generations through forced image mode", async () => {
+    let seenInput = null;
+    const resp = await mod.handleImageGenerations({
+      model: "gemini-3.5-flash",
+      prompt: "draw an endpoint logo",
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich(input) {
+        seenInput = input;
+        return {
+          text: "ignored text",
+          images: [{ url: "https://images.example/generated.png", source: "generated", base64: TINY_PNG_BASE64, outputFormat: "png" }],
+        };
+      },
+    }));
+    assert.equal(resp.status, 200);
+    assert.match(seenInput.prompt, /draw an endpoint logo/);
+    assert.match(seenInput.prompt, /IMAGE GENERATION ENABLED/);
+    assert.doesNotMatch(seenInput.prompt, /Available tools|<\|DSML\|tool_calls>/);
+    assert.equal(seenInput.fileRefs, null);
+    const body = await resp.json();
+    assert.equal(typeof body.created, "number");
+    assert.deepEqual(body.data, [{ b64_json: TINY_PNG_BASE64 }]);
+  }],
+  ["parses OpenAI Images JSON stream values compatibly", async () => {
+    let generated = 0;
+    const provider = fakeProvider({
+      async generateRich() {
+        generated += 1;
+        return {
+          text: "",
+          images: [{ url: "https://images.example/generated.png", source: "generated", base64: TINY_PNG_BASE64, outputFormat: "png" }],
+        };
+      },
+    });
+
+    const falseString = await mod.handleImageGenerations({
+      model: "gemini-3.5-flash",
+      prompt: "draw with string false stream",
+      stream: "false",
+    }, baseConfig({ cookie: "SID=ok" }), provider);
+    assert.equal(falseString.status, 200);
+    assert.equal(generated, 1);
+
+    const trueString = await mod.handleImageGenerations({
+      prompt: "draw with string true stream",
+      stream: "true",
+    }, baseConfig({ cookie: "SID=ok" }), provider);
+    assert.equal(trueString.status, 400);
+    assert.equal((await trueString.json()).error.code, "unsupported_image_generation_stream");
+
+    const invalidString = await mod.handleImageGenerations({
+      prompt: "draw with invalid stream",
+      stream: "maybe",
+    }, baseConfig({ cookie: "SID=ok" }), provider);
+    assert.equal(invalidString.status, 400);
+    assert.equal((await invalidString.json()).error.code, "invalid_request");
+    assert.equal(generated, 1);
+  }],
+  ["routes OpenAI Images edits through JSON image inputs", async () => {
+    const plans = [];
+    let seenInput = null;
+    const resp = await mod.handleImageEdits({
+      model: "gemini-3.5-flash",
+      prompt: "replace the background",
+      image: { b64_json: TINY_PNG_BASE64, filename: "first.png" },
+      image_url: { url: `data:image/png;base64,${TINY_PNG_BASE64}`, filename: "second.png" },
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async resolveAttachments(plan) {
+        plans.push(plan);
+        return attachmentResult({
+          fileRefs: [
+            { ref: "/uploaded/first.png", name: "first.png" },
+            { ref: "/uploaded/second.png", name: "second.png" },
+          ],
+        });
+      },
+      async generateRich(input) {
+        seenInput = input;
+        return {
+          text: "",
+          images: [{ url: "https://images.example/edit.png", source: "generated", base64: TINY_PNG_BASE64, outputFormat: "png" }],
+        };
+      },
+    }));
+    assert.equal(resp.status, 200);
+    assert.equal(plans.length, 1);
+    assert.equal(plans[0].candidates.length, 2);
+    assert.deepEqual(plans[0].candidates.map((candidate) => candidate.kind), ["image", "image"]);
+    assert.deepEqual(seenInput.fileRefs, [
+      { ref: "/uploaded/first.png", name: "first.png" },
+      { ref: "/uploaded/second.png", name: "second.png" },
+    ]);
+    const body = await resp.json();
+    assert.deepEqual(body.data, [{ b64_json: TINY_PNG_BASE64 }]);
+  }],
+  ["routes OpenAI Images multipart edits through ordered image inputs", async () => {
+    const form = new FormData();
+    form.append("model", "gemini-3.5-flash");
+    form.append("prompt", "edit the uploaded references");
+    form.append("image", tinyPngFile("first.png"));
+    form.append("image_url", `data:image/png;base64,${TINY_PNG_BASE64}`);
+    form.append("images[]", tinyPngFile("third.png"));
+
+    const plans = [];
+    let seenInput = null;
+    const resp = await mod.handleImageEditsMultipart(new Request("https://worker.example/v1/images/edits", {
+      method: "POST",
+      body: form,
+    }), baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async resolveAttachments(plan) {
+        plans.push(plan);
+        return attachmentResult({
+          fileRefs: [
+            { ref: "/uploaded/first.png", name: "first.png" },
+            { ref: "/uploaded/second.png", name: "second.png" },
+            { ref: "/uploaded/third.png", name: "third.png" },
+          ],
+        });
+      },
+      async generateRich(input) {
+        seenInput = input;
+        return {
+          text: "",
+          images: [{ url: "https://images.example/edit.png", source: "generated", base64: TINY_PNG_BASE64, outputFormat: "png" }],
+        };
+      },
+    }));
+
+    assert.equal(resp.status, 200);
+    assert.equal(plans.length, 1);
+    assert.deepEqual(plans[0].candidates.map((candidate) => candidate.filename), ["first.png", "image-2.png", "third.png"]);
+    assert.deepEqual(seenInput.fileRefs, [
+      { ref: "/uploaded/first.png", name: "first.png" },
+      { ref: "/uploaded/second.png", name: "second.png" },
+      { ref: "/uploaded/third.png", name: "third.png" },
+    ]);
+    const body = await resp.json();
+    assert.deepEqual(body.data, [{ b64_json: TINY_PNG_BASE64 }]);
+  }],
+  ["accepts OpenAI Images multipart edit field aliases and JSON reference strings", async () => {
+    const form = new FormData();
+    form.append("model", "gemini-3.5-flash");
+    form.append("prompt", "edit all alias references");
+    form.append("stream", "false");
+    form.append("image[]", tinyPngFile("bracket.png"));
+    form.append("images", JSON.stringify([
+      { b64_json: TINY_PNG_BASE64, filename: "images-array-a.png" },
+      { image_url: `data:image/png;base64,${TINY_PNG_BASE64}`, filename: "images-array-b.png" },
+    ]));
+    form.append("image_url[]", `data:image/png;base64,${TINY_PNG_BASE64}`);
+    form.append("input_image", JSON.stringify({ base64: TINY_PNG_BASE64, filename: "input-json.png" }));
+    form.append("input_image[]", tinyPngFile("input-bracket.png"));
+
+    const plans = [];
+    let seenInput = null;
+    const resp = await mod.handleImageEditsMultipart(new Request("https://worker.example/v1/images/edits", {
+      method: "POST",
+      body: form,
+    }), baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async resolveAttachments(plan) {
+        plans.push(plan);
+        return attachmentResult({
+          fileRefs: plan.candidates.map((candidate) => ({
+            ref: `/uploaded/${candidate.filename}`,
+            name: candidate.filename,
+          })),
+        });
+      },
+      async generateRich(input) {
+        seenInput = input;
+        return {
+          text: "",
+          images: [{ url: "https://images.example/edit.png", source: "generated", base64: TINY_PNG_BASE64, outputFormat: "png" }],
+        };
+      },
+    }));
+
+    assert.equal(resp.status, 200);
+    assert.equal(plans.length, 1);
+    const expectedNames = [
+      "bracket.png",
+      "images-array-a.png",
+      "images-array-b.png",
+      "image-4.png",
+      "input-json.png",
+      "input-bracket.png",
+    ];
+    assert.deepEqual(plans[0].candidates.map((candidate) => candidate.filename), expectedNames);
+    assert.deepEqual(seenInput.fileRefs, expectedNames.map((name) => ({ ref: `/uploaded/${name}`, name })));
+    const body = await resp.json();
+    assert.deepEqual(body.data, [{ b64_json: TINY_PNG_BASE64 }]);
+  }],
+  ["dispatches multipart OpenAI Images edits before JSON parsing", async () => {
+    const form = new FormData();
+    form.append("prompt", "edit");
+    form.append("stream", "true");
+    form.append("image", tinyPngFile("input.png"));
+    const resp = await mod.default.fetch(new Request("https://worker.example/v1/images/edits", {
+      method: "POST",
+      body: form,
+    }), {}, {});
+
+    assert.equal(resp.status, 400);
+    assert.equal((await resp.json()).error.code, "unsupported_image_generation_stream");
+  }],
+  ["rejects unsupported multipart OpenAI Images edit inputs before upstream work", async () => {
+    let generated = false;
+    const remoteForm = new FormData();
+    remoteForm.append("model", "gemini-3.5-flash");
+    remoteForm.append("prompt", "edit it");
+    remoteForm.append("image_url", "https://cdn.example.com/image.png");
+    const remote = await mod.handleImageEditsMultipart(new Request("https://worker.example/v1/images/edits", {
+      method: "POST",
+      body: remoteForm,
+    }), baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        generated = true;
+        return { text: "", images: [] };
+      },
+    }));
+    assert.equal(remote.status, 400);
+    assert.equal((await remote.json()).error.code, "image_input_unsupported");
+
+    const textFileForm = new FormData();
+    textFileForm.append("model", "gemini-3.5-flash");
+    textFileForm.append("prompt", "edit it");
+    textFileForm.append("image", new File([new TextEncoder().encode("not an image")], "not-image.png", { type: "image/png" }));
+    const textFile = await mod.handleImageEditsMultipart(new Request("https://worker.example/v1/images/edits", {
+      method: "POST",
+      body: textFileForm,
+    }), baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        generated = true;
+        return { text: "", images: [] };
+      },
+    }));
+    assert.equal(textFile.status, 400);
+    assert.equal((await textFile.json()).error.code, "image_input_unsupported");
+
+    const tooLargeForm = new FormData();
+    tooLargeForm.append("model", "gemini-3.5-flash");
+    tooLargeForm.append("prompt", "edit it");
+    tooLargeForm.append("image", tinyPngFile("large.png"));
+    const tooLarge = await mod.handleImageEditsMultipart(new Request("https://worker.example/v1/images/edits", {
+      method: "POST",
+      body: tooLargeForm,
+    }), baseConfig({ cookie: "SID=ok", generic_file_upload_max_bytes: 2 }), fakeProvider({
+      async generateRich() {
+        generated = true;
+        return { text: "", images: [] };
+      },
+    }));
+    assert.equal(tooLarge.status, 413);
+    assert.equal((await tooLarge.json()).error.code, "image_input_too_large");
+
+    const declaredTooLarge = await mod.handleImageEditsMultipart(new Request("https://worker.example/v1/images/edits", {
+      method: "POST",
+      headers: {
+        "content-type": "multipart/form-data; boundary=x",
+        "content-length": "1048577",
+      },
+      body: "--x--",
+    }), baseConfig({ cookie: "SID=ok", generic_file_upload_max_bytes: 0 }), fakeProvider({
+      async generateRich() {
+        generated = true;
+        return { text: "", images: [] };
+      },
+    }));
+    assert.equal(declaredTooLarge.status, 413);
+    assert.equal((await declaredTooLarge.json()).error.code, "image_input_too_large");
+    assert.equal(generated, false);
+  }],
+  ["supports OpenAI Images url response format without Worker-hosted image URLs", async () => {
+    const resp = await mod.handleImageGenerations({
+      model: "gemini-3.5-flash",
+      prompt: "draw a URL-returned image",
+      response_format: "url",
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        return {
+          text: "",
+          images: [{ url: "https://images.example/generated.png", source: "generated", base64: TINY_PNG_BASE64, outputFormat: "png" }],
+        };
+      },
+    }));
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.deepEqual(body.data, [{ url: "https://images.example/generated.png" }]);
+    assert.equal(String(body.data[0].url).startsWith("/images/"), false);
+  }],
+  ["rejects unsupported OpenAI Images endpoint options before upstream work", async () => {
+    let generated = false;
+    const provider = fakeProvider({
+      async generateRich() {
+        generated = true;
+        return { text: "", images: [] };
+      },
+    });
+
+    const stream = await mod.default.fetch(new Request("https://worker.example/v1/images/generations", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "draw", stream: true }),
+    }), {}, {});
+    assert.equal(stream.status, 400);
+    assert.equal((await stream.json()).error.code, "unsupported_image_generation_stream");
+
+    const count = await mod.handleImageGenerations({ prompt: "draw", n: 2 }, baseConfig(), provider);
+    assert.equal(count.status, 400);
+    assert.equal((await count.json()).error.code, "unsupported_image_count");
+
+    const format = await mod.handleImageGenerations({ prompt: "draw", response_format: "base64" }, baseConfig(), provider);
+    assert.equal(format.status, 400);
+    assert.equal((await format.json()).error.code, "invalid_response_format");
+    assert.equal(generated, false);
+  }],
+  ["rejects OpenAI Images edits without local image inputs", async () => {
+    let generated = false;
+    const remote = await mod.handleImageEdits({
+      model: "gemini-3.5-flash",
+      prompt: "edit it",
+      image_url: "https://cdn.example.com/image.png",
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        generated = true;
+        return { text: "", images: [] };
+      },
+    }));
+    assert.equal(remote.status, 400);
+    assert.equal((await remote.json()).error.code, "image_input_unsupported");
+
+    const missing = await mod.handleImageEdits({
+      model: "gemini-3.5-flash",
+      prompt: "edit it",
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        generated = true;
+        return { text: "", images: [] };
+      },
+    }));
+    assert.equal(missing.status, 400);
+    assert.equal((await missing.json()).error.code, "image_input_unsupported");
+    assert.equal(generated, false);
+  }],
+  ["fails forced OpenAI Images endpoints on text-only or URL-only b64_json output", async () => {
+    const textOnly = await mod.handleImageGenerations({
+      model: "gemini-3.5-flash",
+      prompt: "draw",
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        return { text: "policy text only", images: [] };
+      },
+    }));
+    assert.equal(textOnly.status, 502);
+    assert.equal((await textOnly.json()).error.code, "upstream_image_generation_empty");
+
+    const urlOnly = await mod.handleImageGenerations({
+      model: "gemini-3.5-flash",
+      prompt: "draw",
+    }, baseConfig({ cookie: "SID=ok" }), fakeProvider({
+      async generateRich() {
+        return { text: "", images: [{ url: "https://images.example/generated.png", source: "generated" }] };
+      },
+    }));
+    assert.equal(urlOnly.status, 502);
+    assert.equal((await urlOnly.json()).error.code, "upstream_image_fetch_failed");
+  }],
   ["normalizes Responses input without leaking unknown event payloads", async () => {
     const messages = mod.normalizeResponsesInputAsMessages({
       input: [
@@ -331,7 +1015,7 @@ export const cases = [
     assert.equal(resp.status, 200);
     assert.equal(uploads.length, 2);
     assert.doesNotMatch(prompts[0], /<\|DSML\|tool_calls>/);
-    assert.match(prompts[0], /Context is attached/);
+    assert.match(prompts[0], /Continue from the latest state in the attached `message\.txt` context/);
     assert.match(prompts[0], /tools\.txt/);
     assert.match(prompts[0], /All text above this sentence is system prompt content/);
     assert.doesNotMatch(prompts[0], /Gemini native hidden tool calls/);
