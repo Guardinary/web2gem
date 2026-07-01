@@ -1,7 +1,7 @@
 import type { RuntimeConfig } from "../../config";
 import { joinByteChunks } from "../../attachments/materialize";
 import { sanitizeUploadFilename } from "../../attachments/media";
-import { TEXT_ENCODER } from "../../shared/runtime";
+import { TEXT_ENCODER, bytesToHex } from "../../shared/runtime";
 import { GEMINI_WEB_USER_AGENT } from "../constants";
 import { httpFetch } from "../transport";
 import { contentPushUploadError, validateContentPushFileRef } from "./errors";
@@ -85,5 +85,5 @@ function escapeMultipartFilename(filename: string): string {
 function randomBoundarySuffix(): string {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
-  return (bytes as Uint8Array & { toHex(): string }).toHex();
+  return bytesToHex(bytes);
 }

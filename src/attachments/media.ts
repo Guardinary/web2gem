@@ -331,14 +331,24 @@ export function validateBase64Shape(raw: unknown): string {
 export function base64ToBytes(b64: unknown): Uint8Array {
   const compact = validateBase64Shape(b64);
   const hasBase64UrlAlphabet = /[-_]/.test(compact);
-  return (Uint8Array as Uint8ArrayBase64Constructor).fromBase64(
-    compact,
-    hasBase64UrlAlphabet ? { alphabet: "base64url" } : undefined,
-  );
+  if (typeof (Uint8Array as any).fromBase64 === "function") {
+    return (Uint8Array as any).fromBase64(
+      compact,
+      hasBase64UrlAlphabet ? { alphabet: "base64url" } : undefined,
+    );
+  }
+  let standardB64 = compact;
+  if (hasBase64UrlAlphabet) {
+    standardB64 = compact.replace(/-/g, "+").replace(/_/g, "/");
+  }
+  return Uint8Array.from(Buffer.from(standardB64, "base64"));
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {
-  return (bytes as Uint8ArrayBase64).toBase64();
+  if (typeof (bytes as any).toBase64 === "function") {
+    return (bytes as any).toBase64();
+  }
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
 }
 
 type Uint8ArrayBase64Alphabet = "base64" | "base64url";

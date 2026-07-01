@@ -143,8 +143,13 @@ export function randomBytes(n: number): Uint8Array {
   return arr;
 }
 
-function bytesToHex(bytes: Uint8Array): string {
-  return (bytes as Uint8Array & { toHex(): string }).toHex();
+export function bytesToHex(bytes: Uint8Array): string {
+  if (typeof (bytes as any).toHex === "function") {
+    return (bytes as any).toHex();
+  }
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /** 生成 `n` 个十六进制字符的随机串(n/2 个随机字节)。 */

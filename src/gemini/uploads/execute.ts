@@ -4,7 +4,7 @@ import { createAttachmentPlan } from "../../attachments/plan";
 import { DEFAULT_ATTACHMENT_MAX_BYTES, materializeAttachment, type AttachmentLimits, type MaterializedAttachment } from "../../attachments/materialize";
 import { chooseUploadMime, firstNonEmptyString, genericFilenameFromMime, imageFilenameFromMime, normalizeMimeType } from "../../attachments/media";
 import type { AttachmentCandidate, AttachmentDrop, AttachmentFileRef, AttachmentPlan, AttachmentUploadResult, AttachmentUsage } from "../../attachments/types";
-import { TEXT_ENCODER, UTF8_FATAL_DECODER, errorLogSummary, log, logStage } from "../../shared/runtime";
+import { TEXT_ENCODER, UTF8_FATAL_DECODER, errorLogSummary, log, logStage, bytesToHex } from "../../shared/runtime";
 import { configWithFreshGeminiCookie } from "../cookies";
 import { uploadMultipartFile, type UploadBytesInput } from "./multipart";
 
@@ -328,7 +328,7 @@ async function dedupeKey(materialized: MaterializedAttachment): Promise<string> 
   bytes.set(prefix, 0);
   bytes.set(materialized.bytes, prefix.byteLength);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return (new Uint8Array(digest) as Uint8Array & { toHex(): string }).toHex();
+  return bytesToHex(new Uint8Array(digest));
 }
 
 function dropCodeFromError(candidate: AttachmentCandidate, error: unknown): AttachmentDrop["code"] {
