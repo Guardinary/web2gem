@@ -2,11 +2,13 @@ import http from "node:http";
 import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
+import { createD1HttpBindingFromEnv } from "./d1-http-binding.mjs";
 
 const port = Number(process.env.PORT || 52389);
 const host = process.env.HOST || "0.0.0.0";
 const env = { ...process.env };
 let defaultWorkerPromise = null;
+let defaultResolvedEnv = null;
 
 export function requestHeaders(rawHeaders) {
   const headers = new Headers();
@@ -44,9 +46,16 @@ export function executionContext() {
   };
 }
 
+export function resolveDockerEnv(sourceEnv = process.env, options = {}) {
+  const nextEnv = { ...sourceEnv };
+  const d1Binding = createD1HttpBindingFromEnv(sourceEnv, { fetch: options.fetch });
+  if (d1Binding) nextEnv.GEMINI_DB = d1Binding;
+  return nextEnv;
+}
+
 export async function handleDockerRequest(req, res, options = {}) {
   const workerImpl = options.worker || await defaultWorker();
-  const requestEnv = options.env || env;
+  const requestEnv = options.env || defaultDockerEnv();
   const fallbackPort = Number(options.port || port);
   const method = req.method || "GET";
   const init = {
@@ -77,6 +86,11 @@ export async function handleDockerRequest(req, res, options = {}) {
   await finished(res);
 }
 
+function defaultDockerEnv() {
+  if (!defaultResolvedEnv) defaultResolvedEnv = resolveDockerEnv(env);
+  return defaultResolvedEnv;
+}
+
 async function defaultWorker() {
   if (!defaultWorkerPromise) {
     defaultWorkerPromise = import("../dist/worker.js").then((mod) => mod.default || mod);
@@ -85,8 +99,12 @@ async function defaultWorker() {
 }
 
 export function createDockerServer(options = {}) {
+  const serverOptions = options.env ? options : {
+    ...options,
+    env: resolveDockerEnv(options.processEnv || process.env, { fetch: options.fetch }),
+  };
   return http.createServer((req, res) => {
-    handleDockerRequest(req, res, options).catch((err) => {
+    handleDockerRequest(req, res, serverOptions).catch((err) => {
       console.error("request failed:", err);
       if (!res.headersSent) {
         res.statusCode = 500;
