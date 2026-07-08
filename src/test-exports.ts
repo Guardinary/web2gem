@@ -6,6 +6,18 @@ export { createStreamTextExtractor, stripArtifacts } from "./gemini/client/parse
 export { configWithCachedGeminiBuildLabel, getCachedGeminiBuildLabel, getFreshGeminiBuildLabel, resetGeminiBuildLabelCacheForTest, setCachedGeminiBuildLabel, waitBeforeRetry } from "./gemini/client/retry";
 export { invalidGeminiCookieError, isInvalidGeminiCookieError, unverifiedGeminiCookieError } from "./gemini/client/errors";
 export { configWithActiveGeminiCookie, mergeSetCookieHeaders, parseCookieHeader, resetActiveGeminiCookieForTest, rotateGeminiCookieForRetry, rotateGeminiCookieForRetryWithReason, splitSetCookieHeader } from "./gemini/cookies";
+export { D1GeminiAccountStore } from "./gemini/accounts/store-d1";
+export {
+  accountRowId,
+  changedRows,
+  cleanAccountString,
+  cookiePreview,
+  geminiAccountCategory,
+  hashNullable,
+  normalizeGeminiCookieHeader,
+  sanitizeGeminiAccount,
+  sha256Hex,
+} from "./gemini/accounts/normalize";
 export { extractGeminiAppPageTokens, extractGeminiBuildLabel, extractGeminiPushId } from "./gemini/app-page";
 export {
   filenameFromUrl,
