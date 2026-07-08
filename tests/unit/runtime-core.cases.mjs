@@ -697,6 +697,29 @@ export const cases = [
     });
     assert.deepEqual(declaredLarge.value, {});
 
+    let declaredSmallCanceled = false;
+    let declaredSmallPulls = 0;
+    const declaredSmallActualLarge = await mod.readJsonRequest(new Request("https://worker.example/", {
+      method: "POST",
+      headers: { "Content-Length": "1" },
+      body: new ReadableStream({
+        pull(controller) {
+          declaredSmallPulls += 1;
+          controller.enqueue(new TextEncoder().encode(declaredSmallPulls === 1 ? "{\"a\":\"123\"" : "}"));
+        },
+        cancel() {
+          declaredSmallCanceled = true;
+        },
+      }),
+      duplex: "half",
+    }), {
+      maxBodyBytes: 10,
+    });
+    assert.equal(declaredSmallActualLarge.status, 413);
+    assert.match(declaredSmallActualLarge.error, /11 bytes > 10/);
+    assert.equal(declaredSmallPulls, 2);
+    assert.equal(declaredSmallCanceled, true);
+
     let canceled = false;
     const oversized = await mod.readJsonRequest(new Request("https://worker.example/", {
       method: "POST",
@@ -1093,11 +1116,36 @@ export const cases = [
     );
     assert.equal(state.closed, true);
   }],
+  ["rejects socket stream bodies without length before opening a socket", async () => {
+    let connected = false;
+    await assert.rejects(
+      () => mod.socketHttp(() => {
+        connected = true;
+        return {
+          readable: new ReadableStream(),
+          writable: new WritableStream(),
+          close() {},
+        };
+      }, "https://example.test/missing-length", {
+        method: "POST",
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("x"));
+            controller.close();
+          },
+        }),
+      }),
+      /streaming request body requires a known content length/,
+    );
+    assert.equal(connected, false);
+  }],
   ["falls back from socket transport before upstream response starts", async () => {
     let fetched = false;
+    let fetchBody = "";
     const logs = [];
-    await withConsoleLog((line) => logs.push(String(line)), () => withFetch(async () => {
+    await withConsoleLog((line) => logs.push(String(line)), () => withFetch(async (_url, init = {}) => {
       fetched = true;
+      fetchBody = init.body ? await new Response(init.body).text() : "";
       return new Response("fallback", { status: 202 });
     }, async () => {
       mod._setConnectForTest(() => {
@@ -1136,6 +1184,59 @@ export const cases = [
       assert.equal(fetched, false);
 
       mod._setConnectForTest(() => {
+        const err = new Error("stream body socket secret");
+        err.code = "socket_stream_body";
+        throw err;
+      });
+      const streamFallback = await mod.httpFetch("https://example.test/stream-body-fallback", {
+        method: "POST",
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("x"));
+            controller.close();
+          },
+        }),
+        bodyLength: 1,
+        socket: true,
+        timeoutMs: 100,
+        cfg: { log_requests: true },
+      });
+      assert.equal(fetched, true);
+      assert.equal(streamFallback.status, 202);
+      assert.equal(fetchBody, "x");
+
+      fetched = false;
+      fetchBody = "";
+      let writes = 0;
+      mod._setConnectForTest(() => ({
+        readable: new ReadableStream(),
+        writable: new WritableStream({
+          write() {
+            writes += 1;
+            if (writes === 2) throw new Error("stream body write secret");
+          },
+        }),
+        close() {},
+      }));
+      await assert.rejects(
+        () => mod.httpFetch("https://example.test/no-consumed-stream-body-fallback", {
+          method: "POST",
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("x"));
+              controller.close();
+            },
+          }),
+          bodyLength: 1,
+          socket: true,
+          timeoutMs: 100,
+          cfg: { log_requests: true },
+        }),
+        /stream body write secret/,
+      );
+      assert.equal(fetched, false);
+
+      mod._setConnectForTest(() => {
         const err = new Error("upstream response started secret");
         err.code = "socket_response_started";
         err.upstreamStatus = 502;
@@ -1153,11 +1254,13 @@ export const cases = [
       assert.equal(fetched, false);
       mod._setConnectForTest(null);
     }));
-    assert.equal(logs.length, 3);
+    assert.equal(logs.length, 5);
     assert.match(logs[0], /falling back to fetch: type=Error code=socket_boom/);
     assert.match(logs[1], /fallback disabled for POST: type=Error code=socket_disabled/);
-    assert.match(logs[2], /not falling back after upstream response for POST: type=Error code=socket_response_started upstreamStatus=502/);
-    assert.doesNotMatch(logs.join("\n"), /socket boom secret|socket disabled secret|upstream response started secret/);
+    assert.match(logs[2], /falling back to fetch: type=Error code=socket_stream_body/);
+    assert.match(logs[3], /not falling back with streaming request body for POST: type=Error/);
+    assert.match(logs[4], /not falling back after upstream response for POST: type=Error code=socket_response_started upstreamStatus=502/);
+    assert.doesNotMatch(logs.join("\n"), /socket boom secret|socket disabled secret|stream body socket secret|stream body write secret|upstream response started secret/);
   }],
   ["renders upstream empty response warning without leaking build hints", async () => {
     assert.match(mod.EMPTY_UPSTREAM_MSG, /empty response/);

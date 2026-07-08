@@ -30,9 +30,13 @@ export type CompletionProviderOptions = {
   signal?: AbortSignal;
 };
 
+export type CompletionRichOptions = {
+  hydrateGeneratedImageBytes?: boolean;
+};
+
 export type CompletionProvider = {
   generateText(input: CompletionTextInput): Promise<string>;
-  generateRich?(input: CompletionTextInput): Promise<CompletionRichOutput>;
+  generateRich?(input: CompletionTextInput, options?: CompletionRichOptions): Promise<CompletionRichOutput>;
   streamText(input: CompletionTextInput, options?: CompletionProviderOptions): AsyncIterable<string>;
   resolveAttachments(plan: AttachmentPlan): Promise<AttachmentResolutionResult>;
   uploadTextFile(text: string, filename: string): Promise<FileRef>;

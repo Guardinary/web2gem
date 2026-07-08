@@ -1,5 +1,4 @@
 import type { RuntimeConfig } from "../../config";
-import { joinByteChunks } from "../../attachments/materialize";
 import { sanitizeUploadFilename } from "../../attachments/media";
 import { TEXT_ENCODER, bytesToHex } from "../../shared/runtime";
 import { GEMINI_WEB_USER_AGENT } from "../constants";
@@ -14,6 +13,13 @@ export type UploadBytesInput = {
 };
 
 const MULTIPART_UPLOAD_ENDPOINT = "https://content-push.googleapis.com/upload";
+
+type MultipartFileBody = {
+  body: BodyInit;
+  contentType: string;
+  boundary: string;
+  contentLength: number;
+};
 
 export async function uploadMultipartFile(cfg: RuntimeConfig, input: UploadBytesInput): Promise<string> {
   return uploadMultipartFileWithPushId(cfg, input, await getGeminiPushId(cfg), false);
@@ -34,6 +40,7 @@ async function uploadMultipartFileWithPushId(cfg: RuntimeConfig, input: UploadBy
     method: "POST",
     headers,
     body: multipart.body,
+    bodyLength: multipart.contentLength,
     timeoutMs: 60000,
     socket: cfg.upstream_socket,
     cfg,
@@ -58,7 +65,7 @@ function shouldRefreshPushIdAfterStatus(status: unknown): boolean {
   return code === 401 || code === 403 || code === 415;
 }
 
-export function buildMultipartFileBody(input: UploadBytesInput): { body: Uint8Array; contentType: string; boundary: string } {
+export function buildMultipartFileBody(input: UploadBytesInput): MultipartFileBody {
   const boundary = `----web2gem-${randomBoundarySuffix()}`;
   const filename = escapeMultipartFilename(input.filename || "upload.bin");
   const mime = String(input.mime || "application/octet-stream").replace(/[\r\n]/g, "").trim() || "application/octet-stream";
@@ -70,11 +77,43 @@ export function buildMultipartFileBody(input: UploadBytesInput): { body: Uint8Ar
     "",
   ].join("\r\n"));
   const tail = TEXT_ENCODER.encode(`\r\n--${boundary}--\r\n`);
+  const contentLength = head.byteLength + input.bytes.byteLength + tail.byteLength;
   return {
-    body: joinByteChunks([head, input.bytes, tail], head.byteLength + input.bytes.byteLength + tail.byteLength),
+    body: multipartByteStream([head, input.bytes, tail], contentLength),
     contentType: `multipart/form-data; boundary=${boundary}`,
     boundary,
+    contentLength,
   };
+}
+
+function multipartByteStream(chunks: readonly Uint8Array[], contentLength: number): BodyInit {
+  if (typeof FixedLengthStream === "function") {
+    const stream = new FixedLengthStream(contentLength);
+    void writeMultipartChunks(stream.writable, chunks);
+    return stream.readable;
+  }
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        if (chunk.byteLength) controller.enqueue(chunk);
+      }
+      controller.close();
+    },
+  });
+}
+
+async function writeMultipartChunks(writable: WritableStream<Uint8Array>, chunks: readonly Uint8Array[]): Promise<void> {
+  const writer = writable.getWriter();
+  try {
+    for (const chunk of chunks) {
+      if (chunk.byteLength) await writer.write(chunk);
+    }
+    await writer.close();
+  } catch (e) {
+    try { await writer.abort(e); } catch (_) {}
+  } finally {
+    try { writer.releaseLock(); } catch (_) {}
+  }
 }
 
 function escapeMultipartFilename(filename: string): string {

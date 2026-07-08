@@ -197,7 +197,9 @@ async function handlePreparedForcedImageEndpoint(
   const generationStart = logRequests ? nowMs() : 0;
   let rich: CompletionRichOutput;
   try {
-    rich = await provider.generateRich({ prompt, rm, fileRefs });
+    rich = await provider.generateRich({ prompt, rm, fileRefs }, {
+      hydrateGeneratedImageBytes: responseFormat === "b64_json",
+    });
   } catch (e) {
     if (logRequests) logStage(cfg, `${stagePrefix}_generate`, { ms: elapsedMs(generationStart), status: "error", model: rm.name });
     log(cfg, `${stagePrefix} generate failed model=${rm.name} code=${upstreamErrorCode(e) || "upstream_error"} error=${errorLogSummary(e)}`);

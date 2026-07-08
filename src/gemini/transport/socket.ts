@@ -6,6 +6,7 @@ import { parseSocketHeaderBlock, readSocketHeaderBlock } from "./http-parse";
 import { closeIdleSocketPool, putIdleSocket, socketPoolKey, takeIdleSocket } from "./pool";
 import { closeSocketQuietly, createSocketTimeoutScope } from "./timeout";
 import type { ByteChunk, SocketConnect, SocketHttpOptions, SocketHttpResponse } from "./socket-types";
+import type { ErrorWithMetadata } from "../../shared/types";
 
 export type { ByteChunk, ByteQueue, SocketConnect, SocketHttpOptions, SocketHttpResponse, SocketPool } from "./socket-types";
 export { _joinByteChunks, bytesFromBody, createByteQueue } from "./byte-queue";
@@ -43,10 +44,14 @@ export async function resolveConnect(): Promise<SocketConnect | null> {
 export async function socketHttp(
   connect: SocketConnect,
   url: string | URL,
-  { method = "GET", headers = {}, body, timeoutMs = 180000, signal, keepAlive = false, pool = null, acceptCompressed = false }: SocketHttpOptions = {},
+  { method = "GET", headers = {}, body, bodyLength = null, timeoutMs = 180000, signal, keepAlive = false, pool = null, acceptCompressed = false }: SocketHttpOptions = {},
 ): Promise<SocketHttpResponse> {
   throwIfAborted(signal);
   const u = new URL(url);
+  const bodyStream = readableByteStreamFromBody(body);
+  const bodyBytes = bodyStream ? null : bytesFromBody(body);
+  const declaredBodyLength = safeBodyLength(bodyLength);
+  if (bodyStream && declaredBodyLength == null) throw socketStreamBodyLengthError();
   const secure = u.protocol !== "http:";
   const port = u.port ? Number(u.port) : (secure ? 443 : 80);
   const poolKey = socketPoolKey(u, secure, port);
@@ -58,13 +63,13 @@ export async function socketHttp(
   if (signal) signal.addEventListener("abort", onAbort, { once: true });
   const timeout = createSocketTimeoutScope(timeoutMs, socket, signal);
 
-  const bodyBytes = bytesFromBody(body);
   const reqHeaders: Record<string, string> = { Host: u.host, "Accept-Encoding": socketAcceptEncoding(acceptCompressed), Connection: useKeepAlive ? "keep-alive" : "close" };
   for (const [k, v] of Object.entries(headers)) {
     if (/^(host|connection|accept-encoding|content-length)$/i.test(k)) continue;
     reqHeaders[k] = String(v);
   }
   if (bodyBytes) reqHeaders["Content-Length"] = String(bodyBytes.length);
+  else if (bodyStream) reqHeaders["Content-Length"] = String(declaredBodyLength);
   const headParts = [`${method} ${u.pathname}${u.search} HTTP/1.1`];
   for (const [k, v] of Object.entries(reqHeaders)) headParts.push(`${k}: ${v}`);
   const head = `${headParts.join("\r\n")}\r\n\r\n`;
@@ -73,6 +78,13 @@ export async function socketHttp(
   try {
     await timeout.wait(writer.write(TEXT_ENCODER.encode(head)), "request headers write");
     if (bodyBytes) await timeout.wait(writer.write(bodyBytes), "request body write");
+    else if (bodyStream) {
+      try {
+        await writeRequestBodyStream(writer, bodyStream, timeout);
+      } catch (e) {
+        throw markRequestBodyStarted(e);
+      }
+    }
   } catch (e) {
     timeout.clear();
     if (signal) signal.removeEventListener("abort", onAbort);
@@ -162,4 +174,49 @@ export async function socketHttp(
       return chunks.join("");
     },
   };
+}
+
+function readableByteStreamFromBody(body: unknown): ReadableStream<Uint8Array> | null {
+  if (body instanceof ReadableStream) return body as ReadableStream<Uint8Array>;
+  return null;
+}
+
+function safeBodyLength(value: unknown): number | null {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+function socketStreamBodyLengthError(): ErrorWithMetadata {
+  const err: ErrorWithMetadata = new Error("socket: streaming request body requires a known content length");
+  err.code = "socket_stream_body_length_required";
+  return err;
+}
+
+function markRequestBodyStarted(error: unknown): unknown {
+  if (error && typeof error === "object") {
+    (error as ErrorWithMetadata & { requestBodyStarted?: true }).requestBodyStarted = true;
+    return error;
+  }
+  const err: ErrorWithMetadata & { requestBodyStarted?: true } = new Error(String(error));
+  err.requestBodyStarted = true;
+  return err;
+}
+
+async function writeRequestBodyStream(
+  writer: WritableStreamDefaultWriter<ByteChunk>,
+  stream: ReadableStream<Uint8Array>,
+  timeout: ReturnType<typeof createSocketTimeoutScope>,
+): Promise<void> {
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await timeout.wait(reader.read(), "request body read");
+      if (done) break;
+      if (!value || !value.byteLength) continue;
+      await timeout.wait(writer.write(value), "request body write");
+    }
+  } finally {
+    try { reader.releaseLock(); } catch (_) {}
+  }
 }

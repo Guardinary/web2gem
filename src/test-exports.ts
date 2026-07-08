@@ -62,6 +62,7 @@ export { collectOpenAIInlineUploadImages, collectOpenAIRequestAttachmentPlan } f
 export { createAttachmentPlan } from "./attachments/plan";
 export { attachmentDrop, droppedAttachmentNote } from "./attachments/notes";
 export { getCachedGeminiPushId, getGeminiPushId, getPageTokens, refreshGeminiPushId, resetGeminiUploadCachesForTest, setCachedGeminiPushId } from "./gemini/uploads/tokens";
+export { buildMultipartFileBody } from "./gemini/uploads/multipart";
 export { resolveFiles, resolveImages, uploadImage, uploadTextFile } from "./gemini/uploads/execute";
 export {
   contextFilePromptByteCheck,

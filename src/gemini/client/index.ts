@@ -36,6 +36,10 @@ type GeminiStreamOptions = {
   signal?: AbortSignal;
 };
 
+type GeminiRichOptions = {
+  hydrateGeneratedImageBytes?: boolean;
+};
+
 export type GeminiRichImage = GeminiParsedImage & {
   base64?: string;
   outputFormat?: "png" | "jpeg" | "gif" | "webp";
@@ -155,6 +159,7 @@ export async function generateRich(
   extra: Record<number, unknown> | null,
   fileRefs: GeminiFileRef[] | null | undefined,
   modelHeaders: Record<string, string> | null = null,
+  options: GeminiRichOptions = {},
 ): Promise<GeminiRichOutput> {
   let lastErr: unknown;
   let activeCfg = await configWithCachedGeminiBuildLabel(await configWithFreshGeminiCookie(cfg));
@@ -187,7 +192,9 @@ export async function generateRich(
         }
         throw upstreamImageGenerationEmptyError(resp.status, raw.length, "non-stream");
       }
-      const images = await hydrateGeneratedImages(cfg, activeCfg, parts.images);
+      const images = options.hydrateGeneratedImageBytes === false
+        ? parts.images
+        : await hydrateGeneratedImages(cfg, activeCfg, parts.images);
       return { text: parts.text, images };
     } catch (e) {
       if (isInvalidGeminiCookieError(e) && !refreshedCookie) {

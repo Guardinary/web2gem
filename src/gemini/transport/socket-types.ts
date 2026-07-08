@@ -25,6 +25,7 @@ export type SocketHttpOptions = {
   method?: string;
   headers?: Record<string, string>;
   body?: unknown;
+  bodyLength?: number | null | undefined;
   timeoutMs?: number;
   signal?: AbortSignal | null | undefined;
   keepAlive?: boolean;

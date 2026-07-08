@@ -69,7 +69,7 @@ export const cases = [
         return new Response('{"qKIAYe":"push-direct"}', { status: 200 });
       }
       if (href === "https://content-push.googleapis.com/upload") {
-        assertPreferredMultipart(init, { filename: "image.jpg", mime: "image/jpeg" });
+        await assertPreferredMultipart(init, { filename: "image.jpg", mime: "image/jpeg" });
         return new Response("/uploaded/direct-image-ref", { status: 200 });
       }
       throw new Error(`unexpected fetch ${href}`);
@@ -178,7 +178,7 @@ export const cases = [
         const href = String(url);
         requests.push(href);
         if (href === "https://content-push.googleapis.com/upload") {
-          assertPreferredMultipart(init, { filename: "message.txt", mime: "text/plain; charset=utf-8", bodyText: "hello" });
+          await assertPreferredMultipart(init, { filename: "message.txt", mime: "text/plain; charset=utf-8", bodyText: "hello" });
           assert.equal(init.headers["Push-ID"], "push-upload-cache");
           return new Response("/uploaded/cached-text-ref", { status: 200 });
         }
@@ -204,7 +204,7 @@ export const cases = [
         requests.push(href);
         if (href === "https://content-push.googleapis.com/upload") {
           pushIds.push(init.headers["Push-ID"]);
-          assertPreferredMultipart(init, { filename: "message.txt", mime: "text/plain; charset=utf-8", bodyText: "hello" });
+          await assertPreferredMultipart(init, { filename: "message.txt", mime: "text/plain; charset=utf-8", bodyText: "hello" });
           return pushIds.length === 1
             ? new Response("stale token", { status: 415 })
             : new Response("/uploaded/refreshed-text-ref", { status: 200 });
@@ -302,7 +302,7 @@ export const cases = [
       if (href === "https://gemini.example/app") return new Response('{"qKIAYe":"push-dedupe"}', { status: 200 });
       if (href === "https://content-push.googleapis.com/upload") {
         uploadCalls += 1;
-        assertPreferredMultipart(init, { filename: "same.txt", mime: "text/plain", bodyText: "hello" });
+        await assertPreferredMultipart(init, { filename: "same.txt", mime: "text/plain", bodyText: "hello" });
         return new Response("/uploaded/same", { status: 200 });
       }
       throw new Error(`unexpected fetch ${href}`);
@@ -389,7 +389,7 @@ export const cases = [
       const href = String(url);
       if (href === "https://gemini.example/app") return new Response('{"qKIAYe":"push-file"}', { status: 200 });
       if (href === "https://content-push.googleapis.com/upload") {
-        assertPreferredMultipart(init, { filename: "main.py", mime: "text/x-python", bodyText: "print(1)\n" });
+        await assertPreferredMultipart(init, { filename: "main.py", mime: "text/x-python", bodyText: "print(1)\n" });
         return new Response("/uploaded/code-ref", { status: 200 });
       }
       throw new Error(`unexpected fetch ${href}`);
@@ -407,7 +407,7 @@ export const cases = [
       const href = String(url);
       if (href === "https://gemini.example/app") return new Response('{"qKIAYe":"push-sniff"}', { status: 200 });
       if (href === "https://content-push.googleapis.com/upload") {
-        assertPreferredMultipart(init, { filename: "file-1.pdf", mime: "application/pdf", bodyText: "%PDF-1.4\n" });
+        await assertPreferredMultipart(init, { filename: "file-1.pdf", mime: "application/pdf", bodyText: "%PDF-1.4\n" });
         return new Response("/uploaded/pdf-ref", { status: 200 });
       }
       throw new Error(`unexpected fetch ${href}`);
@@ -501,7 +501,7 @@ export const cases = [
       const href = String(url);
       if (href === "https://gemini.example/app") return new Response('{"qKIAYe":"push-text"}', { status: 200 });
       if (href === "https://content-push.googleapis.com/upload") {
-        assertPreferredMultipart(init, { filename: "message.txt", mime: "text/plain; charset=utf-8", bodyText: "hello" });
+        await assertPreferredMultipart(init, { filename: "message.txt", mime: "text/plain; charset=utf-8", bodyText: "hello" });
         return new Response("/uploaded/text-ref", { status: 200 });
       }
       throw new Error(`unexpected fetch ${href}`);
@@ -598,7 +598,7 @@ export const cases = [
       const href = String(url);
       if (href === "https://gemini.example/app") return new Response('{"qKIAYe":"push-log"}', { status: 200 });
       if (href === "https://content-push.googleapis.com/upload") {
-        assertPreferredMultipart(init, { filename: "same.txt", mime: "text/plain", bodyText: "hello" });
+        await assertPreferredMultipart(init, { filename: "same.txt", mime: "text/plain", bodyText: "hello" });
         return new Response("/uploaded/log-ref", { status: 200 });
       }
       throw new Error(`unexpected fetch ${href}`);
@@ -626,7 +626,7 @@ export const cases = [
       const href = String(url);
       if (href === "https://gemini.example/app") return new Response('{"qKIAYe":"push-log-fallback"}', { status: 200 });
       if (href === "https://content-push.googleapis.com/upload") {
-        assertPreferredMultipart(init, { filename: "fallback.txt", mime: "text/plain", bodyText: "hello" });
+        await assertPreferredMultipart(init, { filename: "fallback.txt", mime: "text/plain", bodyText: "hello" });
         return new Response("unsupported media type", { status: 415 });
       }
       throw new Error(`unexpected fetch ${href}`);
@@ -676,16 +676,23 @@ function baseUploadCfg(overrides = {}) {
   };
 }
 
-function assertPreferredMultipart(init, expected) {
+async function assertPreferredMultipart(init, expected) {
   assert.equal(init.method, "POST");
   assert.equal(init.headers["X-Tenant-Id"], "bard-storage");
   assert.equal(init.headers.Cookie, undefined);
   assert.equal(init.headers.Authorization, undefined);
   assert.match(init.headers["Content-Type"], /^multipart\/form-data; boundary=/);
-  const text = new TextDecoder().decode(init.body);
+  const text = new TextDecoder().decode(await bodyBytes(init.body));
   assert.match(text, new RegExp(`name="file"; filename="${escapeRegExp(expected.filename)}"`));
   assert.match(text, new RegExp(`Content-Type: ${escapeRegExp(expected.mime)}`));
   if (expected.bodyText !== undefined) assert.match(text, new RegExp(escapeRegExp(expected.bodyText)));
+}
+
+async function bodyBytes(body) {
+  if (body instanceof Uint8Array) return body;
+  if (body instanceof ArrayBuffer) return new Uint8Array(body);
+  if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  return new Response(body).bytes();
 }
 
 function escapeRegExp(value) {

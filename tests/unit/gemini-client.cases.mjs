@@ -1548,7 +1548,7 @@ export const cases = [
         assert.equal(init.headers.Cookie, undefined);
         assert.equal(init.headers.Authorization, undefined);
         assert.match(init.headers["Content-Type"], /^multipart\/form-data; boundary=/);
-        assert.match(new TextDecoder().decode(init.body), /name="file"; filename="context\.txt"/);
+        assert.match(new TextDecoder().decode(await bodyBytes(init.body)), /name="file"; filename="context\.txt"/);
         return new Response("/uploaded/context-file", { status: 200 });
       }
       throw new Error(`unexpected upload URL: ${url}`);
@@ -1562,3 +1562,10 @@ export const cases = [
     ]);
   }],
 ];
+
+async function bodyBytes(body) {
+  if (body instanceof Uint8Array) return body;
+  if (body instanceof ArrayBuffer) return new Uint8Array(body);
+  if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  return new Response(body).bytes();
+}

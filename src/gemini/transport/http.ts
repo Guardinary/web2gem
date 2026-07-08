@@ -8,6 +8,7 @@ type HttpFetchOptions = {
   method?: string;
   headers?: Record<string, string>;
   body?: HttpBodyInit | null | undefined;
+  bodyLength?: number | null | undefined;
   timeoutMs?: number;
   socket?: boolean;
   socketFallback?: "pre-response" | "never";
@@ -19,7 +20,7 @@ type HttpFetchOptions = {
 // 统一上游入口:socket 优先,失败/不可用则回退 fetch。返回类 Response 对象。
 export async function httpFetch(
   url: string,
-  { method = "GET", headers = {}, body, timeoutMs = 180000, socket = true, socketFallback = "pre-response", signal, cfg, acceptCompressed }: HttpFetchOptions = {},
+  { method = "GET", headers = {}, body, bodyLength = null, timeoutMs = 180000, socket = true, socketFallback = "pre-response", signal, cfg, acceptCompressed }: HttpFetchOptions = {},
 ): Promise<Response | SocketHttpResponse> {
   throwIfAborted(signal);
   if (socket) {
@@ -30,6 +31,7 @@ export async function httpFetch(
           method,
           headers,
           body,
+          bodyLength,
           timeoutMs,
           signal,
           keepAlive: true,
@@ -41,6 +43,10 @@ export async function httpFetch(
         if (isAbortError(e) || (signal && signal.aborted)) throw abortError(signal);
         if (socketFallback === "never") {
           log(cfg, `socket upstream failed; fallback disabled for ${method}: ${errorLogSummary(e)}`);
+          throw e;
+        }
+        if (body instanceof ReadableStream && socketErrorConsumedRequestBody(e)) {
+          log(cfg, `socket upstream failed; not falling back with streaming request body for ${method}: ${errorLogSummary(e)}`);
           throw e;
         }
         if (!canFallbackAfterSocketError(method, e)) {
@@ -55,11 +61,17 @@ export async function httpFetch(
   try {
     const init: RequestInit = { method, headers };
     if (body !== undefined) init.body = body as BodyInit;
+    if (body instanceof ReadableStream) (init as RequestInit & { duplex?: "half" }).duplex = "half";
     if (linked.signal) init.signal = linked.signal;
     return await fetch(url, init);
   } finally {
     linked.cleanup();
   }
+}
+
+function socketErrorConsumedRequestBody(error: unknown): boolean {
+  const err = error as { requestBodyStarted?: unknown; code?: unknown } | null | undefined;
+  return !!err && (err.requestBodyStarted === true || err.code === "socket_stream_body_length_required");
 }
 
 function linkedFetchSignal(

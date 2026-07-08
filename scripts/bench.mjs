@@ -11,6 +11,7 @@ const SOCKET_BODY_BYTES = positiveInt(process.env.BENCH_SOCKET_BODY_BYTES, 64 * 
 const SOCKET_CHUNK_BYTES = positiveInt(process.env.BENCH_SOCKET_CHUNK_BYTES, 1024);
 const UNIQUE_ITEMS_COUNT = positiveInt(process.env.BENCH_UNIQUE_ITEMS_COUNT, 240);
 const BASE64_BYTES = positiveInt(process.env.BENCH_BASE64_BYTES, 64 * 1024);
+const MULTIPART_BYTES = positiveInt(process.env.BENCH_MULTIPART_BYTES, 8 * 1024 * 1024);
 const APP_HTML_BYTES = positiveInt(process.env.BENCH_APP_HTML_BYTES, 512 * 1024);
 const APP_HTML_CHUNK_BYTES = positiveInt(process.env.BENCH_APP_HTML_CHUNK_BYTES, 4096);
 const STRUCTURED_JSON_NOISE_BYTES = positiveInt(process.env.BENCH_STRUCTURED_JSON_NOISE_BYTES, 16 * 1024);
@@ -84,6 +85,7 @@ const structuredPatternRequirement = {
   },
 };
 const base64Input = bytesToBase64(makeBytes(BASE64_BYTES));
+const multipartBytes = makeBytes(MULTIPART_BYTES);
 const appPageTokensHtml = makeAppHtml(APP_HTML_BYTES, '{"qKIAYe":"push-bench","SNlM0e":"at-bench"}');
 const appBuildLabelHtml = makeAppHtml(APP_HTML_BYTES, '<script>{"cfb2h":"bench-bl"}</script>');
 const structuredJsonNoise = "{".repeat(STRUCTURED_JSON_NOISE_BYTES);
@@ -155,6 +157,7 @@ const cases = [
   { name: "structured_unique_items", fn: () => runUniqueItemsValidation(), iterations: Math.min(ITERATIONS, 200), warmup: Math.min(WARMUP, 50) },
   { name: "structured_pattern_schema", fn: () => runStructuredPatternValidation(), iterations: Math.min(ITERATIONS, 1000), warmup: Math.min(WARMUP, 200) },
   { name: "base64_decode_large", fn: () => runBase64Decode(), iterations: Math.min(ITERATIONS, 1000), warmup: Math.min(WARMUP, 200) },
+  { name: "multipart_body_large", fn: () => runMultipartBodyLarge(), iterations: Math.min(ITERATIONS, 1000), warmup: Math.min(WARMUP, 200) },
   { name: "app_page_tokens_large", fn: () => runAppPageTokensLarge(), iterations: Math.min(ITERATIONS, 200), warmup: Math.min(WARMUP, 50) },
   { name: "app_build_label_large", fn: () => runAppBuildLabelLarge(), iterations: Math.min(ITERATIONS, 200), warmup: Math.min(WARMUP, 50) },
   { name: "structured_json_unclosed", fn: () => runStructuredJsonUnclosed(), iterations: Math.min(ITERATIONS, 100), warmup: Math.min(WARMUP, 20) },
@@ -585,6 +588,19 @@ function runBase64Decode() {
   return {
     __benchDetails: {
       bytes: bytes.length,
+    },
+  };
+}
+
+function runMultipartBodyLarge() {
+  const multipart = mod.buildMultipartFileBody({
+    bytes: multipartBytes,
+    mime: "application/octet-stream",
+    filename: "large.bin",
+  });
+  return {
+    __benchDetails: {
+      bytes: multipart.contentLength,
     },
   };
 }

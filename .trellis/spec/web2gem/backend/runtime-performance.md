@@ -8,8 +8,8 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 
 ### 2. Signatures
 
-- `httpFetch(url, { method, headers, body, timeoutMs, socket, signal, cfg, acceptCompressed })` is the unified upstream entrypoint.
-- `socketHttp(connect, url, { method, headers, body, timeoutMs, signal, keepAlive, pool, acceptCompressed })` owns HTTP/1.1 over `cloudflare:sockets`.
+- `httpFetch(url, { method, headers, body, bodyLength, timeoutMs, socket, signal, cfg, acceptCompressed })` is the unified upstream entrypoint.
+- `socketHttp(connect, url, { method, headers, body, bodyLength, timeoutMs, signal, keepAlive, pool, acceptCompressed })` owns HTTP/1.1 over `cloudflare:sockets`.
 - `createSocketPool()`, `getDefaultSocketPool()`, and `closeIdleSocketPool(pool?)` own reusable idle sockets.
 - `parseHttpChunkSizeLine(line: Uint8Array)` returns a safe integer chunk size or `-1`.
 
@@ -20,6 +20,8 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 - Errors with upstream response metadata, such as `upstreamStatus`, must not fall back because the request may already have reached Gemini.
 - `httpFetch` defaults socket `acceptCompressed` to `true` for `GET` and `false` for other methods unless explicitly provided.
 - `socketHttp` sends `Accept-Encoding: gzip` only when `acceptCompressed` is true and `DecompressionStream("gzip")` is supported. Otherwise it sends `identity`.
+- Streaming request bodies must provide a safe integer `bodyLength`. Socket transport uses it for `Content-Length` and writes chunks sequentially; fetch transport may use fixed-length Worker streams.
+- Socket fallback with a streaming request body is allowed only before socket transport starts reading the body stream. Once the body stream has been read or written, do not retry through `fetch` because the body is no longer safely replayable.
 - When a supported gzip response is decoded, remove `content-encoding` and `content-length` from the response headers exposed to callers.
 - Unsupported or unsolicited compressed responses must remain raw bytes; do not construct unsupported decompression streams.
 - Chunked response parsing must accept valid chunk extensions such as `5;foo=bar`, reject invalid hex, reject unsafe integer sizes, and tolerate split chunk-size lines across socket reads.
