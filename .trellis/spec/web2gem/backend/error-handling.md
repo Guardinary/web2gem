@@ -176,6 +176,72 @@ try {
 
 `src/index.ts` catches unhandled route errors, logs through `log(cfg, ...)`, and returns a JSON 500 response. Keep this as the final fallback, not the primary validation mechanism.
 
+## Scenario: D1 Account Storage And Docker Adapter Redaction
+
+### 1. Scope / Trigger
+
+Use this contract when adding D1-backed storage, Docker-side D1 HTTP bindings, account storage DTOs, or any adapter that can see SQL bind values, Gemini cookies, session tokens, or Cloudflare API tokens.
+
+### 2. Signatures
+
+- Worker storage uses a minimal D1-compatible shape: `db.prepare(sql).bind(...values).first/all/run()`.
+- Docker D1 HTTP config is all-or-none: `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN`.
+- Account list/public DTOs may expose `row_id`, hashes, category/status, and boolean presence flags, but not raw `cookie_header`, `SAPISID`, `session_token`, `SNlM0e`, or `at`.
+
+### 3. Contracts
+
+- Partial Docker D1 HTTP configuration must fail startup/config resolution before serving requests.
+- Adapter errors may include safe status/code metadata, but must not include SQL text-derived bind values, raw cookie fragments, session-token fragments, or `D1_API_TOKEN`.
+- Wrap underlying `fetch` failures from D1 HTTP adapters and replace arbitrary thrown messages with a safe adapter error; do not bubble a lower-level error string that might include request bodies or headers.
+- Cookie previews in sanitized account objects must not contain raw cookie prefixes or suffixes. Prefer presence flags, row IDs, hashes, or short non-replayable diagnostics.
+- D1 account state should be stored in structured rows, not JSON blob rewrites or delete-and-reinsert-all collection saves.
+
+### 4. Validation & Error Matrix
+
+- `D1_ACCOUNT_ID` and `D1_API_TOKEN` present but `D1_DATABASE_ID` missing -> throw a safe partial-config error listing missing variable names only.
+- D1 HTTP response status is non-2xx -> throw `D1 HTTP query failed status=<status>` without SQL params or tokens.
+- D1 HTTP API payload reports an error -> throw a safe code-only message such as `D1 HTTP query failed code=<code>`.
+- D1 HTTP `fetch` throws before a response -> throw a generic pre-response D1 adapter error, not the original thrown message.
+- Sanitized account list response contains raw cookie/session fields or raw cookie preview fragments -> test failure.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `createD1HttpBinding(...).prepare(sql).bind(secret).all()` sends bind values to Cloudflare, but any thrown error message omits `secret`.
+- Good: `sanitizeGeminiAccount(row)` returns `has_cookie`, `has_sapisid`, `has_session_token`, hashes, and `cookie_preview: "present"` rather than raw cookie material.
+- Base: Docker leaves `GEMINI_DB` absent when all three D1 HTTP env vars are blank, preserving the existing single-cookie runtime path.
+- Bad: returning `token.slice(0, 8) + "..."` for Gemini cookies in admin/public account lists.
+- Bad: `catch (err) { throw err; }` around D1 HTTP calls, because custom fetch implementations or runtime errors can include request bodies.
+
+### 6. Tests Required
+
+- Unit test complete Docker D1 HTTP config injects a D1-compatible `GEMINI_DB` binding.
+- Unit test partial D1 HTTP config throws without exposing provided secret values.
+- Unit test D1 HTTP `first`, `all`, and `run` normalize Cloudflare query responses into the Worker D1-like shape.
+- Unit test adapter status/API/fetch errors do not include SQL params, cookie fragments, session-token fragments, or D1 API token fragments.
+- Unit test sanitized account pages omit raw secret fields and raw cookie/session fragments.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+try {
+  return await fetch(endpoint, { body: JSON.stringify({ sql, params }) });
+} catch (err) {
+  throw err;
+}
+```
+
+#### Correct
+
+```javascript
+try {
+  return await fetch(endpoint, { body: JSON.stringify({ sql, params }) });
+} catch (_) {
+  throw new D1HttpBindingError("D1 HTTP query failed before response", { code: "d1_http_fetch_error" });
+}
+```
+
 ## Scenario: Oversized Inline Long Context
 
 ### 1. Scope / Trigger

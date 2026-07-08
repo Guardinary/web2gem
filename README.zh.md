@@ -237,6 +237,9 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 | `API_KEYS`                      | empty                       | 逗号分隔或 JSON 数组形式的 API keys。为空时关闭认证。                                                                                                                              |
 | `GEMINI_COOKIE`                 | empty                       | 原始 Gemini cookie 字符串；或包含 `cookie` 和可选 `sapisid` 的 JSON；或包含 `secure_1psid`、`secure_1psidts` 和可选 `sapisid` 的 JSON。真实 Pro 路由、大上下文文本附件和已登录 Gemini Web 行为需要它。 |
 | `SAPISID`                       | empty                       | 可选 SAPISID 覆盖值。为空时会尽量从 `GEMINI_COOKIE` 提取。                                                                                                                         |
+| `D1_ACCOUNT_ID`                 | empty                       | 仅 Docker 使用的 Cloudflare account ID，用于 D1 HTTP binding。需与 `D1_DATABASE_ID`、`D1_API_TOKEN` 同时设置；只设置一部分会导致启动失败。                                             |
+| `D1_DATABASE_ID`                | empty                       | 仅 Docker 使用的 Cloudflare D1 database ID，用于注入 `GEMINI_DB` binding。                                                                                                          |
+| `D1_API_TOKEN`                  | empty                       | 仅 Docker 使用的 Cloudflare API token，需要具备查询该 D1 数据库的权限。Adapter 错误会脱敏该 token 和 SQL bind values。                                                              |
 | `GEMINI_BL`                     | bundled value               | 上游请求使用的 Gemini Web build label。如果 Gemini Web 变化导致上游响应为空，需要更新它。                                                                                          |
 | `GEMINI_ORIGIN`                 | `https://gemini.google.com` | 上游源站。可指向你自己的转发服务或代理地址，并保留预期请求语义。                                                                                                                   |
 | `UPSTREAM_SOCKET`               | `true`                      | 可用时优先使用 `cloudflare:sockets` 作为上游传输。                                                                                                                                 |
@@ -262,6 +265,14 @@ wrangler secret put GEMINI_COOKIE
 ```
 
 当 `GEMINI_COOKIE` 包含 `__Secure-1PSID` 时，Worker 会为当前 isolate 保留一份内存中的活跃 cookie，并在 cookie 过期或认证上游请求失败时懒调用 Google 的 `RotateCookies` 端点。刷新后的 cookie 只保存在内存中；Worker 不会为它们使用数据库，也不会写回 Worker secrets。冷启动会重新从 `GEMINI_COOKIE` 初始化。
+
+### D1 账号存储
+
+当前版本已经包含未来 Gemini 账号池所需的 D1 存储基础。实时 Gemini 请求路径仍保持现有单 cookie 行为，直到后续账号 runtime/admin 任务接入。
+
+Worker 部署时，创建 D1 数据库，执行 [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql)，并在 `wrangler.jsonc` 或 Cloudflare 控制台配置中把它绑定为 `GEMINI_DB`。该 schema 会创建结构化的 `gemini_accounts`、`gemini_pool_meta` 和 `gemini_account_locks` 表，不会把账号状态作为单个 JSON blob 存储。
+
+Docker 部署时，在 `.env` 中同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`。三者都存在时，`scripts/docker-server.mjs` 会注入一个基于 Cloudflare D1 HTTP API 的 D1 兼容 `GEMINI_DB` binding。只设置一部分时，启动会以配置错误失败。
 
 对于单 cookie 部署，建议使用尽量短的 cookie 形式：`__Secure-1PSID`、`__Secure-1PSIDTS` 和可选 `SAPISID`。用新的无痕浏览器 Gemini 登录，提取这些值后关闭浏览器，通常比复制日常浏览器的完整 cookie header 更稳定。如果冷启动回退到过期的 `__Secure-1PSIDTS`，第一次认证请求会尝试刷新它。如果 Google 拒绝刷新或没有返回更新后的 cookie，需要手动更新 `GEMINI_COOKIE` secret。
 

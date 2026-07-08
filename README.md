@@ -237,6 +237,9 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 | `API_KEYS`                      | empty                       | Comma-separated or JSON-array API keys. Empty disables auth.                                                                                                                                                     |
 | `GEMINI_COOKIE`                 | empty                       | Raw Gemini cookie string; JSON with `cookie` and optional `sapisid`; or JSON with `secure_1psid`, `secure_1psidts`, and optional `sapisid`. Needed for real Pro routing, large-context text attachments, and signed-in Gemini Web behavior. |
 | `SAPISID`                       | empty                       | Optional SAPISID override. If empty, it is extracted from `GEMINI_COOKIE` when possible.                                                                                                                         |
+| `D1_ACCOUNT_ID`                 | empty                       | Docker-only Cloudflare account ID for the D1 HTTP binding. Set together with `D1_DATABASE_ID` and `D1_API_TOKEN`; partial D1 HTTP config fails startup.                                                          |
+| `D1_DATABASE_ID`                | empty                       | Docker-only Cloudflare D1 database ID for the injected `GEMINI_DB` binding.                                                                                                                                      |
+| `D1_API_TOKEN`                  | empty                       | Docker-only Cloudflare API token allowed to query the D1 database. Adapter errors redact this token and SQL bind values.                                                                                         |
 | `GEMINI_BL`                     | bundled value               | Gemini Web build label used by upstream requests. Update if Gemini Web changes and upstream responses become empty.                                                                                              |
 | `GEMINI_ORIGIN`                 | `https://gemini.google.com` | Upstream origin. Can point to your own forwarding service or proxy endpoint while preserving expected request semantics.                                                                                         |
 | `UPSTREAM_SOCKET`               | `true`                      | Prefer `cloudflare:sockets` upstream transport when available.                                                                                                                                                   |
@@ -262,6 +265,14 @@ wrangler secret put GEMINI_COOKIE
 ```
 
 When `GEMINI_COOKIE` contains `__Secure-1PSID`, the Worker keeps an in-memory active cookie for the current isolate and lazily calls Google's `RotateCookies` endpoint when the cookie is stale or an authenticated upstream request fails. Refreshed cookies are kept in memory only; the Worker does not use a database for them or write them back to Worker secrets. A cold start initializes again from `GEMINI_COOKIE`.
+
+### D1 account storage
+
+This version includes the D1 storage foundation for a future Gemini account pool. The live Gemini request path still uses the existing single-cookie behavior until the account runtime/admin tasks are wired in.
+
+For Workers, create a D1 database, apply [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql), and bind it as `GEMINI_DB` in `wrangler.jsonc` or through your Cloudflare dashboard configuration. The schema creates structured `gemini_accounts`, `gemini_pool_meta`, and `gemini_account_locks` tables rather than storing account state as one JSON blob.
+
+For Docker, set all of `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` in `.env`. When all three are present, `scripts/docker-server.mjs` injects a D1-compatible `GEMINI_DB` binding backed by Cloudflare's D1 HTTP API. If only some are present, startup fails with a configuration error.
 
 For single-cookie deployments, use the shortest practical cookie form: `__Secure-1PSID`, `__Secure-1PSIDTS`, and optional `SAPISID`. A fresh private-browser Gemini login that is closed after extracting these values tends to be more stable than copying a full everyday-browser cookie header. If a cold start falls back to an expired `__Secure-1PSIDTS`, the first authenticated request will try to rotate it. If Google rejects that rotation or returns no updated cookie, update the `GEMINI_COOKIE` secret manually.
 
