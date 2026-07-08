@@ -44,7 +44,7 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
     const boundedLimit = boundedPageLimit(limit);
     const result = await this.db.prepare(`
       SELECT
-        id, label, status, cookie_header, cookie_hash, sapisid, session_token,
+        id, row_id, label, enabled, status, cookie_header, cookie_hash, sapisid, session_token,
         session_token_hash, user_agent, gemini_origin, cooldown_until_ms,
         last_used_at_ms, last_success_at_ms, last_failure_at_ms
       FROM gemini_accounts

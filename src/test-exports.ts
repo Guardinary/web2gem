@@ -7,6 +7,9 @@ export { configWithCachedGeminiBuildLabel, getCachedGeminiBuildLabel, getFreshGe
 export { invalidGeminiCookieError, isInvalidGeminiCookieError, unverifiedGeminiCookieError } from "./gemini/client/errors";
 export { configWithActiveGeminiCookie, mergeSetCookieHeaders, parseCookieHeader, resetActiveGeminiCookieForTest, rotateGeminiCookieForRetry, rotateGeminiCookieForRetryWithReason, splitSetCookieHeader } from "./gemini/cookies";
 export { D1GeminiAccountStore } from "./gemini/accounts/store-d1";
+export { AccountPoolService } from "./gemini/accounts/pool";
+export { classifyGeminiAccountOutcome } from "./gemini/accounts/classify";
+export { createGeminiAccountRuntimeFromEnv, d1BindingFromEnv, GeminiAccountRuntime } from "./gemini/accounts/runtime";
 export {
   accountRowId,
   changedRows,

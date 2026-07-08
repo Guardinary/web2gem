@@ -41,9 +41,16 @@ export type GeminiAccountFailureKind =
   | "auth"
   | "rate_limit"
   | "usage_limit"
-  | "transient"
   | "hard_block"
   | "needs_user_action"
+  | "location_or_ip_block"
+  | "model_invalid"
+  | "model_capability"
+  | "temporary_model_error"
+  | "empty_response"
+  | "network"
+  | "upstream_5xx"
+  | "transient"
   | "capability_mismatch"
   | "unknown";
 
@@ -101,7 +108,9 @@ export type GeminiAccountRow = {
 export type GeminiAccountSnapshotRow = Pick<
   GeminiAccountRow,
   | "id"
+  | "row_id"
   | "label"
+  | "enabled"
   | "status"
   | "cookie_header"
   | "cookie_hash"
@@ -173,13 +182,13 @@ export type GeminiAccountUpdate = {
 
 export type GeminiCookieWriteback = {
   cookieHeader: string;
-  sapisid?: string | null;
-  sessionToken?: string | null;
-  sessionId?: string | null;
-  language?: string | null;
-  pushId?: string | null;
-  lastRefreshAtMs?: number | null;
-  lastRefreshAttemptAtMs?: number | null;
+  sapisid?: string | null | undefined;
+  sessionToken?: string | null | undefined;
+  sessionId?: string | null | undefined;
+  language?: string | null | undefined;
+  pushId?: string | null | undefined;
+  lastRefreshAtMs?: number | null | undefined;
+  lastRefreshAttemptAtMs?: number | null | undefined;
   status?: GeminiAccountStatus;
   stateReason?: string | null;
   nowMs: number;
@@ -191,13 +200,13 @@ export type GeminiCookieWritebackResult = {
 
 export type GeminiAccountOutcome = {
   kind: "success" | "failure";
-  failureKind?: GeminiAccountFailureKind;
-  status?: GeminiAccountStatus;
-  stateReason?: string | null;
-  cooldownUntilMs?: number | null;
-  upstreamStatus?: number | null;
-  errorCode?: string | null;
-  errorMessageRedacted?: string | null;
+  failureKind?: GeminiAccountFailureKind | undefined;
+  status?: GeminiAccountStatus | undefined;
+  stateReason?: string | null | undefined;
+  cooldownUntilMs?: number | null | undefined;
+  upstreamStatus?: number | null | undefined;
+  errorCode?: string | null | undefined;
+  errorMessageRedacted?: string | null | undefined;
   nowMs: number;
 };
 
@@ -214,4 +223,64 @@ export type GeminiAccountStore = {
   releaseRefreshLock(accountId: string, owner: string): Promise<void>;
   writeCookieState(accountId: string, update: GeminiCookieWriteback): Promise<GeminiCookieWritebackResult>;
   writeAccountOutcome(accountId: string, outcome: GeminiAccountOutcome): Promise<void>;
+};
+
+export type GeminiAccountRuntimeOptions = {
+  nowMs?: () => number;
+  snapshotTtlMs?: number;
+  versionProbeTtlMs?: number;
+  selectableLimit?: number;
+  refreshLockTtlMs?: number;
+  rotateCookie?: GeminiAccountCookieRotator;
+};
+
+export type GeminiAccountCookieRotator = (input: {
+  config: import("../../config").RuntimeConfig;
+  account: GeminiAccountSecretRow;
+}) => Promise<GeminiAccountRotateResponse>;
+
+export type GeminiAccountRotateResponse = {
+  status: number;
+  ok: boolean;
+  headers: Headers;
+};
+
+export type GeminiAccountPageState = {
+  cookieHeader?: string | undefined;
+  sapisid?: string | null | undefined;
+  sessionToken?: string | null | undefined;
+  sessionId?: string | null | undefined;
+  language?: string | null | undefined;
+  pushId?: string | null | undefined;
+  nowMs?: number;
+};
+
+export type GeminiAccountLease = {
+  accountId: string;
+  rowId?: string;
+  selectedCookieHash: string;
+  config: import("../../config").RuntimeConfig;
+  recordPageState(update: GeminiAccountPageState): Promise<GeminiCookieWritebackResult>;
+  refreshForRetry(reason?: string): Promise<GeminiAccountRefreshResult>;
+  markSuccess(nowMs?: number): Promise<void>;
+  markFailure(error: unknown, nowMs?: number): Promise<void>;
+  release(): void;
+};
+
+export type GeminiAccountRefreshReason =
+  | "missing_cookie"
+  | "missing_secure_1psid"
+  | "recent_rotation"
+  | "lock_conflict"
+  | "account_missing"
+  | "rotation_rejected"
+  | "rotation_failed"
+  | "rotation_no_update"
+  | "rotation_error"
+  | "rotation_updated";
+
+export type GeminiAccountRefreshResult = {
+  changed: boolean;
+  reason: GeminiAccountRefreshReason;
+  upstreamStatus?: number;
 };

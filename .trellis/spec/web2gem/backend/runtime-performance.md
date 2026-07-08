@@ -138,6 +138,76 @@ if (_configCacheValue && _configCacheEnv === env && _configCacheKey === cacheKey
 }
 ```
 
+## Scenario: Gemini Account Runtime Snapshot And Refresh Cost
+
+### 1. Scope / Trigger
+
+Use this contract when adding or changing D1-backed Gemini account runtime code, account selection, account leases, snapshot caching, account-scoped cookie rotation, or refresh dedupe.
+
+### 2. Signatures
+
+- `AccountPoolService.acquireLease(baseConfig)` returns a lease or `null`.
+- `GeminiAccountStore.getPoolVersion()` reads one metadata row.
+- `GeminiAccountStore.listSelectableAccounts(nowMs, limit)` reads a bounded selectable snapshot.
+- Account refresh uses `tryAcquireRefreshLock(accountId, owner, expiresAtMs, nowMs)` and `releaseRefreshLock(accountId, owner)`.
+
+### 3. Contracts
+
+- A fresh selectable snapshot must satisfy account selection without a D1 account-row read and without any D1 write.
+- Version probes read only `gemini_pool_meta.pool_version`; reload selectable rows only when the version changes or the snapshot TTL expires.
+- Local fairness uses in-memory round-robin and in-flight counts. Do not write durable round-robin pointers or last-used timestamps synchronously during selection.
+- Register pending per-account refresh promises before the first `await` in the refresh path. If the key is computed after an async hash/read, two same-tick callers can both start refresh work.
+- The first refresh attempt for an account must not be suppressed just because `lastRotateAtMs` is initialized to `0`; apply debounce only when a prior rotate timestamp is positive.
+- Refresh lock owners and cache keys must be based on account IDs and hashes, never raw cookies or session tokens.
+- No-D1 mode must return `null` runtime and leave the single-cookie path unchanged.
+
+### 4. Validation & Error Matrix
+
+- Snapshot fresh and version probe not due -> no store calls.
+- Version probe due and version unchanged -> exactly one metadata read, no row reload.
+- Version changed -> metadata read plus bounded selectable row reload.
+- Selection with two available accounts and one local in-flight -> choose the lower in-flight account.
+- Two concurrent refresh waiters for the same account/cookie hash -> one rotate call and shared result/rejection.
+- D1 lock conflict -> typed refresh conflict result, no rotate call, no lock release attempt for a lock not owned.
+- `lastRotateAtMs = 0` -> first refresh may proceed; recent positive timestamp -> debounce.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `pendingRefresh.set(key, promise)` happens before awaiting account state or hashes.
+- Good: selection increments local in-flight and release is idempotent.
+- Base: snapshot TTL/probe values are short enough for operator changes to propagate but long enough to avoid D1 reads on every request.
+- Bad: `await sha256(cookie)` before checking the pending refresh map.
+- Bad: writing `last_used_at_ms` or global round-robin state during every lease acquisition.
+
+### 6. Tests Required
+
+- Unit tests with fake store counters for snapshot reads, version probes, row reloads, and selection write counts.
+- Unit tests for in-flight spread and idempotent release.
+- Unit tests for refresh debounce, pending dedupe, D1 lock conflict, failure propagation, and lock release.
+- Unit tests proving `SNlM0e`, `session_token`, and `at` stay out of outbound Cookie headers during writeback.
+- Run `pnpm typecheck`, `pnpm check:arch`, `pnpm check:static`, `pnpm unit`, and `pnpm smoke`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+const state = await accountState(lease);
+const key = `${lease.accountId}\0${state.cookieHash}`;
+if (pending.has(key)) return pending.get(key);
+```
+
+#### Correct
+
+```typescript
+const key = `${lease.accountId}\0${lease.cookieHash}`;
+const pending = pendingRefresh.get(key);
+if (pending) return pending;
+const promise = refreshOnce(lease).finally(() => pendingRefresh.delete(key));
+pendingRefresh.set(key, promise);
+return promise;
+```
+
 ## Scenario: Streaming Delta Coalescing
 
 ### 1. Scope / Trigger
