@@ -28,9 +28,12 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
     "@cloudflare/workers-types": "^5.20260708.1",
+    "@preact/signals": "^2.9.3",
     "@vitest/coverage-v8": "^4.1.10",
     "esbuild": "^0.28.1",
+    "preact": "^10.29.6",
     "typescript": "^7.0.2",
+    "valibot": "^1.4.2",
     "vitest": "^4.1.10",
     "wrangler": "^4.107.1"
   }

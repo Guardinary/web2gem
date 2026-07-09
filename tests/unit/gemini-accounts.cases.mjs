@@ -146,6 +146,13 @@ export const cases = [
     assert.equal(page.limit, 200);
     assert.deepEqual(page.items.map((item) => item.id), ["a", "b"]);
 
+    const firstPage = await service.list({ limit: 1 });
+    assert.deepEqual(firstPage.items.map((item) => item.id), ["a"]);
+    assert.equal(firstPage.nextCursor, "a");
+    const secondPage = await service.list({ limit: 1, cursor: firstPage.nextCursor });
+    assert.deepEqual(secondPage.items.map((item) => item.id), ["b"]);
+    assert.equal(secondPage.nextCursor, null);
+
     const disabled = await service.setEnabled({
       identifiers: [
         { id: "a" },
@@ -221,19 +228,19 @@ export const cases = [
       },
     };
 
-    const publicKey = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts", {
+    const publicKey = await mod.default.fetch(new Request("https://worker.example/admin/accounts", {
       headers: { Authorization: "Bearer public-key" },
     }), env, {});
     assert.equal(publicKey.status, 401);
     assert.equal(prepareCalls, 0);
 
-    const missingD1 = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts", {
+    const missingD1 = await mod.default.fetch(new Request("https://worker.example/admin/accounts", {
       headers: { Authorization: "Bearer admin-secret" },
     }), { ADMIN_KEY: "admin-secret" }, {});
     assert.equal(missingD1.status, 503);
     assert.equal((await missingD1.json()).error.code, "gemini_account_store_unavailable");
 
-    const created = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts", {
+    const created = await mod.default.fetch(new Request("https://worker.example/admin/accounts", {
       method: "POST",
       headers: { Authorization: "Bearer admin-secret", "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -244,7 +251,7 @@ export const cases = [
     assert.equal(created.status, 200);
     assert.doesNotMatch(JSON.stringify(await created.json()), /route-psid|route-ts/);
 
-    const listed = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts?limit=999", {
+    const listed = await mod.default.fetch(new Request("https://worker.example/admin/accounts?limit=999", {
       headers: { "X-Admin-Key": "admin-secret" },
     }), env, {});
     assert.equal(listed.status, 200);
@@ -266,19 +273,26 @@ export const cases = [
       },
     };
 
-    const response = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts/ui"), env, {});
+    const response = await mod.default.fetch(new Request("https://worker.example/admin"), env, {});
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") || "", /text\/html/);
     assert.equal(prepareCalls, 0);
     const html = await response.text();
     assert.match(html, /Gemini Account Pool/);
-    assert.match(html, /\/admin\/gemini\/accounts/);
-    assert.match(html, /Authorization: "Bearer "/);
+    assert.match(html, /\/admin\/accounts/);
+    assert.match(html, /Authorization:\s*`Bearer \$\{[^}]+\}`/);
     assert.match(html, /__Secure-1PSID/);
     assert.match(html, /__Secure-1PSIDTS/);
+    assert.match(html, /id:"category-filter"/);
+    assert.match(html, /id:"cooldown-filter"/);
+    assert.match(html, /id:"edit-form"/);
+    assert.match(html, /id:"export-metadata"/);
+    assert.match(html, /id:"next-page"/);
+    assert.match(html, /success_count/);
+    assert.match(html, /failure_count/);
     assert.doesNotMatch(html, /GEMINI_COOKIE|SAPISID=|SNlM0e=|psid-secret|ts-secret|Cookie:\s*__Secure/i);
 
-    const post = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts/ui", { method: "POST" }), env, {});
+    const post = await mod.default.fetch(new Request("https://worker.example/admin", { method: "POST" }), env, {});
     assert.equal(post.status, 404);
     assert.equal(prepareCalls, 0);
   }],

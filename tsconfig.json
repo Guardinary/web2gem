@@ -3,8 +3,10 @@
     "target": "ES2025",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2025"],
+    "lib": ["ES2025", "DOM"],
     "types": ["@cloudflare/workers-types"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "strict": true,
     "exactOptionalPropertyTypes": true,
     "noFallthroughCasesInSwitch": true,
@@ -18,5 +20,5 @@
     "noEmit": true,
     "isolatedModules": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

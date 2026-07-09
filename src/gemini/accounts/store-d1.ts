@@ -84,10 +84,10 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
     const result = await this.db.prepare(sql).bind(...args).all<GeminiAccountRow>();
     const rows = result.results || [];
     const pageRows = rows.slice(0, limit);
-    const nextRow = rows.length > limit ? rows[limit] : undefined;
+    const nextCursor = rows.length > limit ? pageRows[pageRows.length - 1]?.id || null : null;
     return {
       items: pageRows.map(sanitizeGeminiAccount),
-      nextCursor: nextRow?.id || null,
+      nextCursor,
       limit,
     };
   }

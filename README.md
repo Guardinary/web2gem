@@ -271,12 +271,12 @@ For Workers, create a D1 database, apply [`migrations/0001_gemini_accounts.sql`]
 
 For Docker, set all of `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` in `.env`. When all three are present, `scripts/docker-server.mjs` injects a D1-compatible `GEMINI_DB` binding backed by Cloudflare's D1 HTTP API. If only some are present, startup fails with a configuration error.
 
-Account-pool management is available under `/admin/gemini/accounts` and requires `ADMIN_KEYS` / `ADMIN_KEY` through `Authorization: Bearer <key>` or `X-Admin-Key`. Public `API_KEYS` and query-string `key` do not authorize these routes.
+Account-pool management is available through the built-in WebUI at `/admin` and through the admin API under `/admin/accounts`. Admin API requests require `ADMIN_KEYS` / `ADMIN_KEY` through `Authorization: Bearer <key>` or `X-Admin-Key`. Public `API_KEYS` and query-string `key` do not authorize these routes.
 
 Default Gemini import accepts only bare cookie values:
 
 ```sh
-curl -X POST "https://your-worker.example/admin/gemini/accounts" \
+curl -X POST "https://your-worker.example/admin/accounts" \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{"provider":"gemini","accounts":[{"__Secure-1PSID":"<value-only>","__Secure-1PSIDTS":"<value-only>","label":"primary"}]}'
@@ -287,7 +287,7 @@ Do not send a full Cookie header, JSON cookie export, `access_token`, cookie nam
 Explicit diagnostics are admin-only:
 
 ```sh
-curl -X POST "https://your-worker.example/admin/gemini/accounts/refresh" \
+curl -X POST "https://your-worker.example/admin/accounts/refresh" \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{"identifiers":[{"row_id":"<row_id>"}]}'

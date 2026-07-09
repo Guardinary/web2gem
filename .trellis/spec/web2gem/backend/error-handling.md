@@ -251,17 +251,17 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 ### 2. Signatures
 
 - Env keys: `ADMIN_KEYS` accepts comma-separated or JSON-array admin keys; `ADMIN_KEY` is a single-key compatibility alias.
-- Admin routes live under `/admin/gemini/accounts`.
+- Admin routes live under `/admin/accounts`.
 - Supported operations:
-  - `GET /admin/gemini/accounts?limit=&cursor=&status=&enabled=`
-  - `POST /admin/gemini/accounts`
-  - `PATCH /admin/gemini/accounts`
-  - `POST /admin/gemini/accounts/update`
-  - `POST /admin/gemini/accounts/enable`
-  - `POST /admin/gemini/accounts/disable`
-  - `DELETE /admin/gemini/accounts`
-  - `POST /admin/gemini/accounts/refresh`
-  - `POST /admin/gemini/accounts/check`
+  - `GET /admin/accounts?limit=&cursor=&status=&enabled=`
+  - `POST /admin/accounts`
+  - `PATCH /admin/accounts`
+  - `POST /admin/accounts/update`
+  - `POST /admin/accounts/enable`
+  - `POST /admin/accounts/disable`
+  - `DELETE /admin/accounts`
+  - `POST /admin/accounts/refresh`
+  - `POST /admin/accounts/check`
 - Default create payload accepts only `provider`, `accounts[]`, `__Secure-1PSID`, `__Secure-1PSIDTS`, and safe metadata such as `label`, `user_agent`, `gemini_origin`, `source`, `source_id`, and `source_name`.
 - Identifier payloads accept `id`, `account_id`, or `row_id`; `identifiers[]` is the batch form.
 
@@ -288,7 +288,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `/admin/gemini/accounts` checks admin auth before constructing a store or reading D1.
+- Good: `/admin/accounts` checks admin auth before constructing a store or reading D1.
 - Good: `createGeminiAccountAdminServiceFromD1(...).create(...)` returns `GeminiAccountPublic` items with `has_cookie`/hash/status metadata and no `cookie_header`, `sapisid`, or `session_token`.
 - Good: refresh/check responses include `checked`, `skipped`, `refreshed`, `unchanged`, `failed`, `errors`, `results`, and sanitized `items`.
 - Base: `/`, `/v1/models`, and `/v1beta/models` return static responses without constructing account runtime or reading D1 account rows.
@@ -332,21 +332,24 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 
 ### 2. Signatures
 
-- UI route: `GET /admin/gemini/accounts/ui` returns static `text/html; charset=utf-8` with `cache-control: no-store`.
+- UI route: `GET /admin` returns static `text/html; charset=utf-8` with `cache-control: no-store`.
 - Non-GET requests to the UI route return 404 and must not create a `GEMINI_DB` binding or read D1.
-- API route used by the UI: `/admin/gemini/accounts`.
+- API route used by the UI: `/admin/accounts`.
 - Admin auth header: `Authorization: Bearer <admin-key>`.
 - Gemini import payload: `{ provider: "gemini", "__Secure-1PSID": string, "__Secure-1PSIDTS": string, label?: string }`.
 - Mutation payload: `{ identifiers: Array<{ id?: string; account_id?: string; row_id?: string }> }`.
 
 ### 3. Contracts
 
-- The UI must be served by the Worker from `src/http/admin/**` and routed before the broader `/admin/gemini/accounts` admin API prefix.
+- The UI must be served by the Worker from `src/http/admin/**` and routed before the broader `/admin/accounts` admin API prefix.
 - The admin key may be stored client-side by the browser, but it must only be sent as an admin header. Do not put admin keys in query strings, HTML links, form actions, or local logs.
 - The UI may render sanitized account metadata from `GeminiAccountPublic`, including IDs, row IDs, labels, statuses, boolean secret-presence flags, redacted error text, and source metadata.
 - The UI must not render raw `cookie_header`, SAPISID values, session tokens, SQL bind values, or D1 API tokens.
 - The UI must import Gemini accounts with value-only `__Secure-1PSID` and `__Secure-1PSIDTS` fields. It must not accept or show full cookie headers, cookie-name/value examples, JSON blobs, `tokens`, `access_token`, or legacy single-cookie fallback fields.
 - Row and batch actions must reuse existing admin API operations: refresh, check, enable, disable, and delete. Do not add UI-only mutation routes.
+- Editing account labels/status/enabled/source metadata must use `PATCH /admin/accounts` with identifier fields plus safe update fields only.
+- Cursor pagination must use the admin API's `nextCursor` without requesting or caching raw D1 rows. The server `nextCursor` is the last returned row id, matching the route's `id > cursor` query semantics.
+- Client-side metadata export may include sanitized account IDs, status/category, timestamps, counters, redacted errors, and source metadata. It must not export raw cookies, SAPISID values, session tokens, SQL bind values, or D1 API tokens.
 - Public API auth remains separate from admin auth. A public API key must not authorize UI-driven admin API mutations.
 
 ### 4. Validation & Error Matrix
@@ -358,14 +361,18 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Import field contains `=`, `;`, JSON-looking text, or cookie names -> reject client-side before API call; server validation remains authoritative.
 - Admin API returns non-2xx JSON error -> show the sanitized error message, not raw response bodies or request payload secrets.
 - List response includes secret-presence flags -> render safe labels such as present/missing; do not derive previews from raw values.
+- Metadata export requested with no current rows -> no-op user error.
+- Cursor pagination response with `nextCursor=null` -> disable the next-page control.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: static UI calls `fetch("/admin/gemini/accounts", { headers: { Authorization: "Bearer " + key } })`.
+- Good: static UI calls `fetch("/admin/accounts", { headers: { Authorization: "Bearer " + key } })`.
 - Good: import form submits only `provider`, `__Secure-1PSID`, `__Secure-1PSIDTS`, and optional display metadata.
 - Base: UI displays sanitized account status, enabled state, IDs, row IDs, timestamps, source metadata, and redacted error text from the existing admin API response.
+- Base: UI may show refreshability, cooldown, success/failure counters, and category filters derived from sanitized admin fields.
 - Bad: serving a separate Next.js/React build for this Worker-only admin console.
-- Bad: using `/admin/gemini/accounts?admin_key=...`, `x-api-key` public auth, or full `Cookie: __Secure-1PSID=...` examples.
+- Bad: using `/admin/accounts?admin_key=...`, `x-api-key` public auth, or full `Cookie: __Secure-1PSID=...` examples.
+- Bad: adding a Gemini TXT export that serializes raw cookie values through the browser UI.
 - Bad: adding UI text or docs that reintroduce `GEMINI_COOKIE` or single-cookie fallback setup.
 
 ### 6. Tests Required
@@ -373,6 +380,8 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Unit test the Worker serves the UI route with `text/html`, `no-store`, and zero D1 reads.
 - Unit test non-GET UI requests return 404 and perform zero D1 reads.
 - Unit or snapshot-style assertions should verify static HTML/JS includes the admin API path, bearer admin header usage, value-only dual-cookie fields, and existing action names.
+- Unit or snapshot-style assertions should cover static UI controls for category/cooldown filters, pagination, safe metadata export, editing safe metadata, and success/failure counters.
+- Unit test admin list cursor pagination so `nextCursor` does not skip the first row on the next page.
 - Unit or grep-style assertions should verify the UI bundle does not contain `GEMINI_COOKIE`, raw cookie examples, SAPISID value examples, session-token examples, or query-parameter admin-key patterns.
 - Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke` after changing the UI route, static HTML, or Worker routing.
 
@@ -381,13 +390,13 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 #### Wrong
 
 ```javascript
-fetch("/admin/gemini/accounts?admin_key=" + encodeURIComponent(key));
+fetch("/admin/accounts?admin_key=" + encodeURIComponent(key));
 ```
 
 #### Correct
 
 ```javascript
-fetch("/admin/gemini/accounts", {
+fetch("/admin/accounts", {
   headers: { Authorization: "Bearer " + key },
 });
 ```

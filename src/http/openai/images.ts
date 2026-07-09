@@ -275,7 +275,7 @@ async function parseImageEditMultipartRequest(request: Request, cfg: RuntimeConf
     form = await new Request(request.url, {
       method: "POST",
       headers: request.headers,
-      body: read.value,
+      body: new Uint8Array(read.value).buffer,
     }).formData();
   } catch (_) {
     return { response: openAIErrorResponse("invalid multipart form data", 400, "invalid_multipart_form") };

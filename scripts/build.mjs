@@ -1,5 +1,8 @@
 import esbuild from "esbuild";
 import { mkdir, rm } from "node:fs/promises";
+import { buildAdminUi } from "./build-admin-ui.mjs";
+
+await buildAdminUi();
 
 const coverageBuild = /^(1|true|yes|on)$/i.test(process.env.COVERAGE || "");
 const includeTestBundle = process.argv.includes("--test-bundle")

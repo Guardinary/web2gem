@@ -271,12 +271,12 @@ Worker 部署时，创建 D1 数据库，执行 [`migrations/0001_gemini_account
 
 Docker 部署时，在 `.env` 中同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`。三者都存在时，`scripts/docker-server.mjs` 会注入一个基于 Cloudflare D1 HTTP API 的 D1 兼容 `GEMINI_DB` binding。只设置一部分时，启动会以配置错误失败。
 
-账号池管理接口位于 `/admin/gemini/accounts`，必须通过 `ADMIN_KEYS` / `ADMIN_KEY` 鉴权，可使用 `Authorization: Bearer <key>` 或 `X-Admin-Key`。公共 `API_KEYS` 和查询参数 `key` 不能调用这些管理接口。
+账号池可以通过内置 WebUI `/admin` 管理，也可以通过 `/admin/accounts` 下的管理 API 操作。管理 API 必须通过 `ADMIN_KEYS` / `ADMIN_KEY` 鉴权，可使用 `Authorization: Bearer <key>` 或 `X-Admin-Key`。公共 `API_KEYS` 和查询参数 `key` 不能调用这些管理接口。
 
 默认 Gemini 导入只接受裸 cookie 值：
 
 ```sh
-curl -X POST "https://your-worker.example/admin/gemini/accounts" \
+curl -X POST "https://your-worker.example/admin/accounts" \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{"provider":"gemini","accounts":[{"__Secure-1PSID":"<仅值>","__Secure-1PSIDTS":"<仅值>","label":"primary"}]}'
@@ -287,7 +287,7 @@ curl -X POST "https://your-worker.example/admin/gemini/accounts" \
 显式诊断接口也只对 admin 开放：
 
 ```sh
-curl -X POST "https://your-worker.example/admin/gemini/accounts/refresh" \
+curl -X POST "https://your-worker.example/admin/accounts/refresh" \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{"identifiers":[{"row_id":"<row_id>"}]}'

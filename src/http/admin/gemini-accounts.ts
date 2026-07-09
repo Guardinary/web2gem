@@ -4,7 +4,7 @@ import { errorLogSummary } from "../../shared/runtime";
 import { isRecord } from "../../shared/types";
 import { jsonResponse, readJsonRequest } from "../core/json";
 
-const ADMIN_PATH_PREFIX = "/admin/gemini/accounts";
+const ADMIN_PATH_PREFIX = "/admin/accounts";
 const ADMIN_MAX_BODY_BYTES = 256 * 1024;
 
 export function isGeminiAccountAdminPath(path: string): boolean {
