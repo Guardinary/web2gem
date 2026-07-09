@@ -252,6 +252,36 @@ export const cases = [
     assert.equal(body.limit, 200);
     assert.equal(body.items.length, 1);
   }],
+  ["worker serves Gemini account admin WebUI without D1 reads or legacy cookie fallback text", async () => {
+    const db = new FakeD1();
+    let prepareCalls = 0;
+    const env = {
+      API_KEYS: "public-key",
+      ADMIN_KEY: "admin-secret",
+      GEMINI_DB: {
+        prepare(sql) {
+          prepareCalls++;
+          return db.prepare(sql);
+        },
+      },
+    };
+
+    const response = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts/ui"), env, {});
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") || "", /text\/html/);
+    assert.equal(prepareCalls, 0);
+    const html = await response.text();
+    assert.match(html, /Gemini Account Pool/);
+    assert.match(html, /\/admin\/gemini\/accounts/);
+    assert.match(html, /Authorization: "Bearer "/);
+    assert.match(html, /__Secure-1PSID/);
+    assert.match(html, /__Secure-1PSIDTS/);
+    assert.doesNotMatch(html, /GEMINI_COOKIE|SAPISID=|SNlM0e=|psid-secret|ts-secret|Cookie:\s*__Secure/i);
+
+    const post = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts/ui", { method: "POST" }), env, {});
+    assert.equal(post.status, 404);
+    assert.equal(prepareCalls, 0);
+  }],
 ];
 
 async function seedAccount(store, id, input) {

@@ -5,6 +5,7 @@ import { handleGoogleGenerate } from "./http/google/handlers";
 import { GOOGLE_MODEL_JSON_BY_ID, GOOGLE_MODEL_LIST_JSON, HEALTH_JSON, NOT_FOUND_JSON, OPENAI_MODEL_JSON_BY_ID, OPENAI_MODEL_LIST_JSON } from "./http/core/model-routes";
 import { googleJsonError, readRouteJsonPost } from "./http/core/route-json";
 import { handleGeminiAccountAdminRequest, isGeminiAccountAdminPath } from "./http/admin/gemini-accounts";
+import { handleGeminiAccountAdminUiRequest, isGeminiAccountAdminUiPath } from "./http/admin/gemini-account-webui";
 import { createGeminiCompletionProvider } from "./gemini/completion-provider";
 import { createGeminiAccountRuntimeFromEnv, d1BindingFromEnv } from "./gemini/accounts/runtime";
 import { errorLogSummary, log } from "./shared/runtime";
@@ -30,6 +31,10 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     const respond = (response: Response) => withCORS(response, request);
+
+    if (isGeminiAccountAdminUiPath(path)) {
+      return respond(handleGeminiAccountAdminUiRequest(request));
+    }
 
     if (isGeminiAccountAdminPath(path)) {
       return respond(await handleGeminiAccountAdminRequest(request, env, cfg, url));

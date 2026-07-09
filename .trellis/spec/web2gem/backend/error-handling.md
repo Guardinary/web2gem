@@ -324,6 +324,90 @@ if (!auth.ok) return adminErrorResponse(auth);
 return jsonResponse(await service.refresh(body)); // service returns sanitized DTOs
 ```
 
+## Scenario: Gemini Account Admin WebUI
+
+### 1. Scope / Trigger
+
+Use this contract when adding or changing the built-in browser UI for Gemini account-pool administration. The UI is part of the Worker HTTP boundary and must stay aligned with the sanitized admin API instead of introducing a separate frontend stack or a second mutation contract.
+
+### 2. Signatures
+
+- UI route: `GET /admin/gemini/accounts/ui` returns static `text/html; charset=utf-8` with `cache-control: no-store`.
+- Non-GET requests to the UI route return 404 and must not create a `GEMINI_DB` binding or read D1.
+- API route used by the UI: `/admin/gemini/accounts`.
+- Admin auth header: `Authorization: Bearer <admin-key>`.
+- Gemini import payload: `{ provider: "gemini", "__Secure-1PSID": string, "__Secure-1PSIDTS": string, label?: string }`.
+- Mutation payload: `{ identifiers: Array<{ id?: string; account_id?: string; row_id?: string }> }`.
+
+### 3. Contracts
+
+- The UI must be served by the Worker from `src/http/admin/**` and routed before the broader `/admin/gemini/accounts` admin API prefix.
+- The admin key may be stored client-side by the browser, but it must only be sent as an admin header. Do not put admin keys in query strings, HTML links, form actions, or local logs.
+- The UI may render sanitized account metadata from `GeminiAccountPublic`, including IDs, row IDs, labels, statuses, boolean secret-presence flags, redacted error text, and source metadata.
+- The UI must not render raw `cookie_header`, SAPISID values, session tokens, SQL bind values, or D1 API tokens.
+- The UI must import Gemini accounts with value-only `__Secure-1PSID` and `__Secure-1PSIDTS` fields. It must not accept or show full cookie headers, cookie-name/value examples, JSON blobs, `tokens`, `access_token`, or legacy single-cookie fallback fields.
+- Row and batch actions must reuse existing admin API operations: refresh, check, enable, disable, and delete. Do not add UI-only mutation routes.
+- Public API auth remains separate from admin auth. A public API key must not authorize UI-driven admin API mutations.
+
+### 4. Validation & Error Matrix
+
+- UI route `GET` -> 200 static HTML without D1 reads.
+- UI route non-GET -> 404 without D1 reads.
+- Missing admin key in browser state -> UI should require one before API calls; API returns 401 if called anyway.
+- Admin key supplied in URL query or form action -> forbidden implementation pattern.
+- Import field contains `=`, `;`, JSON-looking text, or cookie names -> reject client-side before API call; server validation remains authoritative.
+- Admin API returns non-2xx JSON error -> show the sanitized error message, not raw response bodies or request payload secrets.
+- List response includes secret-presence flags -> render safe labels such as present/missing; do not derive previews from raw values.
+
+### 5. Good/Base/Bad Cases
+
+- Good: static UI calls `fetch("/admin/gemini/accounts", { headers: { Authorization: "Bearer " + key } })`.
+- Good: import form submits only `provider`, `__Secure-1PSID`, `__Secure-1PSIDTS`, and optional display metadata.
+- Base: UI displays sanitized account status, enabled state, IDs, row IDs, timestamps, source metadata, and redacted error text from the existing admin API response.
+- Bad: serving a separate Next.js/React build for this Worker-only admin console.
+- Bad: using `/admin/gemini/accounts?admin_key=...`, `x-api-key` public auth, or full `Cookie: __Secure-1PSID=...` examples.
+- Bad: adding UI text or docs that reintroduce `GEMINI_COOKIE` or single-cookie fallback setup.
+
+### 6. Tests Required
+
+- Unit test the Worker serves the UI route with `text/html`, `no-store`, and zero D1 reads.
+- Unit test non-GET UI requests return 404 and perform zero D1 reads.
+- Unit or snapshot-style assertions should verify static HTML/JS includes the admin API path, bearer admin header usage, value-only dual-cookie fields, and existing action names.
+- Unit or grep-style assertions should verify the UI bundle does not contain `GEMINI_COOKIE`, raw cookie examples, SAPISID value examples, session-token examples, or query-parameter admin-key patterns.
+- Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke` after changing the UI route, static HTML, or Worker routing.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+fetch("/admin/gemini/accounts?admin_key=" + encodeURIComponent(key));
+```
+
+#### Correct
+
+```javascript
+fetch("/admin/gemini/accounts", {
+  headers: { Authorization: "Bearer " + key },
+});
+```
+
+#### Wrong
+
+```javascript
+body: JSON.stringify({ cookie: "__Secure-1PSID=...; __Secure-1PSIDTS=..." });
+```
+
+#### Correct
+
+```javascript
+body: JSON.stringify({
+  provider: "gemini",
+  "__Secure-1PSID": psidValue,
+  "__Secure-1PSIDTS": psidtsValue,
+});
+```
+
 ## Scenario: Oversized Inline Long Context
 
 ### 1. Scope / Trigger

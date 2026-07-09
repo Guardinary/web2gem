@@ -76,6 +76,7 @@ export {
 export { readJsonRequest } from "./http/core/json";
 export { readRouteJsonPost } from "./http/core/route-json";
 export { adminAuthorized, handleGeminiAccountAdminRequest, isGeminiAccountAdminPath } from "./http/admin/gemini-accounts";
+export { handleGeminiAccountAdminUiRequest, isGeminiAccountAdminUiPath } from "./http/admin/gemini-account-webui";
 export { sseResponse } from "./http/core/sse";
 export { streamErrorText, streamInterruptedWarningText, streamWarningObject, writeStreamWarningEvent } from "./http/core/stream-errors";
 export { httpFetch } from "./gemini/transport/http";
