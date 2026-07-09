@@ -5,8 +5,10 @@ import { handleGoogleGenerate } from "./http/google/handlers";
 import { GOOGLE_MODEL_JSON_BY_ID, GOOGLE_MODEL_LIST_JSON, HEALTH_JSON, NOT_FOUND_JSON, OPENAI_MODEL_JSON_BY_ID, OPENAI_MODEL_LIST_JSON } from "./http/core/model-routes";
 import { googleJsonError, readRouteJsonPost } from "./http/core/route-json";
 import { createGeminiCompletionProvider } from "./gemini/completion-provider";
+import { createGeminiAccountRuntimeFromEnv } from "./gemini/accounts/runtime";
 import { errorLogSummary, log } from "./shared/runtime";
 import type { RuntimeConfig } from "./config";
+import type { GeminiAccountRuntime } from "./gemini/accounts/runtime";
 import type { RouteJsonPostResult } from "./http/core/route-json";
 
 const GOOGLE_GENERATE_PATH_RE = /^\/v(?:1beta|1)\/models\/[^/?#]+:generateContent$/;
@@ -35,6 +37,7 @@ export default {
     }
 
     try {
+      const accountRuntime = createGeminiAccountRuntimeFromEnv(env);
       if (method === "GET") {
         if (path === "/v1/models") {
           return respond(jsonTextResponse(OPENAI_MODEL_LIST_JSON));
@@ -62,25 +65,25 @@ export default {
 
       if (method === "POST") {
         if (path === "/v1/chat/completions") {
-          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleChat(body, cfg, createGeminiCompletionProvider(cfg))));
+          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleChat(body, cfg, createProvider(cfg, accountRuntime))));
         }
         if (path === "/v1/responses") {
-          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleResponses(body, cfg, createGeminiCompletionProvider(cfg))));
+          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleResponses(body, cfg, createProvider(cfg, accountRuntime))));
         }
         if (path === "/v1/images/generations") {
-          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleImageGenerations(body, cfg, createGeminiCompletionProvider(cfg))));
+          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleImageGenerations(body, cfg, createProvider(cfg, accountRuntime))));
         }
         if (path === "/v1/images/edits") {
           if (isMultipartFormRequest(request)) {
-            return respond(await handleImageEditsMultipart(request, cfg, createGeminiCompletionProvider(cfg)));
+            return respond(await handleImageEditsMultipart(request, cfg, createProvider(cfg, accountRuntime)));
           }
-          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleImageEdits(body, cfg, createGeminiCompletionProvider(cfg))));
+          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleImageEdits(body, cfg, createProvider(cfg, accountRuntime))));
         }
         if (GOOGLE_GENERATE_PATH_RE.test(path)) {
-          return respond(await handleGoogleJsonPost(request, cfg, path, (body) => handleGoogleGenerate(body, cfg, createGeminiCompletionProvider(cfg), path, false)));
+          return respond(await handleGoogleJsonPost(request, cfg, path, (body) => handleGoogleGenerate(body, cfg, createProvider(cfg, accountRuntime), path, false)));
         }
         if (GOOGLE_STREAM_GENERATE_PATH_RE.test(path)) {
-          return respond(await handleGoogleJsonPost(request, cfg, path, (body) => handleGoogleGenerate(body, cfg, createGeminiCompletionProvider(cfg), path, true)));
+          return respond(await handleGoogleJsonPost(request, cfg, path, (body) => handleGoogleGenerate(body, cfg, createProvider(cfg, accountRuntime), path, true)));
         }
         return respond(jsonTextResponse(NOT_FOUND_JSON, 404));
       }
@@ -97,6 +100,10 @@ export default {
 
 // Stable public helper exports for the bundled worker module.
 export * from "./public-exports";
+
+function createProvider(cfg: RuntimeConfig, accountRuntime: GeminiAccountRuntime | null) {
+  return createGeminiCompletionProvider(cfg, { accountRuntime });
+}
 
 async function handleOpenAIJsonPost(
   request: Request,

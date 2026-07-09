@@ -16,6 +16,7 @@ export async function handleGoogleGenerate(req: UnknownRecord, cfg: RuntimeConfi
   const prepareStart = logRequests ? nowMs() : 0;
   const prepared = await prepareGoogleCompletion(cfg, provider, req, path);
   if ("error" in prepared) {
+    await provider.dispose?.();
     if (logRequests) logStage(cfg, "google_prepare", { ms: elapsedMs(prepareStart), status: prepared.error.status, code: prepared.error.code });
     return jsonResponse(googleErrorResponseBody(prepared.error.message, prepared.error.code), prepared.error.status);
   }

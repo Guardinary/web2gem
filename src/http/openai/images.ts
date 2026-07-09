@@ -178,6 +178,7 @@ async function handlePreparedForcedImageEndpoint(
   const prepareStart = logRequests ? nowMs() : 0;
   const prepared = await prepare();
   if ("error" in prepared) {
+    await provider.dispose?.();
     if (logRequests) logStage(cfg, `${stagePrefix}_prepare`, { ms: elapsedMs(prepareStart), status: prepared.error.status, code: prepared.error.code });
     return openAIErrorResponse(prepared.error.message, prepared.error.status, prepared.error.code);
   }

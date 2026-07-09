@@ -35,9 +35,11 @@ export type CompletionRichOptions = {
 };
 
 export type CompletionProvider = {
+  supportsAuthenticatedSession?: boolean;
   generateText(input: CompletionTextInput): Promise<string>;
   generateRich?(input: CompletionTextInput, options?: CompletionRichOptions): Promise<CompletionRichOutput>;
   streamText(input: CompletionTextInput, options?: CompletionProviderOptions): AsyncIterable<string>;
   resolveAttachments(plan: AttachmentPlan): Promise<AttachmentResolutionResult>;
   uploadTextFile(text: string, filename: string): Promise<FileRef>;
+  dispose?(): void | Promise<void>;
 };

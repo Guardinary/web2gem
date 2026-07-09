@@ -153,6 +153,22 @@ export const cases = [
       assert.equal(cache.stats.put, 1);
     });
   }],
+  ["scopes Gemini push ID cache by account context when present", async () => {
+    mod.resetActiveGeminiCookieForTest();
+    mod.resetGeminiUploadCachesForTest();
+    const cfgA = accountUploadCfg("account-a", "hash-a");
+    const cfgB = accountUploadCfg("account-b", "hash-b");
+    const cache = createMemoryCache();
+    await withCaches(cache, async () => {
+      await mod.setCachedGeminiPushId(cfgA, "push-a");
+      await mod.setCachedGeminiPushId(cfgB, "push-b");
+      mod.resetGeminiUploadCachesForTest();
+      assert.equal(await mod.getCachedGeminiPushId(cfgA), "push-a");
+      assert.equal(await mod.getCachedGeminiPushId(cfgB), "push-b");
+      assert.equal(mod.geminiAccountCacheScope(cfgA) === mod.geminiAccountCacheScope(cfgB), false);
+      assert.doesNotMatch(mod.geminiAccountCacheScope(cfgA), /psid-account-a|ts-account-a/);
+    });
+  }],
   ["drops stale cached Gemini push IDs", async () => {
     mod.resetActiveGeminiCookieForTest();
     mod.resetGeminiUploadCachesForTest();
@@ -272,6 +288,35 @@ export const cases = [
       assert.deepEqual(await mod.getPageTokens(baseUploadCfg()), {});
     });
     assert.equal(appCalls, 2);
+  }],
+  ["scopes Gemini page tokens by account context", async () => {
+    mod.resetActiveGeminiCookieForTest();
+    mod.resetGeminiUploadCachesForTest();
+    const cfgA = accountUploadCfg("account-a", "hash-a");
+    const cfgB = accountUploadCfg("account-b", "hash-b");
+    const appCookies = [];
+    await withFetch(async (url, init = {}) => {
+      const href = String(url);
+      if (href === "https://gemini.example/app") {
+        appCookies.push(init.headers.Cookie);
+        if (init.headers.Cookie.includes("psid-account-a")) {
+          return new Response('{"SNlM0e":"at-a","qKIAYe":"push-a"}', { status: 200 });
+        }
+        if (init.headers.Cookie.includes("psid-account-b")) {
+          return new Response('{"SNlM0e":"at-b","qKIAYe":"push-b"}', { status: 200 });
+        }
+      }
+      throw new Error(`unexpected fetch ${href}`);
+    }, async () => {
+      assert.deepEqual(await mod.getPageTokens(cfgA), { at: "at-a", push_id: "push-a" });
+      assert.deepEqual(await mod.getPageTokens(cfgB), { at: "at-b", push_id: "push-b" });
+      assert.deepEqual(await mod.getPageTokens(cfgA), { at: "at-a", push_id: "push-a" });
+    });
+    assert.deepEqual(appCookies, [
+      "__Secure-1PSID=psid-account-a; __Secure-1PSIDTS=ts-account-a",
+      "__Secure-1PSID=psid-account-b; __Secure-1PSIDTS=ts-account-b",
+      "__Secure-1PSID=psid-account-a; __Secure-1PSIDTS=ts-account-a",
+    ]);
   }],
   ["rejects content-push upload when app page markers are missing", async () => {
     mod.resetActiveGeminiCookieForTest();
@@ -704,6 +749,17 @@ function baseUploadCfg(overrides = {}) {
     generic_file_upload_max_bytes: 1024,
     ...overrides,
   };
+}
+
+function accountUploadCfg(accountId, cookieHash) {
+  return baseUploadCfg({
+    cookie: `__Secure-1PSID=psid-${accountId}; __Secure-1PSIDTS=ts-${accountId}`,
+    gemini_account: {
+      accountId,
+      rowId: `row-${accountId}`,
+      cookieHash,
+    },
+  });
 }
 
 async function assertPreferredMultipart(init, expected) {

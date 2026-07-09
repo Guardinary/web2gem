@@ -16,6 +16,7 @@ export type ActiveCookieState = {
 export type CookieRotationReason =
   | "missing_cookie"
   | "missing_secure_1psid"
+  | "account_runtime_managed"
   | "recent_rotation"
   | "rotation_rejected"
   | "rotation_failed"
@@ -100,6 +101,7 @@ export function mergeSetCookieHeaders(cookieHeader: unknown, setCookieValues: re
 }
 
 export function configWithActiveGeminiCookie(cfg: RuntimeConfig): RuntimeConfig {
+  if (cfg.gemini_account) return cfg;
   const state = ensureActiveCookieState(cfg);
   if (!state) return cfg;
   return {
@@ -110,6 +112,7 @@ export function configWithActiveGeminiCookie(cfg: RuntimeConfig): RuntimeConfig 
 }
 
 export async function configWithFreshGeminiCookie(cfg: RuntimeConfig): Promise<RuntimeConfig> {
+  if (cfg.gemini_account) return cfg;
   const state = ensureActiveCookieState(cfg);
   if (!state) return cfg;
   if (Date.now() - state.updatedAtMs > COOKIE_ROTATE_STALE_MS) {
@@ -124,6 +127,10 @@ export async function rotateGeminiCookieForRetry(cfg: RuntimeConfig): Promise<Ru
 }
 
 export async function rotateGeminiCookieForRetryWithReason(cfg: RuntimeConfig): Promise<CookieRotationRetryResult> {
+  if (cfg.gemini_account) {
+    setRotationReason("account_runtime_managed");
+    return rotationRetryResult(null);
+  }
   const current = configWithActiveGeminiCookie(cfg);
   const refreshed = await rotateGeminiCookie(current, { force: true });
   if (!refreshed || refreshed.cookie === current.cookie) {

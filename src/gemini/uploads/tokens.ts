@@ -4,7 +4,7 @@ import { httpFetch } from "../transport";
 import { createOriginScopedStringCache } from "../cache";
 import type { RuntimeConfig } from "../../config";
 import { configWithFreshGeminiCookie } from "../cookies";
-import { errorLogSummary, log } from "../../shared/runtime";
+import { TEXT_ENCODER, bytesToHex, errorLogSummary, log } from "../../shared/runtime";
 import { contentPushUploadError } from "./errors";
 
 type PageTokens = GeminiAppPageTokens;
@@ -26,6 +26,7 @@ const pushIdCache = createOriginScopedStringCache({
   ttlSec: GEMINI_PUSH_ID_CACHE_TTL_SEC,
   payloadKey: "push_id",
   logLabel: "Gemini push_id",
+  accountScoped: true,
 });
 
 export function resetGeminiUploadCachesForTest(): void {
@@ -41,7 +42,7 @@ export async function getPageTokens(cfg: RuntimeConfig): Promise<PageTokens> {
 
 export async function getPageTokensForConfig(activeCfg: RuntimeConfig): Promise<PageTokens> {
   const now = Date.now();
-  const cacheKey = `${activeCfg.gemini_origin || "https://gemini.google.com"}\x00${activeCfg.cookie || ""}`;
+  const cacheKey = await pageTokenCacheKey(activeCfg);
   if (_pageTokens.tokens && _pageTokens.key === cacheKey && now - _pageTokens.ts < pageTokenCacheTtl(_pageTokens.tokens)) return _pageTokens.tokens;
   if (_pageTokensPending.promise && _pageTokensPending.key === cacheKey) return _pageTokensPending.promise;
   const promise = (async () => {
@@ -60,6 +61,7 @@ export async function getPageTokensForConfig(activeCfg: RuntimeConfig): Promise<
         cfg: activeCfg,
       });
       Object.assign(tokens, await extractGeminiAppPageTokens(resp));
+      await recordGeminiPageTokens(activeCfg, tokens);
       if (!hasAnyPageToken(tokens)) {
         log(activeCfg, "gemini app page token markers missing; content-push upload unavailable");
       }
@@ -76,6 +78,17 @@ export async function getPageTokensForConfig(activeCfg: RuntimeConfig): Promise<
   } finally {
     if (_pageTokensPending.promise === promise) _pageTokensPending = { key: "", promise: null };
   }
+}
+
+async function pageTokenCacheKey(cfg: RuntimeConfig): Promise<string> {
+  const origin = (cfg.gemini_origin || "https://gemini.google.com").replace(/\/$/, "");
+  const account = cfg.gemini_account;
+  if (account) {
+    return `${origin}\x00account:${account.accountId || ""}\x00cookie:${account.cookieHash || ""}`;
+  }
+  if (!cfg.cookie) return `${origin}\x00anonymous`;
+  const digest = await crypto.subtle.digest("SHA-256", TEXT_ENCODER.encode(cfg.cookie));
+  return `${origin}\x00cookie_sha256:${bytesToHex(new Uint8Array(digest))}`;
 }
 
 export async function getGeminiPushId(cfg: RuntimeConfig): Promise<string> {
@@ -137,6 +150,7 @@ async function fetchFreshGeminiPushId(cfg: RuntimeConfig): Promise<string> {
       cfg: activeCfg,
     });
     const pushId = validGeminiPushId(await extractGeminiPushId(resp));
+    if (pushId) await recordGeminiPageTokens(activeCfg, { push_id: pushId });
     if (!pushId) {
       log(activeCfg, "gemini app page push_id marker missing; content-push upload unavailable");
     }
@@ -145,4 +159,16 @@ async function fetchFreshGeminiPushId(cfg: RuntimeConfig): Promise<string> {
     log(activeCfg, `gemini app page push_id fetch failed; content-push upload unavailable ${errorLogSummary(e)}`);
     return "";
   }
+}
+
+async function recordGeminiPageTokens(cfg: RuntimeConfig, tokens: PageTokens): Promise<void> {
+  const writeback = cfg.gemini_account_writeback;
+  if (!writeback) return;
+  const sessionToken = typeof tokens.at === "string" && tokens.at.trim() ? tokens.at.trim() : "";
+  const pushId = typeof tokens.push_id === "string" && tokens.push_id.trim() ? tokens.push_id.trim() : "";
+  if (!sessionToken && !pushId) return;
+  await writeback({
+    sessionToken: sessionToken || undefined,
+    pushId: pushId || undefined,
+  });
 }

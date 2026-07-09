@@ -1,5 +1,5 @@
 import assert from "./assertions.js";
-import { baseConfig, mod } from "./helpers.js";
+import { baseConfig, mod, withFetch } from "./helpers.js";
 
 export const suiteName = "gemini account runtime";
 export const cases = [
@@ -154,6 +154,30 @@ export const cases = [
     assert.equal(store.writeCookieCalls, 1);
     assert.doesNotMatch(store.lastCookieWrite.cookieHeader, /SNlM0e|at=|secret-at/);
     assert.equal(store.lastCookieWrite.sessionToken, "secret-at");
+    lease.release();
+  }],
+  ["writes account page tokens back through the selected lease config", async () => {
+    const store = new FakeStore([accountRow("a")]);
+    const pool = new mod.AccountPoolService(store, {
+      nowMs: () => 45_000,
+      rotateCookie: async () => new Response("", { status: 204 }),
+    });
+    const lease = await pool.acquireLease(baseConfig({
+      gemini_origin: "https://gemini.example",
+      request_timeout_sec: 180,
+      upstream_socket: false,
+    }));
+    await withFetch(async (url, init = {}) => {
+      assert.equal(String(url), "https://gemini.example/app");
+      assert.equal(init.headers.Cookie, "__Secure-1PSID=psid-a; __Secure-1PSIDTS=ts-a");
+      return new Response('{"SNlM0e":"page-at","qKIAYe":"page-push"}', { status: 200 });
+    }, async () => {
+      assert.deepEqual(await mod.getPageTokens(lease.config), { at: "page-at", push_id: "page-push" });
+    });
+    assert.equal(store.writeCookieCalls, 1);
+    assert.equal(store.lastCookieWrite.sessionToken, "page-at");
+    assert.equal(store.lastCookieWrite.pushId, "page-push");
+    assert.doesNotMatch(store.lastCookieWrite.cookieHeader, /SNlM0e|page-at|page-push/);
     lease.release();
   }],
   ["does not classify generic token budget wording as auth failure", async () => {

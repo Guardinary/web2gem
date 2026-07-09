@@ -405,6 +405,35 @@ export const cases = [
     const googleV1Body = await googleV1.json();
     assert.equal(googleV1Body.error.message, "request body must be a JSON object");
   }],
+  ["does not read D1 accounts before public auth or JSON validation succeeds", async () => {
+    let prepareCalls = 0;
+    const env = {
+      API_KEYS: "[\"sk-test\"]",
+      GEMINI_DB: {
+        prepare() {
+          prepareCalls += 1;
+          throw new Error("D1 should not be read before auth and validation");
+        },
+      },
+    };
+
+    const unauthorized = await mod.default.fetch(new Request("https://worker.example/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gemini-3.5-flash", messages: [{ role: "user", content: "hello" }] }),
+    }), env, {});
+    assert.equal(unauthorized.status, 401);
+    assert.equal(prepareCalls, 0);
+
+    const invalidJson = await mod.default.fetch(new Request("https://worker.example/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer sk-test" },
+      body: "[]",
+    }), env, {});
+    assert.equal(invalidJson.status, 400);
+    assert.equal((await invalidJson.json()).error.message, "request body must be a JSON object");
+    assert.equal(prepareCalls, 0);
+  }],
   ["covers additional worker routing error envelopes", async () => {
     const googleStream = await mod.default.fetch(new Request("https://worker.example/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse", {
       method: "POST",

@@ -23,6 +23,7 @@ export async function handleChat(req: UnknownRecord, cfg: RuntimeConfig, provide
   const prepareStart = logRequests ? nowMs() : 0;
   const prepared = await prepareOpenAICompletion(cfg, provider, req, messages, req.tools, { emptyPromptMessage: "empty prompt" });
   if ("error" in prepared) {
+    await provider.dispose?.();
     if (logRequests) logStage(cfg, "openai_chat_prepare", { ms: elapsedMs(prepareStart), status: prepared.error.status, code: prepared.error.code });
     return openAIErrorResponse(prepared.error.message, prepared.error.status, prepared.error.code);
   }
@@ -137,6 +138,7 @@ async function handleImageGenerationChat(req: UnknownRecord, cfg: RuntimeConfig,
   const prepareStart = logRequests ? nowMs() : 0;
   const prepared = await prepareOpenAIImageGenerationCompletion(cfg, provider, req, "chat", forced);
   if ("error" in prepared) {
+    await provider.dispose?.();
     if (logRequests) logStage(cfg, "openai_chat_image_prepare", { ms: elapsedMs(prepareStart), status: prepared.error.status, code: prepared.error.code });
     return openAIErrorResponse(prepared.error.message, prepared.error.status, prepared.error.code);
   }

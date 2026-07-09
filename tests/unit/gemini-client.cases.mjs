@@ -1561,6 +1561,140 @@ export const cases = [
       "https://content-push.googleapis.com/upload",
     ]);
   }],
+  ["reuses one account lease across provider upload and text generation", async () => {
+    const cfg = baseGeminiClientConfig({ cookie: "" });
+    const lease = fakeLease(accountCfg("account-a", "hash-a"));
+    const runtime = fakeRuntime([lease]);
+    const seenConfigs = [];
+    const provider = mod.createGeminiCompletionProvider(cfg, {
+      accountRuntime: runtime,
+      uploads: {
+        async resolveAttachments(activeCfg) {
+          seenConfigs.push(activeCfg);
+          return {
+            fileRefs: [{ ref: "/uploaded/file", name: "file.txt" }],
+            imageFileRefs: null,
+            genericFileRefs: [{ ref: "/uploaded/file", name: "file.txt" }],
+            promptText: "",
+            droppedNote: "",
+            supportsFileRefs: true,
+            usage: { uploadedFiles: 1, dedupedFiles: 0, uploadedBytes: 4, fileRefBytes: 4, inlinedFiles: 0, inlinedBytes: 0, droppedFiles: 0, multipartUploads: 1 },
+          };
+        },
+      },
+      client: {
+        async generate(activeCfg, prompt, _modelId, _thinkMode, _extra, fileRefs) {
+          seenConfigs.push(activeCfg);
+          assert.equal(prompt, "provider prompt");
+          assert.deepEqual(fileRefs, [{ ref: "/uploaded/file", name: "file.txt" }]);
+          return "lease answer";
+        },
+      },
+    });
+
+    assert.equal(provider.supportsAuthenticatedSession, true);
+    const attachments = await provider.resolveAttachments(mod.createAttachmentPlan({ files: [{ b64: "aGVsbG8=", mime: "text/plain", filename: "file.txt" }] }));
+    const text = await provider.generateText({
+      prompt: "provider prompt",
+      rm: providerResolvedModel(),
+      fileRefs: attachments.fileRefs,
+    });
+
+    assert.equal(text, "lease answer");
+    assert.equal(runtime.acquireCalls, 1);
+    assert.equal(lease.successCalls, 1);
+    assert.equal(lease.failureCalls, 0);
+    assert.equal(lease.releaseCalls, 1);
+    assert.equal(seenConfigs.length, 2);
+    assert.equal(seenConfigs.every((activeCfg) => activeCfg.gemini_account.accountId === "account-a"), true);
+  }],
+  ["returns sanitized no-account provider errors before upstream calls", async () => {
+    let generated = false;
+    const runtime = fakeRuntime([null]);
+    const provider = mod.createGeminiCompletionProvider(baseGeminiClientConfig(), {
+      accountRuntime: runtime,
+      client: {
+        async generate() {
+          generated = true;
+          return "unexpected";
+        },
+      },
+    });
+
+    await assert.rejects(async () => {
+      try {
+        await provider.generateText({
+          prompt: "prompt",
+          rm: providerResolvedModel(),
+          fileRefs: null,
+        });
+      } catch (error) {
+        assert.equal(error.status, 503);
+        assert.equal(error.code, "no_available_gemini_account");
+        assert.doesNotMatch(error.message, /psid|cookie|SNlM0e|SAPISID/i);
+        throw error;
+      }
+    }, /no available Gemini account/);
+    assert.equal(generated, false);
+    assert.equal(runtime.acquireCalls, 1);
+  }],
+  ["finalizes account streams only after iterator completion", async () => {
+    const lease = fakeLease(accountCfg("stream-account", "stream-hash"));
+    const provider = mod.createGeminiCompletionProvider(baseGeminiClientConfig(), {
+      accountRuntime: fakeRuntime([lease]),
+      client: {
+        async *generateStream(activeCfg) {
+          assert.equal(activeCfg.gemini_account.accountId, "stream-account");
+          yield "a";
+          yield "b";
+        },
+      },
+    });
+
+    const iterator = provider.streamText({
+      prompt: "stream",
+      rm: providerResolvedModel(),
+      fileRefs: null,
+    })[Symbol.asyncIterator]();
+
+    assert.deepEqual(await iterator.next(), { value: "a", done: false });
+    assert.equal(lease.successCalls, 0);
+    assert.equal(lease.releaseCalls, 0);
+    assert.deepEqual(await iterator.next(), { value: "b", done: false });
+    assert.deepEqual(await iterator.next(), { value: undefined, done: true });
+    assert.equal(lease.successCalls, 1);
+    assert.equal(lease.failureCalls, 0);
+    assert.equal(lease.releaseCalls, 1);
+  }],
+  ["marks account stream failures and releases the selected lease", async () => {
+    const lease = fakeLease(accountCfg("stream-fail", "hash-fail"));
+    const provider = mod.createGeminiCompletionProvider(baseGeminiClientConfig(), {
+      accountRuntime: fakeRuntime([lease]),
+      client: {
+        async *generateStream() {
+          yield "partial";
+          const err = new Error("stream broke");
+          err.code = "stream_broke";
+          throw err;
+        },
+      },
+    });
+
+    const seen = [];
+    await assert.rejects(async () => {
+      for await (const delta of provider.streamText({
+        prompt: "stream",
+        rm: providerResolvedModel(),
+        fileRefs: null,
+      })) {
+        seen.push(delta);
+      }
+    }, /stream broke/);
+    assert.deepEqual(seen, ["partial"]);
+    assert.equal(lease.successCalls, 0);
+    assert.equal(lease.failureCalls, 1);
+    assert.equal(lease.releaseCalls, 1);
+  }],
 ];
 
 async function bodyBytes(body) {
@@ -1568,4 +1702,57 @@ async function bodyBytes(body) {
   if (body instanceof ArrayBuffer) return new Uint8Array(body);
   if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
   return new Response(body).bytes();
+}
+
+function providerResolvedModel() {
+  return { name: "gemini-3.5-flash", modeId: 1, thinkMode: 4, extra: null, modelHeaders: null };
+}
+
+function accountCfg(accountId, cookieHash) {
+  return baseGeminiClientConfig({
+    cookie: `__Secure-1PSID=psid-${accountId}; __Secure-1PSIDTS=ts-${accountId}`,
+    sapisid: "",
+    gemini_account: {
+      accountId,
+      rowId: `row-${accountId}`,
+      cookieHash,
+    },
+  });
+}
+
+function fakeRuntime(leases) {
+  return {
+    acquireCalls: 0,
+    async acquireLease() {
+      this.acquireCalls += 1;
+      return leases.shift() ?? null;
+    },
+  };
+}
+
+function fakeLease(config) {
+  return {
+    accountId: config.gemini_account.accountId,
+    rowId: config.gemini_account.rowId,
+    selectedCookieHash: config.gemini_account.cookieHash,
+    config,
+    successCalls: 0,
+    failureCalls: 0,
+    releaseCalls: 0,
+    async recordPageState() {
+      return { changed: false };
+    },
+    async refreshForRetry() {
+      return { changed: false, reason: "account_missing" };
+    },
+    async markSuccess() {
+      this.successCalls += 1;
+    },
+    async markFailure() {
+      this.failureCalls += 1;
+    },
+    release() {
+      this.releaseCalls += 1;
+    },
+  };
 }

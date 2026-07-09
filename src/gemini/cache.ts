@@ -6,6 +6,7 @@ type OriginScopedStringCacheOptions = {
   ttlSec: number;
   payloadKey: string;
   logLabel: string;
+  accountScoped?: boolean;
 };
 
 type OriginScopedStringCachePayload = Record<string, unknown> & {
@@ -16,6 +17,17 @@ function geminiOrigin(cfg: RuntimeConfig): string {
   return (cfg.gemini_origin || "https://gemini.google.com").replace(/\/$/, "");
 }
 
+export function geminiAccountCacheScope(cfg: RuntimeConfig, accountScoped: boolean = true): string {
+  const origin = geminiOrigin(cfg);
+  if (!accountScoped) return origin;
+  const account = cfg.gemini_account;
+  if (!account) return origin;
+  const accountId = String(account.accountId || "").trim();
+  const cookieHash = String(account.cookieHash || "").trim();
+  if (!accountId && !cookieHash) return origin;
+  return `${origin}\x00account:${accountId}\x00cookie:${cookieHash}`;
+}
+
 function workerCache(): Cache | null {
   if (typeof caches === "undefined") return null;
   const cacheStorage = caches as CacheStorage & { default?: Cache };
@@ -24,28 +36,28 @@ function workerCache(): Cache | null {
 
 export function createOriginScopedStringCache(options: OriginScopedStringCacheOptions) {
   const refreshes = new Map<string, Promise<string>>();
-  let l1: { origin: string; value: string; expiresAt: number } = { origin: "", value: "", expiresAt: 0 };
+  let l1: { scope: string; value: string; expiresAt: number } = { scope: "", value: "", expiresAt: 0 };
 
-  const cacheKey = (origin: string): Request => new Request(`${options.cachePrefix}${encodeURIComponent(origin)}`);
+  const cacheKey = (scope: string): Request => new Request(`${options.cachePrefix}${encodeURIComponent(scope)}`);
 
-  const setL1 = (origin: string, value: string, now: number = Date.now()): void => {
+  const setL1 = (scope: string, value: string, now: number = Date.now()): void => {
     l1 = {
-      origin,
+      scope,
       value,
       expiresAt: now + options.ttlSec * 1000,
     };
   };
 
-  const clearL1 = (origin?: string): void => {
-    if (!origin || l1.origin === origin) {
-      l1 = { origin: "", value: "", expiresAt: 0 };
+  const clearL1 = (scope?: string): void => {
+    if (!scope || l1.scope === scope) {
+      l1 = { scope: "", value: "", expiresAt: 0 };
     }
   };
 
-  const put = (cfg: RuntimeConfig, origin: string, value: string, now: number): Promise<void> => {
+  const put = (cfg: RuntimeConfig, scope: string, value: string, now: number): Promise<void> => {
     const cache = workerCache();
     if (!cache) return Promise.resolve();
-    return cache.put(cacheKey(origin), new Response(JSON.stringify({
+    return cache.put(cacheKey(scope), new Response(JSON.stringify({
       [options.payloadKey]: value,
       created_at_ms: now,
     }), {
@@ -59,26 +71,26 @@ export function createOriginScopedStringCache(options: OriginScopedStringCacheOp
   };
 
   const getCached = async (cfg: RuntimeConfig): Promise<string> => {
-    const origin = geminiOrigin(cfg);
+    const scope = geminiAccountCacheScope(cfg, !!options.accountScoped);
     const now = Date.now();
-    if (l1.origin === origin && l1.expiresAt > now) {
+    if (l1.scope === scope && l1.expiresAt > now) {
       return l1.value;
     }
-    clearL1(origin);
+    clearL1(scope);
     const cache = workerCache();
     if (!cache) return "";
     try {
-      const resp = await cache.match(cacheKey(origin));
+      const resp = await cache.match(cacheKey(scope));
       if (!resp) return "";
       const data = await resp.json().catch(() => null) as OriginScopedStringCachePayload | null;
       const value = validString(data && data[options.payloadKey]);
       const createdAt = Number(data && data.created_at_ms);
       if (!value || !Number.isFinite(createdAt)) return "";
       if (now - createdAt > options.ttlSec * 1000) {
-        await cache.delete(cacheKey(origin)).catch(() => false);
+        await cache.delete(cacheKey(scope)).catch(() => false);
         return "";
       }
-      setL1(origin, value, createdAt);
+      setL1(scope, value, createdAt);
       return value;
     } catch (e) {
       logCacheError(cfg, `failed to read cached ${options.logLabel}`, e);
@@ -87,20 +99,20 @@ export function createOriginScopedStringCache(options: OriginScopedStringCacheOp
   };
 
   const deleteCached = async (cfg: RuntimeConfig): Promise<void> => {
-    const origin = geminiOrigin(cfg);
-    clearL1(origin);
+    const scope = geminiAccountCacheScope(cfg, !!options.accountScoped);
+    clearL1(scope);
     const cache = workerCache();
     if (!cache) return;
-    await cache.delete(cacheKey(origin)).catch(() => false);
+    await cache.delete(cacheKey(scope)).catch(() => false);
   };
 
   const setCached = async (cfg: RuntimeConfig, rawValue: string): Promise<void> => {
     const value = validString(rawValue);
     if (!value) return;
-    const origin = geminiOrigin(cfg);
+    const scope = geminiAccountCacheScope(cfg, !!options.accountScoped);
     const now = Date.now();
-    setL1(origin, value, now);
-    const write = put(cfg, origin, value, now);
+    setL1(scope, value, now);
+    const write = put(cfg, scope, value, now);
     if (cfg.execution_ctx) {
       cfg.execution_ctx.waitUntil(write);
       return;
@@ -109,7 +121,7 @@ export function createOriginScopedStringCache(options: OriginScopedStringCacheOp
   };
 
   const getFresh = async (cfg: RuntimeConfig, fetchFresh: (cfg: RuntimeConfig) => Promise<string>): Promise<string> => {
-    const refreshKey = geminiOrigin(cfg);
+    const refreshKey = geminiAccountCacheScope(cfg, !!options.accountScoped);
     const pending = refreshes.get(refreshKey);
     if (pending) return pending;
 

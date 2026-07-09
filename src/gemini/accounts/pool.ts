@@ -62,7 +62,7 @@ export class AccountPoolService {
     const row = this.chooseRow(rows, nowMs);
     if (!row) return null;
     this.incrementInFlight(row.id);
-    return new PoolLease(this, row, accountConfig(baseConfig, row));
+    return new PoolLease(this, baseConfig, row);
   }
 
   async selectableSnapshot(nowMs: number = this.nowMs()): Promise<GeminiAccountSnapshotRow[]> {
@@ -247,8 +247,8 @@ class PoolLease implements GeminiAccountLease {
 
   constructor(
     private readonly pool: AccountPoolService,
+    baseConfig: RuntimeConfig,
     row: GeminiAccountSnapshotRow,
-    readonly config: RuntimeConfig,
   ) {
     this.accountId = row.id;
     this.rowId = row.row_id;
@@ -256,7 +256,10 @@ class PoolLease implements GeminiAccountLease {
     this.cookieHeader = row.cookie_header;
     this.cookieHash = row.cookie_hash;
     this.sapisid = row.sapisid;
+    this.config = accountConfig(baseConfig, row, (update) => this.recordPageState(update));
   }
+
+  readonly config: RuntimeConfig;
 
   recordPageState(update: GeminiAccountPageState): Promise<GeminiCookieWritebackResult> {
     return this.pool.recordPageState(this, update);
@@ -281,12 +284,22 @@ class PoolLease implements GeminiAccountLease {
   }
 }
 
-function accountConfig(baseConfig: RuntimeConfig, row: GeminiAccountSnapshotRow): RuntimeConfig {
+function accountConfig(
+  baseConfig: RuntimeConfig,
+  row: GeminiAccountSnapshotRow,
+  writeback: NonNullable<RuntimeConfig["gemini_account_writeback"]>,
+): RuntimeConfig {
   return {
     ...baseConfig,
     cookie: normalizeGeminiCookieHeader(row.cookie_header),
     sapisid: row.sapisid || "",
     gemini_origin: row.gemini_origin || baseConfig.gemini_origin,
+    gemini_account: {
+      accountId: row.id,
+      rowId: row.row_id,
+      cookieHash: row.cookie_hash,
+    },
+    gemini_account_writeback: writeback,
   };
 }
 

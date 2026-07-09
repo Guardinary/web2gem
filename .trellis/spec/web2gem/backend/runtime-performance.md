@@ -208,6 +208,63 @@ pendingRefresh.set(key, promise);
 return promise;
 ```
 
+## Scenario: Account-aware Gemini Provider Lease And Caches
+
+### 1. Scope / Trigger
+
+Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion-provider.ts`, changing provider request lifecycle behavior, changing Gemini upload/page-token caches, or changing generated-image byte fetching in account-pool mode.
+
+### 2. Signatures
+
+- `createGeminiCompletionProvider(cfg, { accountRuntime })` returns a request-scoped provider.
+- Account-backed `RuntimeConfig` carries `gemini_account.accountId`, `gemini_account.cookieHash`, optional `rowId`, and a narrow `gemini_account_writeback(...)` callback.
+- `CompletionProvider.supportsAuthenticatedSession` is the provider-neutral signal that authenticated Gemini behavior is available through either `GEMINI_COOKIE` or a configured account pool.
+- `CompletionProvider.dispose()` releases an acquired request lease when preparation fails before generation.
+
+### 3. Contracts
+
+- Public auth and JSON/multipart request validation must happen before account lease acquisition or D1 account reads. Constructing a runtime object is allowed before parsing, but `acquireLease` and store reads must stay lazy.
+- A provider instance may lazily acquire at most one account lease and must reuse it across `resolveAttachments`, `uploadTextFile`, `generateText`, `generateRich`, and `streamText`.
+- Upload-only provider calls keep the lease for the later generation call. If preparation returns an error after upload/bootstrap, the HTTP handler must call `provider.dispose()` before returning.
+- Non-streaming generation marks account success only after the Gemini call resolves. Streaming marks success only after the async iterator completes normally.
+- Non-abort provider failures mark the selected account failure and release the lease. Abort/disconnect errors release without recording noisy account failure.
+- No eligible account must throw a sanitized 503 error with code `no_available_gemini_account` and must not call upstream Gemini.
+- Account-marked configs must not use the process-global single-cookie rotation singleton. Cookie/session recovery goes through account runtime leases.
+- `/app` page tokens and content-push `push_id` caches must include account identity or cookie hash when `gemini_account` is present. Build-label cache remains origin-scoped.
+- Raw cookies, `SNlM0e`, `at`, `SAPISID`, session tokens, SQL bind values, and D1 API tokens must not appear in cache keys, log fields, or public error messages.
+- Successful `/app` token bootstrap in account mode should write changed `SNlM0e`/`at` and `push_id` through the lease writeback callback. These values remain structured account/session fields, not outbound Cookie header members.
+- Content-push upload may send selected `Push-ID`, but must not send Gemini `Cookie` or SAPISID-derived `Authorization` to `content-push.googleapis.com`.
+
+### 4. Validation & Error Matrix
+
+- Auth failure with `GEMINI_DB` configured -> 401 and zero D1 `prepare` calls.
+- Invalid JSON with `GEMINI_DB` configured -> 400 and zero D1 `prepare` calls.
+- D1 configured and no selectable account -> 503 `no_available_gemini_account`, zero upstream Gemini calls.
+- Upload then generation -> one lease acquisition, same account config in both calls, one success, one release.
+- `/app` page token fetch for account A then account B -> distinct cache keys; tokens cannot cross accounts.
+- Account stream yields a first delta -> no success marked yet; stream completion -> success and release.
+- Account stream throws after partial output -> failure and release; no alternate-account retry after visible output.
+
+### 5. Good/Base/Bad Cases
+
+- Good: provider closure stores the lease promise and reuses `lease.config` for upload and generation.
+- Good: HTTP prepare-error branches call `provider.dispose?.()` before returning a validation error after possible upload work.
+- Good: generated-image byte hydration receives the same account-backed config as rich generation.
+- Base: no-D1 provider keeps existing single-cookie/anonymous behavior.
+- Bad: calling `AccountPoolService.acquireLease` while parsing JSON, checking public API keys, listing models, or serving health checks.
+- Bad: keying page tokens or push IDs by raw cookie header.
+- Bad: releasing the lease immediately after successful upload and selecting another account for generation.
+
+### 6. Tests Required
+
+- Provider unit tests for lease reuse across upload plus text/rich generation.
+- Provider stream tests for success only after iterator completion and release on stream failure.
+- Route tests proving auth and request-validation failures do not touch D1.
+- Cache tests proving account-scoped page-token and push-id isolation.
+- Upload tests proving content-push requests omit Cookie and Authorization.
+- Runtime tests proving page-token writeback keeps session tokens out of outbound Cookie headers.
+- Run `pnpm typecheck`, `pnpm check:arch`, `pnpm check:static`, `pnpm unit`, and `pnpm smoke`.
+
 ## Scenario: Streaming Delta Coalescing
 
 ### 1. Scope / Trigger

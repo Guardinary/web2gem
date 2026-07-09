@@ -72,6 +72,7 @@ export { readRouteJsonPost } from "./http/core/route-json";
 export { sseResponse } from "./http/core/sse";
 export { streamErrorText, streamInterruptedWarningText, streamWarningObject, writeStreamWarningEvent } from "./http/core/stream-errors";
 export { httpFetch } from "./gemini/transport/http";
+export { geminiAccountCacheScope } from "./gemini/cache";
 export { base64ToBytes } from "./attachments/media";
 export { collectOpenAIInlineUploadImages, collectOpenAIRequestAttachmentPlan } from "./attachments/collect-openai";
 export { createAttachmentPlan } from "./attachments/plan";

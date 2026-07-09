@@ -2,6 +2,22 @@ export const VERSION = "1.1.0-worker";
 
 export type WorkerEnv = Record<string, unknown>;
 
+export type GeminiAccountRuntimeContext = {
+  accountId: string;
+  cookieHash: string;
+  rowId?: string;
+};
+
+export type GeminiAccountPageStateWriteback = {
+  cookieHeader?: string | undefined;
+  sapisid?: string | null | undefined;
+  sessionToken?: string | null | undefined;
+  sessionId?: string | null | undefined;
+  language?: string | null | undefined;
+  pushId?: string | null | undefined;
+  nowMs?: number;
+};
+
 export type RuntimeConfig = {
   gemini_bl: string;
   gemini_origin: string;
@@ -19,6 +35,8 @@ export type RuntimeConfig = {
   api_keys: string[];
   cookie: string;
   sapisid: string;
+  gemini_account?: GeminiAccountRuntimeContext;
+  gemini_account_writeback?: (update: GeminiAccountPageStateWriteback) => Promise<unknown>;
   execution_ctx?: Pick<ExecutionContext, "waitUntil">;
 };
 

@@ -25,6 +25,7 @@ export async function handleResponses(req: Record<string, unknown> | undefined, 
   const prepareStart = logRequests ? nowMs() : 0;
   const prepared = await prepareOpenAICompletion(cfg, provider, req, messages, req.tools, { emptyPromptMessage: "empty input" });
   if ("error" in prepared) {
+    await provider.dispose?.();
     if (logRequests) logStage(cfg, "openai_responses_prepare", { ms: elapsedMs(prepareStart), status: prepared.error.status, code: prepared.error.code });
     return openAIErrorResponse(prepared.error.message, prepared.error.status, prepared.error.code);
   }
@@ -115,6 +116,7 @@ async function handleImageGenerationResponses(req: Record<string, unknown>, cfg:
   const prepareStart = logRequests ? nowMs() : 0;
   const prepared = await prepareOpenAIImageGenerationCompletion(cfg, provider, req, "responses", forced);
   if ("error" in prepared) {
+    await provider.dispose?.();
     if (logRequests) logStage(cfg, "openai_responses_image_prepare", { ms: elapsedMs(prepareStart), status: prepared.error.status, code: prepared.error.code });
     return openAIErrorResponse(prepared.error.message, prepared.error.status, prepared.error.code);
   }
