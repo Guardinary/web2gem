@@ -43,7 +43,7 @@ export function largePromptEmptyResponseError(
   const err: ErrorWithMetadata = new Error(
     `Context is too long and triggered Gemini Web risk controls, so Gemini returned an empty response ` +
     `(${bytes} UTF-8 bytes > ${threshold}). This is unrelated to GEMINI_BL; ` +
-    "set GEMINI_COOKIE so this worker can route long context through txt attachments, or reduce the latest inline request size."
+    "configure a Gemini account pool so this worker can route long context through txt attachments, or reduce the latest inline request size."
   );
   err.code = LARGE_PROMPT_EMPTY_RESPONSE_CODE;
   err.promptBytes = bytes;
@@ -124,9 +124,9 @@ export function invalidGeminiCookieError(
   if (!cfg || !cfg.cookie || !AUTH_FAILURE_STATUSES.has(Number(status))) return null;
   const reason = cookieDiagnosticMessage(diagnosticReason);
   const err: ErrorWithMetadata = new Error(
-    `Gemini rejected the configured GEMINI_COOKIE (upstream HTTP ${status}). ` +
+    `Gemini rejected the selected account credentials (upstream HTTP ${status}). ` +
     (reason ? `Diagnostic: ${reason}. ` : "") +
-    "Update GEMINI_COOKIE with a valid, unexpired Gemini web session cookie, or remove it for anonymous-capable models."
+    "Update the Gemini account pool with valid, unexpired Gemini web session credentials."
   );
   err.code = INVALID_GEMINI_COOKIE_CODE;
   err.status = 401;
@@ -139,8 +139,8 @@ export function invalidGeminiCookieError(
 export function unverifiedGeminiCookieError(reason: string = "missing Gemini page auth token") {
   const messageReason = cookieDiagnosticMessage(reason) || reason;
   const err: ErrorWithMetadata = new Error(
-    `Could not verify the configured GEMINI_COOKIE (${messageReason}). ` +
-    "Update GEMINI_COOKIE with a valid, unexpired Gemini web session cookie, or remove it for anonymous-capable models."
+    `Could not verify the selected Gemini account credentials (${messageReason}). ` +
+    "Update the Gemini account pool with valid, unexpired Gemini web session credentials."
   );
   err.code = INVALID_GEMINI_COOKIE_CODE;
   err.status = 401;

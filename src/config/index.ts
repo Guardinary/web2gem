@@ -36,6 +36,7 @@ export type RuntimeConfig = {
   admin_keys: string[];
   cookie: string;
   sapisid: string;
+  supports_authenticated_session?: boolean;
   gemini_account?: GeminiAccountRuntimeContext;
   gemini_account_writeback?: (update: GeminiAccountPageStateWriteback) => Promise<unknown>;
   execution_ctx?: Pick<ExecutionContext, "waitUntil">;
@@ -52,12 +53,13 @@ export const CONFIG = {
   ADMIN_KEYS: [""],
   ADMIN_KEY: "",
 
-  // Gemini cookie。匿名访问可用于普通文本；真实 Pro 路由、大上下文文本附件、生图和已登录 Gemini Web 行为需要它。
+  // Gemini cookie。D1 账号池选中的账号会在运行时生成同形态配置；不要把这里当作
+  // 无 D1 部署 fallback。
   // 原始 cookie 字符串,例如:
   //   "__Secure-1PSID=...;__Secure-1PSIDTS=...;SAPISID=..."
-  // 匿名就留空 ""。(出于安全考虑,建议把它设为 Worker secret。)
+  // 默认留空 ""。(出于安全考虑,账号凭据应通过账号池导入和管理。)
   GEMINI_COOKIE: "",
-  SAPISID: "", // 可选;留空则自动从上面的 cookie 中提取
+  SAPISID: "", // 可选;内部 cookie 形态需要时会从 cookie 中提取
 
   // Gemini 网页版构建号。如果返回开始变空,去 gemini.google.com 页面源码里
   // 找一个新的值("boq_assistant-bard-web-server_...")。
@@ -80,7 +82,8 @@ export const CONFIG = {
   LOG_REQUESTS: false,
 
   // Pass large request context as Gemini text attachments only when the inline
-  // prompt is larger than CURRENT_INPUT_FILE_MIN_BYTES and a cookie is present.
+  // prompt is larger than CURRENT_INPUT_FILE_MIN_BYTES and an authenticated
+  // Gemini account-pool session is available.
   CURRENT_INPUT_FILE_ENABLED: true,
   CURRENT_INPUT_FILE_MIN_BYTES: 95000,
   CURRENT_INPUT_FILE_NAME: "message.txt",

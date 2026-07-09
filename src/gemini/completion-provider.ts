@@ -106,7 +106,7 @@ export function createGeminiCompletionProvider(cfg: RuntimeConfig, options: Gemi
   };
 
   return {
-    supportsAuthenticatedSession: !!(cfg.cookie || runtime),
+    supportsAuthenticatedSession: !!(runtime || cfg.supports_authenticated_session),
     generateText(input: CompletionTextInput) {
       const model = requireResolvedModel(input.rm);
       if (cfg.log_requests) logGeminiRoute(cfg, model, false);

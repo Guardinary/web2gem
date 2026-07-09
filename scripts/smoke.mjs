@@ -88,6 +88,32 @@ if (googleModelBody.name !== "models/gemini-3.5-flash" || googleModelBody.models
   process.exit(1);
 }
 
+const missingD1 = await prod.default.fetch(new Request("https://worker.example/v1/chat/completions", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    model: "gemini-3.5-flash",
+    messages: [{ role: "user", content: "hello" }],
+  }),
+}), {
+  API_KEYS: "[]",
+}, {});
+if (missingD1.status !== 503) {
+  console.error(`Smoke check failed: missing D1 status ${missingD1.status}`);
+  process.exit(1);
+}
+const missingD1Body = await missingD1.json();
+if (missingD1Body.error?.code !== "gemini_account_pool_required") {
+  console.error("Smoke check failed: missing D1 did not return gemini_account_pool_required");
+  process.exit(1);
+}
+
+const unusedD1 = {
+  prepare() {
+    throw new Error("smoke validation should not read D1");
+  },
+};
+
 const openAIReject = await prod.default.fetch(new Request("https://worker.example/v1/chat/completions", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -98,6 +124,7 @@ const openAIReject = await prod.default.fetch(new Request("https://worker.exampl
 }), {
   API_KEYS: "[]",
   CURRENT_INPUT_FILE_ENABLED: "false",
+  GEMINI_DB: unusedD1,
 }, {});
 if (openAIReject.status !== 400) {
   console.error(`Smoke check failed: OpenAI route status ${openAIReject.status}`);
@@ -119,6 +146,7 @@ const googleReject = await prod.default.fetch(new Request("https://worker.exampl
 }), {
   API_KEYS: "[]",
   CURRENT_INPUT_FILE_ENABLED: "false",
+  GEMINI_DB: unusedD1,
 }, {});
 if (googleReject.status !== 400) {
   console.error(`Smoke check failed: Google route status ${googleReject.status}`);

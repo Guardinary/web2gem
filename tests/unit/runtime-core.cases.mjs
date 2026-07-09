@@ -468,6 +468,27 @@ export const cases = [
     assert.equal((await invalidJson.json()).error.message, "request body must be a JSON object");
     assert.equal(prepareCalls, 0);
   }],
+  ["requires D1 account pool for public generation routes without upstream work", async () => {
+    let fetchCalls = 0;
+    const run = () => mod.default.fetch(new Request("https://worker.example/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gemini-3.5-flash", messages: [{ role: "user", content: "hello" }] }),
+    }), {
+      API_KEYS: "[]",
+      GEMINI_COOKIE: "SID=legacy-cookie",
+      LOG_REQUESTS: "false",
+    }, {});
+    const resp = await withFetch(async () => {
+      fetchCalls += 1;
+      throw new Error("upstream should not be called without GEMINI_DB");
+    }, run);
+    assert.equal(resp.status, 503);
+    const body = await resp.json();
+    assert.equal(body.error.code, "gemini_account_pool_required");
+    assert.match(body.error.message, /Gemini account pool requires/);
+    assert.equal(fetchCalls, 0);
+  }],
   ["covers additional worker routing error envelopes", async () => {
     const googleStream = await mod.default.fetch(new Request("https://worker.example/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse", {
       method: "POST",
@@ -507,20 +528,20 @@ export const cases = [
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "gemini-3.5-flash", messages: [] }),
     }), {}, {});
-    assert.equal(emptyChat.status, 400);
-    assert.equal((await emptyChat.json()).error.message, "empty prompt");
+    assert.equal(emptyChat.status, 503);
+    assert.equal((await emptyChat.json()).error.code, "gemini_account_pool_required");
 
+    const contextAvailableBody = JSON.stringify({ model: "gemini-3.5-flash", messages: [] });
     const contextAvailable = await mod.default.fetch(new Request("https://worker.example/v1/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": "9999" },
-      body: JSON.stringify({ model: "gemini-3.5-flash", messages: [] }),
+      headers: { "Content-Type": "application/json", "Content-Length": String(contextAvailableBody.length) },
+      body: contextAvailableBody,
     }), {
       CURRENT_INPUT_FILE_ENABLED: "true",
-      GEMINI_COOKIE: "SID=ok",
       CURRENT_INPUT_FILE_MIN_BYTES: "1",
     }, {});
-    assert.equal(contextAvailable.status, 400);
-    assert.equal((await contextAvailable.json()).error.message, "empty prompt");
+    assert.equal(contextAvailable.status, 503);
+    assert.equal((await contextAvailable.json()).error.code, "gemini_account_pool_required");
   }],
   ["rejects oversized inline OpenAI bodies from content length before parsing", async () => {
     const resp = await mod.default.fetch(new Request("https://worker.example/v1/responses", {

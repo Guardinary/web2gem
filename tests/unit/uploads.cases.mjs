@@ -345,7 +345,7 @@ export const cases = [
       assert.equal(result.fileRefs, null);
       assert.equal(result.imageFileRefs, null);
       assert.equal(result.supportsFileRefs, false);
-      assert.match(result.droppedNote, /image input requires a configured GEMINI_COOKIE/);
+      assert.match(result.droppedNote, /image input requires a configured Gemini account pool/);
       assert.equal(result.usage.uploadedFiles, 0);
     });
   }],
@@ -566,7 +566,7 @@ export const cases = [
     }, async () => {
       const result = await mod.resolveFiles(baseUploadCfg(), [{ b64: "AA==" }]);
       assert.equal(result.fileRefs, null);
-      assert.match(result.droppedNote, /file attachment requires a configured GEMINI_COOKIE/);
+      assert.match(result.droppedNote, /file attachment requires a configured Gemini account pool/);
     });
   }],
   ["uploads text context files through preferred multipart", async () => {

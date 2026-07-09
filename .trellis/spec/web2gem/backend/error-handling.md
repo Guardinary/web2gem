@@ -18,9 +18,9 @@ Gemini content-push `Push-ID` values must come from the Gemini `/app` page. Do n
 
 Request-local upload materialization follows `ds2api`: inline base64 and data URL payloads are supported, but remote `http://` / `https://` URLs are not fetched by the worker. Explicit file inputs that contain only a remote URL and no existing file reference are invalid request-local file inputs and must degrade with a prompt note instead of starting any network read.
 
-When `GEMINI_COOKIE` is configured and Gemini generation returns an authentication-style upstream status (`401` or `403`), classify it immediately as `invalid_gemini_cookie` before reading or parsing the response body, log safe metadata, and return HTTP 401 to OpenAI-compatible and Google-compatible callers. Do not retry the same request anonymously. Request-local image and generic file uploads may still degrade as described above; text-file context upload must fail instead of falling back.
+When selected account credentials are present and Gemini generation returns an authentication-style upstream status (`401` or `403`), classify it immediately as `invalid_gemini_cookie` before reading or parsing the response body, log safe metadata, and return HTTP 401 to OpenAI-compatible and Google-compatible callers. Do not retry the same request anonymously. Request-local image and generic file uploads may still degrade as described above; text-file context upload must fail instead of falling back.
 
-When `GEMINI_COOKIE` is configured, generation requests must also verify the Gemini page auth token (`at`) before calling `StreamGenerate`. If `/app` does not yield `at`, return `invalid_gemini_cookie` immediately instead of sending the generation request without `at`, because that silently turns the request into anonymous behavior.
+When selected account credentials are present, generation requests must also verify the Gemini page auth token (`at`) before calling `StreamGenerate`. If `/app` does not yield `at`, return `invalid_gemini_cookie` immediately instead of sending the generation request without `at`, because that silently turns the request into anonymous behavior.
 
 When Gemini WRB response parsing yields no text, logs under `LOG_REQUESTS` should include safe response-shape diagnostics such as WRB line count, parsed-envelope count, parsed-inner count, text-part count, and a reason class. Do not log raw WRB payload snippets or response text as diagnostics.
 
@@ -51,7 +51,7 @@ Use this contract when changing Gemini non-streaming rich output parsing, image 
 
 ### 4. Validation & Error Matrix
 
-- OpenAI image generation or image editing request and no `GEMINI_COOKIE` -> 401 `image_generation_requires_cookie` before upstream generation, upload resolution, or generated-image byte fetching.
+- OpenAI image generation or image editing request without a configured Gemini account pool -> sanitized account-pool-required failure before upstream generation, upload resolution, or generated-image byte fetching.
 - Rich response has no text but at least one generated image -> success, not `upstream_empty_response`.
 - Rich response has neither text nor images after retries -> `upstream_image_generation_empty`.
 - Rich response text only contains `http://googleusercontent.com/<kind>/<number>` placeholders and images are present -> return image output without placeholder text.
@@ -208,7 +208,7 @@ Use this contract when adding D1-backed storage, Docker-side D1 HTTP bindings, a
 
 - Good: `createD1HttpBinding(...).prepare(sql).bind(secret).all()` sends bind values to Cloudflare, but any thrown error message omits `secret`.
 - Good: `sanitizeGeminiAccount(row)` returns `has_cookie`, `has_sapisid`, `has_session_token`, hashes, and `cookie_preview: "present"` rather than raw cookie material.
-- Base: Docker leaves `GEMINI_DB` absent when all three D1 HTTP env vars are blank, preserving the existing single-cookie runtime path.
+- Base: Docker leaves `GEMINI_DB` absent when all three D1 HTTP env vars are blank, and public Gemini generation routes fail closed with `gemini_account_pool_required`.
 - Bad: returning `token.slice(0, 8) + "..."` for Gemini cookies in admin/public account lists.
 - Bad: `catch (err) { throw err; }` around D1 HTTP calls, because custom fetch implementations or runtime errors can include request bodies.
 
@@ -343,7 +343,7 @@ Use this contract when a request may be too large to send inline to Gemini Web a
   - `CURRENT_INPUT_FILE_ENABLED=true` keeps context-file attachment support enabled.
   - `CURRENT_INPUT_FILE_MIN_BYTES` is the oversized threshold.
   - `GENERIC_FILE_UPLOAD_MAX_BYTES` contributes to the JSON body read limit because base64 request-local attachments increase `Content-Length` without increasing inline prompt bytes.
-  - `GEMINI_COOKIE` must be configured for text attachment upload.
+  - A configured Gemini account pool must be available for text attachment upload.
   - `LOG_REQUESTS` is opt-in and should not be required for normal operation.
 - `Content-Length` is not an inline prompt size. It includes base64 image/file bytes that prompt conversion later replaces with markers and attachment candidates.
 - If `Content-Length` is present and exceeds the attachment-aware body read limit while context-file attachments are unavailable, return 413 before parsing JSON. The client-facing message should include `<contentLength> bytes > <bodyLimit>` and the inline prompt threshold.
@@ -357,9 +357,9 @@ Use this contract when a request may be too large to send inline to Gemini Web a
 
 ### 4. Validation & Error Matrix
 
-- `Content-Length > attachment-aware body read limit` and no `GEMINI_COOKIE` -> 413 `large_context_inline_unsupported`.
-- Streamed request body exceeds attachment-aware body read limit and no `GEMINI_COOKIE` -> 413 `large_context_inline_unsupported`.
-- Prompt bytes exceed threshold and no `GEMINI_COOKIE` -> 413 `large_context_inline_unsupported`.
+- `Content-Length > attachment-aware body read limit` and no authenticated account-pool session is available -> 413 `large_context_inline_unsupported`.
+- Streamed request body exceeds attachment-aware body read limit and no authenticated account-pool session is available -> 413 `large_context_inline_unsupported`.
+- Prompt bytes exceed threshold and no authenticated account-pool session is available -> 413 `large_context_inline_unsupported`.
 - Prompt bytes exceed threshold and `CURRENT_INPUT_FILE_ENABLED=false` -> 413 `large_context_inline_unsupported`.
 - Prompt bytes exceed threshold and text upload fails -> 502 `large_context_file_upload_failed`.
 - Context-file path with visible tools -> upload `message.txt` and `tools.txt`; provider prompt references `tools.txt` but does not contain `Available tools`, `<|DSML|tool_calls>`, or `Gemini native hidden tool calls`.

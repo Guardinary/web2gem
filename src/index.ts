@@ -6,7 +6,7 @@ import { GOOGLE_MODEL_JSON_BY_ID, GOOGLE_MODEL_LIST_JSON, HEALTH_JSON, NOT_FOUND
 import { googleJsonError, readRouteJsonPost } from "./http/core/route-json";
 import { handleGeminiAccountAdminRequest, isGeminiAccountAdminPath } from "./http/admin/gemini-accounts";
 import { createGeminiCompletionProvider } from "./gemini/completion-provider";
-import { createGeminiAccountRuntimeFromEnv } from "./gemini/accounts/runtime";
+import { createGeminiAccountRuntimeFromEnv, d1BindingFromEnv } from "./gemini/accounts/runtime";
 import { errorLogSummary, log } from "./shared/runtime";
 import type { RuntimeConfig } from "./config";
 import type { GeminiAccountRuntime } from "./gemini/accounts/runtime";
@@ -26,7 +26,7 @@ export default {
       });
     }
 
-    const cfg = { ...getConfig(env), execution_ctx: _ctx };
+    const cfg = withAccountPoolAvailability({ ...getConfig(env), execution_ctx: _ctx }, env);
     const url = new URL(request.url);
     const path = url.pathname;
     const respond = (response: Response) => withCORS(response, request);
@@ -68,27 +68,28 @@ export default {
       }
 
       if (method === "POST") {
-        const accountRuntime = createGeminiAccountRuntimeFromEnv(env);
         if (path === "/v1/chat/completions") {
-          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleChat(body, cfg, createProvider(cfg, accountRuntime))));
+          return respond(await handleOpenAIAccountJsonPost(request, cfg, env, path, (body, accountRuntime) => handleChat(body, cfg, createProvider(cfg, accountRuntime))));
         }
         if (path === "/v1/responses") {
-          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleResponses(body, cfg, createProvider(cfg, accountRuntime))));
+          return respond(await handleOpenAIAccountJsonPost(request, cfg, env, path, (body, accountRuntime) => handleResponses(body, cfg, createProvider(cfg, accountRuntime))));
         }
         if (path === "/v1/images/generations") {
-          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleImageGenerations(body, cfg, createProvider(cfg, accountRuntime))));
+          return respond(await handleOpenAIAccountJsonPost(request, cfg, env, path, (body, accountRuntime) => handleImageGenerations(body, cfg, createProvider(cfg, accountRuntime))));
         }
         if (path === "/v1/images/edits") {
           if (isMultipartFormRequest(request)) {
+            const accountRuntime = requiredGeminiAccountRuntimeFromEnv(env);
+            if (!accountRuntime) return respond(accountPoolRequiredOpenAIResponse());
             return respond(await handleImageEditsMultipart(request, cfg, createProvider(cfg, accountRuntime)));
           }
-          return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleImageEdits(body, cfg, createProvider(cfg, accountRuntime))));
+          return respond(await handleOpenAIAccountJsonPost(request, cfg, env, path, (body, accountRuntime) => handleImageEdits(body, cfg, createProvider(cfg, accountRuntime))));
         }
         if (GOOGLE_GENERATE_PATH_RE.test(path)) {
-          return respond(await handleGoogleJsonPost(request, cfg, path, (body) => handleGoogleGenerate(body, cfg, createProvider(cfg, accountRuntime), path, false)));
+          return respond(await handleGoogleAccountJsonPost(request, cfg, env, path, (body, accountRuntime) => handleGoogleGenerate(body, cfg, createProvider(cfg, accountRuntime), path, false)));
         }
         if (GOOGLE_STREAM_GENERATE_PATH_RE.test(path)) {
-          return respond(await handleGoogleJsonPost(request, cfg, path, (body) => handleGoogleGenerate(body, cfg, createProvider(cfg, accountRuntime), path, true)));
+          return respond(await handleGoogleAccountJsonPost(request, cfg, env, path, (body, accountRuntime) => handleGoogleGenerate(body, cfg, createProvider(cfg, accountRuntime), path, true)));
         }
         return respond(jsonTextResponse(NOT_FOUND_JSON, 404));
       }
@@ -110,26 +111,49 @@ function createProvider(cfg: RuntimeConfig, accountRuntime: GeminiAccountRuntime
   return createGeminiCompletionProvider(cfg, { accountRuntime });
 }
 
-async function handleOpenAIJsonPost(
+function withAccountPoolAvailability(cfg: RuntimeConfig, env: Record<string, unknown>): RuntimeConfig {
+  if (!d1BindingFromEnv(env)) return cfg;
+  return { ...cfg, supports_authenticated_session: true };
+}
+
+function requiredGeminiAccountRuntimeFromEnv(env: Record<string, unknown>): GeminiAccountRuntime | null {
+  return createGeminiAccountRuntimeFromEnv(env);
+}
+
+function accountPoolRequiredOpenAIResponse(): Response {
+  return openAIErrorResponse("Gemini account pool requires a configured GEMINI_DB binding", 503, "gemini_account_pool_required");
+}
+
+function accountPoolRequiredGoogleResponse(): Response {
+  return jsonResponse(googleJsonError("Gemini account pool requires a configured GEMINI_DB binding", "gemini_account_pool_required"), 503);
+}
+
+async function handleOpenAIAccountJsonPost(
   request: Request,
   cfg: RuntimeConfig,
+  env: Record<string, unknown>,
   path: string,
-  handler: (body: NonNullable<RouteJsonPostResult["value"]>) => Promise<Response>,
+  handler: (body: NonNullable<RouteJsonPostResult["value"]>, accountRuntime: GeminiAccountRuntime) => Promise<Response>,
 ): Promise<Response> {
   const parsed = await readRouteJsonPost(request, cfg, path);
   if (parsed.error !== undefined) return openAIErrorResponse(parsed.error, parsed.status || 400, parsed.code);
-  return handler(parsed.value);
+  const accountRuntime = requiredGeminiAccountRuntimeFromEnv(env);
+  if (!accountRuntime) return accountPoolRequiredOpenAIResponse();
+  return handler(parsed.value, accountRuntime);
 }
 
-async function handleGoogleJsonPost(
+async function handleGoogleAccountJsonPost(
   request: Request,
   cfg: RuntimeConfig,
+  env: Record<string, unknown>,
   path: string,
-  handler: (body: NonNullable<RouteJsonPostResult["value"]>) => Promise<Response>,
+  handler: (body: NonNullable<RouteJsonPostResult["value"]>, accountRuntime: GeminiAccountRuntime) => Promise<Response>,
 ): Promise<Response> {
   const parsed = await readRouteJsonPost(request, cfg, path);
   if (parsed.error !== undefined) return jsonResponse(googleJsonError(parsed.error, parsed.code), parsed.status || 400);
-  return handler(parsed.value);
+  const accountRuntime = requiredGeminiAccountRuntimeFromEnv(env);
+  if (!accountRuntime) return accountPoolRequiredGoogleResponse();
+  return handler(parsed.value, accountRuntime);
 }
 
 function isMultipartFormRequest(request: Request): boolean {

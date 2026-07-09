@@ -990,7 +990,7 @@ export const cases = [
         throw new Error("expected missing page token failure");
       } catch (err) {
         assert.equal(err.code, "invalid_gemini_cookie");
-        assert.match(err.message, /GEMINI_COOKIE/);
+        assert.match(err.message, /Gemini account pool/);
       }
     });
     assert.deepEqual(calls, ["https://gemini.example/app"]);

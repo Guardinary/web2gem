@@ -96,7 +96,8 @@ export const cases = [
   ["keeps runtime config env keys aligned with Docker docs and Compose", async () => {
     const envExample = parseEnvExampleKeys(await readFile(".env.example", "utf8"));
     const composeEnv = parseComposeEnvironmentKeys(await readFile("compose.yaml", "utf8"));
-    const configKeys = mod.CONFIG_ENV_KEYS;
+    const internalCompatKeys = new Set(["GEMINI_COOKIE", "SAPISID"]);
+    const configKeys = mod.CONFIG_ENV_KEYS.filter((key) => !internalCompatKeys.has(key));
 
     assert.deepEqual(missingKeys(configKeys, envExample), []);
     assert.deepEqual(missingKeys(configKeys, composeEnv), []);

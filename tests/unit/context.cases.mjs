@@ -80,6 +80,7 @@ export const cases = [
     assert.equal(mod.contextFileThreshold({ current_input_file_min_bytes: "not-a-number" }), 95000);
     assert.equal(mod.shouldConsiderContextFiles({ ...cfg, current_input_file_enabled: false }, "x".repeat(40)), false);
     assert.equal(mod.shouldConsiderContextFiles({ ...cfg, cookie: "" }, "x".repeat(40)), false);
+    assert.equal(mod.shouldConsiderContextFiles({ ...cfg, cookie: "", supports_authenticated_session: true }, "x".repeat(40)), true);
     assert.equal(mod.shouldConsiderContextFiles(cfg, "short"), false);
     assert.equal(mod.shouldConsiderContextFiles(cfg, "x".repeat(40), check), true);
     assert.equal(mod.shouldUseContextFiles(cfg, "history", "latest", "x".repeat(40), check), true);
@@ -359,9 +360,13 @@ export const cases = [
       }),
     }), {
       API_KEYS: "[]",
-      CURRENT_INPUT_FILE_ENABLED: "true",
+      CURRENT_INPUT_FILE_ENABLED: "false",
       CURRENT_INPUT_FILE_MIN_BYTES: "10",
-      GEMINI_COOKIE: "",
+      GEMINI_DB: {
+        prepare() {
+          throw new Error("oversized inline rejection should not read D1");
+        },
+      },
       LOG_REQUESTS: "false",
     }, {});
     assert.equal(resp.status, 413);

@@ -232,11 +232,11 @@ async function inlineOrDropAnonymousAttachment(cfg: RuntimeConfig, candidate: At
   try {
     materialized = await materializeAttachment(candidate, limits);
     if (candidate.kind !== "file") {
-      return droppedAnonymousAttachment(cfg, candidate, materialized, "image input requires a configured GEMINI_COOKIE");
+      return droppedAnonymousAttachment(cfg, candidate, materialized, "image input requires a configured Gemini account pool");
     }
     const inlineText = anonymousInlineTextFor(materialized);
     if (inlineText == null) {
-      return droppedAnonymousAttachment(cfg, candidate, materialized, "file attachment requires a configured GEMINI_COOKIE");
+      return droppedAnonymousAttachment(cfg, candidate, materialized, "file attachment requires a configured Gemini account pool");
     }
     const key = await dedupeKey(materialized);
     const existingInlineText = state.inlinedByKey.get(key);

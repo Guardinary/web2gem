@@ -12,6 +12,7 @@ type ContextFileConfig = {
   current_input_file_name?: unknown;
   current_tools_file_name?: unknown;
   cookie?: unknown;
+  supports_authenticated_session?: unknown;
   log_requests?: unknown;
 };
 export type TextFileUploader = (text: string, filename: string) => Promise<FileRef>;
@@ -34,7 +35,7 @@ export function contextFilePromptByteCheck(cfg: ContextFileConfig, promptText: u
 
 export function contextFileConfigUnavailableReason(cfg: ContextFileConfig): string {
   if (!cfg.current_input_file_enabled) return "CURRENT_INPUT_FILE_ENABLED is disabled";
-  if (!cfg.cookie) return "GEMINI_COOKIE is not configured";
+  if (!cfg.cookie && !cfg.supports_authenticated_session) return "Gemini account pool is not configured";
   return "";
 }
 
@@ -59,7 +60,7 @@ export function oversizedInlineContextFailure(cfg: ContextFileConfig, promptText
   const check = promptByteCheck || contextFilePromptByteCheck(cfg, promptText);
   const unavailable = String(reason || contextFileConfigUnavailableReason(cfg) || "context-file attachments are unavailable");
   const err: ErrorWithMetadata = new Error(
-    `context is too long to send inline (${formatPromptByteComparison(check)}) and ${unavailable}; configure GEMINI_COOKIE with CURRENT_INPUT_FILE_ENABLED=true so this worker can use text attachments, or reduce the request size`
+    `context is too long to send inline (${formatPromptByteComparison(check)}) and ${unavailable}; configure the Gemini account pool with CURRENT_INPUT_FILE_ENABLED=true so this worker can use text attachments, or reduce the request size`
   );
   err.code = "large_context_inline_unsupported";
   err.status = 413;

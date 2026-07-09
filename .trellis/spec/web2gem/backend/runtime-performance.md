@@ -159,7 +159,7 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 - Register pending per-account refresh promises before the first `await` in the refresh path. If the key is computed after an async hash/read, two same-tick callers can both start refresh work.
 - The first refresh attempt for an account must not be suppressed just because `lastRotateAtMs` is initialized to `0`; apply debounce only when a prior rotate timestamp is positive.
 - Refresh lock owners and cache keys must be based on account IDs and hashes, never raw cookies or session tokens.
-- No-D1 mode must return `null` runtime and leave the single-cookie path unchanged.
+- `createGeminiAccountRuntimeFromEnv` may return `null` for helper/admin composition, but public generation routes on this branch must translate missing `GEMINI_DB` into a sanitized `gemini_account_pool_required` response instead of serving through a single-cookie fallback.
 
 ### 4. Validation & Error Matrix
 
@@ -218,7 +218,7 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 
 - `createGeminiCompletionProvider(cfg, { accountRuntime })` returns a request-scoped provider.
 - Account-backed `RuntimeConfig` carries `gemini_account.accountId`, `gemini_account.cookieHash`, optional `rowId`, and a narrow `gemini_account_writeback(...)` callback.
-- `CompletionProvider.supportsAuthenticatedSession` is the provider-neutral signal that authenticated Gemini behavior is available through either `GEMINI_COOKIE` or a configured account pool.
+- `CompletionProvider.supportsAuthenticatedSession` is the provider-neutral signal that authenticated Gemini behavior is available through a configured account pool. Low-level cookie-shaped configs may still appear after a D1 account lease is selected.
 - `CompletionProvider.dispose()` releases an acquired request lease when preparation fails before generation.
 
 ### 3. Contracts
@@ -239,6 +239,7 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 
 - Auth failure with `GEMINI_DB` configured -> 401 and zero D1 `prepare` calls.
 - Invalid JSON with `GEMINI_DB` configured -> 400 and zero D1 `prepare` calls.
+- Missing `GEMINI_DB` on a public generation route after public auth and JSON parsing -> 503 `gemini_account_pool_required`, zero upstream Gemini calls.
 - D1 configured and no selectable account -> 503 `no_available_gemini_account`, zero upstream Gemini calls.
 - Upload then generation -> one lease acquisition, same account config in both calls, one success, one release.
 - `/app` page token fetch for account A then account B -> distinct cache keys; tokens cannot cross accounts.
@@ -250,7 +251,7 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - Good: provider closure stores the lease promise and reuses `lease.config` for upload and generation.
 - Good: HTTP prepare-error branches call `provider.dispose?.()` before returning a validation error after possible upload work.
 - Good: generated-image byte hydration receives the same account-backed config as rich generation.
-- Base: no-D1 provider keeps existing single-cookie/anonymous behavior.
+- Base: no-D1 public generation fails closed with `gemini_account_pool_required`; static health/model routes still do not read D1.
 - Bad: calling `AccountPoolService.acquireLease` while parsing JSON, checking public API keys, listing models, or serving health checks.
 - Bad: keying page tokens or push IDs by raw cookie header.
 - Bad: releasing the lease immediately after successful upload and selecting another account for generation.

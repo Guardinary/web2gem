@@ -90,7 +90,7 @@ curl https://your-web2gem.example/v1/chat/completions \
 
 Set `"stream": true` to receive Server-Sent Events.
 
-For image generation, send explicit OpenAI image-generation metadata with a non-streaming request. The Worker routes requests with either `tool_choice: { "type": "image_generation" }` or a `tools[]` entry `{ "type": "image_generation" }` through a pass-through image path. This mode uses only user-authored prompt text plus user-provided inline/existing image inputs, rejects attachments-only prompts, and returns upstream text/images as data-image or URL markdown in Chat Completions. Remote image/file URLs are not fetched. `GEMINI_COOKIE` is required for image generation, image editing, and image byte fetching.
+For image generation, send explicit OpenAI image-generation metadata with a non-streaming request. The Worker routes requests with either `tool_choice: { "type": "image_generation" }` or a `tools[]` entry `{ "type": "image_generation" }` through a pass-through image path. This mode uses only user-authored prompt text plus user-provided inline/existing image inputs, rejects attachments-only prompts, and returns upstream text/images as data-image or URL markdown in Chat Completions. Remote image/file URLs are not fetched. A configured D1-backed Gemini account pool is required for image generation, image editing, and image byte fetching.
 
 ```sh
 curl https://your-web2gem.example/v1/chat/completions \
@@ -119,7 +119,7 @@ Responses image generation uses the same explicit metadata and returns `image_ge
 
 ### OpenAI Images API
 
-`POST /v1/images/generations` and `POST /v1/images/edits` are supported as non-streaming image-generation routes. They do not require `tools` or `tool_choice`, but they still require `GEMINI_COOKIE`.
+`POST /v1/images/generations` and `POST /v1/images/edits` are supported as non-streaming image-generation routes. They do not require `tools` or `tool_choice`, but they still require the configured Gemini account pool.
 
 ```sh
 curl https://your-web2gem.example/v1/images/generations \
@@ -187,9 +187,7 @@ Each release publishes these assets:
 | `web2gem_<tag>_docker_linux_arm64.tar.gz` | Docker image archive for `linux/arm64`. |
 | `sha256sums.txt` | Checksums for the released files. |
 
-Secrets are optional. In the Worker dashboard, open the Worker settings and add variables/secrets only for the features you need. Set `API_KEYS` when you want to protect shared access, and set `GEMINI_COOKIE` when Pro routing, large-context text attachments, or signed-in Gemini Web behavior is needed.
-
-![Cloudflare Worker settings showing secrets](./docs/images/cloudflare-worker-settings-secrets-GEMINI_COOKIE.png)
+In the Worker dashboard, open the Worker settings and add variables/secrets for public API auth, admin auth, and the required `GEMINI_DB` D1 binding. Set `API_KEYS` when you want to protect shared access, and set `ADMIN_KEYS` before using account-pool admin endpoints.
 
 If you build from source instead of using a release artifact, `pnpm deploy` builds `dist/worker.js` and deploys it through the checked-in `wrangler.jsonc`.
 
@@ -202,7 +200,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The provided [`compose.yaml`](compose.yaml) pulls `ghcr.io/guardinary/web2gem:latest` by default, maps `${PORT:-52389}:${PORT:-52389}`, and forwards the runtime variables from `.env`. Set `API_KEYS` in `.env` for shared deployments, and set `GEMINI_COOKIE` when Pro routing, large-context text attachments, or signed-in Gemini Web behavior is needed. To pin a specific image tag, set `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:<tag>` in `.env`.
+The provided [`compose.yaml`](compose.yaml) pulls `ghcr.io/guardinary/web2gem:latest` by default, maps `${PORT:-52389}:${PORT:-52389}`, and forwards the runtime variables from `.env`. Set `API_KEYS` in `.env` for shared deployments, and set `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` so Docker can inject the required `GEMINI_DB` binding. To pin a specific image tag, set `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:<tag>` in `.env`.
 
 After the container starts, verify the local health route:
 
@@ -237,8 +235,6 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 | `API_KEYS`                      | empty                       | Comma-separated or JSON-array API keys. Empty disables auth.                                                                                                                                                     |
 | `ADMIN_KEYS`                    | empty                       | Comma-separated or JSON-array admin keys for account-pool management. Empty or placeholder-only values fail closed; public `API_KEYS` do not authorize admin account mutation.                                  |
 | `ADMIN_KEY`                     | empty                       | Single admin-key compatibility alias. Ignored when empty or set to placeholder values such as `changeme`.                                                                                                       |
-| `GEMINI_COOKIE`                 | empty                       | Raw Gemini cookie string; JSON with `cookie` and optional `sapisid`; or JSON with `secure_1psid`, `secure_1psidts`, and optional `sapisid`. Needed for real Pro routing, large-context text attachments, and signed-in Gemini Web behavior. |
-| `SAPISID`                       | empty                       | Optional SAPISID override. If empty, it is extracted from `GEMINI_COOKIE` when possible.                                                                                                                         |
 | `D1_ACCOUNT_ID`                 | empty                       | Docker-only Cloudflare account ID for the D1 HTTP binding. Set together with `D1_DATABASE_ID` and `D1_API_TOKEN`; partial D1 HTTP config fails startup.                                                          |
 | `D1_DATABASE_ID`                | empty                       | Docker-only Cloudflare D1 database ID for the injected `GEMINI_DB` binding.                                                                                                                                      |
 | `D1_API_TOKEN`                  | empty                       | Docker-only Cloudflare API token allowed to query the D1 database. Adapter errors redact this token and SQL bind values.                                                                                         |
@@ -260,19 +256,16 @@ When managing a Worker through the Wrangler CLI, optional secrets can be set wit
 
 - Set `API_KEYS` for shared deployments. If it is empty, auth is disabled.
 - Set `ADMIN_KEYS` or `ADMIN_KEY` before using account-pool admin endpoints. Admin endpoints do not become public when this is missing.
-- Set `GEMINI_COOKIE` when Pro routing, large-context text attachments, or signed-in Gemini Web behavior is needed.
+- Bind the D1 database as `GEMINI_DB` and import Gemini accounts through the admin endpoints before serving generation traffic.
 
 ```sh
 wrangler secret put API_KEYS
 wrangler secret put ADMIN_KEYS
-wrangler secret put GEMINI_COOKIE
 ```
-
-When `GEMINI_COOKIE` contains `__Secure-1PSID`, the Worker keeps an in-memory active cookie for the current isolate and lazily calls Google's `RotateCookies` endpoint when the cookie is stale or an authenticated upstream request fails. Refreshed cookies are kept in memory only; the Worker does not use a database for them or write them back to Worker secrets. A cold start initializes again from `GEMINI_COOKIE`.
 
 ### D1 account storage
 
-This version supports a D1-backed Gemini account pool for Worker and Docker deployments. If `GEMINI_DB` is not configured, the existing single-cookie `GEMINI_COOKIE` path remains available. If D1 is configured but no eligible account is selectable, Gemini generation fails with a sanitized `no_available_gemini_account` response instead of falling back to `GEMINI_COOKIE`.
+This branch requires a D1-backed Gemini account pool for Worker and Docker deployments. If `GEMINI_DB` is not configured, public Gemini generation routes fail closed with `gemini_account_pool_required`. If D1 is configured but no eligible account is selectable, Gemini generation fails with a sanitized `no_available_gemini_account` response.
 
 For Workers, create a D1 database, apply [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql), and bind it as `GEMINI_DB` in `wrangler.jsonc` or through your Cloudflare dashboard configuration. The schema creates structured `gemini_accounts`, `gemini_pool_meta`, and `gemini_account_locks` tables rather than storing account state as one JSON blob.
 
@@ -302,17 +295,7 @@ curl -X POST "https://your-worker.example/admin/gemini/accounts/refresh" \
 
 Refresh/check responses include countable fields such as `checked`, `skipped`, `refreshed`, `unchanged`, `failed`, `errors`, `results`, and sanitized `items`. Startup, health, and public model-list routes do not select accounts, call `/app`, rotate cookies, or probe Google.
 
-For single-cookie deployments, use the shortest practical cookie form: `__Secure-1PSID`, `__Secure-1PSIDTS`, and optional `SAPISID`. A fresh private-browser Gemini login that is closed after extracting these values tends to be more stable than copying a full everyday-browser cookie header. If a cold start falls back to an expired `__Secure-1PSIDTS`, the first authenticated request will try to rotate it. If Google rejects that rotation or returns no updated cookie, update the `GEMINI_COOKIE` secret manually.
-
-Short JSON cookie form:
-
-```json
-{
-  "secure_1psid": "YOUR_SECURE_1PSID",
-  "secure_1psidts": "YOUR_SECURE_1PSIDTS",
-  "sapisid": "OPTIONAL_SAPISID"
-}
-```
+When importing accounts, use the shortest practical credential form: `__Secure-1PSID`, `__Secure-1PSIDTS`, and optional `SAPISID`. A fresh private-browser Gemini login that is closed after extracting these values tends to be more stable than copying a full everyday-browser cookie header.
 
 For local development, use Wrangler environment support or pass bindings through the local Worker environment.
 

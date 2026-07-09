@@ -710,7 +710,13 @@ export const cases = [
     const resp = await mod.default.fetch(new Request("https://worker.example/v1/images/edits", {
       method: "POST",
       body: form,
-    }), {}, {});
+    }), {
+      GEMINI_DB: {
+        prepare() {
+          throw new Error("invalid multipart stream should not read D1");
+        },
+      },
+    }, {});
 
     assert.equal(resp.status, 400);
     assert.equal((await resp.json()).error.code, "unsupported_image_generation_stream");
@@ -816,7 +822,13 @@ export const cases = [
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt: "draw", stream: true }),
-    }), {}, {});
+    }), {
+      GEMINI_DB: {
+        prepare() {
+          throw new Error("invalid image stream should not read D1");
+        },
+      },
+    }, {});
     assert.equal(stream.status, 400);
     assert.equal((await stream.json()).error.code, "unsupported_image_generation_stream");
 
@@ -1208,7 +1220,7 @@ export const cases = [
       },
       async resolveAttachments() {
         return attachmentResult({
-          droppedNote: "\n\n[Note: 1 image(s) were provided but ignored - image input requires a configured GEMINI_COOKIE.]",
+          droppedNote: "\n\n[Note: 1 image(s) were provided but ignored - image input requires a configured Gemini account pool.]",
         });
       },
       async uploadTextFile(_text, filename) {

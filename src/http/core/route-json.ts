@@ -11,6 +11,7 @@ type RouteJsonConfig = {
   current_input_file_min_bytes?: unknown;
   generic_file_upload_max_bytes?: unknown;
   cookie?: unknown;
+  supports_authenticated_session?: unknown;
   log_requests?: unknown;
 };
 
@@ -54,7 +55,7 @@ function oversizedInlineBodyRejection(request: Request, cfg: RouteJsonConfig, pa
     threshold,
     bodyLimit,
   });
-  const message = `request body is too large to parse without Gemini text attachments (${contentLength} bytes > ${bodyLimit}; inline prompt threshold ${threshold}) and ${unavailable}; configure GEMINI_COOKIE with CURRENT_INPUT_FILE_ENABLED=true so this worker can use text attachments, or reduce the request size`;
+  const message = `request body is too large to parse without Gemini text attachments (${contentLength} bytes > ${bodyLimit}; inline prompt threshold ${threshold}) and ${unavailable}; configure the Gemini account pool with CURRENT_INPUT_FILE_ENABLED=true so this worker can use text attachments, or reduce the request size`;
   return {
     status: 413,
     code: LARGE_CONTEXT_INLINE_UNSUPPORTED,
@@ -90,7 +91,7 @@ function oversizedInlineBodyReadOptions(cfg: RouteJsonConfig): ReadJsonRequestOp
     oversizedError: {
       status: 413,
       code: LARGE_CONTEXT_INLINE_UNSUPPORTED,
-      message: `request body is too large to parse without Gemini text attachments (at least ${bodyLimit + 1} UTF-8 bytes > ${bodyLimit}; inline prompt threshold ${threshold}) and ${unavailable}; configure GEMINI_COOKIE with CURRENT_INPUT_FILE_ENABLED=true so this worker can use text attachments, or reduce the request size`,
+      message: `request body is too large to parse without Gemini text attachments (at least ${bodyLimit + 1} UTF-8 bytes > ${bodyLimit}; inline prompt threshold ${threshold}) and ${unavailable}; configure the Gemini account pool with CURRENT_INPUT_FILE_ENABLED=true so this worker can use text attachments, or reduce the request size`,
     },
   };
 }
@@ -104,6 +105,6 @@ export function inlineContextBodyReadLimit(cfg: RouteJsonConfig, threshold: numb
 
 function inlineContextUnavailableReason(cfg: RouteJsonConfig): string {
   if (!cfg.current_input_file_enabled) return "CURRENT_INPUT_FILE_ENABLED is disabled";
-  if (!cfg.cookie) return "GEMINI_COOKIE is not configured";
+  if (!cfg.cookie && !cfg.supports_authenticated_session) return "Gemini account pool is not configured";
   return "";
 }
