@@ -235,6 +235,8 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 | 变量                            | 默认值                      | 说明                                                                                                                                                                               |
 | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_KEYS`                      | empty                       | 逗号分隔或 JSON 数组形式的 API keys。为空时关闭认证。                                                                                                                              |
+| `ADMIN_KEYS`                    | empty                       | 账号池管理接口使用的 admin keys，支持逗号分隔或 JSON 数组。为空或只包含占位值时会 fail closed；公共 `API_KEYS` 不能管理账号池。                                                     |
+| `ADMIN_KEY`                     | empty                       | 单个 admin key 的兼容别名。为空或设置为 `changeme` 等占位值时会被忽略。                                                                                                             |
 | `GEMINI_COOKIE`                 | empty                       | 原始 Gemini cookie 字符串；或包含 `cookie` 和可选 `sapisid` 的 JSON；或包含 `secure_1psid`、`secure_1psidts` 和可选 `sapisid` 的 JSON。真实 Pro 路由、大上下文文本附件和已登录 Gemini Web 行为需要它。 |
 | `SAPISID`                       | empty                       | 可选 SAPISID 覆盖值。为空时会尽量从 `GEMINI_COOKIE` 提取。                                                                                                                         |
 | `D1_ACCOUNT_ID`                 | empty                       | 仅 Docker 使用的 Cloudflare account ID，用于 D1 HTTP binding。需与 `D1_DATABASE_ID`、`D1_API_TOKEN` 同时设置；只设置一部分会导致启动失败。                                             |
@@ -257,10 +259,12 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 使用 Wrangler CLI 管理 Worker 时，可通过以下命令设置可选 secrets：
 
 - 共享部署时设置 `API_KEYS`。为空时会关闭认证。
+- 使用账号池管理接口前设置 `ADMIN_KEYS` 或 `ADMIN_KEY`。缺失时 admin 接口不会公开放行。
 - 需要 Pro 路由、大上下文文本附件或已登录 Gemini Web 行为时设置 `GEMINI_COOKIE`。
 
 ```sh
 wrangler secret put API_KEYS
+wrangler secret put ADMIN_KEYS
 wrangler secret put GEMINI_COOKIE
 ```
 
@@ -268,11 +272,35 @@ wrangler secret put GEMINI_COOKIE
 
 ### D1 账号存储
 
-当前版本已经包含未来 Gemini 账号池所需的 D1 存储基础。实时 Gemini 请求路径仍保持现有单 cookie 行为，直到后续账号 runtime/admin 任务接入。
+当前版本支持 Worker 和 Docker 部署共用 D1 后端的 Gemini 账号池。未配置 `GEMINI_DB` 时，现有单 cookie `GEMINI_COOKIE` 路径保持可用。已配置 D1 但没有可选账号时，Gemini 生成会返回脱敏的 `no_available_gemini_account`，不会静默回退到 `GEMINI_COOKIE`。
 
 Worker 部署时，创建 D1 数据库，执行 [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql)，并在 `wrangler.jsonc` 或 Cloudflare 控制台配置中把它绑定为 `GEMINI_DB`。该 schema 会创建结构化的 `gemini_accounts`、`gemini_pool_meta` 和 `gemini_account_locks` 表，不会把账号状态作为单个 JSON blob 存储。
 
 Docker 部署时，在 `.env` 中同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`。三者都存在时，`scripts/docker-server.mjs` 会注入一个基于 Cloudflare D1 HTTP API 的 D1 兼容 `GEMINI_DB` binding。只设置一部分时，启动会以配置错误失败。
+
+账号池管理接口位于 `/admin/gemini/accounts`，必须通过 `ADMIN_KEYS` / `ADMIN_KEY` 鉴权，可使用 `Authorization: Bearer <key>` 或 `X-Admin-Key`。公共 `API_KEYS` 和查询参数 `key` 不能调用这些管理接口。
+
+默认 Gemini 导入只接受裸 cookie 值：
+
+```sh
+curl -X POST "https://your-worker.example/admin/gemini/accounts" \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"gemini","accounts":[{"__Secure-1PSID":"<仅值>","__Secure-1PSIDTS":"<仅值>","label":"primary"}]}'
+```
+
+不要在两个 cookie 字段中提交完整 Cookie header、JSON cookie 导出、`access_token`、cookie 名称、等号或分号。列表响应使用 `limit` 和 `cursor` 分页，并且已经脱敏：只暴露 ID、row ID、hash/status 元数据和存在性标记，不返回原始 cookie、`SAPISID`、`SNlM0e`、`at` 或 session token。
+
+显式诊断接口也只对 admin 开放：
+
+```sh
+curl -X POST "https://your-worker.example/admin/gemini/accounts/refresh" \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"identifiers":[{"row_id":"<row_id>"}]}'
+```
+
+Refresh/check 响应包含 `checked`、`skipped`、`refreshed`、`unchanged`、`failed`、`errors`、`results` 和脱敏后的 `items`。启动、健康检查和公开模型列表不会选择账号、调用 `/app`、刷新 cookie 或探测 Google。
 
 对于单 cookie 部署，建议使用尽量短的 cookie 形式：`__Secure-1PSID`、`__Secure-1PSIDTS` 和可选 `SAPISID`。用新的无痕浏览器 Gemini 登录，提取这些值后关闭浏览器，通常比复制日常浏览器的完整 cookie header 更稳定。如果冷启动回退到过期的 `__Secure-1PSIDTS`，第一次认证请求会尝试刷新它。如果 Google 拒绝刷新或没有返回更新后的 cookie，需要手动更新 `GEMINI_COOKIE` secret。
 

@@ -235,6 +235,8 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 | Variable                        | Default                     | Description                                                                                                                                                                                                      |
 | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_KEYS`                      | empty                       | Comma-separated or JSON-array API keys. Empty disables auth.                                                                                                                                                     |
+| `ADMIN_KEYS`                    | empty                       | Comma-separated or JSON-array admin keys for account-pool management. Empty or placeholder-only values fail closed; public `API_KEYS` do not authorize admin account mutation.                                  |
+| `ADMIN_KEY`                     | empty                       | Single admin-key compatibility alias. Ignored when empty or set to placeholder values such as `changeme`.                                                                                                       |
 | `GEMINI_COOKIE`                 | empty                       | Raw Gemini cookie string; JSON with `cookie` and optional `sapisid`; or JSON with `secure_1psid`, `secure_1psidts`, and optional `sapisid`. Needed for real Pro routing, large-context text attachments, and signed-in Gemini Web behavior. |
 | `SAPISID`                       | empty                       | Optional SAPISID override. If empty, it is extracted from `GEMINI_COOKIE` when possible.                                                                                                                         |
 | `D1_ACCOUNT_ID`                 | empty                       | Docker-only Cloudflare account ID for the D1 HTTP binding. Set together with `D1_DATABASE_ID` and `D1_API_TOKEN`; partial D1 HTTP config fails startup.                                                          |
@@ -257,10 +259,12 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 When managing a Worker through the Wrangler CLI, optional secrets can be set with:
 
 - Set `API_KEYS` for shared deployments. If it is empty, auth is disabled.
+- Set `ADMIN_KEYS` or `ADMIN_KEY` before using account-pool admin endpoints. Admin endpoints do not become public when this is missing.
 - Set `GEMINI_COOKIE` when Pro routing, large-context text attachments, or signed-in Gemini Web behavior is needed.
 
 ```sh
 wrangler secret put API_KEYS
+wrangler secret put ADMIN_KEYS
 wrangler secret put GEMINI_COOKIE
 ```
 
@@ -268,11 +272,35 @@ When `GEMINI_COOKIE` contains `__Secure-1PSID`, the Worker keeps an in-memory ac
 
 ### D1 account storage
 
-This version includes the D1 storage foundation for a future Gemini account pool. The live Gemini request path still uses the existing single-cookie behavior until the account runtime/admin tasks are wired in.
+This version supports a D1-backed Gemini account pool for Worker and Docker deployments. If `GEMINI_DB` is not configured, the existing single-cookie `GEMINI_COOKIE` path remains available. If D1 is configured but no eligible account is selectable, Gemini generation fails with a sanitized `no_available_gemini_account` response instead of falling back to `GEMINI_COOKIE`.
 
 For Workers, create a D1 database, apply [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql), and bind it as `GEMINI_DB` in `wrangler.jsonc` or through your Cloudflare dashboard configuration. The schema creates structured `gemini_accounts`, `gemini_pool_meta`, and `gemini_account_locks` tables rather than storing account state as one JSON blob.
 
 For Docker, set all of `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` in `.env`. When all three are present, `scripts/docker-server.mjs` injects a D1-compatible `GEMINI_DB` binding backed by Cloudflare's D1 HTTP API. If only some are present, startup fails with a configuration error.
+
+Account-pool management is available under `/admin/gemini/accounts` and requires `ADMIN_KEYS` / `ADMIN_KEY` through `Authorization: Bearer <key>` or `X-Admin-Key`. Public `API_KEYS` and query-string `key` do not authorize these routes.
+
+Default Gemini import accepts only bare cookie values:
+
+```sh
+curl -X POST "https://your-worker.example/admin/gemini/accounts" \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"gemini","accounts":[{"__Secure-1PSID":"<value-only>","__Secure-1PSIDTS":"<value-only>","label":"primary"}]}'
+```
+
+Do not send a full Cookie header, JSON cookie export, `access_token`, cookie names, equals signs, or semicolons in the two cookie fields. List responses are paginated with `limit` and `cursor` and are redacted: they expose IDs, row IDs, hashes/status metadata, and presence flags, not raw cookies, `SAPISID`, `SNlM0e`, `at`, or session tokens.
+
+Explicit diagnostics are admin-only:
+
+```sh
+curl -X POST "https://your-worker.example/admin/gemini/accounts/refresh" \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"identifiers":[{"row_id":"<row_id>"}]}'
+```
+
+Refresh/check responses include countable fields such as `checked`, `skipped`, `refreshed`, `unchanged`, `failed`, `errors`, `results`, and sanitized `items`. Startup, health, and public model-list routes do not select accounts, call `/app`, rotate cookies, or probe Google.
 
 For single-cookie deployments, use the shortest practical cookie form: `__Secure-1PSID`, `__Secure-1PSIDTS`, and optional `SAPISID`. A fresh private-browser Gemini login that is closed after extracting these values tends to be more stable than copying a full everyday-browser cookie header. If a cold start falls back to an expired `__Secure-1PSIDTS`, the first authenticated request will try to rotate it. If Google rejects that rotation or returns no updated cookie, update the `GEMINI_COOKIE` secret manually.
 

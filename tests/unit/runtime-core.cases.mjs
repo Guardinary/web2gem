@@ -263,6 +263,17 @@ export const cases = [
     assert.deepEqual(mod.getConfig({ API_KEYS: [" sk-array ", "", null, "sk-array-2"] }).api_keys, ["sk-array", "sk-array-2"]);
     assert.deepEqual(mod.getConfig({ API_KEYS: "[not json], sk-fallback" }).api_keys, ["[not json]", "sk-fallback"]);
   }],
+  ["normalizes admin key config, rejects placeholders, and recomputes cache keys", async () => {
+    assert.deepEqual(mod.getConfig({ ADMIN_KEY: "changeme", ADMIN_KEYS: "admin,password,test" }).admin_keys, []);
+    assert.deepEqual(mod.getConfig({ ADMIN_KEY: " admin-one ", ADMIN_KEYS: "[\"admin-two\",\"changeme\",\"admin-two\"]" }).admin_keys, ["admin-two", "admin-one"]);
+    const env = { ADMIN_KEY: "first" };
+    const first = mod.getConfig(env);
+    assert.deepEqual(first.admin_keys, ["first"]);
+    env.ADMIN_KEY = "second";
+    const second = mod.getConfig(env);
+    assert.deepEqual(second.admin_keys, ["second"]);
+    assert.equal(first === second, false);
+  }],
   ["extracts SAPISID from raw Gemini cookie when not set separately", async () => {
     const cfg = mod.getConfig({
       GEMINI_COOKIE: "__Secure-1PSID=psid; SAPISID=sapi-from-cookie; __Secure-1PSIDTS=ts",
@@ -314,6 +325,29 @@ export const cases = [
     const modelBody = await model.json();
     assert.equal(modelBody.id, "gemini-3.5-flash");
     assert.equal(modelBody.object, "model");
+  }],
+  ["does not initialize or read D1 for health and model-list routes", async () => {
+    let prepareCalls = 0;
+    const env = {
+      API_KEYS: "sk-test",
+      GEMINI_DB: {
+        prepare() {
+          prepareCalls++;
+          throw new Error("model and health routes must not touch D1");
+        },
+      },
+    };
+    const health = await mod.default.fetch(new Request("https://worker.example/"), env, {});
+    assert.equal(health.status, 200);
+    const openaiModels = await mod.default.fetch(new Request("https://worker.example/v1/models", {
+      headers: { Authorization: "Bearer sk-test" },
+    }), env, {});
+    assert.equal(openaiModels.status, 200);
+    const googleModels = await mod.default.fetch(new Request("https://worker.example/v1beta/models", {
+      headers: { Authorization: "Bearer sk-test" },
+    }), env, {});
+    assert.equal(googleModels.status, 200);
+    assert.equal(prepareCalls, 0);
   }],
   ["serves Google model routes and rejects prefix lookalikes", async () => {
     const listResp = await mod.default.fetch(new Request("https://worker.example/v1beta/models"), {}, {});

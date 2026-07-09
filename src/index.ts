@@ -4,6 +4,7 @@ import { handleChat, handleImageEdits, handleImageEditsMultipart, handleImageGen
 import { handleGoogleGenerate } from "./http/google/handlers";
 import { GOOGLE_MODEL_JSON_BY_ID, GOOGLE_MODEL_LIST_JSON, HEALTH_JSON, NOT_FOUND_JSON, OPENAI_MODEL_JSON_BY_ID, OPENAI_MODEL_LIST_JSON } from "./http/core/model-routes";
 import { googleJsonError, readRouteJsonPost } from "./http/core/route-json";
+import { handleGeminiAccountAdminRequest, isGeminiAccountAdminPath } from "./http/admin/gemini-accounts";
 import { createGeminiCompletionProvider } from "./gemini/completion-provider";
 import { createGeminiAccountRuntimeFromEnv } from "./gemini/accounts/runtime";
 import { errorLogSummary, log } from "./shared/runtime";
@@ -30,6 +31,10 @@ export default {
     const path = url.pathname;
     const respond = (response: Response) => withCORS(response, request);
 
+    if (isGeminiAccountAdminPath(path)) {
+      return respond(await handleGeminiAccountAdminRequest(request, env, cfg, url));
+    }
+
     // 鉴权:配置了 API_KEYS 时,除健康检查 "/" 外的所有接口都需要有效 key
     // (含 /v1/* 与 /v1beta/*,防止 Google 原生端点被绕过白嫖)。
     if (path !== "/" && !authorized(request, url, cfg)) {
@@ -37,7 +42,6 @@ export default {
     }
 
     try {
-      const accountRuntime = createGeminiAccountRuntimeFromEnv(env);
       if (method === "GET") {
         if (path === "/v1/models") {
           return respond(jsonTextResponse(OPENAI_MODEL_LIST_JSON));
@@ -64,6 +68,7 @@ export default {
       }
 
       if (method === "POST") {
+        const accountRuntime = createGeminiAccountRuntimeFromEnv(env);
         if (path === "/v1/chat/completions") {
           return respond(await handleOpenAIJsonPost(request, cfg, path, (body) => handleChat(body, cfg, createProvider(cfg, accountRuntime))));
         }

@@ -7,6 +7,12 @@ export { configWithCachedGeminiBuildLabel, getCachedGeminiBuildLabel, getFreshGe
 export { invalidGeminiCookieError, isInvalidGeminiCookieError, unverifiedGeminiCookieError } from "./gemini/client/errors";
 export { configWithActiveGeminiCookie, mergeSetCookieHeaders, parseCookieHeader, resetActiveGeminiCookieForTest, rotateGeminiCookieForRetry, rotateGeminiCookieForRetryWithReason, splitSetCookieHeader } from "./gemini/cookies";
 export { D1GeminiAccountStore } from "./gemini/accounts/store-d1";
+export {
+  createGeminiAccountAdminServiceFromD1,
+  createGeminiAccountAdminServiceFromEnv,
+  GeminiAccountAdminError,
+  GeminiAccountAdminService,
+} from "./gemini/accounts/admin";
 export { AccountPoolService } from "./gemini/accounts/pool";
 export { classifyGeminiAccountOutcome } from "./gemini/accounts/classify";
 export { createGeminiAccountRuntimeFromEnv, d1BindingFromEnv, GeminiAccountRuntime } from "./gemini/accounts/runtime";
@@ -69,6 +75,7 @@ export {
 } from "./shared/tokens";
 export { readJsonRequest } from "./http/core/json";
 export { readRouteJsonPost } from "./http/core/route-json";
+export { adminAuthorized, handleGeminiAccountAdminRequest, isGeminiAccountAdminPath } from "./http/admin/gemini-accounts";
 export { sseResponse } from "./http/core/sse";
 export { streamErrorText, streamInterruptedWarningText, streamWarningObject, writeStreamWarningEvent } from "./http/core/stream-errors";
 export { httpFetch } from "./gemini/transport/http";

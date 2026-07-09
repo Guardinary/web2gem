@@ -33,6 +33,7 @@ export type RuntimeConfig = {
   current_tools_file_name: string;
   generic_file_upload_max_bytes: number;
   api_keys: string[];
+  admin_keys: string[];
   cookie: string;
   sapisid: string;
   gemini_account?: GeminiAccountRuntimeContext;
@@ -48,6 +49,8 @@ export const CONFIG = {
   // 调用方必须携带的密钥(Authorization: Bearer <key> 或 x-api-key: <key>)。
   // 空数组 = 不鉴权(任何知道地址的人都能调用)。
   API_KEYS: [""],
+  ADMIN_KEYS: [""],
+  ADMIN_KEY: "",
 
   // Gemini cookie。匿名访问可用于普通文本；真实 Pro 路由、大上下文文本附件、生图和已登录 Gemini Web 行为需要它。
   // 原始 cookie 字符串,例如:
@@ -113,6 +116,32 @@ export function parseApiKeys(v: unknown): string[] {
   return raw.split(",").map((s: string) => s.trim()).filter(Boolean);
 }
 
+const PLACEHOLDER_ADMIN_KEYS = new Set([
+  "admin",
+  "changeme",
+  "change-me",
+  "example",
+  "password",
+  "sample",
+  "test",
+  "your-admin-key",
+]);
+
+export function parseAdminKeys(primary: unknown, legacy?: unknown): string[] {
+  const keys = [...parseApiKeys(primary), ...parseApiKeys(legacy)];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const key of keys) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) continue;
+    if (PLACEHOLDER_ADMIN_KEYS.has(trimmed.toLowerCase())) continue;
+    if (seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
 function normalizeApiKeyArray(items: unknown[]): string[] {
   return items.map((item: unknown) => item == null ? "" : String(item).trim()).filter(Boolean);
 }
@@ -164,6 +193,8 @@ export const CONFIG_ENV_KEYS = [
   "CURRENT_TOOLS_FILE_NAME",
   "GENERIC_FILE_UPLOAD_MAX_BYTES",
   "API_KEYS",
+  "ADMIN_KEYS",
+  "ADMIN_KEY",
 ];
 export let _configCacheKey: string | null = null;
 export let _configCacheValue: RuntimeConfig | null = null;
@@ -240,6 +271,7 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): RuntimeConfig {
       0
     ),
     api_keys: parseApiKeys(envOr(env, "API_KEYS", CONFIG.API_KEYS)),
+    admin_keys: parseAdminKeys(envOr(env, "ADMIN_KEYS", CONFIG.ADMIN_KEYS), envOr(env, "ADMIN_KEY", CONFIG.ADMIN_KEY)),
     cookie,
     sapisid,
   };

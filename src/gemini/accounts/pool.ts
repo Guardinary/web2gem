@@ -8,6 +8,7 @@ import type {
   GeminiAccountLease,
   GeminiAccountPageState,
   GeminiAccountRefreshResult,
+  GeminiAccountSecretRow,
   GeminiAccountSnapshotRow,
   GeminiAccountStore,
   GeminiAccountRuntimeOptions,
@@ -63,6 +64,15 @@ export class AccountPoolService {
     if (!row) return null;
     this.incrementInFlight(row.id);
     return new PoolLease(this, baseConfig, row);
+  }
+
+  async refreshAccountForAdmin(baseConfig: RuntimeConfig, account: GeminiAccountSecretRow, reason: string = "admin"): Promise<GeminiAccountRefreshResult> {
+    const lease = new PoolLease(this, baseConfig, account);
+    try {
+      return await this.refreshForRetry(lease, reason);
+    } finally {
+      lease.release();
+    }
   }
 
   async selectableSnapshot(nowMs: number = this.nowMs()): Promise<GeminiAccountSnapshotRow[]> {

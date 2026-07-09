@@ -242,6 +242,88 @@ try {
 }
 ```
 
+## Scenario: Gemini Account Admin API Auth And Redaction
+
+### 1. Scope / Trigger
+
+Use this contract when adding or changing account-pool admin routes, admin auth config, Gemini account import validation, account diagnostics, or any route that can mutate D1-backed Gemini account state.
+
+### 2. Signatures
+
+- Env keys: `ADMIN_KEYS` accepts comma-separated or JSON-array admin keys; `ADMIN_KEY` is a single-key compatibility alias.
+- Admin routes live under `/admin/gemini/accounts`.
+- Supported operations:
+  - `GET /admin/gemini/accounts?limit=&cursor=&status=&enabled=`
+  - `POST /admin/gemini/accounts`
+  - `PATCH /admin/gemini/accounts`
+  - `POST /admin/gemini/accounts/update`
+  - `POST /admin/gemini/accounts/enable`
+  - `POST /admin/gemini/accounts/disable`
+  - `DELETE /admin/gemini/accounts`
+  - `POST /admin/gemini/accounts/refresh`
+  - `POST /admin/gemini/accounts/check`
+- Default create payload accepts only `provider`, `accounts[]`, `__Secure-1PSID`, `__Secure-1PSIDTS`, and safe metadata such as `label`, `user_agent`, `gemini_origin`, `source`, `source_id`, and `source_name`.
+- Identifier payloads accept `id`, `account_id`, or `row_id`; `identifiers[]` is the batch form.
+
+### 3. Contracts
+
+- Admin auth is separate from public caller auth. Public `API_KEYS`, `x-goog-api-key`, and query-string `key` must not authorize account-pool admin routes.
+- Admin routes accept admin credentials through `Authorization: Bearer <key>`, `X-Admin-Key`, or `x-api-key`, matched only against `cfg.admin_keys`.
+- Missing, empty, or placeholder-only admin config fails closed with `401 admin_auth_not_configured`. Placeholder values include `changeme`, `change-me`, `your-admin-key`, `admin`, `password`, `test`, `example`, and `sample`.
+- Service-layer admin methods return sanitized DTOs before the HTTP route serializes responses. Route handlers must not receive raw D1 account rows for list/create/update/delete/refresh/check results.
+- Default Gemini import must reject full Cookie headers, JSON-looking cookie blobs, `access_token`, `accessToken`, `cookie`, `cookies`, extra non-null payload keys, provider mismatches, missing PSID/PSIDTS, and dual-field values containing cookie names, `=`, or `;`.
+- List pagination is bounded: default `limit` is 50 and maximum `limit` is 200.
+- Delete/update/enable/disable/refresh/check resolve and dedupe `id` / `account_id` / `row_id` before mutating D1 rows or scheduling refresh work.
+- Refresh/check are explicit admin-only diagnostics. Startup, health, public model listing, and public liveness routes must not select accounts, call `/app`, rotate cookies, run model/capability probes, or mutate account/session state.
+
+### 4. Validation & Error Matrix
+
+- No valid admin key configured -> `401 { error: { code: "admin_auth_not_configured" } }`, no D1 read.
+- Public `API_KEYS` presented to an admin route -> `401 invalid_admin_key`, no D1 read unless it also equals a configured admin key.
+- Admin route with no `GEMINI_DB` binding -> `503 gemini_account_store_unavailable`.
+- Create with unsafe Gemini import shape -> `400` with a safe `gemini_import_*` code.
+- Update/delete with no resolvable identifier -> `400 account_identifier_required` or `404 account_not_found`.
+- Refresh/check missing, disabled, or not-refreshable account -> count as `skipped` with a sanitized reason.
+- Unexpected D1/upstream/admin failure -> safe error code/message or `errorLogSummary(error)` only; do not serialize arbitrary `error.message`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `/admin/gemini/accounts` checks admin auth before constructing a store or reading D1.
+- Good: `createGeminiAccountAdminServiceFromD1(...).create(...)` returns `GeminiAccountPublic` items with `has_cookie`/hash/status metadata and no `cookie_header`, `sapisid`, or `session_token`.
+- Good: refresh/check responses include `checked`, `skipped`, `refreshed`, `unchanged`, `failed`, `errors`, `results`, and sanitized `items`.
+- Base: `/`, `/v1/models`, and `/v1beta/models` return static responses without constructing account runtime or reading D1 account rows.
+- Bad: reusing `authorized(request, url, cfg)` for admin routes, because it accepts public `API_KEYS` and query-string `key`.
+- Bad: route handlers receiving `GeminiAccountSecretRow` and relying on final JSON filtering for redaction.
+- Bad: health checks or public model list endpoints that call refresh/check or dynamic model discovery.
+
+### 6. Tests Required
+
+- Unit test admin key normalization, placeholder rejection, and config cache invalidation for `ADMIN_KEYS` / `ADMIN_KEY`.
+- Unit test public `API_KEYS` cannot authorize admin routes and unauthenticated admin failures perform zero D1 `prepare` calls.
+- Unit test safe dual-field Gemini import accepts and unsafe token/cookie/blob/provider/extra-key shapes reject.
+- Unit test admin list limit clamping and cursor/filter behavior.
+- Unit test update/delete/refresh/check identifier dedupe.
+- Unit test refresh/check count fields, skipped reasons, and sanitized item/error payloads.
+- Unit test health/model-list routes perform zero D1 account reads when `GEMINI_DB` is configured.
+- Unit or review checks should search full admin JSON responses for raw cookie/session fragments, not only known fields.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+if (!authorized(request, url, cfg)) return openAIErrorResponse("invalid api key", 401);
+return jsonResponse(await store.getAccountForRefresh(id));
+```
+
+#### Correct
+
+```typescript
+const auth = adminAuthorized(request, cfg);
+if (!auth.ok) return adminErrorResponse(auth);
+return jsonResponse(await service.refresh(body)); // service returns sanitized DTOs
+```
+
 ## Scenario: Oversized Inline Long Context
 
 ### 1. Scope / Trigger

@@ -1,5 +1,5 @@
 import assert from "./assertions.js";
-import { mod } from "./helpers.js";
+import { baseConfig, mod } from "./helpers.js";
 
 export const suiteName = "gemini accounts";
 export const cases = [
@@ -96,6 +96,162 @@ export const cases = [
     await store.releaseRefreshLock("acct", "owner-b");
     assert.equal(db.locks.has("acct"), false);
   }],
+  ["admin service accepts only safe Gemini dual-cookie imports and sanitizes create output", async () => {
+    const db = new FakeD1();
+    const service = mod.createGeminiAccountAdminServiceFromD1(db, baseConfig(), { nowMs: () => 1000 });
+    const created = await service.create({
+      provider: "gemini",
+      accounts: [{
+        provider: "gemini",
+        "__Secure-1PSID": "psid-secret",
+        "__Secure-1PSIDTS": "ts-secret",
+        label: "primary",
+      }],
+    });
+    assert.equal(created.added, 1);
+    assert.equal(created.items[0].label, "primary");
+    assert.equal(created.items[0].has_cookie, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(created.items[0], "cookie_header"), false);
+    assert.doesNotMatch(JSON.stringify(created), /psid-secret|ts-secret|SAPISID|SNlM0e/);
+
+    const invalidPayloads = [
+      { provider: "gemini", tokens: ["raw-token"] },
+      { provider: "gpt", accounts: [{ provider: "gemini", "__Secure-1PSID": "a", "__Secure-1PSIDTS": "b" }] },
+      { provider: "gemini", accounts: [{ provider: "gpt", "__Secure-1PSID": "a", "__Secure-1PSIDTS": "b" }] },
+      { provider: "gemini", accounts: [{ "__Secure-1PSID": "a", "__Secure-1PSIDTS": "b", access_token: "secret" }] },
+      { provider: "gemini", accounts: [{ "__Secure-1PSID": "__Secure-1PSID=a", "__Secure-1PSIDTS": "b" }] },
+      { provider: "gemini", accounts: [{ "__Secure-1PSID": "a;b", "__Secure-1PSIDTS": "c" }] },
+      { provider: "gemini", accounts: [{ "__Secure-1PSID": "a", "__Secure-1PSIDTS": "c=d" }] },
+      { provider: "gemini", accounts: [{ "__Secure-1PSID": "{\"__Secure-1PSID\":\"a\"}", "__Secure-1PSIDTS": "b" }] },
+      { provider: "gemini", accounts: [{ "__Secure-1PSID": "__Secure-1PSID", "__Secure-1PSIDTS": "b" }] },
+      { provider: "gemini", accounts: [{ "__Secure-1PSID": "a", "__Secure-1PSIDTS": "b", cookies: { x: "y" } }] },
+    ];
+    for (const payload of invalidPayloads) {
+      await assert.rejects(() => service.create(payload), /Gemini|provider|cookie/i);
+    }
+  }],
+  ["admin service bounds list pagination and deduplicates identifier mutations", async () => {
+    const db = new FakeD1();
+    const store = new mod.D1GeminiAccountStore(db);
+    await seedAccount(store, "a", {
+      cookieHeader: "__Secure-1PSID=psid-a; __Secure-1PSIDTS=ts-a",
+      nowMs: 1000,
+    });
+    await seedAccount(store, "b", {
+      cookieHeader: "__Secure-1PSID=psid-b; __Secure-1PSIDTS=ts-b",
+      nowMs: 1100,
+    });
+    const service = mod.createGeminiAccountAdminServiceFromD1(db, baseConfig(), { nowMs: () => 2000 });
+    const page = await service.list({ limit: 500, enabled: true });
+    assert.equal(page.limit, 200);
+    assert.deepEqual(page.items.map((item) => item.id), ["a", "b"]);
+
+    const disabled = await service.setEnabled({
+      identifiers: [
+        { id: "a" },
+        { account_id: "a" },
+        { row_id: db.rows.get("a").row_id },
+      ],
+    }, false);
+    assert.equal(disabled.updated, 1);
+    assert.equal(db.rows.get("a").enabled, 0);
+
+    const removed = await service.delete({
+      identifiers: [
+        { row_id: db.rows.get("b").row_id },
+        { id: "b" },
+      ],
+    });
+    assert.equal(removed.removed, 1);
+    assert.equal(db.rows.has("b"), false);
+  }],
+  ["admin refresh and check return countable sanitized deduped diagnostics", async () => {
+    const db = new FakeD1();
+    const store = new mod.D1GeminiAccountStore(db);
+    await seedAccount(store, "refreshable", {
+      cookieHeader: "__Secure-1PSID=psid-refresh; __Secure-1PSIDTS=ts-old",
+      nowMs: 1000,
+    });
+    await seedAccount(store, "skipped", {
+      cookieHeader: "__Secure-1PSID=psid-skip; __Secure-1PSIDTS=ts-skip",
+      nowMs: 1000,
+    });
+    db.rows.get("skipped").account_category = "psid_only";
+
+    let rotateCalls = 0;
+    const service = mod.createGeminiAccountAdminServiceFromD1(db, baseConfig({
+      request_timeout_sec: 10,
+      upstream_socket: false,
+    }), {
+      nowMs: () => 120_000,
+      rotateCookie: async () => {
+        rotateCalls++;
+        return new Response("", { status: 200, headers: { "set-cookie": "__Secure-1PSIDTS=ts-new; Path=/; Secure" } });
+      },
+    });
+    const result = await service.refresh({
+      identifiers: [
+        { id: "refreshable" },
+        { account_id: "refreshable" },
+        { row_id: db.rows.get("skipped").row_id },
+      ],
+    });
+    assert.equal(result.checked, 2);
+    assert.equal(result.refreshed, 1);
+    assert.equal(result.skipped, 1);
+    assert.equal(result.failed, 0);
+    assert.equal(rotateCalls, 1);
+    assert.doesNotMatch(JSON.stringify(result), /psid-refresh|ts-old|ts-new|SNlM0e|SAPISID/);
+
+    const check = await service.check({ identifiers: [{ id: "refreshable" }, { id: "refreshable" }] });
+    assert.equal(check.checked, 1);
+    assert.equal(check.unchanged + check.refreshed, 1);
+  }],
+  ["worker admin route uses admin auth separately from public API keys and avoids unauthenticated D1 reads", async () => {
+    const db = new FakeD1();
+    let prepareCalls = 0;
+    const env = {
+      API_KEYS: "public-key",
+      ADMIN_KEY: "admin-secret",
+      GEMINI_DB: {
+        prepare(sql) {
+          prepareCalls++;
+          return db.prepare(sql);
+        },
+      },
+    };
+
+    const publicKey = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts", {
+      headers: { Authorization: "Bearer public-key" },
+    }), env, {});
+    assert.equal(publicKey.status, 401);
+    assert.equal(prepareCalls, 0);
+
+    const missingD1 = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts", {
+      headers: { Authorization: "Bearer admin-secret" },
+    }), { ADMIN_KEY: "admin-secret" }, {});
+    assert.equal(missingD1.status, 503);
+    assert.equal((await missingD1.json()).error.code, "gemini_account_store_unavailable");
+
+    const created = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts", {
+      method: "POST",
+      headers: { Authorization: "Bearer admin-secret", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "gemini",
+        accounts: [{ "__Secure-1PSID": "route-psid", "__Secure-1PSIDTS": "route-ts" }],
+      }),
+    }), env, {});
+    assert.equal(created.status, 200);
+    assert.doesNotMatch(JSON.stringify(await created.json()), /route-psid|route-ts/);
+
+    const listed = await mod.default.fetch(new Request("https://worker.example/admin/gemini/accounts?limit=999", {
+      headers: { "X-Admin-Key": "admin-secret" },
+    }), env, {});
+    assert.equal(listed.status, 200);
+    const body = await listed.json();
+    assert.equal(body.limit, 200);
+    assert.equal(body.items.length, 1);
+  }],
 ];
 
 async function seedAccount(store, id, input) {
@@ -187,7 +343,23 @@ class FakeStatement {
     }
     if (this.sql.includes("FROM gemini_accounts")) {
       const limit = this.values.at(-1);
-      const rows = Array.from(this.db.rows.values()).sort((a, b) => a.id.localeCompare(b.id)).slice(0, limit).map(clone);
+      let index = 0;
+      let rows = Array.from(this.db.rows.values()).sort((a, b) => a.id.localeCompare(b.id));
+      if (this.sql.includes("id > ?")) {
+        const cursor = this.values[index];
+        index++;
+        rows = rows.filter((row) => row.id > cursor);
+      }
+      if (this.sql.includes("status = ?")) {
+        const status = this.values[index];
+        index++;
+        rows = rows.filter((row) => row.status === status);
+      }
+      if (this.sql.includes("enabled = ?")) {
+        const enabled = this.values[index];
+        rows = rows.filter((row) => row.enabled === enabled);
+      }
+      rows = rows.slice(0, limit).map(clone);
       return { results: rows, meta: { changes: 0 } };
     }
     throw new Error(`unhandled fake all SQL: ${this.sql}`);
@@ -253,6 +425,19 @@ class FakeStatement {
       row.success_count += this.values[10];
       row.failure_count += this.values[11];
       row.updated_at_ms = this.values[12];
+      return changed(1);
+    }
+    if (this.sql.includes("UPDATE gemini_accounts") && this.sql.includes("SET label = ?")) {
+      const accountId = this.values[13];
+      const row = this.db.rows.get(accountId);
+      if (!row) return changed(0);
+      [
+        "label", "enabled", "status", "state_reason", "cooldown_until_ms",
+        "account_status_code", "account_status_description", "user_agent",
+        "gemini_origin", "source", "source_id", "source_name", "updated_at_ms",
+      ].forEach((name, index) => {
+        row[name] = this.values[index];
+      });
       return changed(1);
     }
     if (this.sql.includes("DELETE FROM gemini_accounts")) {
