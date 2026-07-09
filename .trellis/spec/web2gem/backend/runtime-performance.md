@@ -88,6 +88,7 @@ Use this contract when changing environment config parsing, config cache keys, r
 ### 3. Contracts
 
 - Add every new environment variable consumed by `getConfig` to `CONFIG_ENV_KEYS`; otherwise cached configs can go stale.
+- `GEMINI_COOKIE` and `SAPISID` are not public runtime config keys on the D1 account-pool branch. Do not add them back to `CONFIG_ENV_KEYS`; account leases populate `RuntimeConfig.cookie` and `RuntimeConfig.sapisid` internally after selecting a D1 account.
 - Do not cache config solely by env object identity. Cloudflare-style env objects may be reused and mutated in tests or local harnesses, so `getConfig` must recompute when `configCacheKey(env)` changes.
 - `requestContentLength` accepts only safe base-10 integer strings after trimming; invalid, signed, fractional, or unsafe values return `null`.
 - `readJsonRequest` must reject `Content-Length > maxBodyBytes` before reading the stream.

@@ -113,7 +113,7 @@ async function prepareImageGenerationFromState(
   state: ExtractionState,
   forced: boolean,
 ): Promise<PreparedImageGenerationCompletion | { error: ImageGenerationPrepareError }> {
-  if (!cfg.cookie && !provider.supportsAuthenticatedSession) {
+  if (!provider.supportsAuthenticatedSession) {
     return {
       error: {
         message: "image generation requires a configured Gemini account pool",

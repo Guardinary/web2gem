@@ -11,7 +11,6 @@ type ContextFileConfig = {
   current_input_file_min_bytes?: unknown;
   current_input_file_name?: unknown;
   current_tools_file_name?: unknown;
-  cookie?: unknown;
   supports_authenticated_session?: unknown;
   log_requests?: unknown;
 };
@@ -35,7 +34,7 @@ export function contextFilePromptByteCheck(cfg: ContextFileConfig, promptText: u
 
 export function contextFileConfigUnavailableReason(cfg: ContextFileConfig): string {
   if (!cfg.current_input_file_enabled) return "CURRENT_INPUT_FILE_ENABLED is disabled";
-  if (!cfg.cookie && !cfg.supports_authenticated_session) return "Gemini account pool is not configured";
+  if (!cfg.supports_authenticated_session) return "Gemini account pool is not configured";
   return "";
 }
 

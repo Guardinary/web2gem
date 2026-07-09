@@ -40,6 +40,7 @@ export function fakeStreamProvider(items) {
 
 export function fakeProvider(overrides = {}) {
   return {
+    supportsAuthenticatedSession: true,
     async generateText() {
       return "";
     },

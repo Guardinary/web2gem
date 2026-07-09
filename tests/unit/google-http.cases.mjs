@@ -139,6 +139,7 @@ export const cases = [
       current_input_file_enabled: true,
       current_input_file_min_bytes: 10,
       cookie: "SID=ok",
+      supports_authenticated_session: true,
     }), provider, {
       contents: [{
         role: "user",
@@ -485,6 +486,7 @@ export const cases = [
       current_input_file_name: "message.txt",
       current_tools_file_name: "tools.txt",
       cookie: "SID=ok",
+      supports_authenticated_session: true,
       log_requests: false,
     }, provider, "/v1beta/models/gemini-3.5-flash:generateContent", false);
     assert.equal(resp.status, 200);

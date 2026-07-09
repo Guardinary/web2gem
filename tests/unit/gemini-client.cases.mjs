@@ -652,17 +652,6 @@ export const cases = [
     assert.equal(active.sapisid, "sapi");
     assert.equal(cfg.sapisid, "");
   }],
-  ["accepts structured GEMINI_COOKIE JSON config", async () => {
-    const cfg = mod.getConfig({
-      GEMINI_COOKIE: JSON.stringify({
-        secure_1psid: "psid",
-        secure_1psidts: "ts",
-        sapisid: "sapi",
-      }),
-    });
-    assert.equal(cfg.cookie, "__Secure-1PSID=psid; __Secure-1PSIDTS=ts; SAPISID=sapi");
-    assert.equal(cfg.sapisid, "sapi");
-  }],
   ["rotates Gemini cookie with safe RotateCookies headers", async () => {
     mod.resetActiveGeminiCookieForTest();
     let calls = 0;

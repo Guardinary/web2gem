@@ -53,14 +53,6 @@ export const CONFIG = {
   ADMIN_KEYS: [""],
   ADMIN_KEY: "",
 
-  // Gemini cookie。D1 账号池选中的账号会在运行时生成同形态配置；不要把这里当作
-  // 无 D1 部署 fallback。
-  // 原始 cookie 字符串,例如:
-  //   "__Secure-1PSID=...;__Secure-1PSIDTS=...;SAPISID=..."
-  // 默认留空 ""。(出于安全考虑,账号凭据应通过账号池导入和管理。)
-  GEMINI_COOKIE: "",
-  SAPISID: "", // 可选;内部 cookie 形态需要时会从 cookie 中提取
-
   // Gemini 网页版构建号。如果返回开始变空,去 gemini.google.com 页面源码里
   // 找一个新的值("boq_assistant-bard-web-server_...")。
   GEMINI_BL: "boq_assistant-bard-web-server_20260618.10_p0",
@@ -155,33 +147,7 @@ export function envOr(env: WorkerEnv, key: string, fallback: unknown): unknown {
   return v !== undefined && v !== null && v !== "" ? v : fallback;
 }
 
-function stringField(obj: Record<string, unknown>, ...keys: string[]): string {
-  for (const key of keys) {
-    const value = obj[key];
-    if (value !== undefined && value !== null && value !== "") return String(value);
-  }
-  return "";
-}
-
-function appendCookiePart(parts: string[], name: string, value: string): void {
-  if (value) parts.push(`${name}=${value}`);
-}
-
-function cookieFromJsonConfig(obj: Record<string, unknown>): { cookie: string; sapisid: string } {
-  const rawCookie = stringField(obj, "cookie");
-  const sapisid = stringField(obj, "sapisid", "SAPISID");
-  if (rawCookie) return { cookie: rawCookie, sapisid };
-
-  const parts: string[] = [];
-  appendCookiePart(parts, "__Secure-1PSID", stringField(obj, "secure_1psid", "secure1psid", "__Secure-1PSID"));
-  appendCookiePart(parts, "__Secure-1PSIDTS", stringField(obj, "secure_1psidts", "secure1psidts", "__Secure-1PSIDTS"));
-  appendCookiePart(parts, "SAPISID", sapisid);
-  return { cookie: parts.join("; "), sapisid };
-}
-
 export const CONFIG_ENV_KEYS = [
-  "GEMINI_COOKIE",
-  "SAPISID",
   "GEMINI_BL",
   "GEMINI_ORIGIN",
   "UPSTREAM_SOCKET",
@@ -232,25 +198,6 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): RuntimeConfig {
     _configCacheByEnv.set(env, { key: cacheKey, value: _configCacheValue });
     return _configCacheValue;
   }
-  let cookie = String(envOr(env, "GEMINI_COOKIE", CONFIG.GEMINI_COOKIE) || "");
-  let sapisid = String(envOr(env, "SAPISID", CONFIG.SAPISID) || "");
-  if (cookie && cookie.trim().startsWith("{")) {
-    // JSON forms:
-    //   {"cookie":"...", "sapisid":"..."}
-    //   {"secure_1psid":"...", "secure_1psidts":"...", "sapisid":"..."}
-    try {
-      const parsed = JSON.parse(cookie);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const fromJson = cookieFromJsonConfig(parsed as Record<string, unknown>);
-        cookie = fromJson.cookie;
-        if (!sapisid) sapisid = fromJson.sapisid;
-      }
-    } catch (_) { /* 当作原始字符串处理 */ }
-  }
-  if (cookie && !sapisid) {
-    const m = /(?:^|;\s*)SAPISID=([^;]+)/.exec(cookie);
-    if (m && m[1]) sapisid = m[1];
-  }
   const cfg = {
     gemini_bl: String(envOr(env, "GEMINI_BL", CONFIG.GEMINI_BL)),
     gemini_origin: String(envOr(env, "GEMINI_ORIGIN", CONFIG.GEMINI_ORIGIN)).replace(/\/$/, ""),
@@ -275,8 +222,8 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): RuntimeConfig {
     ),
     api_keys: parseApiKeys(envOr(env, "API_KEYS", CONFIG.API_KEYS)),
     admin_keys: parseAdminKeys(envOr(env, "ADMIN_KEYS", CONFIG.ADMIN_KEYS), envOr(env, "ADMIN_KEY", CONFIG.ADMIN_KEY)),
-    cookie,
-    sapisid,
+    cookie: "",
+    sapisid: "",
   };
   _configCacheKey = cacheKey;
   _configCacheValue = cfg;

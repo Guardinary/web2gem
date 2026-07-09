@@ -15,6 +15,7 @@ export const cases = [
       current_input_file_name: "message.txt",
       current_tools_file_name: "tools.txt",
       cookie: "SID=ok",
+      supports_authenticated_session: true,
       log_requests: true,
     };
     const logs = [];
@@ -59,9 +60,9 @@ export const cases = [
     const check = mod.contextFilePromptByteCheck({
       current_input_file_enabled: true,
       current_input_file_min_bytes: 10,
-      cookie: "",
+      supports_authenticated_session: false,
     }, "x".repeat(40));
-    const err = mod.oversizedInlineContextFailure({ current_input_file_enabled: true, current_input_file_min_bytes: 10, cookie: "" }, "x".repeat(40), check);
+    const err = mod.oversizedInlineContextFailure({ current_input_file_enabled: true, current_input_file_min_bytes: 10, supports_authenticated_session: false }, "x".repeat(40), check);
     assert.equal(err.code, "large_context_inline_unsupported");
     assert.equal(err.status, 413);
     assert.equal(err.promptBytes, 11);
@@ -73,14 +74,13 @@ export const cases = [
       current_input_file_enabled: true,
       current_input_file_min_bytes: 10,
       current_input_file_name: "history.txt",
-      cookie: "SID=ok",
+      supports_authenticated_session: true,
     };
     const check = mod.contextFilePromptByteCheck(cfg, "x".repeat(40));
     assert.equal(mod.contextFileThreshold({ current_input_file_min_bytes: -1 }), 0);
     assert.equal(mod.contextFileThreshold({ current_input_file_min_bytes: "not-a-number" }), 95000);
     assert.equal(mod.shouldConsiderContextFiles({ ...cfg, current_input_file_enabled: false }, "x".repeat(40)), false);
-    assert.equal(mod.shouldConsiderContextFiles({ ...cfg, cookie: "" }, "x".repeat(40)), false);
-    assert.equal(mod.shouldConsiderContextFiles({ ...cfg, cookie: "", supports_authenticated_session: true }, "x".repeat(40)), true);
+    assert.equal(mod.shouldConsiderContextFiles({ ...cfg, supports_authenticated_session: false }, "x".repeat(40)), false);
     assert.equal(mod.shouldConsiderContextFiles(cfg, "short"), false);
     assert.equal(mod.shouldConsiderContextFiles(cfg, "x".repeat(40), check), true);
     assert.equal(mod.shouldUseContextFiles(cfg, "history", "latest", "x".repeat(40), check), true);
@@ -115,6 +115,7 @@ export const cases = [
       current_input_file_name: "message.txt",
       current_tools_file_name: "tools.txt",
       cookie: "SID=ok",
+      supports_authenticated_session: true,
       log_requests: false,
     };
     const messages = [{
@@ -165,6 +166,7 @@ export const cases = [
       current_input_file_name: "message.txt",
       current_tools_file_name: "tools.txt",
       cookie: "SID=ok",
+      supports_authenticated_session: true,
     };
     const check = mod.contextFilePromptByteCheck(cfg, "x".repeat(40));
     const result = await mod.prepareContextFiles(
@@ -196,6 +198,7 @@ export const cases = [
       current_input_file_name: "message.txt",
       current_tools_file_name: "tools.txt",
       cookie: "SID=ok",
+      supports_authenticated_session: true,
       log_requests: false,
     };
     const result = await mod.prepareContextFilesWithUploader(
@@ -220,6 +223,7 @@ export const cases = [
       current_input_file_name: "message.txt",
       current_tools_file_name: "tools.txt",
       cookie: "SID=ok",
+      supports_authenticated_session: true,
       log_requests: false,
     };
     const uploads = [];
@@ -289,7 +293,6 @@ export const cases = [
       CURRENT_INPUT_FILE_ENABLED: "true",
       CURRENT_INPUT_FILE_MIN_BYTES: "10",
       GENERIC_FILE_UPLOAD_MAX_BYTES: "0",
-      GEMINI_COOKIE: "",
       LOG_REQUESTS: "false",
     }, {});
     assert.equal(resp.status, 413);
@@ -316,7 +319,6 @@ export const cases = [
       CURRENT_INPUT_FILE_ENABLED: "true",
       CURRENT_INPUT_FILE_MIN_BYTES: "10",
       GENERIC_FILE_UPLOAD_MAX_BYTES: "0",
-      GEMINI_COOKIE: "",
       LOG_REQUESTS: "false",
     }, {});
     assert.equal(resp.status, 413);

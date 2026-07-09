@@ -274,13 +274,13 @@ export const cases = [
     assert.deepEqual(second.admin_keys, ["second"]);
     assert.equal(first === second, false);
   }],
-  ["extracts SAPISID from raw Gemini cookie when not set separately", async () => {
+  ["ignores legacy Gemini cookie env for public runtime config", async () => {
     const cfg = mod.getConfig({
       GEMINI_COOKIE: "__Secure-1PSID=psid; SAPISID=sapi-from-cookie; __Secure-1PSIDTS=ts",
       SAPISID: "",
     });
-    assert.equal(cfg.cookie, "__Secure-1PSID=psid; SAPISID=sapi-from-cookie; __Secure-1PSIDTS=ts");
-    assert.equal(cfg.sapisid, "sapi-from-cookie");
+    assert.equal(cfg.cookie, "");
+    assert.equal(cfg.sapisid, "");
   }],
   ["clamps numeric runtime config minimums", async () => {
     const cfg = mod.getConfig({
@@ -476,7 +476,6 @@ export const cases = [
       body: JSON.stringify({ model: "gemini-3.5-flash", messages: [{ role: "user", content: "hello" }] }),
     }), {
       API_KEYS: "[]",
-      GEMINI_COOKIE: "SID=legacy-cookie",
       LOG_REQUESTS: "false",
     }, {});
     const resp = await withFetch(async () => {

@@ -10,7 +10,6 @@ type RouteJsonConfig = {
   current_input_file_enabled?: unknown;
   current_input_file_min_bytes?: unknown;
   generic_file_upload_max_bytes?: unknown;
-  cookie?: unknown;
   supports_authenticated_session?: unknown;
   log_requests?: unknown;
 };
@@ -105,6 +104,6 @@ export function inlineContextBodyReadLimit(cfg: RouteJsonConfig, threshold: numb
 
 function inlineContextUnavailableReason(cfg: RouteJsonConfig): string {
   if (!cfg.current_input_file_enabled) return "CURRENT_INPUT_FILE_ENABLED is disabled";
-  if (!cfg.cookie && !cfg.supports_authenticated_session) return "Gemini account pool is not configured";
+  if (!cfg.supports_authenticated_session) return "Gemini account pool is not configured";
   return "";
 }

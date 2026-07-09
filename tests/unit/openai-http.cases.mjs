@@ -27,6 +27,7 @@ export const cases = [
       input: "draw a red square",
       tools: [{ type: "image_generation" }],
     }, baseConfig({ cookie: "" }), fakeProvider({
+      supportsAuthenticatedSession: false,
       async generateRich() {
         generated = true;
         return { text: "upstream no-cookie result", images: [] };
@@ -40,6 +41,7 @@ export const cases = [
       model: "gemini-3.5-flash",
       prompt: "draw a red square",
     }, baseConfig({ cookie: "" }), fakeProvider({
+      supportsAuthenticatedSession: false,
       async generateRich() {
         generated = true;
         return { text: "", images: [] };
@@ -1128,6 +1130,7 @@ export const cases = [
       current_input_file_enabled: true,
       current_input_file_min_bytes: 1,
       cookie: "SID=ok",
+      supports_authenticated_session: true,
     }), fakeProvider({
       async uploadTextFile() {
         throw uploadErr;
@@ -1188,6 +1191,7 @@ export const cases = [
       current_input_file_enabled: true,
       current_input_file_min_bytes: 1,
       cookie: "SID=ok",
+      supports_authenticated_session: true,
     }), fakeProvider({
       async resolveAttachments() {
         throw new Error("resolveAttachments should not run");
@@ -1352,6 +1356,7 @@ export const cases = [
       current_input_file_name: "message.txt",
       current_tools_file_name: "tools.txt",
       cookie: "SID=ok",
+      supports_authenticated_session: true,
       log_requests: false,
     }, provider);
     assert.equal(resp.status, 200);
