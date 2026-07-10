@@ -182,6 +182,8 @@ For source-based one-click deployment to Cloudflare Workers, use the deploy butt
 
 The button forks the repository, creates the Worker, provisions the `GEMINI_DB` D1 database from `wrangler.jsonc`, builds the Worker, runs `wrangler d1 migrations apply GEMINI_DB --remote` through the deploy script, then deploys the Worker. During setup, enter `ADMIN_KEYS`; `API_KEYS` is optional. After deployment, open the admin UI and import your own Gemini account values.
 
+The deploy form shows non-secret Worker settings from `wrangler.jsonc` `vars` in plain text. Only secrets from [`.env.example`](.env.example) and [`.dev.vars.example`](.dev.vars.example), currently `API_KEYS` and `ADMIN_KEYS`, are hidden.
+
 Download the release build artifact `worker.js` from the [Releases](https://github.com/Guardinary/web2gem/releases) page, open your Cloudflare Worker in the dashboard, and replace the Worker source with the contents of that file. In the Worker dashboard settings, add the `nodejs_compat` compatibility flag.
 
 ![Cloudflare Worker settings showing nodejs_compat](./docs/images/cloudflare-worker-settings-nodejs-compat.png)
@@ -201,10 +203,10 @@ If you build from source instead of using a release artifact, `pnpm deploy` buil
 
 ### Option 2: Deploy with Docker
 
-Use [`.env.example`](.env.example) as the environment template and [`compose.yaml`](compose.yaml) as the Compose service definition:
+Use [`.env.docker.example`](.env.docker.example) as the environment template and [`compose.yaml`](compose.yaml) as the Compose service definition:
 
 ```sh
-cp .env.example .env
+cp .env.docker.example .env
 docker compose up -d
 ```
 
@@ -216,7 +218,7 @@ After the container starts, verify the local health route:
 curl http://127.0.0.1:52389/
 ```
 
-If you changed `PORT` in `.env`, use that host port instead. Docker deployments default `UPSTREAM_SOCKET` to `false` in [`.env.example`](.env.example) because `cloudflare:sockets` is only available in the Cloudflare Workers runtime. Other runtime variables are the same as the configuration variables listed below.
+If you changed `PORT` in `.env`, use that host port instead. Docker deployments default `UPSTREAM_SOCKET` to `false` in [`.env.docker.example`](.env.docker.example) because `cloudflare:sockets` is only available in the Cloudflare Workers runtime. Other runtime variables are the same as the configuration variables listed below.
 
 For one-off local testing without Compose, you can still build and run the image directly:
 

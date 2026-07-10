@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import assert from "./assertions.js";
 import { mod } from "./helpers.js";
 
+const DEPLOY_SECRET_TEMPLATE_KEYS = ["ADMIN_KEYS", "API_KEYS"];
+const DEPLOY_SECRET_KEYS = new Set([...DEPLOY_SECRET_TEMPLATE_KEYS, "ADMIN_KEY"]);
+const DOCKER_ONLY_ENV_KEYS = ["PORT", "WEB2GEM_IMAGE", "D1_ACCOUNT_ID", "D1_DATABASE_ID", "D1_API_TOKEN"];
+
 export const suiteName = "quality scripts";
 export const cases = [
   ["accepts coverage summaries that satisfy line and branch gates", async () => {
@@ -94,12 +98,48 @@ export const cases = [
     assert.doesNotMatch(compose, /\$\{PORT:-52389\}:52389/);
   }],
   ["keeps runtime config env keys aligned with Docker docs and Compose", async () => {
-    const envExample = parseEnvExampleKeys(await readFile(".env.example", "utf8"));
-    const composeEnv = parseComposeEnvironmentKeys(await readFile("compose.yaml", "utf8"));
+    const dockerEnvExample = parseEnvExampleKeys(await readFile(".env.docker.example", "utf8"));
+    const compose = await readFile("compose.yaml", "utf8");
+    const composeEnv = parseComposeEnvironmentKeys(compose);
+    const composeVariables = parseComposeVariableReferences(compose);
     const configKeys = mod.CONFIG_ENV_KEYS;
 
-    assert.deepEqual(missingKeys(configKeys, envExample), []);
+    assert.deepEqual(missingKeys(configKeys, dockerEnvExample), []);
     assert.deepEqual(missingKeys(configKeys, composeEnv), []);
+    assert.deepEqual(missingKeys(DOCKER_ONLY_ENV_KEYS, dockerEnvExample), []);
+    assert.deepEqual(missingKeys(DOCKER_ONLY_ENV_KEYS, composeVariables), []);
+  }],
+  ["keeps Deploy Button secrets separate from visible Worker vars", async () => {
+    const deploySecretTemplates = [".env.example", ".dev.vars.example"];
+    const deploySecretsByTemplate = new Map();
+    for (const path of deploySecretTemplates) {
+      deploySecretsByTemplate.set(path, parseEnvExampleKeys(await readFile(path, "utf8")));
+    }
+    const wrangler = parseJsoncObject(await readFile("wrangler.jsonc", "utf8"));
+    const workerVars = new Set(Object.keys(wrangler.vars || {}));
+    const expectedVisibleVars = mod.CONFIG_ENV_KEYS.filter((key) => !DEPLOY_SECRET_KEYS.has(key));
+
+    assert.deepEqual(missingKeys(expectedVisibleVars, workerVars), []);
+    assert.deepEqual([...DEPLOY_SECRET_KEYS].filter((key) => workerVars.has(key)), []);
+    for (const [path, deploySecrets] of deploySecretsByTemplate) {
+      assert.deepEqual([...deploySecrets].sort(), DEPLOY_SECRET_TEMPLATE_KEYS, path);
+      assert.deepEqual(expectedVisibleVars.filter((key) => deploySecrets.has(key)), [], path);
+      assert.deepEqual(DOCKER_ONLY_ENV_KEYS.filter((key) => deploySecrets.has(key)), [], path);
+    }
+  }],
+  ["parses JSONC config syntax without treating URL-like strings as comments", () => {
+    const wrangler = parseJsoncObject(`{
+      // JSONC line comment
+      "vars": {
+        "GEMINI_ORIGIN": "https://gemini.google.com",
+        "COMMENT_TEXT": "keep /* this */ and // this",
+      },
+    }`);
+
+    assert.deepEqual(wrangler.vars, {
+      GEMINI_ORIGIN: "https://gemini.google.com",
+      COMMENT_TEXT: "keep /* this */ and // this",
+    });
   }],
 ];
 
@@ -200,6 +240,89 @@ function parseComposeEnvironmentKeys(source) {
     if (match) keys.add(match[1]);
   }
   return keys;
+}
+
+function parseComposeVariableReferences(source) {
+  const keys = new Set();
+  for (const match of source.matchAll(/\$\{([A-Z0-9_]+)(?::-[^}]*)?\}/g)) {
+    keys.add(match[1]);
+  }
+  return keys;
+}
+
+function parseJsoncObject(source) {
+  return JSON.parse(removeTrailingJsoncCommas(stripJsoncComments(source)));
+}
+
+function stripJsoncComments(source) {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    const next = source[i + 1];
+    if (inString) {
+      out += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === "\"") {
+      inString = true;
+      out += char;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      while (i < source.length && !/\r|\n/.test(source[i])) i++;
+      out += source[i] || "";
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      i += 2;
+      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) i++;
+      i++;
+      continue;
+    }
+    out += char;
+  }
+  return out;
+}
+
+function removeTrailingJsoncCommas(source) {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    if (inString) {
+      out += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === "\"") {
+      inString = true;
+      out += char;
+      continue;
+    }
+    if (char === ",") {
+      let nextIndex = i + 1;
+      while (/\s/.test(source[nextIndex] || "")) nextIndex++;
+      if (source[nextIndex] === "}" || source[nextIndex] === "]") continue;
+    }
+    out += char;
+  }
+  return out;
 }
 
 function missingKeys(expected, actual) {

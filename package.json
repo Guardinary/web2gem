@@ -37,5 +37,54 @@
     "valibot": "^1.4.2",
     "vitest": "^4.1.10",
     "wrangler": "^4.107.1"
+  },
+  "cloudflare": {
+    "bindings": {
+      "API_KEYS": {
+        "description": "Optional public API keys. Leave empty to disable shared API authentication."
+      },
+      "ADMIN_KEYS": {
+        "description": "Admin keys for the account-pool WebUI and `/admin/accounts` API. Set at least one non-placeholder value before importing Gemini accounts."
+      },
+      "GEMINI_BL": {
+        "description": "Gemini Web build label. Update only if upstream Gemini Web responses become empty after a frontend change."
+      },
+      "GEMINI_ORIGIN": {
+        "description": "Upstream Gemini origin. Keep the default unless Cloudflare egress is rate-limited and you operate a compatible forwarding endpoint."
+      },
+      "UPSTREAM_SOCKET": {
+        "description": "Prefer `cloudflare:sockets` upstream transport when available. Docker uses a separate `.env.docker.example` default of `false`."
+      },
+      "DEFAULT_MODEL": {
+        "description": "Model used when a request omits `model`."
+      },
+      "RETRY_ATTEMPTS": {
+        "description": "Upstream retry attempts. Minimum runtime value is `1`."
+      },
+      "RETRY_DELAY_SEC": {
+        "description": "Delay between upstream retry attempts in seconds."
+      },
+      "REQUEST_TIMEOUT_SEC": {
+        "description": "Upstream request timeout in seconds."
+      },
+      "LOG_REQUESTS": {
+        "description": "Enable structured runtime stage logs."
+      },
+      "CURRENT_INPUT_FILE_ENABLED": {
+        "description": "Enable Gemini text attachments for large prompt context when an authenticated account-pool session is available."
+      },
+      "CURRENT_INPUT_FILE_MIN_BYTES": {
+        "description": "Inline prompt byte threshold before text attachment handling is attempted."
+      },
+      "CURRENT_INPUT_FILE_NAME": {
+        "description": "Filename used for large message context attachments."
+      },
+      "CURRENT_TOOLS_FILE_NAME": {
+        "description": "Filename used for large tool-definition context attachments."
+      },
+      "GENERIC_FILE_UPLOAD_MAX_BYTES": {
+        "description": "Maximum bytes per request-local attachment."
+      }
+    }
   }
 }

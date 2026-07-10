@@ -13,5 +13,20 @@
   ],
   "observability": {
     "enabled": true
+  },
+  "vars": {
+    "GEMINI_BL": "boq_assistant-bard-web-server_20260618.10_p0",
+    "GEMINI_ORIGIN": "https://gemini.google.com",
+    "UPSTREAM_SOCKET": true,
+    "DEFAULT_MODEL": "gemini-3.5-flash",
+    "RETRY_ATTEMPTS": 3,
+    "RETRY_DELAY_SEC": 2,
+    "REQUEST_TIMEOUT_SEC": 180,
+    "LOG_REQUESTS": false,
+    "CURRENT_INPUT_FILE_ENABLED": true,
+    "CURRENT_INPUT_FILE_MIN_BYTES": 95000,
+    "CURRENT_INPUT_FILE_NAME": "message.txt",
+    "CURRENT_TOOLS_FILE_NAME": "tools.txt",
+    "GENERIC_FILE_UPLOAD_MAX_BYTES": 20971520
   }
 }
