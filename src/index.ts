@@ -1,4 +1,4 @@
-import { getConfig } from "./config";
+import { createRuntimeConfig, getConfig } from "./config";
 import {
 	authorized,
 	corsHeaders,
@@ -63,7 +63,7 @@ export default {
 		}
 
 		const cfg = withAccountPoolAvailability(
-			{ ...getConfig(env), execution_ctx: _ctx },
+			createRuntimeConfig(getConfig(env), { execution_ctx: _ctx }),
 			env,
 		);
 		const url = new URL(request.url);

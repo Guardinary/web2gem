@@ -279,6 +279,68 @@ export const cases = [
 		},
 	],
 	[
+		"admin input owner normalizes filters identifiers and update payloads",
+		() => {
+			const accounts = mod.normalizeCreateAccounts({
+				provider: "gemini",
+				accounts: [
+					{
+						provider: "gemini",
+						"__Secure-1PSID": "psid",
+						"__Secure-1PSIDTS": "psidts",
+						label: "primary",
+					},
+				],
+			});
+			assert.equal(accounts.length, 1);
+			assert.deepEqual(
+				mod.createGeminiAccountInputFromAdmin(accounts[0], 1234),
+				{
+					cookieHeader: "__Secure-1PSID=psid; __Secure-1PSIDTS=psidts",
+					label: "primary",
+					nowMs: 1234,
+				},
+			);
+			assert.deepEqual(
+				mod.normalizeGeminiAccountIdentifiers({
+					identifiers: [
+						{ id: "account-a" },
+						{ account_id: "account-a" },
+						{ row_id: "row-b" },
+					],
+				}),
+				[{ id: "account-a", account_id: "account-a" }, { row_id: "row-b" }],
+			);
+			assert.deepEqual(
+				mod.normalizeGeminiAccountListFilter({
+					limit: 999,
+					q: " q ",
+					category: "full_session",
+					cooldown: "active",
+				}),
+				{
+					limit: 200,
+					q: "q",
+					category: "full_session",
+					cooldown: "active",
+				},
+			);
+			const update = mod.geminiAccountUpdateFromAdminBody(
+				{ label: " next ", enabled: 1, source: "" },
+				2000,
+			);
+			assert.deepEqual(update, {
+				label: "next",
+				enabled: true,
+				source: null,
+				nowMs: 2000,
+			});
+			assert.equal(mod.hasAccountUpdate(update), true);
+			assert.equal(mod.hasAccountUpdate({ nowMs: 2000 }), false);
+			assert.equal(mod.boundedAdminConcurrency(100), 10);
+		},
+	],
+	[
 		"admin service bounds list pagination and deduplicates identifier mutations",
 		async () => {
 			const db = new FakeD1();

@@ -232,36 +232,15 @@ export type GeminiAccountOutcome = {
 	nowMs: number;
 };
 
-export type GeminiAccountStore = {
+export type GeminiAccountRuntimeStore = {
 	getPoolVersion(): Promise<string>;
 	listSelectableAccounts(
 		nowMs: number,
 		limit: number,
 	): Promise<GeminiAccountSnapshotRow[]>;
-	listAdminAccounts(
-		filter: GeminiAccountAdminFilter,
-		nowMs: number,
-	): Promise<GeminiAccountPublicPage>;
-	getAdminStats(
-		filter: Omit<GeminiAccountAdminFilter, "cursor" | "limit">,
-		nowMs: number,
-	): Promise<GeminiAccountAdminStats>;
-	findAccountByCookieHash(
-		cookieHash: string,
-	): Promise<GeminiAccountPublic | null>;
 	getAccountForRefresh(
 		accountId: string,
 	): Promise<GeminiAccountSecretRow | null>;
-	resolveAccountIdentifier(input: {
-		id?: string;
-		rowId?: string;
-	}): Promise<string | null>;
-	createAccount(input: GeminiAccountCreateInput): Promise<GeminiAccountPublic>;
-	updateAccount(
-		accountId: string,
-		update: GeminiAccountUpdate,
-	): Promise<GeminiAccountPublic | null>;
-	deleteAccount(accountId: string): Promise<boolean>;
 	tryAcquireRefreshLock(
 		accountId: string,
 		owner: string,
@@ -278,6 +257,33 @@ export type GeminiAccountStore = {
 		outcome: GeminiAccountOutcome,
 	): Promise<void>;
 };
+
+export type GeminiAccountAdminStore = {
+	listAdminAccounts(
+		filter: GeminiAccountAdminFilter,
+		nowMs: number,
+	): Promise<GeminiAccountPublicPage>;
+	getAdminStats(
+		filter: Omit<GeminiAccountAdminFilter, "cursor" | "limit">,
+		nowMs: number,
+	): Promise<GeminiAccountAdminStats>;
+	findAccountByCookieHash(
+		cookieHash: string,
+	): Promise<GeminiAccountPublic | null>;
+	resolveAccountIdentifier(input: {
+		id?: string;
+		rowId?: string;
+	}): Promise<string | null>;
+	createAccount(input: GeminiAccountCreateInput): Promise<GeminiAccountPublic>;
+	updateAccount(
+		accountId: string,
+		update: GeminiAccountUpdate,
+	): Promise<GeminiAccountPublic | null>;
+	deleteAccount(accountId: string): Promise<boolean>;
+};
+
+export type GeminiAccountStore = GeminiAccountRuntimeStore &
+	GeminiAccountAdminStore;
 
 export type GeminiAccountRuntimeOptions = {
 	nowMs?: () => number;

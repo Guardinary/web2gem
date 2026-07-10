@@ -15,7 +15,7 @@ import type {
 	GeminiAccountRefreshResult,
 	GeminiAccountSecretRow,
 	GeminiAccountSnapshotRow,
-	GeminiAccountStore,
+	GeminiAccountRuntimeStore,
 	GeminiAccountRuntimeOptions,
 	GeminiCookieWritebackResult,
 } from "./types";
@@ -59,7 +59,7 @@ export class AccountPoolService {
 	private roundRobinCursor = 0;
 
 	constructor(
-		private readonly store: GeminiAccountStore,
+		private readonly store: GeminiAccountRuntimeStore,
 		options: GeminiAccountRuntimeOptions = {},
 	) {
 		this.nowMs = options.nowMs || Date.now;

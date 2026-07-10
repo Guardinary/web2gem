@@ -12,6 +12,7 @@
 - `src/toolcall/index.ts` is a compatibility barrel only. Implementation modules outside `src/toolcall/` should import concrete owner modules such as `toolcall/content`, `toolcall/tool-bundle`, `toolcall/policy-openai`, `toolcall/policy-google`, `toolcall/google`, `toolcall/dsml`, `toolcall/openai-format`, `toolcall/prompt-format`, or `toolcall/structured` instead of the broad barrel.
 - `src/toolstream/` owns streamed tool-call sieve state.
 - `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. `gemini/client/index.ts` should stay an orchestration layer; payload/header construction, response parsing, retry helpers, and domain error classification live in sibling client modules.
+- `src/gemini/accounts/admin-input.ts` owns admin request normalization and validation. `admin.ts` owns account-admin use-case orchestration and depends on capability-specific admin/runtime store contracts.
 - `src/gemini/transport/http.ts` owns the unified upstream HTTP entry. It may choose `cloudflare:sockets` first and fall back to `fetch` only when request semantics are preserved.
 - `src/gemini/transport/socket.ts` is the public socket transport facade. If the socket implementation is decomposed, keep public exports compatible from this module and move internals into owner modules under `src/gemini/transport/`.
 - `src/gemini/completion-provider.ts` is the Gemini adapter for `src/completion/ports.ts`. It may import completion port types; other Gemini implementation modules should not depend on completion business modules.

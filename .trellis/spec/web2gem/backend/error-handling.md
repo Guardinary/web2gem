@@ -264,6 +264,8 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
   - `POST /admin/accounts/check`
 - Default create payload accepts only `provider`, `accounts[]`, `__Secure-1PSID`, `__Secure-1PSIDTS`, and safe metadata such as `label`, `user_agent`, `gemini_origin`, `source`, `source_id`, and `source_name`.
 - Identifier payloads accept `id`, `account_id`, or `row_id`; `identifiers[]` is the batch form.
+- `admin-input.ts` exports `normalizeCreateAccounts`, `createInputFromAccount`, `updateFromBody`, `normalizeIdentifiers`, `normalizeListFilter`, and `boundedConcurrency` as the single validation/normalization owner.
+- `GeminiAccountAdminService` accepts explicit `adminStore` and `runtimeStore` capabilities; the legacy combined `store` option remains a compatibility construction path.
 
 ### 3. Contracts
 
@@ -274,6 +276,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 - Default Gemini import must reject full Cookie headers, JSON-looking cookie blobs, `access_token`, `accessToken`, `cookie`, `cookies`, extra non-null payload keys, provider mismatches, missing PSID/PSIDTS, and dual-field values containing cookie names, `=`, or `;`.
 - List pagination is bounded: default `limit` is 50 and maximum `limit` is 200.
 - Delete/update/enable/disable/refresh/check resolve and dedupe `id` / `account_id` / `row_id` before mutating D1 rows or scheduling refresh work.
+- HTTP and service orchestration must consume normalized values from `admin-input.ts`; do not re-parse the same untyped payload fields in route or persistence code.
 - Refresh/check are explicit admin-only diagnostics. Startup, health, public model listing, and public liveness routes must not select accounts, call `/app`, rotate cookies, run model/capability probes, or mutate account/session state.
 
 ### 4. Validation & Error Matrix
@@ -282,6 +285,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 - Public `API_KEYS` presented to an admin route -> `401 invalid_admin_key`, no D1 read unless it also equals a configured admin key.
 - Admin route with no `GEMINI_DB` binding -> `503 gemini_account_store_unavailable`.
 - Create with unsafe Gemini import shape -> `400` with a safe `gemini_import_*` code.
+- Constructing `GeminiAccountAdminService` without either a combined store or both explicit capabilities -> developer configuration error before request handling.
 - Update/delete with no resolvable identifier -> `400 account_identifier_required` or `404 account_not_found`.
 - Refresh/check missing, disabled, or not-refreshable account -> count as `skipped` with a sanitized reason.
 - Unexpected D1/upstream/admin failure -> safe error code/message or `errorLogSummary(error)` only; do not serialize arbitrary `error.message`.
@@ -290,10 +294,12 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 
 - Good: `/admin/accounts` checks admin auth before constructing a store or reading D1.
 - Good: `createGeminiAccountAdminServiceFromD1(...).create(...)` returns `GeminiAccountPublic` items with `has_cookie`/hash/status metadata and no `cookie_header`, `sapisid`, or `session_token`.
+- Good: D1 factory passes the same adapter as both `adminStore` and `runtimeStore`, while `AccountPoolService` sees only the runtime capability type.
 - Good: refresh/check responses include `checked`, `skipped`, `refreshed`, `unchanged`, `failed`, `errors`, `results`, and sanitized `items`.
 - Base: `/`, `/v1/models`, and `/v1beta/models` return static responses without constructing account runtime or reading D1 account rows.
 - Bad: reusing `authorized(request, url, cfg)` for admin routes, because it accepts public `API_KEYS` and query-string `key`.
 - Bad: route handlers receiving `GeminiAccountSecretRow` and relying on final JSON filtering for redaction.
+- Bad: copying cookie/filter/identifier validation back into `admin.ts` or `http/admin` after it has been centralized in `admin-input.ts`.
 - Bad: health checks or public model list endpoints that call refresh/check or dynamic model discovery.
 
 ### 6. Tests Required
@@ -301,6 +307,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 - Unit test admin key normalization, placeholder rejection, and config cache invalidation for `ADMIN_KEYS` / `ADMIN_KEY`.
 - Unit test public `API_KEYS` cannot authorize admin routes and unauthenticated admin failures perform zero D1 `prepare` calls.
 - Unit test safe dual-field Gemini import accepts and unsafe token/cookie/blob/provider/extra-key shapes reject.
+- Unit test admin-input projections directly, including identifier dedupe, filter bounds, update normalization, and combined-store compatibility.
 - Unit test admin list limit clamping and cursor/filter behavior.
 - Unit test update/delete/refresh/check identifier dedupe.
 - Unit test refresh/check count fields, skipped reasons, and sanitized item/error payloads.

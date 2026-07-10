@@ -80,7 +80,8 @@ Use this contract when changing environment config parsing, config cache keys, r
 
 - `CONFIG_ENV_KEYS` lists every environment key that affects `getConfig`.
 - `configCacheKey(env)` serializes the watched environment keys.
-- `getConfig(env)` returns a cached `RuntimeConfig` only when the env object and serialized key still match.
+- `getConfig(env)` returns a cached `StaticRuntimeConfig` only when the env object and serialized key still match.
+- `createRuntimeConfig(staticConfig, execution?, session?)` returns a new composed `RuntimeConfig` with request execution and account-session fields; it never mutates the cached static object.
 - `requestContentLength(request)` returns a safe decimal byte length or `null`.
 - `readJsonRequest(request, { maxBodyBytes, oversizedError })` reads UTF-8 JSON objects with optional bounded body size.
 - `jsonTextResponse(body, status, extra)` returns an already-serialized JSON body.
@@ -88,6 +89,8 @@ Use this contract when changing environment config parsing, config cache keys, r
 ### 3. Contracts
 
 - Add every new environment variable consumed by `getConfig` to `CONFIG_ENV_KEYS`; otherwise cached configs can go stale.
+- `StaticRuntimeConfig` contains only environment/default-derived values. `RuntimeExecutionContext` contains request-local `execution_ctx` and authenticated-session availability; `GeminiAccountSessionContext` contains cookie/SAPISID/account identity/writeback state.
+- The Worker composition root must call `createRuntimeConfig(getConfig(env), executionContext)` before adding account-pool availability or acquiring a lease. Do not attach request/account fields directly to the cached object returned by `getConfig`.
 - `GEMINI_COOKIE` and `SAPISID` are not public runtime config keys on the D1 account-pool branch. Do not add them back to `CONFIG_ENV_KEYS`; account leases populate `RuntimeConfig.cookie` and `RuntimeConfig.sapisid` internally after selecting a D1 account.
 - Do not cache config solely by env object identity. Cloudflare-style env objects may be reused and mutated in tests or local harnesses, so `getConfig` must recompute when `configCacheKey(env)` changes.
 - `requestContentLength` accepts only safe base-10 integer strings after trimming; invalid, signed, fractional, or unsafe values return `null`.
@@ -99,6 +102,7 @@ Use this contract when changing environment config parsing, config cache keys, r
 ### 4. Validation & Error Matrix
 
 - Reused env object changes `LOG_REQUESTS=false` to `LOG_REQUESTS=true` -> `getConfig` returns `true`.
+- Composing two requests from one cached static config -> distinct runtime objects; neither request-local context appears on the cached static object.
 - New env key used by config but missing from `CONFIG_ENV_KEYS` -> stale-cache bug; add the key and a cache regression test.
 - `Content-Length: 1000`, `maxBodyBytes: 999` -> 413 before body read.
 - Chunked body grows from 900 to 1001 bytes with `maxBodyBytes: 1000` -> cancel reader and return 413 using `1001 bytes > 1000`.
@@ -109,14 +113,17 @@ Use this contract when changing environment config parsing, config cache keys, r
 ### 5. Good/Base/Bad Cases
 
 - Good: add `NEW_FEATURE_FLAG` to `CONFIG_ENV_KEYS` in the same change that reads it in `getConfig`.
+- Good: call `createRuntimeConfig(staticConfig, { execution_ctx })` at the composition root and let account leases clone that runtime with session fields.
 - Base: use `requestContentLength(request)` for route-level body byte telemetry and oversized preflight checks.
 - Bad: reuse `_configCacheValue` when `_configCacheEnv === env` without checking `_configCacheKey`.
 - Bad: parse `Content-Length` with `Number(raw)` and accept signs, fractions, leading-zero variants, or unsafe integers.
+- Bad: assign `execution_ctx`, `gemini_account`, or `cookie` onto an object returned by `getConfig`.
 
 ### 6. Tests Required
 
 - Unit test that mutating and reusing one env object recomputes config.
 - Unit test each new config env key through `getConfig`.
+- Unit test that static config remains unchanged after runtime/session composition and that empty runtime sessions receive empty cookie/SAPISID compatibility fields.
 - Unit test `requestContentLength` for valid, absent, malformed, and unsafe values.
 - Unit test `readJsonRequest` preflight rejection from `Content-Length`.
 - Unit test streamed body cancellation when bytes exceed `maxBodyBytes`.
@@ -139,6 +146,19 @@ if (_configCacheValue && _configCacheEnv === env && _configCacheKey === cacheKey
 }
 ```
 
+#### Wrong
+
+```typescript
+const cfg = getConfig(env);
+cfg.execution_ctx = ctx;
+```
+
+#### Correct
+
+```typescript
+const cfg = createRuntimeConfig(getConfig(env), { execution_ctx: ctx });
+```
+
 ## Scenario: Gemini Account Runtime Snapshot And Refresh Cost
 
 ### 1. Scope / Trigger
@@ -148,14 +168,16 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 ### 2. Signatures
 
 - `AccountPoolService.acquireLease(baseConfig)` returns a lease or `null`.
-- `GeminiAccountStore.getPoolVersion()` reads one metadata row.
-- `GeminiAccountStore.listSelectableAccounts(nowMs, limit)` reads a bounded selectable snapshot.
+- `GeminiAccountRuntimeStore.getPoolVersion()` reads one metadata row.
+- `GeminiAccountRuntimeStore.listSelectableAccounts(nowMs, limit)` reads a bounded selectable snapshot.
+- `GeminiAccountAdminStore` owns list/stats/identifier/CRUD operations; `GeminiAccountStore` remains their compatibility intersection for the D1 adapter.
 - Account refresh uses `tryAcquireRefreshLock(accountId, owner, expiresAtMs, nowMs)` and `releaseRefreshLock(accountId, owner)`.
 - `GeminiAccountStore.writeCookieState(accountId, update)` returns `{ changed: false, reason: "duplicate_cookie" }` when the normalized next Cookie hash belongs to another account.
 
 ### 3. Contracts
 
 - A fresh selectable snapshot must satisfy account selection without a D1 account-row read and without any D1 write.
+- `AccountPoolService` must accept only `GeminiAccountRuntimeStore`. Account admin composition supplies explicit admin/runtime stores; the D1 factory may pass one `D1GeminiAccountStore` instance for both capabilities.
 - Version probes read only `gemini_pool_meta.pool_version`; reload selectable rows only when the version changes or the snapshot TTL expires.
 - Local fairness uses in-memory round-robin and in-flight counts. Do not write durable round-robin pointers or last-used timestamps synchronously during selection.
 - Register pending per-account refresh promises before the first `await` in the refresh path. If the key is computed after an async hash/read, two same-tick callers can both start refresh work.

@@ -18,7 +18,7 @@ export type GeminiAccountPageStateWriteback = {
 	nowMs?: number;
 };
 
-export type RuntimeConfig = {
+export type StaticRuntimeConfig = {
 	gemini_bl: string;
 	gemini_origin: string;
 	upstream_socket: boolean;
@@ -34,15 +34,39 @@ export type RuntimeConfig = {
 	generic_file_upload_max_bytes: number;
 	api_keys: string[];
 	admin_keys: string[];
+};
+
+export type RuntimeExecutionContext = {
+	supports_authenticated_session?: boolean;
+	execution_ctx?: Pick<ExecutionContext, "waitUntil">;
+};
+
+export type GeminiAccountSessionContext = {
 	cookie: string;
 	sapisid: string;
-	supports_authenticated_session?: boolean;
 	gemini_account?: GeminiAccountRuntimeContext;
 	gemini_account_writeback?: (
 		update: GeminiAccountPageStateWriteback,
 	) => Promise<unknown>;
-	execution_ctx?: Pick<ExecutionContext, "waitUntil">;
 };
+
+export type RuntimeConfig = StaticRuntimeConfig &
+	RuntimeExecutionContext &
+	GeminiAccountSessionContext;
+
+export function createRuntimeConfig(
+	config: StaticRuntimeConfig,
+	execution: RuntimeExecutionContext = {},
+	session: Partial<GeminiAccountSessionContext> = {},
+): RuntimeConfig {
+	return {
+		...config,
+		...execution,
+		...session,
+		cookie: session.cookie ?? "",
+		sapisid: session.sapisid ?? "",
+	};
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  CONFIG —— 改这些值,然后直接部署本文件。
@@ -175,10 +199,10 @@ export const CONFIG_ENV_KEYS = [
 	"ADMIN_KEY",
 ];
 export let _configCacheKey: string | null = null;
-export let _configCacheValue: RuntimeConfig | null = null;
+export let _configCacheValue: StaticRuntimeConfig | null = null;
 let _configCacheEnv: WorkerEnv | null = null;
 const DEFAULT_ENV: WorkerEnv = {};
-type ConfigCacheEntry = { key: string; value: RuntimeConfig };
+type ConfigCacheEntry = { key: string; value: StaticRuntimeConfig };
 const _configCacheByEnv = new WeakMap<WorkerEnv, ConfigCacheEntry>();
 
 export function configCacheKey(env: WorkerEnv = DEFAULT_ENV): string {
@@ -191,7 +215,7 @@ export function configCacheKey(env: WorkerEnv = DEFAULT_ENV): string {
 	return out;
 }
 
-export function getConfig(env: WorkerEnv = DEFAULT_ENV): RuntimeConfig {
+export function getConfig(env: WorkerEnv = DEFAULT_ENV): StaticRuntimeConfig {
 	const activeEnv = env || DEFAULT_ENV;
 	const cacheKey = configCacheKey(activeEnv);
 	if (
@@ -291,8 +315,6 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): RuntimeConfig {
 			envOr(activeEnv, "ADMIN_KEYS", CONFIG.ADMIN_KEYS),
 			envOr(activeEnv, "ADMIN_KEY", CONFIG.ADMIN_KEY),
 		),
-		cookie: "",
-		sapisid: "",
 	};
 	_configCacheKey = cacheKey;
 	_configCacheValue = cfg;

@@ -444,15 +444,36 @@ export const cases = [
 		},
 	],
 	[
-		"ignores legacy Gemini cookie env for public runtime config",
+		"keeps cached static config separate from request and account context",
 		async () => {
-			const cfg = mod.getConfig({
+			const staticConfig = mod.getConfig({
 				GEMINI_COOKIE:
 					"__Secure-1PSID=psid; SAPISID=sapi-from-cookie; __Secure-1PSIDTS=ts",
 				SAPISID: "",
 			});
-			assert.equal(cfg.cookie, "");
-			assert.equal(cfg.sapisid, "");
+			assert.equal(Object.hasOwn(staticConfig, "cookie"), false);
+			assert.equal(Object.hasOwn(staticConfig, "execution_ctx"), false);
+			const executionContext = { waitUntil() {} };
+			const runtimeConfig = mod.createRuntimeConfig(
+				staticConfig,
+				{
+					execution_ctx: executionContext,
+					supports_authenticated_session: true,
+				},
+				{
+					cookie: "__Secure-1PSID=selected",
+					sapisid: "selected-sapisid",
+				},
+			);
+			assert.equal(runtimeConfig === staticConfig, false);
+			assert.equal(runtimeConfig.cookie, "__Secure-1PSID=selected");
+			assert.equal(runtimeConfig.sapisid, "selected-sapisid");
+			assert.equal(runtimeConfig.execution_ctx, executionContext);
+			assert.equal(runtimeConfig.supports_authenticated_session, true);
+			assert.equal(Object.hasOwn(staticConfig, "cookie"), false);
+			const emptySession = mod.createRuntimeConfig(staticConfig);
+			assert.equal(emptySession.cookie, "");
+			assert.equal(emptySession.sapisid, "");
 		},
 	],
 	[
