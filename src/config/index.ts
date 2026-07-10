@@ -18,7 +18,7 @@ export type GeminiAccountPageStateWriteback = {
 	nowMs?: number;
 };
 
-export type StaticRuntimeConfig = {
+export type StaticRuntimeConfig = Readonly<{
 	gemini_bl: string;
 	gemini_origin: string;
 	upstream_socket: boolean;
@@ -32,9 +32,9 @@ export type StaticRuntimeConfig = {
 	current_input_file_name: string;
 	current_tools_file_name: string;
 	generic_file_upload_max_bytes: number;
-	api_keys: string[];
-	admin_keys: string[];
-};
+	api_keys: readonly string[];
+	admin_keys: readonly string[];
+}>;
 
 export type RuntimeExecutionContext = {
 	supports_authenticated_session?: boolean;
@@ -68,78 +68,34 @@ export function createRuntimeConfig(
 	};
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  CONFIG —— 改这些值,然后直接部署本文件。
-//  若设置了同名的 Worker 环境变量 / secret,会覆盖这里的值;不设则用此处的值。
-// ════════════════════════════════════════════════════════════════════════════
-export const CONFIG = {
-	// 调用方必须携带的密钥(Authorization: Bearer <key> 或 x-api-key: <key>)。
-	// 空数组 = 不鉴权(任何知道地址的人都能调用)。
-	API_KEYS: [""],
-	ADMIN_KEYS: [""],
-	ADMIN_KEY: "",
-
-	// Gemini 网页版构建号。如果返回开始变空,去 gemini.google.com 页面源码里
-	// 找一个新的值("boq_assistant-bard-web-server_...")。
+const DEFAULT_CONFIG = Object.freeze({
 	GEMINI_BL: "boq_assistant-bard-web-server_20260618.10_p0",
-
-	// 上游源站。默认直连 gemini.google.com。若部署在 Cloudflare/无服务器平台
-	// 被 Google 以 429 限流(出口 IP 被拦),把它指向一个跑在“干净 IP”上的反向
-	// 代理(转发到 gemini.google.com 并保留 Host/Origin),即可绕开。例:
-	//   GEMINI_ORIGIN = "https://your-relay.example.com"
 	GEMINI_ORIGIN: "https://gemini.google.com",
-
-	// 上游请求是否优先用裸 socket(cloudflare:sockets)绕开 fetch 的 429 限流。
-	// true=优先 socket,不可用/失败再回退 fetch;false=只用 fetch。
 	UPSTREAM_SOCKET: true,
-
 	DEFAULT_MODEL: "gemini-3.5-flash",
 	RETRY_ATTEMPTS: 3,
 	RETRY_DELAY_SEC: 2,
 	REQUEST_TIMEOUT_SEC: 180,
 	LOG_REQUESTS: false,
-
-	// Pass large request context as Gemini text attachments only when the inline
-	// prompt is larger than CURRENT_INPUT_FILE_MIN_BYTES and an authenticated
-	// Gemini account-pool session is available.
 	CURRENT_INPUT_FILE_ENABLED: true,
 	CURRENT_INPUT_FILE_MIN_BYTES: 95000,
 	CURRENT_INPUT_FILE_NAME: "message.txt",
 	CURRENT_TOOLS_FILE_NAME: "tools.txt",
 	GENERIC_FILE_UPLOAD_MAX_BYTES: 20 * 1024 * 1024,
-};
+	API_KEYS: [] as string[],
+	ADMIN_KEYS: [] as string[],
+});
 
-// ─── 配置 ──────────────────────────────────────────────────────────────────
-export function parseBool(v: unknown, def: boolean): boolean {
-	if (v === undefined || v === null || v === "") return def;
-	return /^(1|true|yes|on)$/i.test(String(v));
-}
+export class RuntimeConfigError extends Error {
+	readonly code = "invalid_runtime_config";
 
-export function parseIntDefault(v: unknown, def: number): number {
-	const n = Number.parseInt(String(v), 10);
-	return Number.isFinite(n) ? n : def;
-}
-
-export function parseIntMin(v: unknown, def: number, min: number): number {
-	return Math.max(min, parseIntDefault(v, def));
-}
-
-export function parseApiKeys(v: unknown): string[] {
-	if (!v) return [];
-	if (Array.isArray(v)) return normalizeApiKeyArray(v);
-	const raw = String(v).trim();
-	if (raw.startsWith("[")) {
-		try {
-			const arr = JSON.parse(raw);
-			if (Array.isArray(arr)) return normalizeApiKeyArray(arr);
-		} catch (_) {
-			/* 继续往下走 */
-		}
+	constructor(
+		readonly setting: string,
+		readonly reason: string,
+	) {
+		super(`invalid runtime configuration: ${setting} ${reason}`);
+		this.name = "RuntimeConfigError";
 	}
-	return raw
-		.split(",")
-		.map((s: string) => s.trim())
-		.filter(Boolean);
 }
 
 const PLACEHOLDER_ADMIN_KEYS = new Set([
@@ -154,30 +110,12 @@ const PLACEHOLDER_ADMIN_KEYS = new Set([
 ]);
 
 export function parseAdminKeys(primary: unknown, legacy?: unknown): string[] {
-	const keys = [...parseApiKeys(primary), ...parseApiKeys(legacy)];
-	const out: string[] = [];
-	const seen = new Set<string>();
-	for (const key of keys) {
-		const trimmed = String(key || "").trim();
-		if (!trimmed) continue;
-		if (PLACEHOLDER_ADMIN_KEYS.has(trimmed.toLowerCase())) continue;
-		if (seen.has(trimmed)) continue;
-		seen.add(trimmed);
-		out.push(trimmed);
-	}
-	return out;
-}
-
-function normalizeApiKeyArray(items: unknown[]): string[] {
-	return items
-		.map((item: unknown) => (item == null ? "" : String(item).trim()))
-		.filter(Boolean);
-}
-
-// 当 env[key] 设置了非空值时返回它,否则返回内嵌的默认值。
-export function envOr(env: WorkerEnv, key: string, fallback: unknown): unknown {
-	const v = env[key];
-	return v !== undefined && v !== null && v !== "" ? v : fallback;
+	if (legacy !== undefined && legacy !== null && legacy !== "")
+		throw new RuntimeConfigError(
+			"ADMIN_KEY",
+			"is no longer supported; use ADMIN_KEYS",
+		);
+	return parseKeyList("ADMIN_KEYS", primary, true);
 }
 
 export const CONFIG_ENV_KEYS = [
@@ -196,10 +134,10 @@ export const CONFIG_ENV_KEYS = [
 	"GENERIC_FILE_UPLOAD_MAX_BYTES",
 	"API_KEYS",
 	"ADMIN_KEYS",
-	"ADMIN_KEY",
-];
-export let _configCacheKey: string | null = null;
-export let _configCacheValue: StaticRuntimeConfig | null = null;
+] as const;
+const CONFIG_CACHE_ENV_KEYS = [...CONFIG_ENV_KEYS, "ADMIN_KEY"] as const;
+let _configCacheKey: string | null = null;
+let _configCacheValue: StaticRuntimeConfig | null = null;
 let _configCacheEnv: WorkerEnv | null = null;
 const DEFAULT_ENV: WorkerEnv = {};
 type ConfigCacheEntry = { key: string; value: StaticRuntimeConfig };
@@ -208,9 +146,9 @@ const _configCacheByEnv = new WeakMap<WorkerEnv, ConfigCacheEntry>();
 export function configCacheKey(env: WorkerEnv = DEFAULT_ENV): string {
 	const activeEnv = env || DEFAULT_ENV;
 	let out = "";
-	for (const key of CONFIG_ENV_KEYS) {
+	for (const key of CONFIG_CACHE_ENV_KEYS) {
 		const value = activeEnv[key];
-		out += `${key}\x00${value === undefined || value === null ? "" : String(value)}\x01`;
+		out += `${key}\x00${serializeConfigValue(value)}\x01`;
 	}
 	return out;
 }
@@ -239,86 +177,264 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): StaticRuntimeConfig {
 		});
 		return _configCacheValue;
 	}
-	const cfg = {
-		gemini_bl: String(envOr(activeEnv, "GEMINI_BL", CONFIG.GEMINI_BL)),
-		gemini_origin: String(
-			envOr(activeEnv, "GEMINI_ORIGIN", CONFIG.GEMINI_ORIGIN),
-		).replace(/\/$/, ""),
-		upstream_socket: parseBool(
-			envOr(activeEnv, "UPSTREAM_SOCKET", CONFIG.UPSTREAM_SOCKET),
-			true,
+	const cfg: StaticRuntimeConfig = Object.freeze({
+		gemini_bl: parseNonEmptyString(
+			"GEMINI_BL",
+			configValue(activeEnv, "GEMINI_BL", DEFAULT_CONFIG.GEMINI_BL),
+			512,
 		),
-		default_model: String(
-			envOr(activeEnv, "DEFAULT_MODEL", CONFIG.DEFAULT_MODEL),
+		gemini_origin: parseHttpOrigin(
+			"GEMINI_ORIGIN",
+			configValue(activeEnv, "GEMINI_ORIGIN", DEFAULT_CONFIG.GEMINI_ORIGIN),
 		),
-		retry_attempts: parseIntMin(
-			envOr(activeEnv, "RETRY_ATTEMPTS", CONFIG.RETRY_ATTEMPTS),
-			3,
+		upstream_socket: parseStrictBoolean(
+			"UPSTREAM_SOCKET",
+			configValue(activeEnv, "UPSTREAM_SOCKET", DEFAULT_CONFIG.UPSTREAM_SOCKET),
+		),
+		default_model: parseNonEmptyString(
+			"DEFAULT_MODEL",
+			configValue(activeEnv, "DEFAULT_MODEL", DEFAULT_CONFIG.DEFAULT_MODEL),
+			256,
+		),
+		retry_attempts: parseStrictInteger(
+			"RETRY_ATTEMPTS",
+			configValue(activeEnv, "RETRY_ATTEMPTS", DEFAULT_CONFIG.RETRY_ATTEMPTS),
 			1,
+			10,
 		),
-		retry_delay_sec: parseIntMin(
-			envOr(activeEnv, "RETRY_DELAY_SEC", CONFIG.RETRY_DELAY_SEC),
-			2,
+		retry_delay_sec: parseStrictInteger(
+			"RETRY_DELAY_SEC",
+			configValue(activeEnv, "RETRY_DELAY_SEC", DEFAULT_CONFIG.RETRY_DELAY_SEC),
 			0,
+			60,
 		),
-		request_timeout_sec: parseIntMin(
-			envOr(activeEnv, "REQUEST_TIMEOUT_SEC", CONFIG.REQUEST_TIMEOUT_SEC),
-			180,
+		request_timeout_sec: parseStrictInteger(
+			"REQUEST_TIMEOUT_SEC",
+			configValue(
+				activeEnv,
+				"REQUEST_TIMEOUT_SEC",
+				DEFAULT_CONFIG.REQUEST_TIMEOUT_SEC,
+			),
 			1,
+			3600,
 		),
-		log_requests: parseBool(
-			envOr(activeEnv, "LOG_REQUESTS", CONFIG.LOG_REQUESTS),
-			false,
+		log_requests: parseStrictBoolean(
+			"LOG_REQUESTS",
+			configValue(activeEnv, "LOG_REQUESTS", DEFAULT_CONFIG.LOG_REQUESTS),
 		),
-		current_input_file_enabled: parseBool(
-			envOr(
+		current_input_file_enabled: parseStrictBoolean(
+			"CURRENT_INPUT_FILE_ENABLED",
+			configValue(
 				activeEnv,
 				"CURRENT_INPUT_FILE_ENABLED",
-				CONFIG.CURRENT_INPUT_FILE_ENABLED,
+				DEFAULT_CONFIG.CURRENT_INPUT_FILE_ENABLED,
 			),
-			true,
 		),
-		current_input_file_min_bytes: parseIntMin(
-			envOr(
+		current_input_file_min_bytes: parseStrictInteger(
+			"CURRENT_INPUT_FILE_MIN_BYTES",
+			configValue(
 				activeEnv,
 				"CURRENT_INPUT_FILE_MIN_BYTES",
-				CONFIG.CURRENT_INPUT_FILE_MIN_BYTES,
+				DEFAULT_CONFIG.CURRENT_INPUT_FILE_MIN_BYTES,
 			),
-			CONFIG.CURRENT_INPUT_FILE_MIN_BYTES,
 			0,
+			10 * 1024 * 1024,
 		),
-		current_input_file_name: String(
-			envOr(
+		current_input_file_name: parseFilename(
+			"CURRENT_INPUT_FILE_NAME",
+			configValue(
 				activeEnv,
 				"CURRENT_INPUT_FILE_NAME",
-				CONFIG.CURRENT_INPUT_FILE_NAME,
+				DEFAULT_CONFIG.CURRENT_INPUT_FILE_NAME,
 			),
 		),
-		current_tools_file_name: String(
-			envOr(
+		current_tools_file_name: parseFilename(
+			"CURRENT_TOOLS_FILE_NAME",
+			configValue(
 				activeEnv,
 				"CURRENT_TOOLS_FILE_NAME",
-				CONFIG.CURRENT_TOOLS_FILE_NAME,
+				DEFAULT_CONFIG.CURRENT_TOOLS_FILE_NAME,
 			),
 		),
-		generic_file_upload_max_bytes: parseIntMin(
-			envOr(
+		generic_file_upload_max_bytes: parseStrictInteger(
+			"GENERIC_FILE_UPLOAD_MAX_BYTES",
+			configValue(
 				activeEnv,
 				"GENERIC_FILE_UPLOAD_MAX_BYTES",
-				CONFIG.GENERIC_FILE_UPLOAD_MAX_BYTES,
+				DEFAULT_CONFIG.GENERIC_FILE_UPLOAD_MAX_BYTES,
 			),
-			CONFIG.GENERIC_FILE_UPLOAD_MAX_BYTES,
 			0,
+			100 * 1024 * 1024,
 		),
-		api_keys: parseApiKeys(envOr(activeEnv, "API_KEYS", CONFIG.API_KEYS)),
-		admin_keys: parseAdminKeys(
-			envOr(activeEnv, "ADMIN_KEYS", CONFIG.ADMIN_KEYS),
-			envOr(activeEnv, "ADMIN_KEY", CONFIG.ADMIN_KEY),
+		api_keys: Object.freeze(
+			parseKeyList(
+				"API_KEYS",
+				configValue(activeEnv, "API_KEYS", DEFAULT_CONFIG.API_KEYS),
+				false,
+			),
 		),
-	};
+		admin_keys: Object.freeze(
+			parseAdminKeys(
+				configValue(activeEnv, "ADMIN_KEYS", DEFAULT_CONFIG.ADMIN_KEYS),
+				activeEnv.ADMIN_KEY,
+			),
+		),
+	});
 	_configCacheKey = cacheKey;
 	_configCacheValue = cfg;
 	_configCacheEnv = activeEnv;
 	_configCacheByEnv.set(activeEnv, { key: cacheKey, value: cfg });
 	return cfg;
+}
+
+export function assertRuntimeConfig(env: WorkerEnv = DEFAULT_ENV): void {
+	void getConfig(env);
+}
+
+function configValue(env: WorkerEnv, key: string, fallback: unknown): unknown {
+	const value = env[key];
+	return value === undefined || value === null || value === ""
+		? fallback
+		: value;
+}
+
+function parseStrictBoolean(setting: string, value: unknown): boolean {
+	if (typeof value === "boolean") return value;
+	if (value === "true") return true;
+	if (value === "false") return false;
+	throw new RuntimeConfigError(setting, "must be true or false");
+}
+
+function parseStrictInteger(
+	setting: string,
+	value: unknown,
+	min: number,
+	max: number,
+): number {
+	let parsed: number;
+	if (typeof value === "number") {
+		parsed = value;
+	} else if (typeof value === "string" && /^(?:0|[1-9]\d*)$/.test(value)) {
+		parsed = Number(value);
+	} else {
+		throw new RuntimeConfigError(
+			setting,
+			`must be an integer between ${min} and ${max}`,
+		);
+	}
+	if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+		throw new RuntimeConfigError(
+			setting,
+			`must be an integer between ${min} and ${max}`,
+		);
+	}
+	return parsed;
+}
+
+function parseNonEmptyString(
+	setting: string,
+	value: unknown,
+	maxLength: number,
+): string {
+	if (typeof value !== "string")
+		throw new RuntimeConfigError(setting, "must be a string");
+	const parsed = value.trim();
+	if (!parsed) throw new RuntimeConfigError(setting, "must not be empty");
+	if (parsed.length > maxLength)
+		throw new RuntimeConfigError(
+			setting,
+			`must be at most ${maxLength} characters`,
+		);
+	return parsed;
+}
+
+function parseHttpOrigin(setting: string, value: unknown): string {
+	const raw = parseNonEmptyString(setting, value, 2048);
+	let parsed: URL;
+	try {
+		parsed = new URL(raw);
+	} catch (_) {
+		throw new RuntimeConfigError(setting, "must be an absolute HTTP(S) origin");
+	}
+	if (
+		(parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
+		parsed.username ||
+		parsed.password ||
+		parsed.pathname !== "/" ||
+		parsed.search ||
+		parsed.hash
+	) {
+		throw new RuntimeConfigError(setting, "must be an absolute HTTP(S) origin");
+	}
+	return parsed.origin;
+}
+
+function parseFilename(setting: string, value: unknown): string {
+	const parsed = parseNonEmptyString(setting, value, 255);
+	if (
+		/[/\\\u0000-\u001f\u007f]/.test(parsed) ||
+		parsed === "." ||
+		parsed === ".."
+	)
+		throw new RuntimeConfigError(setting, "must be a plain filename");
+	return parsed;
+}
+
+function parseKeyList(
+	setting: string,
+	value: unknown,
+	rejectPlaceholders: boolean,
+): string[] {
+	let items: unknown[];
+	if (Array.isArray(value)) {
+		items = value;
+	} else if (typeof value === "string") {
+		const raw = value.trim();
+		if (!raw) return [];
+		if (raw.startsWith("["))
+			throw new RuntimeConfigError(setting, "must be a comma-separated list");
+		items = raw.split(",");
+	} else {
+		throw new RuntimeConfigError(setting, "must be a comma-separated list");
+	}
+	const out: string[] = [];
+	const seen = new Set<string>();
+	for (const item of items) {
+		if (typeof item !== "string")
+			throw new RuntimeConfigError(setting, "must contain only strings");
+		const key = item.trim();
+		if (!key)
+			throw new RuntimeConfigError(setting, "must not contain empty entries");
+		if (key.length > 4096)
+			throw new RuntimeConfigError(
+				setting,
+				"contains an entry longer than 4096 characters",
+			);
+		if (rejectPlaceholders && PLACEHOLDER_ADMIN_KEYS.has(key.toLowerCase()))
+			throw new RuntimeConfigError(
+				setting,
+				"must not contain placeholder keys",
+			);
+		if (seen.has(key))
+			throw new RuntimeConfigError(
+				setting,
+				"must not contain duplicate entries",
+			);
+		seen.add(key);
+		out.push(key);
+	}
+	return out;
+}
+
+function serializeConfigValue(value: unknown): string {
+	if (value === undefined) return "undefined";
+	if (value === null) return "null";
+	if (typeof value === "string") return `string:${value}`;
+	if (typeof value === "number") return `number:${value}`;
+	if (typeof value === "boolean") return `boolean:${value}`;
+	try {
+		return `json:${JSON.stringify(value)}`;
+	} catch (_) {
+		return `other:${String(value)}`;
+	}
 }

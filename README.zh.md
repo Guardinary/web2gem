@@ -242,19 +242,18 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 
 | 变量                            | 默认值                      | 说明                                                                                                                                                                               |
 | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `API_KEYS`                      | empty                       | 逗号分隔或 JSON 数组形式的 API keys。为空时关闭认证。                                                                                                                              |
-| `ADMIN_KEYS`                    | empty                       | 账号池管理接口使用的 admin keys，支持逗号分隔或 JSON 数组。为空或只包含占位值时会 fail closed；公共 `API_KEYS` 不能管理账号池。                                                     |
-| `ADMIN_KEY`                     | empty                       | 单个 admin key 的兼容别名。为空或设置为 `changeme` 等占位值时会被忽略。                                                                                                             |
+| `API_KEYS`                      | empty                       | 逗号分隔的 API keys。为空时关闭认证；空成员、重复项和 JSON 数组字符串会被拒绝。                                                                                                    |
+| `ADMIN_KEYS`                    | empty                       | 账号池管理接口使用的逗号分隔 admin keys。占位值、空成员和重复项会被拒绝；公共 `API_KEYS` 不能管理账号池。                                                                           |
 | `D1_ACCOUNT_ID`                 | empty                       | 仅 Docker 使用的 Cloudflare account ID，用于 D1 HTTP binding。需与 `D1_DATABASE_ID`、`D1_API_TOKEN` 同时设置；只设置一部分会导致启动失败。                                             |
 | `D1_DATABASE_ID`                | empty                       | 仅 Docker 使用的 Cloudflare D1 database ID，用于注入 `GEMINI_DB` binding。                                                                                                          |
 | `D1_API_TOKEN`                  | empty                       | 仅 Docker 使用的 Cloudflare API token，需要具备查询该 D1 数据库的权限。Adapter 错误会脱敏该 token 和 SQL bind values。                                                              |
 | `GEMINI_BL`                     | bundled value               | 上游请求使用的 Gemini Web build label。如果 Gemini Web 变化导致上游响应为空，需要更新它。                                                                                          |
-| `GEMINI_ORIGIN`                 | `https://gemini.google.com` | 上游源站。可指向你自己的转发服务或代理地址，并保留预期请求语义。                                                                                                                   |
+| `GEMINI_ORIGIN`                 | `https://gemini.google.com` | 不含凭据、路径、查询或 fragment 的绝对 HTTP(S) 上游 origin。可指向你自己的转发服务或代理 origin。                                                                                  |
 | `UPSTREAM_SOCKET`               | `true`                      | 可用时优先使用 `cloudflare:sockets` 作为上游传输。                                                                                                                                 |
 | `DEFAULT_MODEL`                 | `gemini-3.5-flash`          | 请求省略 `model` 时使用的模型。                                                                                                                                                    |
-| `RETRY_ATTEMPTS`                | `3`                         | 上游重试次数；最小值为 `1`。                                                                                                                                                       |
-| `RETRY_DELAY_SEC`               | `2`                         | 重试间隔秒数；最小值为 `0`。                                                                                                                                                       |
-| `REQUEST_TIMEOUT_SEC`           | `180`                       | 上游请求超时秒数；最小值为 `1`。                                                                                                                                                   |
+| `RETRY_ATTEMPTS`                | `3`                         | 上游重试次数；必须是 `1` 到 `10` 的严格整数。                                                                                                                                      |
+| `RETRY_DELAY_SEC`               | `2`                         | 重试间隔秒数；必须是 `0` 到 `60` 的严格整数。                                                                                                                                      |
+| `REQUEST_TIMEOUT_SEC`           | `180`                       | 上游请求超时秒数；必须是 `1` 到 `3600` 的严格整数。                                                                                                                                |
 | `LOG_REQUESTS`                  | `false`                     | 启用结构化运行阶段日志。                                                                                                                                                           |
 | `CURRENT_INPUT_FILE_ENABLED`    | `true`                      | 启用用于大提示上下文的 Gemini 文本附件。                                                                                                                                           |
 | `CURRENT_INPUT_FILE_MIN_BYTES`  | `95000`                     | 触发文本附件处理前的内联提示字节阈值。                                                                                                                                             |
@@ -265,7 +264,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 使用 Wrangler CLI 管理 Worker 时，可通过以下命令设置可选 secrets：
 
 - 共享部署时设置 `API_KEYS`。为空时会关闭认证。
-- 使用账号池管理接口前设置 `ADMIN_KEYS` 或 `ADMIN_KEY`。缺失时 admin 接口不会公开放行。
+- 使用账号池管理接口前设置 `ADMIN_KEYS`。缺失时 admin 接口不会公开放行。
 - 将 D1 数据库绑定为 `GEMINI_DB`，并在承载生成流量前通过 admin 接口导入 Gemini 账号。
 
 ```sh
@@ -287,7 +286,7 @@ wrangler d1 execute <database-name> --file migrations/0001_gemini_accounts.sql -
 
 Docker 部署时，在 `.env` 中同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`。三者都存在时，`scripts/docker-server.mjs` 会注入一个基于 Cloudflare D1 HTTP API 的 D1 兼容 `GEMINI_DB` binding。只设置一部分时，启动会以配置错误失败。
 
-账号池可以通过内置 WebUI `/admin` 管理，也可以通过 `/admin/accounts` 下的管理 API 操作。管理 API 必须通过 `ADMIN_KEYS` / `ADMIN_KEY` 鉴权，可使用 `Authorization: Bearer <key>` 或 `X-Admin-Key`。公共 `API_KEYS` 和查询参数 `key` 不能调用这些管理接口。
+账号池可以通过内置 WebUI `/admin` 管理，也可以通过 `/admin/accounts` 下的管理 API 操作。管理 API 必须使用一个 `ADMIN_KEYS` 值鉴权，可通过 `Authorization: Bearer <key>` 或 `X-Admin-Key` 发送。公共 `API_KEYS` 和查询参数 `key` 不能调用这些管理接口。
 
 默认 Gemini 导入只接受裸 cookie 值：
 

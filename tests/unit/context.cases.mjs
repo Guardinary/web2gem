@@ -497,7 +497,7 @@ export const cases = [
 					body: bodyText,
 				}),
 				{
-					API_KEYS: "[]",
+					API_KEYS: "",
 					CURRENT_INPUT_FILE_ENABLED: "true",
 					CURRENT_INPUT_FILE_MIN_BYTES: "10",
 					GENERIC_FILE_UPLOAD_MAX_BYTES: "0",
@@ -532,7 +532,7 @@ export const cases = [
 					duplex: "half",
 				}),
 				{
-					API_KEYS: "[]",
+					API_KEYS: "",
 					CURRENT_INPUT_FILE_ENABLED: "true",
 					CURRENT_INPUT_FILE_MIN_BYTES: "10",
 					GENERIC_FILE_UPLOAD_MAX_BYTES: "0",
@@ -600,7 +600,7 @@ export const cases = [
 					}),
 				}),
 				{
-					API_KEYS: "[]",
+					API_KEYS: "",
 					CURRENT_INPUT_FILE_ENABLED: "false",
 					CURRENT_INPUT_FILE_MIN_BYTES: "10",
 					GEMINI_DB: {

@@ -395,7 +395,7 @@ export const cases = [
 		},
 	],
 	[
-		"normalizes API key config from strings JSON and arrays",
+		"parses strict comma-separated API key config",
 		async () => {
 			assert.deepEqual(mod.getConfig({}).api_keys, []);
 			assert.deepEqual(mod.getConfig({ API_KEYS: "sk-one, sk-two" }).api_keys, [
@@ -403,44 +403,45 @@ export const cases = [
 				"sk-two",
 			]);
 			assert.deepEqual(
-				mod.getConfig({ API_KEYS: '[" sk-json ","sk-json-2"]' }).api_keys,
-				["sk-json", "sk-json-2"],
+				mod.getConfig({ API_KEYS: ["sk-array", "sk-two"] }).api_keys,
+				["sk-array", "sk-two"],
 			);
-			assert.deepEqual(
-				mod.getConfig({ API_KEYS: [" sk-array ", "", null, "sk-array-2"] })
-					.api_keys,
-				["sk-array", "sk-array-2"],
+			assert.throws(
+				() => mod.getConfig({ API_KEYS: '["sk-json"]' }),
+				/API_KEYS must be a comma-separated list/,
 			);
-			assert.deepEqual(
-				mod.getConfig({ API_KEYS: "[not json], sk-fallback" }).api_keys,
-				["[not json]", "sk-fallback"],
+			assert.throws(
+				() => mod.getConfig({ API_KEYS: "sk-one,,sk-two" }),
+				/API_KEYS must not contain empty entries/,
+			);
+			assert.throws(
+				() => mod.getConfig({ API_KEYS: "sk-one,sk-one" }),
+				/API_KEYS must not contain duplicate entries/,
 			);
 		},
 	],
 	[
-		"normalizes admin key config, rejects placeholders, and recomputes cache keys",
+		"parses strict admin keys and rejects the removed ADMIN_KEY alias",
 		async () => {
 			assert.deepEqual(
-				mod.getConfig({
-					ADMIN_KEY: "changeme",
-					ADMIN_KEYS: "admin,password,test",
-				}).admin_keys,
-				[],
+				mod.getConfig({ ADMIN_KEYS: "admin-one, admin-two" }).admin_keys,
+				["admin-one", "admin-two"],
 			);
-			assert.deepEqual(
-				mod.getConfig({
-					ADMIN_KEY: " admin-one ",
-					ADMIN_KEYS: '["admin-two","changeme","admin-two"]',
-				}).admin_keys,
-				["admin-two", "admin-one"],
+			assert.throws(
+				() => mod.getConfig({ ADMIN_KEYS: "admin,password,test" }),
+				/ADMIN_KEYS must not contain placeholder keys/,
 			);
-			const env = { ADMIN_KEY: "first" };
+			const env = { ADMIN_KEYS: "first" };
 			const first = mod.getConfig(env);
-			assert.deepEqual(first.admin_keys, ["first"]);
-			env.ADMIN_KEY = "second";
+			env.ADMIN_KEYS = "second";
 			const second = mod.getConfig(env);
 			assert.deepEqual(second.admin_keys, ["second"]);
 			assert.equal(first === second, false);
+			assert.deepEqual(mod.getConfig({ ADMIN_KEYS: "" }).admin_keys, []);
+			assert.throws(
+				() => mod.getConfig({ ADMIN_KEY: "legacy-secret" }),
+				/ADMIN_KEY is no longer supported; use ADMIN_KEYS/,
+			);
 		},
 	],
 	[
@@ -474,23 +475,64 @@ export const cases = [
 			const emptySession = mod.createRuntimeConfig(staticConfig);
 			assert.equal(emptySession.cookie, "");
 			assert.equal(emptySession.sapisid, "");
+			assert.equal(Object.isFrozen(staticConfig), true);
+			assert.equal(Object.isFrozen(staticConfig.api_keys), true);
+			assert.equal(Object.isFrozen(staticConfig.admin_keys), true);
 		},
 	],
 	[
-		"clamps numeric runtime config minimums",
+		"rejects malformed and out-of-range runtime config",
 		async () => {
+			for (const env of [
+				{ GEMINI_BL: 1 },
+				{ DEFAULT_MODEL: "x".repeat(257) },
+				{ GEMINI_ORIGIN: "not a URL" },
+				{ LOG_REQUESTS: "yes" },
+				{ RETRY_ATTEMPTS: "0" },
+				{ RETRY_DELAY_SEC: "-1" },
+				{ REQUEST_TIMEOUT_SEC: "3601" },
+				{ CURRENT_INPUT_FILE_MIN_BYTES: "01" },
+				{ GENERIC_FILE_UPLOAD_MAX_BYTES: "104857601" },
+				{ CURRENT_INPUT_FILE_NAME: "../message.txt" },
+				{ GEMINI_ORIGIN: "https://user:secret@example.test/path" },
+				{ API_KEYS: 123 },
+				{ API_KEYS: [null] },
+			]) {
+				assert.throws(
+					() => mod.getConfig(env),
+					/invalid runtime configuration/,
+				);
+			}
 			const cfg = mod.getConfig({
-				RETRY_ATTEMPTS: "0",
-				RETRY_DELAY_SEC: "-5",
-				REQUEST_TIMEOUT_SEC: "0",
-				CURRENT_INPUT_FILE_MIN_BYTES: "-1",
-				GENERIC_FILE_UPLOAD_MAX_BYTES: "-5",
+				RETRY_ATTEMPTS: "10",
+				RETRY_DELAY_SEC: "0",
+				REQUEST_TIMEOUT_SEC: "3600",
+				CURRENT_INPUT_FILE_MIN_BYTES: "0",
+				GENERIC_FILE_UPLOAD_MAX_BYTES: "104857600",
 			});
-			assert.equal(cfg.retry_attempts, 1);
+			assert.equal(cfg.retry_attempts, 10);
 			assert.equal(cfg.retry_delay_sec, 0);
-			assert.equal(cfg.request_timeout_sec, 1);
+			assert.equal(cfg.request_timeout_sec, 3600);
 			assert.equal(cfg.current_input_file_min_bytes, 0);
-			assert.equal(cfg.generic_file_upload_max_bytes, 0);
+			assert.equal(cfg.generic_file_upload_max_bytes, 104857600);
+			assert.equal(mod.assertRuntimeConfig({ LOG_REQUESTS: "true" }), undefined);
+		},
+	],
+	[
+		"returns sanitized Worker errors for invalid runtime config",
+		async () => {
+			const secret = "runtime-config-secret";
+			const response = await mod.default.fetch(
+				new Request("https://worker.example/v1/models"),
+				{ GEMINI_ORIGIN: `https://user:${secret}@example.test/path` },
+				{},
+			);
+			assert.equal(response.status, 500);
+			const body = await response.json();
+			assert.equal(body.error.code, "invalid_runtime_config");
+			assert.equal(body.error.setting, "GEMINI_ORIGIN");
+			assert.match(body.error.reason, /absolute HTTP\(S\) origin/);
+			assert.doesNotMatch(JSON.stringify(body), new RegExp(secret));
 		},
 	],
 	[
@@ -543,7 +585,7 @@ export const cases = [
 			const health = await mod.default.fetch(
 				new Request("https://worker.example/"),
 				{
-					API_KEYS: '["sk-test"]',
+					API_KEYS: "sk-test",
 				},
 				{},
 			);
@@ -687,7 +729,7 @@ export const cases = [
 	[
 		"accepts alternate API key locations and rejects missing keys",
 		async () => {
-			const env = { API_KEYS: '["sk-test"]' };
+			const env = { API_KEYS: "sk-test" };
 			const missing = await mod.default.fetch(
 				new Request("https://worker.example/v1/models"),
 				env,
@@ -796,7 +838,7 @@ export const cases = [
 		async () => {
 			let prepareCalls = 0;
 			const env = {
-				API_KEYS: '["sk-test"]',
+				API_KEYS: "sk-test",
 				GEMINI_DB: {
 					prepare() {
 						prepareCalls += 1;
@@ -855,7 +897,7 @@ export const cases = [
 						}),
 					}),
 					{
-						API_KEYS: "[]",
+						API_KEYS: "",
 						LOG_REQUESTS: "false",
 					},
 					{},

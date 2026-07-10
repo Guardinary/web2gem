@@ -1,4 +1,4 @@
-type AuthConfig = { api_keys?: string[] | null | undefined };
+type AuthConfig = { api_keys?: readonly string[] | null | undefined };
 
 // Accept the caller key from Bearer, x-api-key, x-goog-api-key, or ?key=.
 export function authorized(

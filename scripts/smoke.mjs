@@ -8,7 +8,7 @@ const expectedProductionExports = [
 	"default",
 	"generate",
 	"generateStream",
-	"getConfig",
+	"assertRuntimeConfig",
 	"parseToolCalls",
 	"resolveModel",
 ];
@@ -41,7 +41,8 @@ const checks = [
 	["default.fetch", prod.default && typeof prod.default.fetch === "function"],
 	["MODELS", prod.MODELS && typeof prod.MODELS === "object"],
 	["resolveModel", typeof prod.resolveModel === "function"],
-	["getConfig", typeof prod.getConfig === "function"],
+	["assertRuntimeConfig", typeof prod.assertRuntimeConfig === "function"],
+	["test.getConfig", typeof testMod.getConfig === "function"],
 	["parseToolCalls", typeof prod.parseToolCalls === "function"],
 	["test.buildPayload", typeof testMod.buildPayload === "function"],
 	[
@@ -148,7 +149,7 @@ const missingD1 = await prod.default.fetch(
 		}),
 	}),
 	{
-		API_KEYS: "[]",
+		API_KEYS: "",
 	},
 	{},
 );
@@ -180,7 +181,7 @@ const openAIReject = await prod.default.fetch(
 		}),
 	}),
 	{
-		API_KEYS: "[]",
+		API_KEYS: "",
 		CURRENT_INPUT_FILE_ENABLED: "false",
 		GEMINI_DB: unusedD1,
 	},
@@ -209,7 +210,7 @@ const googleReject = await prod.default.fetch(
 		},
 	),
 	{
-		API_KEYS: "[]",
+		API_KEYS: "",
 		CURRENT_INPUT_FILE_ENABLED: "false",
 		GEMINI_DB: unusedD1,
 	},

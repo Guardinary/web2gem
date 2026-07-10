@@ -8,7 +8,7 @@ import { errorLine, outputLine } from "./io.mjs";
 const port = Number(process.env.PORT || 52389);
 const host = process.env.HOST || "0.0.0.0";
 const env = { ...process.env };
-let defaultWorkerPromise = null;
+let defaultWorkerModulePromise = null;
 let defaultResolvedEnv = null;
 
 export function requestHeaders(rawHeaders) {
@@ -107,12 +107,14 @@ function defaultDockerEnv() {
 }
 
 async function defaultWorker() {
-	if (!defaultWorkerPromise) {
-		defaultWorkerPromise = import("../dist/worker.js").then(
-			(mod) => mod.default || mod,
-		);
-	}
-	return defaultWorkerPromise;
+	const mod = await defaultWorkerModule();
+	return mod.default || mod;
+}
+
+async function defaultWorkerModule() {
+	if (!defaultWorkerModulePromise)
+		defaultWorkerModulePromise = import("../dist/worker.js");
+	return defaultWorkerModulePromise;
 }
 
 export function createDockerServer(options = {}) {
@@ -136,8 +138,21 @@ export function createDockerServer(options = {}) {
 	});
 }
 
-export function startDockerServer(options = {}) {
-	const server = createDockerServer(options);
+export async function startDockerServer(options = {}) {
+	const resolvedEnv =
+		options.env ||
+		resolveDockerEnv(options.processEnv || process.env, {
+			fetch: options.fetch,
+		});
+	let worker = options.worker;
+	if (!worker) {
+		const mod = await defaultWorkerModule();
+		if (typeof mod.assertRuntimeConfig !== "function")
+			throw new Error("worker bundle is missing assertRuntimeConfig");
+		mod.assertRuntimeConfig(resolvedEnv);
+		worker = mod.default || mod;
+	}
+	const server = createDockerServer({ ...options, env: resolvedEnv, worker });
 	const listenPort = Number(options.port || port);
 	const listenHost = options.host || host;
 	server.listen(listenPort, listenHost, () => {
@@ -150,5 +165,5 @@ if (
 	process.argv[1] &&
 	import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-	startDockerServer();
+	await startDockerServer();
 }

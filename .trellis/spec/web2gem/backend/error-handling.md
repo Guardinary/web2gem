@@ -250,7 +250,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 
 ### 2. Signatures
 
-- Env keys: `ADMIN_KEYS` accepts comma-separated or JSON-array admin keys; `ADMIN_KEY` is a single-key compatibility alias.
+- Env key: `ADMIN_KEYS` accepts comma-separated admin keys. `ADMIN_KEY` and JSON-array strings are rejected by runtime configuration v2.
 - Admin routes live under `/admin/accounts`.
 - Supported operations:
   - `GET /admin/accounts?limit=&cursor=&status=&enabled=`
@@ -304,7 +304,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 
 ### 6. Tests Required
 
-- Unit test admin key normalization, placeholder rejection, and config cache invalidation for `ADMIN_KEYS` / `ADMIN_KEY`.
+- Unit test strict admin key parsing, placeholder rejection, removed `ADMIN_KEY` rejection, and config cache invalidation for `ADMIN_KEYS`.
 - Unit test public `API_KEYS` cannot authorize admin routes and unauthenticated admin failures perform zero D1 `prepare` calls.
 - Unit test safe dual-field Gemini import accepts and unsafe token/cookie/blob/provider/extra-key shapes reject.
 - Unit test admin-input projections directly, including identifier dedupe, filter bounds, update normalization, and combined-store compatibility.

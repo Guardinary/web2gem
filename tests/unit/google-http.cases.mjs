@@ -553,7 +553,7 @@ export const cases = [
 					},
 				),
 				{
-					API_KEYS: "[]",
+					API_KEYS: "",
 					LOG_REQUESTS: "false",
 					GEMINI_DB: {
 						prepare() {

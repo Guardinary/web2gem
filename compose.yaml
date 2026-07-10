@@ -11,7 +11,6 @@ services:
       UPSTREAM_SOCKET: "${UPSTREAM_SOCKET:-false}"
       API_KEYS: "${API_KEYS:-}"
       ADMIN_KEYS: "${ADMIN_KEYS:-}"
-      ADMIN_KEY: "${ADMIN_KEY:-}"
       D1_ACCOUNT_ID: "${D1_ACCOUNT_ID:-}"
       D1_DATABASE_ID: "${D1_DATABASE_ID:-}"
       D1_API_TOKEN: "${D1_API_TOKEN:-}"

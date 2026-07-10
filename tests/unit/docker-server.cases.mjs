@@ -8,6 +8,7 @@ import {
 	requestHeaders,
 	requestUrl,
 	resolveDockerEnv,
+	startDockerServer,
 } from "../../scripts/docker-server.mjs";
 
 export const suiteName = "docker server";
@@ -58,7 +59,7 @@ export const cases = [
 			const seen = {};
 			const server = createDockerServer({
 				port: 0,
-				env: { API_KEYS: "[]", CUSTOM_ENV: "ok" },
+				env: { API_KEYS: "", CUSTOM_ENV: "ok" },
 				worker: {
 					async fetch(request, env, ctx) {
 						seen.url = request.url;
@@ -198,6 +199,15 @@ export const cases = [
 				},
 			);
 			assert.equal(typeof env.GEMINI_DB.prepare, "function");
+		},
+	],
+	[
+		"rejects invalid runtime config before the Docker server listens",
+		async () => {
+			await assert.rejects(
+				() => startDockerServer({ port: 0, env: { LOG_REQUESTS: "yes" } }),
+				/LOG_REQUESTS must be true or false/,
+			);
 		},
 	],
 	[

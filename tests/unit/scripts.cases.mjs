@@ -6,10 +6,7 @@ import { assert } from "./assertions.js";
 import { mod } from "./helpers.js";
 
 const DEPLOY_SECRET_TEMPLATE_KEYS = ["ADMIN_KEYS", "API_KEYS"];
-const DEPLOY_SECRET_KEYS = new Set([
-	...DEPLOY_SECRET_TEMPLATE_KEYS,
-	"ADMIN_KEY",
-]);
+const DEPLOY_SECRET_KEYS = new Set(DEPLOY_SECRET_TEMPLATE_KEYS);
 const DOCKER_ONLY_ENV_KEYS = [
 	"PORT",
 	"WEB2GEM_IMAGE",

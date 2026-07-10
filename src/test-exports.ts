@@ -38,7 +38,12 @@ export {
 	generatedImageFetchHeaders,
 	generatedImagePreviewFetchUrls,
 } from "./gemini/client/generated-images";
-export { CONFIG_ENV_KEYS, createRuntimeConfig } from "./config";
+export {
+	CONFIG_ENV_KEYS,
+	createRuntimeConfig,
+	getConfig,
+	RuntimeConfigError,
+} from "./config";
 export { createGeminiCompletionProvider } from "./gemini/completion-provider";
 export {
 	createStreamTextExtractor,

@@ -242,19 +242,18 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 
 | Variable                        | Default                     | Description                                                                                                                                                                                                      |
 | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `API_KEYS`                      | empty                       | Comma-separated or JSON-array API keys. Empty disables auth.                                                                                                                                                     |
-| `ADMIN_KEYS`                    | empty                       | Comma-separated or JSON-array admin keys for account-pool management. Empty or placeholder-only values fail closed; public `API_KEYS` do not authorize admin account mutation.                                  |
-| `ADMIN_KEY`                     | empty                       | Single admin-key compatibility alias. Ignored when empty or set to placeholder values such as `changeme`.                                                                                                       |
+| `API_KEYS`                      | empty                       | Comma-separated API keys. Empty disables auth. Empty members, duplicates, and JSON-array strings are rejected.                                                                                                  |
+| `ADMIN_KEYS`                    | empty                       | Comma-separated admin keys for account-pool management. Placeholder, empty, and duplicate entries are rejected; public `API_KEYS` do not authorize admin account mutation.                                     |
 | `D1_ACCOUNT_ID`                 | empty                       | Docker-only Cloudflare account ID for the D1 HTTP binding. Set together with `D1_DATABASE_ID` and `D1_API_TOKEN`; partial D1 HTTP config fails startup.                                                          |
 | `D1_DATABASE_ID`                | empty                       | Docker-only Cloudflare D1 database ID for the injected `GEMINI_DB` binding.                                                                                                                                      |
 | `D1_API_TOKEN`                  | empty                       | Docker-only Cloudflare API token allowed to query the D1 database. Adapter errors redact this token and SQL bind values.                                                                                         |
 | `GEMINI_BL`                     | bundled value               | Gemini Web build label used by upstream requests. Update if Gemini Web changes and upstream responses become empty.                                                                                              |
-| `GEMINI_ORIGIN`                 | `https://gemini.google.com` | Upstream origin. Can point to your own forwarding service or proxy endpoint while preserving expected request semantics.                                                                                         |
+| `GEMINI_ORIGIN`                 | `https://gemini.google.com` | Absolute HTTP(S) upstream origin without credentials, path, query, or fragment. Can point to your own forwarding service or proxy origin.                                                                        |
 | `UPSTREAM_SOCKET`               | `true`                      | Prefer `cloudflare:sockets` upstream transport when available.                                                                                                                                                   |
 | `DEFAULT_MODEL`                 | `gemini-3.5-flash`          | Model used when a request omits `model`.                                                                                                                                                                         |
-| `RETRY_ATTEMPTS`                | `3`                         | Upstream retry attempts; minimum `1`.                                                                                                                                                                            |
-| `RETRY_DELAY_SEC`               | `2`                         | Delay between retry attempts; minimum `0`.                                                                                                                                                                       |
-| `REQUEST_TIMEOUT_SEC`           | `180`                       | Upstream request timeout; minimum `1`.                                                                                                                                                                           |
+| `RETRY_ATTEMPTS`                | `3`                         | Upstream retry attempts; strict integer from `1` to `10`.                                                                                                                                                        |
+| `RETRY_DELAY_SEC`               | `2`                         | Delay between retry attempts; strict integer from `0` to `60`.                                                                                                                                                   |
+| `REQUEST_TIMEOUT_SEC`           | `180`                       | Upstream request timeout; strict integer from `1` to `3600`.                                                                                                                                                     |
 | `LOG_REQUESTS`                  | `false`                     | Enable structured runtime stage logs.                                                                                                                                                                            |
 | `CURRENT_INPUT_FILE_ENABLED`    | `true`                      | Enable Gemini text attachments for large prompt context.                                                                                                                                                         |
 | `CURRENT_INPUT_FILE_MIN_BYTES`  | `95000`                     | Inline prompt byte threshold before text attachment handling is attempted.                                                                                                                                       |
@@ -265,7 +264,7 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 When managing a Worker through the Wrangler CLI, optional secrets can be set with:
 
 - Set `API_KEYS` for shared deployments. If it is empty, auth is disabled.
-- Set `ADMIN_KEYS` or `ADMIN_KEY` before using account-pool admin endpoints. Admin endpoints do not become public when this is missing.
+- Set `ADMIN_KEYS` before using account-pool admin endpoints. Admin endpoints do not become public when this is missing.
 - Bind the D1 database as `GEMINI_DB` and import Gemini accounts through the admin endpoints before serving generation traffic.
 
 ```sh
@@ -287,7 +286,7 @@ wrangler d1 execute <database-name> --file migrations/0001_gemini_accounts.sql -
 
 For Docker, set all of `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` in `.env`. When all three are present, `scripts/docker-server.mjs` injects a D1-compatible `GEMINI_DB` binding backed by Cloudflare's D1 HTTP API. If only some are present, startup fails with a configuration error.
 
-Account-pool management is available through the built-in WebUI at `/admin` and through the admin API under `/admin/accounts`. Admin API requests require `ADMIN_KEYS` / `ADMIN_KEY` through `Authorization: Bearer <key>` or `X-Admin-Key`. Public `API_KEYS` and query-string `key` do not authorize these routes.
+Account-pool management is available through the built-in WebUI at `/admin` and through the admin API under `/admin/accounts`. Admin API requests require one `ADMIN_KEYS` value through `Authorization: Bearer <key>` or `X-Admin-Key`. Public `API_KEYS` and query-string `key` do not authorize these routes.
 
 Default Gemini import accepts only bare cookie values:
 

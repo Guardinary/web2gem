@@ -1,4 +1,4 @@
-import { createRuntimeConfig, getConfig } from "./config";
+import { createRuntimeConfig, getConfig, RuntimeConfigError } from "./config";
 import {
 	authorized,
 	corsHeaders,
@@ -54,6 +54,9 @@ export default {
 		_ctx: ExecutionContext,
 	) {
 		const method = request.method;
+		const url = new URL(request.url);
+		const path = url.pathname;
+		const respond = (response: Response) => withCORS(response, request);
 
 		if (method === "OPTIONS") {
 			return new Response(null, {
@@ -62,13 +65,15 @@ export default {
 			});
 		}
 
-		const cfg = withAccountPoolAvailability(
-			createRuntimeConfig(getConfig(env), { execution_ctx: _ctx }),
-			env,
-		);
-		const url = new URL(request.url);
-		const path = url.pathname;
-		const respond = (response: Response) => withCORS(response, request);
+		let cfg: RuntimeConfig;
+		try {
+			cfg = withAccountPoolAvailability(
+				createRuntimeConfig(getConfig(env), { execution_ctx: _ctx }),
+				env,
+			);
+		} catch (error) {
+			return respond(invalidRuntimeConfigResponse(error));
+		}
 
 		if (isGeminiAccountAdminUiPath(path)) {
 			return respond(handleGeminiAccountAdminUiRequest(request));
@@ -337,5 +342,30 @@ function isMultipartFormRequest(request: Request): boolean {
 	const contentType = request.headers.get("content-type") || "";
 	return (
 		contentType.split(";", 1)[0]?.trim().toLowerCase() === "multipart/form-data"
+	);
+}
+
+function invalidRuntimeConfigResponse(error: unknown): Response {
+	if (error instanceof RuntimeConfigError) {
+		return jsonResponse(
+			{
+				error: {
+					message: "invalid runtime configuration",
+					code: error.code,
+					setting: error.setting,
+					reason: error.reason,
+				},
+			},
+			500,
+		);
+	}
+	return jsonResponse(
+		{
+			error: {
+				message: "invalid runtime configuration",
+				code: "invalid_runtime_config",
+			},
+		},
+		500,
 	);
 }
