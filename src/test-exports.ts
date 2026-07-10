@@ -34,6 +34,10 @@ export {
 	richResponseShapeSummary,
 	wrbResponseShapeSummary,
 } from "./gemini/client";
+export {
+	generatedImageFetchHeaders,
+	generatedImagePreviewFetchUrls,
+} from "./gemini/client/generated-images";
 export { CONFIG_ENV_KEYS, createRuntimeConfig } from "./config";
 export { createGeminiCompletionProvider } from "./gemini/completion-provider";
 export {

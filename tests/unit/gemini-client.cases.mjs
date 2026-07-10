@@ -480,6 +480,46 @@ export const cases = [
 		},
 	],
 	[
+		"preserves generated image URL candidates and browser headers",
+		async () => {
+			const previewUrl = "https://lh3.googleusercontent.com/generated=s1024-rj";
+			assert.deepEqual(mod.generatedImagePreviewFetchUrls(previewUrl), [
+				"https://lh3.googleusercontent.com/generated=s2048-rj",
+				previewUrl,
+			]);
+			const directUrl =
+				"https://lh3.googleusercontent.com/gg-dl/AFfU-direct-image";
+			assert.deepEqual(mod.generatedImagePreviewFetchUrls(directUrl), [
+				directUrl,
+				`${directUrl}=s2048-rj`,
+			]);
+			assert.deepEqual(
+				mod.generatedImagePreviewFetchUrls(
+					"https://lh3.googleusercontent.com/generated=s2048-rj",
+				),
+				["https://lh3.googleusercontent.com/generated=s2048-rj"],
+			);
+
+			const headers = mod.generatedImageFetchHeaders({
+				cookie: "__Secure-1PSID=value",
+			});
+			assert.equal(
+				headers.Accept,
+				"image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+			);
+			assert.equal(headers["Accept-Language"], "en-US,en;q=0.9");
+			assert.equal(headers.Origin, "https://gemini.google.com");
+			assert.equal(headers.Referer, "https://gemini.google.com/app");
+			assert.match(headers["User-Agent"], /Mozilla\/5\.0/);
+			assert.equal(headers.Cookie, "__Secure-1PSID=value");
+			assert.equal(headers.Authorization, undefined);
+			assert.equal(
+				mod.generatedImageFetchHeaders({ cookie: "" }).Cookie,
+				undefined,
+			);
+		},
+	],
+	[
 		"fetches direct gg-dl generated image URLs before trying size suffix fallback",
 		async () => {
 			const cfg = {
