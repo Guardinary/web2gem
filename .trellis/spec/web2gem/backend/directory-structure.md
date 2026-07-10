@@ -151,11 +151,13 @@ const fileRefs = mergeFileRefs(
 
 ## Architecture Guard
 
-`scripts/check-architecture.mjs` is the source of truth for import boundaries. It checks both forbidden imports and source import cycles. Run `pnpm check:arch` after moving modules or changing imports.
+`scripts/check-architecture.mjs` is the source of truth for import boundaries. It checks forbidden imports plus authored `.ts` / `.tsx` file and top-level owner cycles. Top-level owners are discovered from `src/` instead of maintained as a hard-coded allowlist; generated sources are excluded from the owner graph. Run `pnpm check:arch` after moving modules or changing imports.
 
 Current enforced rules include:
 
 - `src/shared/**` must not import feature layers such as `gemini`, `http`, `promptcompat`, `toolcall`, or `toolstream`.
+- `src/attachments/**` may depend on its own modules and provider-neutral `src/shared/**` helpers, but must not depend on completion, Gemini, HTTP, prompt compatibility, model, config, tool-call, or tool-stream owners.
+- `src/admin-ui/**` may depend on its own modules and external browser packages, but must not import backend source owners through parent-relative paths.
 - `src/completion/**` must not import `src/gemini/**`; use `src/completion/ports.ts` plus `src/gemini/completion-provider.ts`.
 - `src/gemini/**` may import completion port types only through the provider adapter path.
 - HTTP adapters must not call `gemini/client` directly.
@@ -166,6 +168,7 @@ Current enforced rules include:
 - HTTP adapter barrels should not re-export lower-layer completion, prompt compatibility, tool-call, or Gemini client internals. Export protocol handlers/formatters from HTTP packages and import lower-layer owner modules directly when needed.
 - Implementation modules under `src/completion/`, `src/promptcompat/`, `src/toolstream/`, and `src/http/` should not import bare `src/toolcall` / `src/toolcall/index`; use the specific tool-call owner module that owns the contract being consumed.
 - Directory-level source dependency cycles are also rejected; compatibility-only barrels are excluded where explicitly documented.
+- Architecture-script tests must execute the real checker against temporary fixture roots and include TSX rejection plus dynamically discovered owner-cycle cases.
 
 ### Design Decision: Owner-Module Toolcall Imports
 
@@ -377,6 +380,8 @@ Use this contract when changing test coverage commands, build sourcemap behavior
 - Coverage includes the isolated test bundle entry (`dist-coverage/worker.test.js`) because unit tests import the bundle rather than raw TypeScript.
 - Unit helpers read `process.env.TEST_BUNDLE` when set and default to `../../dist/worker.test.js` for the normal workflow.
 - Vitest V8 coverage is the coverage collector. Its sourcemapped bundle percentages are the baseline for global thresholds and `scripts/check-coverage.mjs` directory gates.
+- Coverage thresholds are regression floors, not aspirational 100% targets. No directory or aggregate threshold should be 100%; stable areas should normally retain 3–5 percentage points of measured headroom so one defensive branch does not block unrelated work.
+- Global thresholds must remain representative of the repository baseline, and newer high-risk owners such as `src/attachments`, `src/gemini/accounts`, and `src/http/admin` require explicit line and branch gates instead of relying only on broad parent-directory aggregation.
 - Generated coverage output belongs under `coverage/` and coverage build output belongs under `dist-coverage/`; both must stay git-ignored.
 - Do not change `src/index.ts`, `src/public-exports.ts`, or `wrangler.jsonc` to make coverage work.
 
@@ -386,22 +391,26 @@ Use this contract when changing test coverage commands, build sourcemap behavior
 - `pnpm coverage:ci` reports zero files -> coverage filtering is invalid; do not rely on a passing exit code until the report includes `src/` rows.
 - Normal `pnpm build` leaves sourcemaps after a prior coverage run -> clean stale map files in the non-coverage build path.
 - `pnpm coverage:ci` passes global Vitest thresholds but `scripts/check-coverage.mjs` fails -> a protected source directory regressed; add focused tests or intentionally ratchet the directory gate with evidence.
+- A new authored source owner has no explicit gate -> add one when the owner handles external input, credentials, persistence, protocol adaptation, or other high-risk behavior; use the measured baseline with maintenance headroom.
 - Coverage commands import `dist/worker.test.js` instead of `dist-coverage/worker.test.js` -> normal builds can overwrite coverage sourcemaps and produce stale or misleading reports.
 - Production bundle exports test helpers -> smoke must fail; restore the production/test entrypoint split.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: add a coverage-only build flag that writes to `dist-coverage/` and preserves normal build output.
+- Good: use a 92% line floor for a directory measured near 95% instead of a brittle 100% floor.
 - Base: use Vitest V8 coverage over `dist-coverage/worker.test.js` with `json-summary` output and directory gates.
 - Bad: change Vitest coverage include/exclude paths without verifying the report still contains covered `src/` files.
 - Bad: enable sourcemaps unconditionally for deploy builds.
 - Bad: share `dist/worker.test.js` between normal unit tests and coverage runs.
 - Bad: use `exclude-after-remap` without verifying the report still contains covered `src/` files.
+- Bad: lower a gate only until the current command turns green without recording the measured baseline and risk-specific rationale.
 
 ### 6. Tests Required
 
 - Run `pnpm coverage` after changing Vitest coverage config, build sourcemaps, or the unit runner.
 - Run `pnpm coverage:ci` after changing global or directory thresholds.
+- Architecture/coverage script fixture summaries must include every required target so missing-data failures remain tested.
 - Run `pnpm unit` to confirm the non-coverage test workflow still passes.
 - Run `pnpm smoke` after changing `scripts/build.mjs` because production/test bundle separation is part of smoke coverage.
 
@@ -419,6 +428,12 @@ Use this contract when changing test coverage commands, build sourcemap behavior
 
 This can import the normal test bundle and miss the isolated coverage sourcemaps.
 
+```javascript
+const lineGates = [["src/http/stream", 100]];
+```
+
+This makes a single uncovered defensive line fail unrelated development.
+
 #### Correct
 
 ```json
@@ -428,6 +443,12 @@ This can import the normal test bundle and miss the isolated coverage sourcemaps
   }
 }
 ```
+
+```javascript
+const lineGates = [["src/http/stream", 94]];
+```
+
+This remains a meaningful regression floor for a directory measured near 98% while preserving maintenance headroom.
 
 ## Scenario: Tool Syntax Probing And Stream Sieve CPU
 

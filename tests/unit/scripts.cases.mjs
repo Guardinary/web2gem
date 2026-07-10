@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { assert } from "./assertions.js";
 import { mod } from "./helpers.js";
@@ -20,6 +20,86 @@ const DOCKER_ONLY_ENV_KEYS = [
 
 export const suiteName = "quality scripts";
 export const cases = [
+	[
+		"accepts authored TSX files that stay inside their owner boundary",
+		async () => {
+			await withArchitectureFixture(
+				{
+					"src/admin-ui/app.tsx":
+						'import { state } from "./state";\nvoid state;\n',
+					"src/admin-ui/state.ts": "export const state = 1;\n",
+				},
+				async (dir) => {
+					const result = await runArchitectureCheck(dir);
+					assert.equal(result.code, 0);
+					assert.match(result.stdout, /Architecture check passed/);
+				},
+			);
+		},
+	],
+	[
+		"rejects backend imports from authored admin UI TSX files",
+		async () => {
+			await withArchitectureFixture(
+				{
+					"src/admin-ui/app.tsx": 'import "../gemini/client";\n',
+					"src/gemini/client/index.ts": "export const client = 1;\n",
+				},
+				async (dir) => {
+					const result = await runArchitectureCheck(dir);
+					assert.equal(result.code, 1);
+					assert.match(
+						result.stderr,
+						/admin UI modules must stay browser-boundary only/,
+					);
+				},
+			);
+		},
+	],
+	[
+		"rejects provider imports from attachment modules",
+		async () => {
+			await withArchitectureFixture(
+				{
+					"src/attachments/plan.ts": 'import "../gemini/client";\n',
+					"src/gemini/client/index.ts": "export const client = 1;\n",
+				},
+				async (dir) => {
+					const result = await runArchitectureCheck(dir);
+					assert.equal(result.code, 1);
+					assert.match(
+						result.stderr,
+						/attachment modules must stay provider-neutral/,
+					);
+				},
+			);
+		},
+	],
+	[
+		"rejects cycles between dynamically discovered source owners",
+		async () => {
+			await withArchitectureFixture(
+				{
+					"src/alpha/a1.ts": 'import "../beta/b1";\n',
+					"src/alpha/a2.ts": "export const a = 1;\n",
+					"src/beta/b1.ts": "export const b = 1;\n",
+					"src/beta/b2.ts": 'import "../alpha/a2";\n',
+				},
+				async (dir) => {
+					const result = await runArchitectureCheck(dir);
+					assert.equal(result.code, 1);
+					assert.match(
+						result.stderr,
+						/source directories must not form dependency cycles/,
+					);
+					assert.match(
+						result.stderr,
+						/alpha -> beta -> alpha|beta -> alpha -> beta/,
+					);
+				},
+			);
+		},
+	],
 	[
 		"accepts coverage summaries that satisfy line and branch gates",
 		async () => {
@@ -53,7 +133,7 @@ export const cases = [
 		"rejects missing coverage data for required targets",
 		async () => {
 			const summary = fullCoverageSummary();
-			delete summary["src/http/openai/responses-stream.ts"];
+			delete summary["src/http/admin/gemini-accounts.ts"];
 			await withCoverageSummary(summary, async (summaryPath) => {
 				const result = await runNodeScript(
 					"scripts/check-coverage.mjs",
@@ -61,7 +141,7 @@ export const cases = [
 				);
 				assert.equal(result.code, 1);
 				assert.match(result.stderr, /missing lines coverage data/);
-				assert.match(result.stderr, /responses-stream\.ts/);
+				assert.match(result.stderr, /src\/http\/admin/);
 			});
 		},
 	],
@@ -271,8 +351,10 @@ function coverageEntry(linePct = 100, branchPct = 100) {
 function fullCoverageSummary() {
 	return {
 		total: coverageEntry(),
+		"src/attachments/plan.ts": coverageEntry(),
 		"src/completion/index.ts": coverageEntry(),
 		"src/config/index.ts": coverageEntry(),
+		"src/gemini/accounts/pool.ts": coverageEntry(),
 		"src/gemini/app-page.ts": coverageEntry(),
 		"src/gemini/index.ts": coverageEntry(),
 		"src/gemini/client/index.ts": coverageEntry(),
@@ -280,6 +362,7 @@ function fullCoverageSummary() {
 		"src/gemini/transport/http.ts": coverageEntry(),
 		"src/gemini/uploads/index.ts": coverageEntry(),
 		"src/http/core/json.ts": coverageEntry(),
+		"src/http/admin/gemini-accounts.ts": coverageEntry(),
 		"src/http/google/handlers.ts": coverageEntry(),
 		"src/http/openai/chat.ts": coverageEntry(),
 		"src/http/openai/responses.ts": coverageEntry(),
@@ -327,13 +410,36 @@ async function withTempDir(run) {
 	}
 }
 
-function runNodeScript(script, arg, env = {}) {
+async function withArchitectureFixture(files, run) {
+	const dir = await mkdtemp(join(tmpdir(), "gemini-architecture-"));
+	try {
+		for (const [relativePath, body] of Object.entries(files)) {
+			const path = join(dir, relativePath);
+			await mkdir(dirname(path), { recursive: true });
+			await writeFile(path, body, "utf8");
+		}
+		await run(dir);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+}
+
+function runArchitectureCheck(cwd) {
+	return runNodeScript(
+		resolve(process.cwd(), "scripts/check-architecture.mjs"),
+		null,
+		{},
+		cwd,
+	);
+}
+
+function runNodeScript(script, arg, env = {}, cwd = process.cwd()) {
 	return new Promise((resolve) => {
 		const args = arg == null ? [script] : [script, arg];
 		execFile(
 			process.execPath,
 			args,
-			{ cwd: process.cwd(), env: { ...process.env, ...env } },
+			{ cwd, env: { ...process.env, ...env } },
 			(error, stdout, stderr) => {
 				resolve({
 					code: error && typeof error.code === "number" ? error.code : 0,

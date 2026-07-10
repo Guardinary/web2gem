@@ -7,6 +7,17 @@ import { errorLine, outputLine } from "./io.mjs";
 const root = process.cwd();
 const rules = [
 	{
+		label: "attachment modules must stay provider-neutral",
+		files: "src/attachments/**/*.{ts,tsx}",
+		disallowed: ["../"],
+		allowed: ["../shared"],
+	},
+	{
+		label: "admin UI modules must stay browser-boundary only",
+		files: "src/admin-ui/**/*.{ts,tsx}",
+		disallowed: ["../"],
+	},
+	{
 		label: "shared modules must stay leaf-level",
 		files: "src/shared/**/*.ts",
 		disallowed: [
@@ -204,7 +215,7 @@ const violations = [];
 
 for (const rule of rules) {
 	for (const file of globSync(rule.files, { cwd: root })) {
-		if (rule.exceptFiles?.includes(normalize(file))) continue;
+		if (rule.exceptFiles?.includes(normalizeSourcePath(file))) continue;
 		const text = await readFile(resolve(root, file), "utf8");
 		for (const match of text.matchAll(importPattern)) {
 			const specifier = match[1];
@@ -217,7 +228,7 @@ for (const rule of rules) {
 				continue;
 			if (rule.disallowedExact?.includes(specifier)) {
 				violations.push(
-					`${relative(root, resolve(root, file))}: ${specifier} (${rule.label})`,
+					`${normalizeSourcePath(relative(root, resolve(root, file)))}: ${specifier} (${rule.label})`,
 				);
 				continue;
 			}
@@ -227,15 +238,15 @@ for (const rule of rules) {
 				)
 			) {
 				violations.push(
-					`${relative(root, resolve(root, file))}: ${specifier} (${rule.label})`,
+					`${normalizeSourcePath(relative(root, resolve(root, file)))}: ${specifier} (${rule.label})`,
 				);
 			}
 		}
 	}
 }
 
-const sourceFiles = globSync("src/**/*.ts", { cwd: root }).map((file) =>
-	normalize(file),
+const sourceFiles = globSync("src/**/*.{ts,tsx}", { cwd: root }).map(
+	normalizeSourcePath,
 );
 const sourceFileSet = new Set(sourceFiles);
 const importGraph = new Map();
@@ -274,12 +285,18 @@ if (violations.length) {
 outputLine("Architecture check passed");
 
 function resolveSourceImport(fromFile, specifier) {
-	const base = normalize(join(dirname(fromFile), specifier));
-	const candidates = [base, `${base}.ts`, join(base, "index.ts")];
+	const base = normalizeSourcePath(join(dirname(fromFile), specifier));
+	const candidates = [
+		base,
+		`${base}.ts`,
+		`${base}.tsx`,
+		normalizeSourcePath(join(base, "index.ts")),
+		normalizeSourcePath(join(base, "index.tsx")),
+	];
 	for (const candidate of candidates) {
 		const absolute = resolve(root, candidate);
 		if (existsSync(absolute) && statSync(absolute).isFile())
-			return normalize(candidate);
+			return normalizeSourcePath(candidate);
 	}
 	return null;
 }
@@ -322,17 +339,9 @@ function findImportCycles(graph) {
 
 function buildPackageGraph(files, fileSet) {
 	const graph = new Map();
-	const packageOwners = new Set([
-		"completion",
-		"config",
-		"gemini",
-		"http",
-		"models",
-		"promptcompat",
-		"shared",
-		"toolcall",
-		"toolstream",
-	]);
+	const packageOwners = new Set(
+		files.map(sourcePackage).filter((owner) => owner && owner !== "generated"),
+	);
 	for (const owner of packageOwners) graph.set(owner, []);
 
 	for (const file of files) {
@@ -355,10 +364,14 @@ function buildPackageGraph(files, fileSet) {
 }
 
 function sourcePackage(file) {
-	const match = /^src\/([^/]+)(?:\/|\.ts$)/.exec(file);
+	const match = /^src\/([^/]+)\//.exec(file);
 	return match?.[1] ? match[1] : "";
 }
 
 function readSourceFileSync(file) {
 	return readFileSync(resolve(root, file), "utf8");
+}
+
+function normalizeSourcePath(file) {
+	return normalize(file).replaceAll("\\", "/");
 }
