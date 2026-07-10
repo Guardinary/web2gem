@@ -13,6 +13,8 @@ import type {
   D1DatabaseLike,
   D1Result,
   GeminiAccountCreateInput,
+  GeminiAccountCategory,
+  GeminiAccountAdminStats,
   GeminiAccountPublic,
   GeminiAccountPublicPage,
   GeminiAccountRow,
@@ -28,6 +30,38 @@ import type {
 
 const POOL_VERSION_KEY = "pool_version";
 const SELECTABLE_STATUSES = ["active", "transient_failed", "rate_limited", "cooling_down"] as const;
+const NEEDS_ATTENTION_STATUSES = [
+  "auth_failed",
+  "needs_cookie_update",
+  "rate_limited",
+  "cooling_down",
+  "hard_blocked",
+  "needs_user_action",
+  "missing_cookie",
+  "capability_mismatch",
+] as const;
+
+const ADMIN_ACCOUNT_SELECT = `
+  id, label, enabled, status, state_reason, row_id, cookie_hash,
+  session_token_hash, session_id, language, push_id, last_token_bootstrap_at_ms,
+  secure_1psid_hash, secure_1psidts_hash, account_category,
+  account_status_code, account_status_description, user_agent, gemini_origin,
+  source, source_id, source_name, imported_at_ms, cooldown_until_ms,
+  last_used_at_ms, last_success_at_ms, last_failure_at_ms, last_refresh_at_ms,
+  last_refresh_attempt_at_ms, last_error_code, last_error_message_redacted,
+  last_upstream_status, last_capability_probe_at_ms, capability_summary_json,
+  success_count, failure_count, created_at_ms, updated_at_ms,
+  CASE WHEN cookie_header IS NOT NULL AND cookie_header != '' THEN 1 ELSE 0 END AS has_cookie,
+  CASE WHEN sapisid IS NOT NULL AND sapisid != '' THEN 1 ELSE 0 END AS has_sapisid,
+  CASE WHEN session_token IS NOT NULL AND session_token != '' THEN 1 ELSE 0 END AS has_session_token,
+  CASE WHEN cookie_header IS NOT NULL AND cookie_header != '' THEN 'present' ELSE '' END AS cookie_preview
+`;
+
+type GeminiAccountPublicSqlRow = Omit<GeminiAccountPublic, "has_cookie" | "has_sapisid" | "has_session_token"> & {
+  has_cookie: number | boolean;
+  has_sapisid: number | boolean;
+  has_session_token: number | boolean;
+};
 
 export class D1GeminiAccountStore implements GeminiAccountStore {
   constructor(private readonly db: D1DatabaseLike) {}
@@ -57,39 +91,66 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
     return result.results || [];
   }
 
-  async listAdminAccounts(filter: GeminiAccountAdminFilter): Promise<GeminiAccountPublicPage> {
+  async listAdminAccounts(filter: GeminiAccountAdminFilter, nowMs: number): Promise<GeminiAccountPublicPage> {
     const limit = boundedPageLimit(filter.limit);
-    const args: unknown[] = [];
-    const where: string[] = [];
-    if (filter.cursor) {
-      where.push("id > ?");
-      args.push(filter.cursor);
-    }
-    if (filter.status) {
-      where.push("status = ?");
-      args.push(filter.status);
-    }
-    if (filter.enabled !== undefined) {
-      where.push("enabled = ?");
-      args.push(filter.enabled ? 1 : 0);
-    }
+    const { where, args } = adminWhere(filter, nowMs);
     args.push(limit + 1);
     const sql = `
-      SELECT *
+      SELECT ${ADMIN_ACCOUNT_SELECT}
       FROM gemini_accounts
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY id ASC
       LIMIT ?
     `;
-    const result = await this.db.prepare(sql).bind(...args).all<GeminiAccountRow>();
+    const result = await this.db.prepare(sql).bind(...args).all<GeminiAccountPublicSqlRow>();
     const rows = result.results || [];
     const pageRows = rows.slice(0, limit);
     const nextCursor = rows.length > limit ? pageRows[pageRows.length - 1]?.id || null : null;
     return {
-      items: pageRows.map(sanitizeGeminiAccount),
+      items: pageRows.map(publicRowFromSql),
       nextCursor,
       limit,
     };
+  }
+
+  async getAdminStats(filter: Omit<GeminiAccountAdminFilter, "cursor" | "limit">, nowMs: number): Promise<GeminiAccountAdminStats> {
+    const { where, args } = adminWhere(filter, nowMs);
+    const sql = `
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN enabled = 1 AND status = 'active' THEN 1 ELSE 0 END) AS available,
+        SUM(CASE WHEN status IN (${NEEDS_ATTENTION_STATUSES.map(() => "?").join(", ")}) THEN 1 ELSE 0 END) AS needsAttention,
+        SUM(CASE WHEN enabled != 1 OR status = 'disabled' THEN 1 ELSE 0 END) AS disabled,
+        SUM(CASE WHEN enabled = 1 AND account_category IN ('full_session', 'psid_psidts') THEN 1 ELSE 0 END) AS refreshable,
+        SUM(CASE WHEN cooldown_until_ms IS NOT NULL AND cooldown_until_ms > ? THEN 1 ELSE 0 END) AS cooling,
+        SUM(CASE WHEN account_category IN ('psid_only', 'missing_session') THEN 1 ELSE 0 END) AS psidOnly,
+        SUM(success_count) AS successCount,
+        SUM(failure_count) AS failureCount
+      FROM gemini_accounts
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+    `;
+    const row = await this.db.prepare(sql).bind(...NEEDS_ATTENTION_STATUSES, nowMs, ...args).first<Partial<GeminiAccountAdminStats>>();
+    return {
+      total: numberOrZero(row?.total),
+      available: numberOrZero(row?.available),
+      needsAttention: numberOrZero(row?.needsAttention),
+      disabled: numberOrZero(row?.disabled),
+      refreshable: numberOrZero(row?.refreshable),
+      cooling: numberOrZero(row?.cooling),
+      psidOnly: numberOrZero(row?.psidOnly),
+      successCount: numberOrZero(row?.successCount),
+      failureCount: numberOrZero(row?.failureCount),
+    };
+  }
+
+  async findAccountByCookieHash(cookieHash: string): Promise<GeminiAccountPublic | null> {
+    const row = await this.db.prepare(`
+      SELECT ${ADMIN_ACCOUNT_SELECT}
+      FROM gemini_accounts
+      WHERE cookie_hash = ?
+      LIMIT 1
+    `).bind(cookieHash).first<GeminiAccountPublicSqlRow>();
+    return row ? publicRowFromSql(row) : null;
   }
 
   async getAccountForRefresh(accountId: string): Promise<GeminiAccountSecretRow | null> {
@@ -218,34 +279,46 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
       || valueChanged(update.stateReason, current.state_reason);
     if (!cookiesChanged) return { changed: false };
 
+    if (nextCookieHash !== current.cookie_hash) {
+      const duplicate = await this.findAccountByCookieHash(nextCookieHash);
+      if (duplicate && duplicate.id !== accountId) return { changed: false, reason: "duplicate_cookie" };
+    }
+
     const hashes = await cookieHashes(nextCookieHeader);
-    await this.db.prepare(`
-      UPDATE gemini_accounts
-      SET cookie_header = ?, cookie_hash = ?, sapisid = ?, session_token = ?,
-          session_token_hash = ?, session_id = ?, language = ?, push_id = ?,
-          secure_1psid_hash = ?, secure_1psidts_hash = ?, account_category = ?,
-          status = ?, state_reason = ?, last_refresh_at_ms = ?,
-          last_refresh_attempt_at_ms = ?, updated_at_ms = ?
-      WHERE id = ?
-    `).bind(
-      nextCookieHeader,
-      nextCookieHash,
-      valueOrCurrent(update.sapisid, current.sapisid),
-      sessionToken,
-      nextSessionTokenHash,
-      valueOrCurrent(update.sessionId, current.session_id),
-      valueOrCurrent(update.language, current.language),
-      valueOrCurrent(update.pushId, current.push_id),
-      hashes.secure1psidHash,
-      hashes.secure1psidtsHash,
-      geminiAccountCategory({ cookieHeader: nextCookieHeader, sessionToken: sessionToken ?? null }),
-      update.status || current.status,
-      valueOrCurrent(update.stateReason, current.state_reason),
-      valueOrCurrent(update.lastRefreshAtMs, current.last_refresh_at_ms),
-      valueOrCurrent(update.lastRefreshAttemptAtMs, current.last_refresh_attempt_at_ms),
-      update.nowMs,
-      accountId,
-    ).run();
+    try {
+      await this.db.prepare(`
+        UPDATE gemini_accounts
+        SET cookie_header = ?, cookie_hash = ?, sapisid = ?, session_token = ?,
+            session_token_hash = ?, session_id = ?, language = ?, push_id = ?,
+            secure_1psid_hash = ?, secure_1psidts_hash = ?, account_category = ?,
+            status = ?, state_reason = ?, last_refresh_at_ms = ?,
+            last_refresh_attempt_at_ms = ?, updated_at_ms = ?
+        WHERE id = ?
+      `).bind(
+        nextCookieHeader,
+        nextCookieHash,
+        valueOrCurrent(update.sapisid, current.sapisid),
+        sessionToken,
+        nextSessionTokenHash,
+        valueOrCurrent(update.sessionId, current.session_id),
+        valueOrCurrent(update.language, current.language),
+        valueOrCurrent(update.pushId, current.push_id),
+        hashes.secure1psidHash,
+        hashes.secure1psidtsHash,
+        geminiAccountCategory({ cookieHeader: nextCookieHeader, sessionToken: sessionToken ?? null }),
+        update.status || current.status,
+        valueOrCurrent(update.stateReason, current.state_reason),
+        valueOrCurrent(update.lastRefreshAtMs, current.last_refresh_at_ms),
+        valueOrCurrent(update.lastRefreshAttemptAtMs, current.last_refresh_attempt_at_ms),
+        update.nowMs,
+        accountId,
+      ).run();
+    } catch (error) {
+      if (!isD1UniqueConstraintError(error)) throw error;
+      const duplicate = await this.findAccountByCookieHash(nextCookieHash);
+      if (!duplicate || duplicate.id === accountId) throw error;
+      return { changed: false, reason: "duplicate_cookie" };
+    }
     await this.bumpPoolVersion(update.nowMs);
     return { changed: true };
   }
@@ -262,6 +335,7 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
           last_error_code = ?,
           last_error_message_redacted = ?,
           last_upstream_status = ?,
+          last_used_at_ms = ?,
           success_count = success_count + ?,
           failure_count = failure_count + ?,
           updated_at_ms = ?
@@ -277,6 +351,7 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
       outcome.errorCode ?? outcome.failureKind ?? null,
       outcome.errorMessageRedacted ?? null,
       outcome.upstreamStatus ?? null,
+      outcome.nowMs,
       isSuccess ? 1 : 0,
       isSuccess ? 0 : 1,
       outcome.nowMs,
@@ -386,4 +461,75 @@ function valueOrCurrent<T>(next: T | undefined, current: T): T {
 
 function valueChanged(next: unknown, current: unknown): boolean {
   return next !== undefined && next !== current;
+}
+
+function adminWhere(filter: Partial<GeminiAccountAdminFilter>, nowMs: number): { where: string[]; args: unknown[] } {
+  const args: unknown[] = [];
+  const where: string[] = [];
+  if (filter.cursor) {
+    where.push("id > ?");
+    args.push(filter.cursor);
+  }
+  if (filter.status) {
+    where.push("status = ?");
+    args.push(filter.status);
+  }
+  if (filter.enabled !== undefined) {
+    where.push("enabled = ?");
+    args.push(filter.enabled ? 1 : 0);
+  }
+  if (filter.category) {
+    where.push("account_category = ?");
+    args.push(filter.category);
+  }
+  if (filter.cooldown === "cooling") {
+    where.push("cooldown_until_ms IS NOT NULL AND cooldown_until_ms > ?");
+    args.push(nowMs);
+  } else if (filter.cooldown === "active") {
+    where.push("(cooldown_until_ms IS NULL OR cooldown_until_ms <= ?)");
+    args.push(nowMs);
+  }
+  if (filter.source) {
+    where.push("(source = ? OR source_id = ? OR source_name = ?)");
+    args.push(filter.source, filter.source, filter.source);
+  }
+  if (filter.q) {
+    const like = `%${escapeSqlLike(filter.q)}%`;
+    where.push(`(
+      id LIKE ? ESCAPE '\\' OR row_id LIKE ? ESCAPE '\\' OR label LIKE ? ESCAPE '\\'
+      OR status LIKE ? ESCAPE '\\' OR state_reason LIKE ? ESCAPE '\\'
+      OR source LIKE ? ESCAPE '\\' OR source_id LIKE ? ESCAPE '\\' OR source_name LIKE ? ESCAPE '\\'
+      OR account_category LIKE ? ESCAPE '\\' OR last_error_code LIKE ? ESCAPE '\\'
+      OR last_error_message_redacted LIKE ? ESCAPE '\\'
+    )`);
+    args.push(like, like, like, like, like, like, like, like, like, like, like);
+  }
+  return { where, args };
+}
+
+function publicRowFromSql(row: GeminiAccountPublicSqlRow): GeminiAccountPublic {
+  return {
+    ...row,
+    has_cookie: !!row.has_cookie,
+    has_sapisid: !!row.has_sapisid,
+    has_session_token: !!row.has_session_token,
+  };
+}
+
+function numberOrZero(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function escapeSqlLike(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+export function isGeminiAccountCategory(value: string): value is GeminiAccountCategory {
+  return ["full_session", "psid_psidts", "psid_only", "session_token_only", "missing_session"].includes(value);
+}
+
+export function isD1UniqueConstraintError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /unique constraint failed|constraint.*unique|SQLITE_CONSTRAINT/i.test(message);
 }

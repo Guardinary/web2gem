@@ -1,5 +1,5 @@
-import { parseMutation, parsePage } from "./schemas";
-import type { AccountIdentifier, AccountPage, MutationResult } from "./types";
+import { parseMutation, parsePage, parseStats } from "./schemas";
+import type { AccountIdentifier, AccountPage, AccountStats, MutationResult } from "./types";
 
 const API_PATH = "/admin/accounts";
 
@@ -8,12 +8,20 @@ export type ListOptions = {
   cursor?: string;
   status?: string;
   enabled?: string;
+  q?: string;
+  category?: string;
+  cooldown?: string;
+  source?: string;
 };
 
 export type CreateInput = {
   label?: string;
   psid: string;
   psidts: string;
+};
+
+export type CreateBatchInput = {
+  accounts: CreateInput[];
 };
 
 export type UpdateInput = AccountIdentifier & {
@@ -55,7 +63,22 @@ export async function listAccounts(options: ListOptions): Promise<AccountPage> {
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.status) params.set("status", options.status);
   if (options.enabled) params.set("enabled", options.enabled);
+  if (options.q) params.set("q", options.q);
+  if (options.category) params.set("category", options.category);
+  if (options.cooldown) params.set("cooldown", options.cooldown);
+  if (options.source) params.set("source", options.source);
   return parsePage(await request(options.adminKey, `${API_PATH}?${params.toString()}`));
+}
+
+export async function getAccountStats(options: ListOptions): Promise<AccountStats> {
+  const params = new URLSearchParams();
+  if (options.status) params.set("status", options.status);
+  if (options.enabled) params.set("enabled", options.enabled);
+  if (options.q) params.set("q", options.q);
+  if (options.category) params.set("category", options.category);
+  if (options.cooldown) params.set("cooldown", options.cooldown);
+  if (options.source) params.set("source", options.source);
+  return parseStats(await request(options.adminKey, `${API_PATH}/stats?${params.toString()}`));
 }
 
 export async function createAccount(adminKey: string, input: CreateInput): Promise<MutationResult> {
@@ -66,6 +89,24 @@ export async function createAccount(adminKey: string, input: CreateInput): Promi
   };
   if (input.label) payload.label = input.label;
   return parseMutation(await request(adminKey, API_PATH, { method: "POST", body: payload }));
+}
+
+export async function createAccounts(adminKey: string, input: CreateBatchInput): Promise<MutationResult> {
+  return parseMutation(await request(adminKey, API_PATH, {
+    method: "POST",
+    body: {
+      provider: "gemini",
+      accounts: input.accounts.map((account) => {
+        const payload: Record<string, string> = {
+          provider: "gemini",
+          "__Secure-1PSID": account.psid,
+          "__Secure-1PSIDTS": account.psidts,
+        };
+        if (account.label) payload.label = account.label;
+        return payload;
+      }),
+    },
+  }));
 }
 
 export async function updateAccount(adminKey: string, input: UpdateInput): Promise<MutationResult> {

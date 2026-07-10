@@ -151,6 +151,7 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 - `GeminiAccountStore.getPoolVersion()` reads one metadata row.
 - `GeminiAccountStore.listSelectableAccounts(nowMs, limit)` reads a bounded selectable snapshot.
 - Account refresh uses `tryAcquireRefreshLock(accountId, owner, expiresAtMs, nowMs)` and `releaseRefreshLock(accountId, owner)`.
+- `GeminiAccountStore.writeCookieState(accountId, update)` returns `{ changed: false, reason: "duplicate_cookie" }` when the normalized next Cookie hash belongs to another account.
 
 ### 3. Contracts
 
@@ -160,6 +161,8 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 - Register pending per-account refresh promises before the first `await` in the refresh path. If the key is computed after an async hash/read, two same-tick callers can both start refresh work.
 - The first refresh attempt for an account must not be suppressed just because `lastRotateAtMs` is initialized to `0`; apply debounce only when a prior rotate timestamp is positive.
 - Refresh lock owners and cache keys must be based on account IDs and hashes, never raw cookies or session tokens.
+- `cookie_hash` is mutable during rotation and may have a unique D1 index. Check for an existing owner before writeback and also classify a concurrent unique-constraint failure after the update attempt; both paths must return the same duplicate no-op result.
+- A duplicate-cookie no-op must not update the selected lease or its in-memory account state. Account refresh returns `rotation_duplicate` instead of throwing or reporting `rotation_updated`.
 - `createGeminiAccountRuntimeFromEnv` may return `null` for helper/admin composition, but public generation routes on this branch must translate missing `GEMINI_DB` into a sanitized `gemini_account_pool_required` response instead of serving through a single-cookie fallback.
 
 ### 4. Validation & Error Matrix
@@ -170,21 +173,27 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 - Selection with two available accounts and one local in-flight -> choose the lower in-flight account.
 - Two concurrent refresh waiters for the same account/cookie hash -> one rotate call and shared result/rejection.
 - D1 lock conflict -> typed refresh conflict result, no rotate call, no lock release attempt for a lock not owned.
+- Rotated Cookie hash already owned by another account -> `{ changed: false, reason: "rotation_duplicate" }`, unchanged lease credentials, no account-failure write.
+- Preflight duplicate lookup misses a concurrent writer and D1 raises a cookie-hash unique constraint -> re-read the hash owner and return the same duplicate result; unrelated unique errors still propagate.
 - `lastRotateAtMs = 0` -> first refresh may proceed; recent positive timestamp -> debounce.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: `pendingRefresh.set(key, promise)` happens before awaiting account state or hashes.
 - Good: selection increments local in-flight and release is idempotent.
+- Good: cookie writeback handles both the preflight duplicate and the post-update unique-constraint race without changing lease state.
 - Base: snapshot TTL/probe values are short enough for operator changes to propagate but long enough to avoid D1 reads on every request.
 - Bad: `await sha256(cookie)` before checking the pending refresh map.
 - Bad: writing `last_used_at_ms` or global round-robin state during every lease acquisition.
+- Bad: catch every unique constraint as a duplicate without confirming another row owns the target Cookie hash.
 
 ### 6. Tests Required
 
 - Unit tests with fake store counters for snapshot reads, version probes, row reloads, and selection write counts.
 - Unit tests for in-flight spread and idempotent release.
 - Unit tests for refresh debounce, pending dedupe, D1 lock conflict, failure propagation, and lock release.
+- Unit test a D1 cookie-hash convergence race returns `duplicate_cookie`, preserves the original row, and does not bump the pool version.
+- Unit test account refresh maps duplicate writeback to `rotation_duplicate` without changing lease Cookie state or writing a failure outcome.
 - Unit tests proving `SNlM0e`, `session_token`, and `at` stay out of outbound Cookie headers during writeback.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm check:static`, `pnpm unit`, and `pnpm smoke`.
 
@@ -207,6 +216,25 @@ if (pending) return pending;
 const promise = refreshOnce(lease).finally(() => pendingRefresh.delete(key));
 pendingRefresh.set(key, promise);
 return promise;
+```
+
+#### Wrong
+
+```typescript
+await store.writeCookieState(accountId, update);
+lease.cookieHeader = update.cookieHeader;
+lease.cookieHash = await sha256Hex(update.cookieHeader);
+```
+
+#### Correct
+
+```typescript
+const writeback = await store.writeCookieState(accountId, update);
+if (!writeback.changed) {
+  return { changed: false, reason: writeback.reason === "duplicate_cookie" ? "rotation_duplicate" : "rotation_no_update" };
+}
+lease.cookieHeader = update.cookieHeader;
+lease.cookieHash = await sha256Hex(update.cookieHeader);
 ```
 
 ## Scenario: Account-aware Gemini Provider Lease And Caches

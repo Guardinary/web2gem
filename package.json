@@ -23,7 +23,8 @@
     "bench": "node scripts/build.mjs --test-bundle && node scripts/bench.mjs",
     "docker:start": "node scripts/docker-server.mjs",
     "dev": "pnpm build && wrangler dev",
-    "deploy": "pnpm build && wrangler deploy"
+    "db:migrations:apply": "wrangler d1 migrations apply GEMINI_DB --remote",
+    "deploy": "pnpm build && pnpm db:migrations:apply && wrangler deploy"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",

@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import type { AccountPage, GeminiAccount, MutationResult } from "./types";
+import type { AccountPage, AccountStats, GeminiAccount, MutationResult } from "./types";
 
 const statusSchema = v.union([
   v.literal("active"),
@@ -76,9 +76,22 @@ export const pageSchema = v.object({
   limit: v.number(),
 });
 
+export const statsSchema = v.object({
+  total: v.number(),
+  available: v.number(),
+  needsAttention: v.number(),
+  disabled: v.number(),
+  refreshable: v.number(),
+  cooling: v.number(),
+  psidOnly: v.number(),
+  successCount: v.number(),
+  failureCount: v.number(),
+});
+
 export const mutationSchema = v.object({
   items: v.optional(v.array(accountSchema)),
   added: v.optional(v.number()),
+  duplicates: v.optional(v.number()),
   skipped: v.optional(v.number()),
   updated: v.optional(v.number()),
   removed: v.optional(v.number()),
@@ -99,6 +112,12 @@ export function parseMutation(value: unknown): MutationResult {
   const parsed = v.safeParse(mutationSchema, value);
   if (!parsed.success) throw new Error("admin mutation response is invalid");
   return parsed.output as MutationResult;
+}
+
+export function parseStats(value: unknown): AccountStats {
+  const parsed = v.safeParse(statsSchema, value);
+  if (!parsed.success) throw new Error("admin stats response is invalid");
+  return parsed.output as AccountStats;
 }
 
 export function isAccount(value: unknown): value is GeminiAccount {

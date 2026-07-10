@@ -139,12 +139,28 @@ export type GeminiAccountAdminFilter = {
   cursor?: string;
   status?: GeminiAccountStatus;
   enabled?: boolean;
+  q?: string;
+  category?: GeminiAccountCategory;
+  cooldown?: "active" | "cooling";
+  source?: string;
 };
 
 export type GeminiAccountPublicPage = {
   items: GeminiAccountPublic[];
   nextCursor: string | null;
   limit: number;
+};
+
+export type GeminiAccountAdminStats = {
+  total: number;
+  available: number;
+  needsAttention: number;
+  disabled: number;
+  refreshable: number;
+  cooling: number;
+  psidOnly: number;
+  successCount: number;
+  failureCount: number;
 };
 
 export type GeminiAccountCreateInput = {
@@ -196,6 +212,7 @@ export type GeminiCookieWriteback = {
 
 export type GeminiCookieWritebackResult = {
   changed: boolean;
+  reason?: "duplicate_cookie";
 };
 
 export type GeminiAccountOutcome = {
@@ -213,7 +230,9 @@ export type GeminiAccountOutcome = {
 export type GeminiAccountStore = {
   getPoolVersion(): Promise<string>;
   listSelectableAccounts(nowMs: number, limit: number): Promise<GeminiAccountSnapshotRow[]>;
-  listAdminAccounts(filter: GeminiAccountAdminFilter): Promise<GeminiAccountPublicPage>;
+  listAdminAccounts(filter: GeminiAccountAdminFilter, nowMs: number): Promise<GeminiAccountPublicPage>;
+  getAdminStats(filter: Omit<GeminiAccountAdminFilter, "cursor" | "limit">, nowMs: number): Promise<GeminiAccountAdminStats>;
+  findAccountByCookieHash(cookieHash: string): Promise<GeminiAccountPublic | null>;
   getAccountForRefresh(accountId: string): Promise<GeminiAccountSecretRow | null>;
   resolveAccountIdentifier(input: { id?: string; rowId?: string }): Promise<string | null>;
   createAccount(input: GeminiAccountCreateInput): Promise<GeminiAccountPublic>;
@@ -276,6 +295,7 @@ export type GeminiAccountRefreshReason =
   | "rotation_rejected"
   | "rotation_failed"
   | "rotation_no_update"
+  | "rotation_duplicate"
   | "rotation_error"
   | "rotation_updated";
 

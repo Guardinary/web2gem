@@ -35,6 +35,7 @@ export const cases = [
     const page = await store.listAdminAccounts({ limit: 10 });
     const account = page.items.find((item) => item.id === "a");
     assert.equal(account.has_cookie, true);
+    assert.equal(account.has_sapisid, false);
     assert.equal(account.has_session_token, true);
     assert.equal(Object.prototype.hasOwnProperty.call(account, "cookie_header"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(account, "session_token"), false);
@@ -71,6 +72,7 @@ export const cases = [
     await store.writeAccountOutcome("acct", { kind: "success", nowMs: 4000 });
     assert.equal(await store.getPoolVersion(), "3000");
     assert.equal(db.rows.get("acct").success_count, 1);
+    assert.equal(db.rows.get("acct").last_used_at_ms, 4000);
 
     await store.writeAccountOutcome("acct", {
       kind: "failure",
@@ -82,6 +84,32 @@ export const cases = [
     assert.equal(await store.getPoolVersion(), "5000");
     assert.equal(db.rows.get("acct").status, "rate_limited");
     assert.equal(db.rows.get("acct").failure_count, 1);
+  }],
+  ["treats cookie writeback convergence as a duplicate instead of failing", async () => {
+    const db = new FakeD1();
+    const store = new mod.D1GeminiAccountStore(db);
+    await seedAccount(store, "stale", {
+      cookieHeader: "__Secure-1PSID=psid; __Secure-1PSIDTS=ts-old",
+      nowMs: 1000,
+    });
+    await seedAccount(store, "current", {
+      cookieHeader: "__Secure-1PSID=psid; __Secure-1PSIDTS=ts-current",
+      nowMs: 1100,
+    });
+    const originalHash = db.rows.get("stale").cookie_hash;
+    const currentHeader = db.rows.get("current").cookie_header;
+    db.hiddenCookieHashLookups = 1;
+
+    const result = await store.writeCookieState("stale", {
+      cookieHeader: currentHeader,
+      lastRefreshAtMs: 2000,
+      nowMs: 2000,
+    });
+
+    assert.deepEqual(result, { changed: false, reason: "duplicate_cookie" });
+    assert.equal(db.rows.get("stale").cookie_hash, originalHash);
+    assert.equal(db.rows.get("stale").last_refresh_at_ms, null);
+    assert.equal(await store.getPoolVersion(), "1100");
   }],
   ["acquires refresh locks with conflict, expiry replacement, and owner release", async () => {
     const db = new FakeD1();
@@ -109,10 +137,25 @@ export const cases = [
       }],
     });
     assert.equal(created.added, 1);
+    assert.equal(created.skipped, 0);
     assert.equal(created.items[0].label, "primary");
     assert.equal(created.items[0].has_cookie, true);
     assert.equal(Object.prototype.hasOwnProperty.call(created.items[0], "cookie_header"), false);
     assert.doesNotMatch(JSON.stringify(created), /psid-secret|ts-secret|SAPISID|SNlM0e/);
+
+    const duplicate = await service.create({
+      provider: "gemini",
+      accounts: [{
+        provider: "gemini",
+        "__Secure-1PSID": "psid-secret",
+        "__Secure-1PSIDTS": "ts-secret",
+        label: "duplicate",
+      }],
+    });
+    assert.equal(duplicate.added, 0);
+    assert.equal(duplicate.skipped, 1);
+    assert.equal(duplicate.duplicates, 1);
+    assert.equal(duplicate.items[0].label, "primary");
 
     const invalidPayloads = [
       { provider: "gemini", tokens: ["raw-token"] },
@@ -145,6 +188,15 @@ export const cases = [
     const page = await service.list({ limit: 500, enabled: true });
     assert.equal(page.limit, 200);
     assert.deepEqual(page.items.map((item) => item.id), ["a", "b"]);
+
+    db.rows.get("a").account_category = "psid_only";
+    db.rows.get("a").source = "alpha-source";
+    db.rows.get("a").cooldown_until_ms = 9_999_999_999_999;
+    const filtered = await service.list({ limit: 10, q: "alpha", category: "psid_only", cooldown: "cooling", source: "alpha-source" });
+    assert.deepEqual(filtered.items.map((item) => item.id), ["a"]);
+    const stats = await service.stats({ category: "psid_only", source: "alpha-source" });
+    assert.equal(stats.total, 1);
+    assert.equal(stats.psidOnly, 1);
 
     const firstPage = await service.list({ limit: 1 });
     assert.deepEqual(firstPage.items.map((item) => item.id), ["a"]);
@@ -258,6 +310,12 @@ export const cases = [
     const body = await listed.json();
     assert.equal(body.limit, 200);
     assert.equal(body.items.length, 1);
+
+    const stats = await mod.default.fetch(new Request("https://worker.example/admin/accounts/stats", {
+      headers: { "X-Admin-Key": "admin-secret" },
+    }), env, {});
+    assert.equal(stats.status, 200);
+    assert.equal((await stats.json()).total, 1);
   }],
   ["worker serves Gemini account admin WebUI without D1 reads or legacy cookie fallback text", async () => {
     const db = new FakeD1();
@@ -276,6 +334,8 @@ export const cases = [
     const response = await mod.default.fetch(new Request("https://worker.example/admin"), env, {});
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") || "", /text\/html/);
+    assert.match(response.headers.get("content-security-policy") || "", /frame-ancestors 'none'/);
+    assert.match(response.headers.get("referrer-policy") || "", /no-referrer/);
     assert.equal(prepareCalls, 0);
     const html = await response.text();
     assert.match(html, /Gemini Account Pool/);
@@ -288,6 +348,11 @@ export const cases = [
     assert.match(html, /id:"edit-form"/);
     assert.match(html, /id:"export-metadata"/);
     assert.match(html, /id:"next-page"/);
+    assert.match(html, /sessionStorage/);
+    assert.match(html, /stats\?/);
+    assert.match(html, /duplicates/);
+    assert.match(html, /Delete loaded/);
+    assert.doesNotMatch(html, /Delete filtered/);
     assert.match(html, /success_count/);
     assert.match(html, /failure_count/);
     assert.doesNotMatch(html, /GEMINI_COOKIE|SAPISID=|SNlM0e=|psid-secret|ts-secret|Cookie:\s*__Secure/i);
@@ -324,6 +389,7 @@ class FakeD1 {
     this.meta = new Map([["pool_version", { value: "0", updated_at_ms: 0 }]]);
     this.locks = new Map();
     this.statements = [];
+    this.hiddenCookieHashLookups = 0;
   }
 
   prepare(sql) {
@@ -372,6 +438,42 @@ class FakeStatement {
     if (this.sql.includes("SELECT id") && this.sql.includes("WHERE row_id = ?")) {
       return this.idLookup((row) => row.row_id === this.values[0]);
     }
+    if (this.sql.includes("WHERE cookie_hash = ?")) {
+      if (this.db.hiddenCookieHashLookups > 0) {
+        this.db.hiddenCookieHashLookups--;
+        return { results: [], meta: { changes: 0 } };
+      }
+      const row = Array.from(this.db.rows.values()).find((row) => row.cookie_hash === this.values[0]);
+      return { results: row ? [publicClone(row)] : [], meta: { changes: 0 } };
+    }
+    if (this.sql.includes("COUNT(*) AS total")) {
+      const rows = this.applyAdminFilters(Array.from(this.db.rows.values()), 9);
+      const attention = new Set([
+        "auth_failed",
+        "needs_cookie_update",
+        "rate_limited",
+        "cooling_down",
+        "hard_blocked",
+        "needs_user_action",
+        "missing_cookie",
+        "capability_mismatch",
+      ]);
+      const nowMs = this.values[8];
+      return {
+        results: [{
+          total: rows.length,
+          available: rows.filter((row) => row.enabled === 1 && row.status === "active").length,
+          needsAttention: rows.filter((row) => attention.has(row.status)).length,
+          disabled: rows.filter((row) => row.enabled !== 1 || row.status === "disabled").length,
+          refreshable: rows.filter((row) => row.enabled === 1 && ["full_session", "psid_psidts"].includes(row.account_category)).length,
+          cooling: rows.filter((row) => row.cooldown_until_ms != null && row.cooldown_until_ms > nowMs).length,
+          psidOnly: rows.filter((row) => ["psid_only", "missing_session"].includes(row.account_category)).length,
+          successCount: rows.reduce((sum, row) => sum + (row.success_count || 0), 0),
+          failureCount: rows.reduce((sum, row) => sum + (row.failure_count || 0), 0),
+        }],
+        meta: { changes: 0 },
+      };
+    }
     if (this.sql.includes("FROM gemini_accounts") && this.sql.includes("status IN")) {
       const statuses = new Set(this.values.slice(0, 4));
       const nowMs = this.values[4];
@@ -386,24 +488,9 @@ class FakeStatement {
       return { results: rows, meta: { changes: 0 } };
     }
     if (this.sql.includes("FROM gemini_accounts")) {
-      const limit = this.values.at(-1);
-      let index = 0;
-      let rows = Array.from(this.db.rows.values()).sort((a, b) => a.id.localeCompare(b.id));
-      if (this.sql.includes("id > ?")) {
-        const cursor = this.values[index];
-        index++;
-        rows = rows.filter((row) => row.id > cursor);
-      }
-      if (this.sql.includes("status = ?")) {
-        const status = this.values[index];
-        index++;
-        rows = rows.filter((row) => row.status === status);
-      }
-      if (this.sql.includes("enabled = ?")) {
-        const enabled = this.values[index];
-        rows = rows.filter((row) => row.enabled === enabled);
-      }
-      rows = rows.slice(0, limit).map(clone);
+      const rows = this.applyAdminFilters(Array.from(this.db.rows.values()), 0)
+        .slice(0, this.values.at(-1))
+        .map(publicClone);
       return { results: rows, meta: { changes: 0 } };
     }
     throw new Error(`unhandled fake all SQL: ${this.sql}`);
@@ -445,6 +532,8 @@ class FakeStatement {
       const accountId = this.values[16];
       const row = this.db.rows.get(accountId);
       if (!row) return changed(0);
+      const duplicate = Array.from(this.db.rows.values()).find((item) => item.id !== accountId && item.cookie_hash === this.values[1]);
+      if (duplicate) throw new Error("UNIQUE constraint failed: gemini_accounts.cookie_hash");
       [
         "cookie_header", "cookie_hash", "sapisid", "session_token", "session_token_hash", "session_id",
         "language", "push_id", "secure_1psid_hash", "secure_1psidts_hash", "account_category",
@@ -455,7 +544,7 @@ class FakeStatement {
       return changed(1);
     }
     if (this.sql.includes("UPDATE gemini_accounts") && this.sql.includes("success_count = success_count")) {
-      const accountId = this.values[13];
+      const accountId = this.values[14];
       const row = this.db.rows.get(accountId);
       if (!row) return changed(0);
       row.status = this.values[0] || row.status;
@@ -466,9 +555,10 @@ class FakeStatement {
       row.last_error_code = this.values[7];
       row.last_error_message_redacted = this.values[8];
       row.last_upstream_status = this.values[9];
-      row.success_count += this.values[10];
-      row.failure_count += this.values[11];
-      row.updated_at_ms = this.values[12];
+      row.last_used_at_ms = this.values[10];
+      row.success_count += this.values[11];
+      row.failure_count += this.values[12];
+      row.updated_at_ms = this.values[13];
       return changed(1);
     }
     if (this.sql.includes("UPDATE gemini_accounts") && this.sql.includes("SET label = ?")) {
@@ -498,6 +588,63 @@ class FakeStatement {
   record() {
     this.db.statements.push({ sql: compactSql(this.sql), values: this.values });
   }
+
+  applyAdminFilters(inputRows, offset) {
+    let index = offset;
+    const whereSql = this.sql.includes("WHERE") ? this.sql.split("WHERE").slice(1).join("WHERE") : "";
+    let rows = inputRows.sort((a, b) => a.id.localeCompare(b.id));
+    if (whereSql.includes("id > ?")) {
+      const cursor = this.values[index];
+      index++;
+      rows = rows.filter((row) => row.id > cursor);
+    }
+    if (whereSql.includes("status = ?")) {
+      const status = this.values[index];
+      index++;
+      rows = rows.filter((row) => row.status === status);
+    }
+    if (whereSql.includes("enabled = ?")) {
+      const enabled = this.values[index];
+      index++;
+      rows = rows.filter((row) => row.enabled === enabled);
+    }
+    if (whereSql.includes("account_category = ?")) {
+      const category = this.values[index];
+      index++;
+      rows = rows.filter((row) => row.account_category === category);
+    }
+    if (whereSql.includes("cooldown_until_ms IS NOT NULL AND cooldown_until_ms > ?")) {
+      const nowMs = this.values[index];
+      index++;
+      rows = rows.filter((row) => row.cooldown_until_ms != null && row.cooldown_until_ms > nowMs);
+    } else if (whereSql.includes("cooldown_until_ms IS NULL OR cooldown_until_ms <= ?")) {
+      const nowMs = this.values[index];
+      index++;
+      rows = rows.filter((row) => row.cooldown_until_ms == null || row.cooldown_until_ms <= nowMs);
+    }
+    if (whereSql.includes("source = ? OR source_id = ? OR source_name = ?")) {
+      const source = this.values[index];
+      index += 3;
+      rows = rows.filter((row) => row.source === source || row.source_id === source || row.source_name === source);
+    }
+    if (whereSql.includes("LIKE ? ESCAPE")) {
+      const query = String(this.values[index] || "").replace(/^%|%$/g, "").toLowerCase();
+      rows = rows.filter((row) => [
+        row.id,
+        row.row_id,
+        row.label,
+        row.status,
+        row.state_reason,
+        row.source,
+        row.source_id,
+        row.source_name,
+        row.account_category,
+        row.last_error_code,
+        row.last_error_message_redacted,
+      ].join(" ").toLowerCase().includes(query));
+    }
+    return rows;
+  }
 }
 
 function changed(count) {
@@ -510,4 +657,16 @@ function compactSql(sql) {
 
 function clone(value) {
   return { ...value };
+}
+
+function publicClone(row) {
+  const out = clone(row);
+  delete out.cookie_header;
+  delete out.sapisid;
+  delete out.session_token;
+  out.has_cookie = !!row.cookie_header;
+  out.has_sapisid = !!row.sapisid;
+  out.has_session_token = !!row.session_token;
+  out.cookie_preview = row.cookie_header ? "present" : "";
+  return out;
 }

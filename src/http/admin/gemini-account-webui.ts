@@ -20,7 +20,9 @@ export function handleGeminiAccountAdminUiRequest(request: Request): Response {
     status: 200,
     headers: {
       "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' blob: data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       "content-type": "text/html; charset=utf-8",
+      "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
     },
   });

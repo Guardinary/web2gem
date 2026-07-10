@@ -4,6 +4,13 @@
   "main": "dist/worker.js",
   "compatibility_date": "2026-07-08",
   "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "GEMINI_DB",
+      "database_name": "web2gem-gemini-accounts",
+      "database_id": ""
+    }
+  ],
   "observability": {
     "enabled": true
   }

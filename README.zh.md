@@ -2,6 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem)
+
 面向 Gemini Web 的 OpenAI 兼容和 Google Gemini 兼容 HTTP 适配器，可部署到 Cloudflare Workers，也可作为 Docker 服务自托管。零成本, 跨平台, 单文件。
 
 TypeScript 代码位于 `src/`，本地质量检查脚本位于 `scripts/`，`dist/worker.js` 由 `pnpm build` 生成并用于 Wrangler 部署，`scripts/docker-server.mjs` 提供 Docker HTTP 适配层。
@@ -174,6 +176,12 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 ### 方式一：通过 Release 单文件 Worker 产物部署
 
+如果想从源码一键部署到 Cloudflare Workers，可以使用下面的部署按钮：
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem)
+
+该按钮会 fork 仓库，创建 Worker，根据 `wrangler.jsonc` 自动创建 `GEMINI_DB` D1 数据库，先构建 Worker，再通过 deploy 脚本执行 `wrangler d1 migrations apply GEMINI_DB --remote`，然后部署 Worker。部署向导中需要填写 `ADMIN_KEYS`；`API_KEYS` 可选。部署完成后，打开管理页面导入你自己的 Gemini 账号值。
+
 从项目 [Releases](https://github.com/Guardinary/web2gem/releases) 页面下载构建产物 `worker.js`，在 Cloudflare Worker 控制台打开你的 Worker，将 Worker 源码替换为该文件内容。然后在 Worker 控制台设置中添加 `nodejs_compat` 兼容性标记。
 
 ![Cloudflare Worker 设置中的 nodejs_compat 兼容性标记](./docs/images/cloudflare-worker-settings-nodejs-compat.png)
@@ -189,7 +197,7 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 在 Worker 控制台中打开该 Worker 的设置页，配置公开 API 鉴权、admin 鉴权和必需的 `GEMINI_DB` D1 binding。需要保护共享访问时设置 `API_KEYS`；使用账号池管理接口前设置 `ADMIN_KEYS`。
 
-如果不使用 Release 产物、而是从源码构建，`pnpm deploy` 会构建 `dist/worker.js`，并通过仓库内的 `wrangler.jsonc` 部署。
+如果不使用 Release 产物、而是从源码构建，`pnpm deploy` 会先构建 `dist/worker.js`，再对 `GEMINI_DB` binding 执行 D1 migrations，并通过仓库内的 `wrangler.jsonc` 部署。
 
 ### 方式二：通过 Docker 部署
 
@@ -269,6 +277,12 @@ wrangler secret put ADMIN_KEYS
 
 Worker 部署时，创建 D1 数据库，执行 [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql)，并在 `wrangler.jsonc` 或 Cloudflare 控制台配置中把它绑定为 `GEMINI_DB`。该 schema 会创建结构化的 `gemini_accounts`、`gemini_pool_meta` 和 `gemini_account_locks` 表，不会把账号状态作为单个 JSON blob 存储。
 
+新建 D1 数据库时，执行一次迁移：
+
+```sh
+wrangler d1 execute <database-name> --file migrations/0001_gemini_accounts.sql --remote
+```
+
 Docker 部署时，在 `.env` 中同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`。三者都存在时，`scripts/docker-server.mjs` 会注入一个基于 Cloudflare D1 HTTP API 的 D1 兼容 `GEMINI_DB` binding。只设置一部分时，启动会以配置错误失败。
 
 账号池可以通过内置 WebUI `/admin` 管理，也可以通过 `/admin/accounts` 下的管理 API 操作。管理 API 必须通过 `ADMIN_KEYS` / `ADMIN_KEY` 鉴权，可使用 `Authorization: Bearer <key>` 或 `X-Admin-Key`。公共 `API_KEYS` 和查询参数 `key` 不能调用这些管理接口。
@@ -282,7 +296,16 @@ curl -X POST "https://your-worker.example/admin/accounts" \
   -d '{"provider":"gemini","accounts":[{"__Secure-1PSID":"<仅值>","__Secure-1PSIDTS":"<仅值>","label":"primary"}]}'
 ```
 
-不要在两个 cookie 字段中提交完整 Cookie header、JSON cookie 导出、`access_token`、cookie 名称、等号或分号。列表响应使用 `limit` 和 `cursor` 分页，并且已经脱敏：只暴露 ID、row ID、hash/status 元数据和存在性标记，不返回原始 cookie、`SAPISID`、`SNlM0e`、`at` 或 session token。
+不要在两个 cookie 字段中提交完整 Cookie header、JSON cookie 导出、`access_token`、cookie 名称、等号或分号。重复导入会按照规范化 Cookie hash 跳过，返回已有的脱敏账号，并增加响应中的 `duplicates` 计数。如果 Cookie 刷新收敛到另一个账号已经占用的 hash，写回会被视为未变化的重复项，而不会因 D1 唯一约束错误导致刷新失败。列表响应使用 `limit` 和 `cursor` 分页，支持通过 `status`、`enabled`、`q`、`category`、`cooldown` 和 `source` 筛选，并且已经脱敏：只暴露 ID、row ID、hash/status 元数据和存在性标记，不返回原始 cookie、`SAPISID`、`SNlM0e`、`at` 或 session token。
+
+管理 API 还可以返回当前筛选条件下的聚合统计：
+
+```sh
+curl "https://your-worker.example/admin/accounts/stats?status=active&enabled=true" \
+  -H "Authorization: Bearer $ADMIN_KEY"
+```
+
+统计响应包含 `total`、`available`、`needsAttention`、`disabled`、`refreshable`、`cooling`、`psidOnly`、`successCount` 和 `failureCount`。
 
 显式诊断接口也只对 admin 开放：
 
@@ -295,7 +318,7 @@ curl -X POST "https://your-worker.example/admin/accounts/refresh" \
 
 Refresh/check 响应包含 `checked`、`skipped`、`refreshed`、`unchanged`、`failed`、`errors`、`results` 和脱敏后的 `items`。启动、健康检查和公开模型列表不会选择账号、调用 `/app`、刷新 cookie 或探测 Google。
 
-导入账号时，建议使用尽量短的凭据形式：`__Secure-1PSID`、`__Secure-1PSIDTS` 和可选 `SAPISID`。用新的无痕浏览器 Gemini 登录，提取这些值后关闭浏览器，通常比复制日常浏览器的完整 cookie header 更稳定。
+导入账号时，只使用当前支持的最短凭据形式：`__Secure-1PSID` 和 `__Secure-1PSIDTS`。用新的无痕浏览器 Gemini 登录，提取这些值后关闭浏览器，通常比复制日常浏览器的完整 cookie header 更稳定。
 
 本地开发时，可以使用 Wrangler 环境支持，或通过本地 Worker 环境传入 bindings。
 

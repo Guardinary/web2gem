@@ -28,6 +28,10 @@ export async function handleGeminiAccountAdminRequest(
       return jsonResponse(await service.list(listFilterFromUrl(url)));
     }
 
+    if (method === "GET" && path === `${ADMIN_PATH_PREFIX}/stats`) {
+      return jsonResponse(await service.stats(listFilterFromUrl(url)));
+    }
+
     if (method === "POST" && path === ADMIN_PATH_PREFIX) {
       return jsonResponse(await service.create(await readAdminJson(request)));
     }
@@ -111,7 +115,16 @@ async function readAdminJson(request: Request) {
 
 function listFilterFromUrl(url: URL) {
   const enabledRaw = url.searchParams.get("enabled");
-  const filter: { limit?: number; cursor?: string; status?: string; enabled?: boolean } = {};
+  const filter: {
+    limit?: number;
+    cursor?: string;
+    status?: string;
+    enabled?: boolean;
+    q?: string;
+    category?: string;
+    cooldown?: string;
+    source?: string;
+  } = {};
   const limit = parseInteger(url.searchParams.get("limit"));
   if (limit !== undefined) filter.limit = limit;
   const cursor = url.searchParams.get("cursor") || "";
@@ -119,6 +132,14 @@ function listFilterFromUrl(url: URL) {
   const status = url.searchParams.get("status") || "";
   if (status) filter.status = status;
   if (enabledRaw != null) filter.enabled = /^(1|true|yes|on)$/i.test(enabledRaw);
+  const q = url.searchParams.get("q") || "";
+  if (q) filter.q = q;
+  const category = url.searchParams.get("category") || "";
+  if (category) filter.category = category;
+  const cooldown = url.searchParams.get("cooldown") || "";
+  if (cooldown) filter.cooldown = cooldown;
+  const source = url.searchParams.get("source") || "";
+  if (source) filter.source = source;
   return filter;
 }
 

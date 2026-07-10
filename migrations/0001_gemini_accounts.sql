@@ -61,6 +61,12 @@ CREATE INDEX IF NOT EXISTS idx_gemini_accounts_select
 CREATE INDEX IF NOT EXISTS idx_gemini_accounts_psid
   ON gemini_accounts (secure_1psid_hash);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gemini_accounts_cookie_hash
+  ON gemini_accounts (cookie_hash);
+
+CREATE INDEX IF NOT EXISTS idx_gemini_accounts_category
+  ON gemini_accounts (account_category);
+
 CREATE INDEX IF NOT EXISTS idx_gemini_accounts_row_id
   ON gemini_accounts (row_id);
 

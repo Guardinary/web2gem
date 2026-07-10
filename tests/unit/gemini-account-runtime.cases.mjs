@@ -99,6 +99,32 @@ export const cases = [
     assert.equal(rotateCalls, 1);
     lease.release();
   }],
+  ["keeps the selected lease unchanged when refreshed cookies duplicate another account", async () => {
+    const originalHeader = "__Secure-1PSID=psid-a; __Secure-1PSIDTS=ts-a";
+    const store = new FakeStore([accountRow("a", {
+      cookie_header: originalHeader,
+      cookie_hash: await mod.sha256Hex(originalHeader),
+    })]);
+    store.writeCookieResult = { changed: false, reason: "duplicate_cookie" };
+    const pool = new mod.AccountPoolService(store, {
+      nowMs: () => 15_000,
+      rotateCookie: async () => new Response("", {
+        status: 200,
+        headers: { "set-cookie": "__Secure-1PSIDTS=ts-existing; Path=/; Secure" },
+      }),
+    });
+    const lease = await pool.acquireLease(baseConfig());
+    const originalHash = lease.cookieHash;
+
+    const result = await lease.refreshForRetry("auth");
+
+    assert.deepEqual(result, { changed: false, reason: "rotation_duplicate", upstreamStatus: 200 });
+    assert.equal(lease.cookieHeader, originalHeader);
+    assert.equal(lease.cookieHash, originalHash);
+    assert.equal(store.outcomeCalls, 0);
+    assert.equal(store.releaseLockCalls, 1);
+    lease.release();
+  }],
   ["propagates refresh failure to all waiters and clears the pending entry", async () => {
     let rotateCalls = 0;
     const store = new FakeStore([accountRow("a")]);
@@ -248,6 +274,7 @@ class FakeStore {
     this.releaseLockCalls = 0;
     this.lockAvailable = true;
     this.lastCookieWrite = null;
+    this.writeCookieResult = { changed: true };
   }
 
   async getPoolVersion() {
@@ -266,6 +293,24 @@ class FakeStore {
 
   async listAdminAccounts() {
     return { items: [], nextCursor: null, limit: 0 };
+  }
+
+  async getAdminStats() {
+    return {
+      total: 0,
+      available: 0,
+      needsAttention: 0,
+      disabled: 0,
+      refreshable: 0,
+      cooling: 0,
+      psidOnly: 0,
+      successCount: 0,
+      failureCount: 0,
+    };
+  }
+
+  async findAccountByCookieHash() {
+    return null;
   }
 
   async getAccountForRefresh(accountId) {
@@ -302,6 +347,7 @@ class FakeStore {
     this.writeCalls++;
     this.writeCookieCalls++;
     this.lastCookieWrite = update;
+    if (!this.writeCookieResult.changed) return this.writeCookieResult;
     const row = this.rows.get(accountId);
     if (row) {
       row.cookie_header = update.cookieHeader;
@@ -309,7 +355,7 @@ class FakeStore {
       if (update.sessionToken !== undefined) row.session_token = update.sessionToken;
       if (update.pushId !== undefined) row.push_id = update.pushId;
     }
-    return { changed: true };
+    return this.writeCookieResult;
   }
 
   async writeAccountOutcome(accountId, outcome) {

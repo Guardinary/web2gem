@@ -180,7 +180,7 @@ export class AccountPoolService {
       if (!nextCookieHeader || nextCookieHash === account.cookie_hash) {
         return { changed: false, reason: "rotation_no_update", upstreamStatus: response.status };
       }
-      await this.store.writeCookieState(lease.accountId, {
+      const writeback = await this.store.writeCookieState(lease.accountId, {
         cookieHeader: nextCookieHeader,
         sapisid: account.sapisid,
         sessionToken: account.session_token,
@@ -188,6 +188,13 @@ export class AccountPoolService {
         lastRefreshAttemptAtMs: nowMs,
         nowMs,
       });
+      if (!writeback.changed) {
+        return {
+          changed: false,
+          reason: writeback.reason === "duplicate_cookie" ? "rotation_duplicate" : "rotation_no_update",
+          upstreamStatus: response.status,
+        };
+      }
       lease.cookieHeader = nextCookieHeader;
       lease.cookieHash = nextCookieHash;
       this.accountStates.set(lease.accountId, {

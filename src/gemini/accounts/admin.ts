@@ -2,10 +2,13 @@ import { errorLogSummary } from "../../shared/runtime";
 import { isRecord, type UnknownRecord } from "../../shared/types";
 import { AccountPoolService } from "./pool";
 import { d1BindingFromEnv } from "./runtime";
-import { D1GeminiAccountStore } from "./store-d1";
+import { D1GeminiAccountStore, isD1UniqueConstraintError } from "./store-d1";
+import { normalizeGeminiCookieHeader, sha256Hex } from "./normalize";
 import type {
   D1DatabaseLike,
   GeminiAccountAdminFilter,
+  GeminiAccountAdminStats,
+  GeminiAccountCategory,
   GeminiAccountCookieRotator,
   GeminiAccountCreateInput,
   GeminiAccountPublic,
@@ -61,6 +64,7 @@ export type GeminiAccountCreateResult = {
   added: number;
   skipped: number;
   items: GeminiAccountPublic[];
+  duplicates?: number;
 };
 
 export type GeminiAccountDiagnosticItem = {
@@ -96,6 +100,12 @@ export type GeminiAccountAdminServiceOptions = {
   rotateCookie?: GeminiAccountCookieRotator;
 };
 
+type GeminiAccountAdminFilterInput = Partial<Omit<GeminiAccountAdminFilter, "status" | "category" | "cooldown">> & {
+  status?: unknown;
+  category?: unknown;
+  cooldown?: unknown;
+};
+
 export class GeminiAccountAdminService {
   private readonly store: GeminiAccountStore;
   private readonly cfg: RuntimeConfig;
@@ -118,31 +128,53 @@ export class GeminiAccountAdminService {
     this.pool = new AccountPoolService(this.store, poolOptions);
   }
 
-  list(filter: Partial<Omit<GeminiAccountAdminFilter, "status">> & { status?: unknown }): Promise<GeminiAccountPublicPage> {
-    const normalized: GeminiAccountAdminFilter = {
-      limit: boundedPageLimit(filter.limit),
-    };
-    const cursor = cleanOptionalString(filter.cursor);
-    if (cursor) normalized.cursor = cursor;
-    const status = normalizeStatus(filter.status);
-    if (status) normalized.status = status;
-    if (typeof filter.enabled === "boolean") normalized.enabled = filter.enabled;
-    return this.store.listAdminAccounts(normalized);
+  list(filter: GeminiAccountAdminFilterInput): Promise<GeminiAccountPublicPage> {
+    return this.store.listAdminAccounts(normalizeListFilter(filter), this.nowMs());
+  }
+
+  stats(filter: GeminiAccountAdminFilterInput): Promise<GeminiAccountAdminStats> {
+    const nowMs = this.nowMs();
+    const normalized = normalizeListFilter({ ...filter, limit: 1 });
+    const statsFilter: Omit<GeminiAccountAdminFilter, "cursor" | "limit"> = {};
+    if (normalized.status) statsFilter.status = normalized.status;
+    if (normalized.enabled !== undefined) statsFilter.enabled = normalized.enabled;
+    if (normalized.q) statsFilter.q = normalized.q;
+    if (normalized.category) statsFilter.category = normalized.category;
+    if (normalized.cooldown) statsFilter.cooldown = normalized.cooldown;
+    if (normalized.source) statsFilter.source = normalized.source;
+    return this.store.getAdminStats(statsFilter, nowMs);
   }
 
   async create(body: UnknownRecord): Promise<GeminiAccountCreateResult> {
     const accounts = normalizeCreateAccounts(body);
     let added = 0;
     let skipped = 0;
+    let duplicates = 0;
     const items: GeminiAccountPublic[] = [];
     for (const account of accounts) {
       const input = createInputFromAccount(account, this.nowMs());
-      const created = await this.store.createAccount(input);
-      items.push(created);
-      added += 1;
+      const cookieHash = await sha256Hex(normalizeGeminiCookieHeader(input.cookieHeader));
+      const existing = await this.store.findAccountByCookieHash(cookieHash);
+      if (existing) {
+        items.push(existing);
+        skipped += 1;
+        duplicates += 1;
+        continue;
+      }
+      try {
+        const created = await this.store.createAccount(input);
+        items.push(created);
+        added += 1;
+      } catch (error) {
+        if (!isD1UniqueConstraintError(error)) throw error;
+        const duplicate = await this.store.findAccountByCookieHash(cookieHash);
+        if (!duplicate) throw error;
+        items.push(duplicate);
+        skipped += 1;
+        duplicates += 1;
+      }
     }
-    if (!items.length) skipped = accounts.length;
-    return { added, skipped, items };
+    return { added, skipped, duplicates, items };
   }
 
   async update(body: UnknownRecord): Promise<GeminiAccountMutationResult> {
@@ -484,6 +516,44 @@ function isGeminiAccountStatus(value: string): value is GeminiAccountStatus {
     "missing_cookie",
     "capability_mismatch",
   ].includes(value);
+}
+
+function normalizeCategory(value: unknown): GeminiAccountCategory | undefined {
+  const text = cleanOptionalString(value);
+  if (!text) return undefined;
+  if (!isGeminiAccountCategory(text)) throw new GeminiAccountAdminError(400, "invalid_account_category", "invalid account category");
+  return text;
+}
+
+function isGeminiAccountCategory(value: string): value is GeminiAccountCategory {
+  return ["full_session", "psid_psidts", "psid_only", "session_token_only", "missing_session"].includes(value);
+}
+
+function normalizeCooldown(value: unknown): "active" | "cooling" | undefined {
+  const text = cleanOptionalString(value);
+  if (!text) return undefined;
+  if (text === "active" || text === "cooling") return text;
+  throw new GeminiAccountAdminError(400, "invalid_cooldown_filter", "invalid cooldown filter");
+}
+
+function normalizeListFilter(filter: GeminiAccountAdminFilterInput): GeminiAccountAdminFilter {
+  const normalized: GeminiAccountAdminFilter = {
+    limit: boundedPageLimit(filter.limit),
+  };
+  const cursor = cleanOptionalString(filter.cursor);
+  if (cursor) normalized.cursor = cursor;
+  const status = normalizeStatus(filter.status);
+  if (status) normalized.status = status;
+  if (typeof filter.enabled === "boolean") normalized.enabled = filter.enabled;
+  const q = cleanOptionalString(filter.q);
+  if (q) normalized.q = q.slice(0, 200);
+  const category = normalizeCategory(filter.category);
+  if (category) normalized.category = category;
+  const cooldown = normalizeCooldown(filter.cooldown);
+  if (cooldown) normalized.cooldown = cooldown;
+  const source = cleanOptionalString(filter.source);
+  if (source) normalized.source = source.slice(0, 200);
+  return normalized;
 }
 
 function boundedPageLimit(limit: unknown): number {

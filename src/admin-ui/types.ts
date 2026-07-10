@@ -62,6 +62,18 @@ export type AccountPage = {
   limit: number;
 };
 
+export type AccountStats = {
+  total: number;
+  available: number;
+  needsAttention: number;
+  disabled: number;
+  refreshable: number;
+  cooling: number;
+  psidOnly: number;
+  successCount: number;
+  failureCount: number;
+};
+
 export type AccountIdentifier = {
   id?: string;
   row_id?: string;
@@ -70,6 +82,7 @@ export type AccountIdentifier = {
 export type MutationResult = {
   items?: GeminiAccount[];
   added?: number;
+  duplicates?: number;
   skipped?: number;
   updated?: number;
   removed?: number;

@@ -1,10 +1,11 @@
 import { signal } from "@preact/signals";
 import type { JSX } from "preact";
 import { useEffect } from "preact/hooks";
-import { createAccount, listAccounts, runAccountAction, updateAccount } from "./api";
-import type { AccountIdentifier, GeminiAccount, MutationResult } from "./types";
+import { createAccount, createAccounts, getAccountStats, listAccounts, runAccountAction, updateAccount } from "./api";
+import type { AccountIdentifier, AccountStats, GeminiAccount, MutationResult } from "./types";
 
 const KEY_STORAGE = "web2gem_gemini_admin_key";
+const KEY_STORAGE_MODE = "web2gem_gemini_admin_key_storage";
 
 const statuses = [
   "active",
@@ -42,6 +43,7 @@ const statusFilter = signal("");
 const enabledFilter = signal("");
 const categoryFilter = signal("");
 const cooldownFilter = signal("");
+const sourceFilter = signal("");
 const cursorStack = signal<string[]>([""]);
 const pageIndex = signal(0);
 const nextCursor = signal<string | null>(null);
@@ -50,6 +52,11 @@ const editDraft = signal<EditDraft | null>(null);
 const importLabel = signal("");
 const importPsid = signal("");
 const importPsidts = signal("");
+const importBatch = signal("");
+const keyStorageMode = signal<"session" | "local">("session");
+const accountStats = signal<AccountStats | null>(null);
+const actionBusy = signal("");
+const lastDiagnostics = signal<MutationResult | null>(null);
 
 let toastId = 0;
 
@@ -128,7 +135,7 @@ function showToast(message: string, kind?: "error"): void {
 
 function resultSummary(action: string, result: MutationResult): string {
   const parts: string[] = [];
-  for (const key of ["checked", "refreshed", "unchanged", "updated", "removed", "skipped", "failed"] as const) {
+  for (const key of ["checked", "refreshed", "unchanged", "updated", "removed", "added", "duplicates", "skipped", "failed"] as const) {
     if (result[key] != null) parts.push(`${key} ${result[key]}`);
   }
   const firstError = result.errors?.[0]?.error || result.errors?.[0]?.message || "";
@@ -145,29 +152,7 @@ function validateCookieValue(value: string, name: string): string {
 }
 
 function visibleAccounts(): GeminiAccount[] {
-  const q = query.value.trim().toLowerCase();
-  return accounts.value.filter((account) => {
-    if (q) {
-      const haystack = [
-        account.id,
-        account.row_id,
-        account.label,
-        account.status,
-        account.state_reason,
-        account.source,
-        account.source_id,
-        account.source_name,
-        account.account_category,
-        account.last_error_code,
-        account.last_error_message_redacted,
-      ].map(text).join(" ").toLowerCase();
-      if (!haystack.includes(q)) return false;
-    }
-    if (categoryFilter.value && account.account_category !== categoryFilter.value) return false;
-    if (cooldownFilter.value === "cooling" && !isCooling(account)) return false;
-    if (cooldownFilter.value === "active" && isCooling(account)) return false;
-    return true;
-  });
+  return accounts.value;
 }
 
 function csvValue(value: unknown): string {
@@ -197,6 +182,10 @@ function exportMetadata(): void {
 }
 
 async function loadAccounts(direction: "current" | "reset" | "next" | "prev" = "current"): Promise<void> {
+  if (!adminKey.value.trim()) {
+    showToast("Admin key is required", "error");
+    return;
+  }
   if (direction === "reset") {
     cursorStack.value = [""];
     pageIndex.value = 0;
@@ -214,13 +203,22 @@ async function loadAccounts(direction: "current" | "reset" | "next" | "prev" = "
   }
   loading.value = true;
   try {
-    const page = await listAccounts({
+    const options = {
       adminKey: adminKey.value,
       cursor: cursorStack.value[pageIndex.value] || "",
       status: statusFilter.value,
       enabled: enabledFilter.value,
-    });
+      q: query.value.trim(),
+      category: categoryFilter.value,
+      cooldown: cooldownFilter.value,
+      source: sourceFilter.value.trim(),
+    };
+    const [page, stats] = await Promise.all([
+      listAccounts(options),
+      getAccountStats(options),
+    ]);
     accounts.value = page.items;
+    accountStats.value = stats;
     nextCursor.value = page.nextCursor;
     selected.value = new Set([...selected.value].filter((key) => page.items.some((account) => identifierKey(account) === key)));
     showToast(`Loaded ${page.items.length} accounts`);
@@ -234,33 +232,45 @@ async function loadAccounts(direction: "current" | "reset" | "next" | "prev" = "
 async function submitImport(event: Event): Promise<void> {
   event.preventDefault();
   try {
-    const result = await createAccount(adminKey.value, {
-      label: importLabel.value.trim(),
-      psid: validateCookieValue(importPsid.value, "__Secure-1PSID"),
-      psidts: validateCookieValue(importPsidts.value, "__Secure-1PSIDTS"),
-    });
-    showToast(`Imported ${result.added || 0} account`);
+    actionBusy.value = "import";
+    const batch = parseBatchImport();
+    const result = batch.length > 1
+      ? await createAccounts(adminKey.value, { accounts: batch })
+      : await createAccount(adminKey.value, batch[0] || {
+        label: importLabel.value.trim(),
+        psid: validateCookieValue(importPsid.value, "__Secure-1PSID"),
+        psidts: validateCookieValue(importPsidts.value, "__Secure-1PSIDTS"),
+      });
+    lastDiagnostics.value = result;
+    showToast(resultSummary("import", result), result.failed || result.errors?.length ? "error" : undefined);
     importLabel.value = "";
     importPsid.value = "";
     importPsidts.value = "";
+    importBatch.value = "";
     await loadAccounts("reset");
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Import failed", "error");
+  } finally {
+    actionBusy.value = "";
   }
 }
 
-async function runAction(action: string, identifiers: AccountIdentifier[]): Promise<void> {
+async function runAction(action: string, identifiers: AccountIdentifier[], targetLabel = "selected account(s)"): Promise<void> {
   if (!identifiers.length) {
     showToast("Select at least one account", "error");
     return;
   }
-  if (action === "delete" && !window.confirm(`Delete ${identifiers.length} selected account(s)?`)) return;
+  if (action === "delete" && !window.confirm(`Delete ${identifiers.length} ${targetLabel}?`)) return;
   try {
+    actionBusy.value = action;
     const result = await runAccountAction(adminKey.value, action, identifiers);
+    lastDiagnostics.value = result;
     showToast(resultSummary(action, result), result.failed || result.errors?.length ? "error" : undefined);
     await loadAccounts();
   } catch (error) {
     showToast(error instanceof Error ? error.message : `${action} failed`, "error");
+  } finally {
+    actionBusy.value = "";
   }
 }
 
@@ -303,16 +313,37 @@ function openEdit(account: GeminiAccount): void {
   };
 }
 
+function parseBatchImport(): Array<{ label?: string; psid: string; psidts: string }> {
+  const raw = importBatch.value.trim();
+  if (!raw) return [];
+  const out: Array<{ label?: string; psid: string; psidts: string }> = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const textLine = line.trim();
+    if (!textLine) continue;
+    const parts = textLine.split(/[,\t ]+/).map((part) => part.trim()).filter(Boolean);
+    if (parts.length < 2) throw new Error("Batch rows require PSID and PSIDTS");
+    const item = {
+      psid: validateCookieValue(parts[0] || "", "__Secure-1PSID"),
+      psidts: validateCookieValue(parts[1] || "", "__Secure-1PSIDTS"),
+    };
+    const label = parts.slice(2).join(" ").trim();
+    out.push(label ? { ...item, label } : item);
+  }
+  if (!out.length) throw new Error("Batch import is empty");
+  return out;
+}
+
 function MetricCards(): JSX.Element {
-  const total = accounts.value.length;
-  const active = accounts.value.filter((item) => item.status === "active" && Number(item.enabled) === 1).length;
-  const attention = accounts.value.filter((item) => ["auth_failed", "needs_cookie_update", "rate_limited", "cooling_down", "hard_blocked", "needs_user_action", "missing_cookie", "capability_mismatch"].includes(item.status)).length;
-  const disabled = accounts.value.filter((item) => Number(item.enabled) !== 1 || item.status === "disabled").length;
-  const refreshable = accounts.value.filter(isRefreshable).length;
-  const cooling = accounts.value.filter(isCooling).length;
-  const psidOnly = accounts.value.filter((item) => item.account_category === "psid_only" || item.account_category === "missing_session").length;
-  const successes = accounts.value.reduce((sum, item) => sum + safeNumber(item.success_count), 0);
-  const failures = accounts.value.reduce((sum, item) => sum + safeNumber(item.failure_count), 0);
+  const stats = accountStats.value;
+  const total = stats?.total ?? accounts.value.length;
+  const active = stats?.available ?? accounts.value.filter((item) => item.status === "active" && Number(item.enabled) === 1).length;
+  const attention = stats?.needsAttention ?? accounts.value.filter((item) => ["auth_failed", "needs_cookie_update", "rate_limited", "cooling_down", "hard_blocked", "needs_user_action", "missing_cookie", "capability_mismatch"].includes(item.status)).length;
+  const disabled = stats?.disabled ?? accounts.value.filter((item) => Number(item.enabled) !== 1 || item.status === "disabled").length;
+  const refreshable = stats?.refreshable ?? accounts.value.filter(isRefreshable).length;
+  const cooling = stats?.cooling ?? accounts.value.filter(isCooling).length;
+  const psidOnly = stats?.psidOnly ?? accounts.value.filter((item) => item.account_category === "psid_only" || item.account_category === "missing_session").length;
+  const successes = stats?.successCount ?? accounts.value.reduce((sum, item) => sum + safeNumber(item.success_count), 0);
+  const failures = stats?.failureCount ?? accounts.value.reduce((sum, item) => sum + safeNumber(item.failure_count), 0);
   const cards: Array<[string, string | number]> = [
     ["Total", total],
     ["Available", active],
@@ -338,8 +369,8 @@ function MetricCards(): JSX.Element {
 
 function AccountRows(): JSX.Element {
   const rows = visibleAccounts();
-  if (loading.value) return <tr><td class="loading" colSpan={14}>Loading accounts...</td></tr>;
-  if (!rows.length) return <tr><td class="empty" colSpan={14}>No accounts match the current filters.</td></tr>;
+  if (loading.value) return <tr><td class="loading" colSpan={15}>Loading accounts...</td></tr>;
+  if (!rows.length) return <tr><td class="empty" colSpan={15}>No accounts match the current filters.</td></tr>;
   return (
     <>
       {rows.map((account) => {
@@ -377,11 +408,11 @@ function AccountRows(): JSX.Element {
             <td><div class="row-main"><div class="row-sub">{account.source || "-"}</div><div class="row-sub">{account.source_name || account.source_id || ""}</div></div></td>
             <td>
               <div class="cell-actions">
-                <button type="button" onClick={() => openEdit(account)}>Edit</button>
-                <button type="button" onClick={() => void runAction("refresh", [identifier(account)])}>Refresh</button>
-                <button type="button" onClick={() => void runAction("check", [identifier(account)])}>Check</button>
-                <button type="button" onClick={() => void runAction(enabled ? "disable" : "enable", [identifier(account)])}>{enabled ? "Disable" : "Enable"}</button>
-                <button type="button" class="danger" onClick={() => void runAction("delete", [identifier(account)])}>Delete</button>
+                <button type="button" disabled={!!actionBusy.value} onClick={() => openEdit(account)}>Edit</button>
+                <button type="button" disabled={!!actionBusy.value} onClick={() => void runAction("refresh", [identifier(account)])}>Refresh</button>
+                <button type="button" disabled={!!actionBusy.value} onClick={() => void runAction("check", [identifier(account)])}>Check</button>
+                <button type="button" disabled={!!actionBusy.value} onClick={() => void runAction(enabled ? "disable" : "enable", [identifier(account)])}>{enabled ? "Disable" : "Enable"}</button>
+                <button type="button" disabled={!!actionBusy.value} class="danger" onClick={() => void runAction("delete", [identifier(account)])}>Delete</button>
               </div>
             </td>
           </tr>
@@ -430,7 +461,8 @@ function EditModal(): JSX.Element | null {
 
 export function App(): JSX.Element {
   useEffect(() => {
-    adminKey.value = window.localStorage.getItem(KEY_STORAGE) || "";
+    keyStorageMode.value = window.localStorage.getItem(KEY_STORAGE_MODE) === "local" ? "local" : "session";
+    adminKey.value = window.sessionStorage.getItem(KEY_STORAGE) || window.localStorage.getItem(KEY_STORAGE) || "";
     if (adminKey.value) void loadAccounts("reset");
   }, []);
 
@@ -439,17 +471,27 @@ export function App(): JSX.Element {
     selected.value = new Set([...selected.value, ...rows.map(identifierKey)]);
   };
   const deleteVisible = (): void => {
-    void runAction("delete", rows.map(identifier));
+    void runAction("delete", rows.map(identifier), "loaded account(s)");
   };
 
   return (
     <main class="shell">
       <div class="topbar">
         <div class="brand"><span class="brand-mark">G</span><div><h1>Gemini Account Pool</h1><div class="subtitle">D1-backed admin console for Gemini Web sessions</div></div></div>
-        <form class="auth" onSubmit={(event) => { event.preventDefault(); window.localStorage.setItem(KEY_STORAGE, adminKey.value.trim()); showToast("Admin key saved"); void loadAccounts("reset"); }}>
+        <form class="auth" onSubmit={(event) => {
+          event.preventDefault();
+          window.sessionStorage.removeItem(KEY_STORAGE);
+          window.localStorage.removeItem(KEY_STORAGE);
+          window.localStorage.setItem(KEY_STORAGE_MODE, keyStorageMode.value);
+          const storage = keyStorageMode.value === "local" ? window.localStorage : window.sessionStorage;
+          storage.setItem(KEY_STORAGE, adminKey.value.trim());
+          showToast("Admin key saved");
+          void loadAccounts("reset");
+        }}>
           <label>Admin key<input type="password" autocomplete="current-password" placeholder="ADMIN_KEY or one ADMIN_KEYS value" value={adminKey.value} onInput={(event) => { adminKey.value = (event.currentTarget as HTMLInputElement).value; }} /></label>
-          <button class="primary" type="submit">Save</button>
-          <button type="button" onClick={() => { window.localStorage.removeItem(KEY_STORAGE); adminKey.value = ""; accounts.value = []; selected.value = new Set(); showToast("Admin key cleared"); }}>Clear</button>
+          <label>Storage<select value={keyStorageMode.value} onChange={(event) => { keyStorageMode.value = (event.currentTarget as HTMLSelectElement).value === "local" ? "local" : "session"; }}><option value="session">Session</option><option value="local">Local</option></select></label>
+          <button class="primary" type="submit" disabled={loading.value}>Save</button>
+          <button type="button" onClick={() => { window.sessionStorage.removeItem(KEY_STORAGE); window.localStorage.removeItem(KEY_STORAGE); adminKey.value = ""; accounts.value = []; accountStats.value = null; selected.value = new Set(); showToast("Admin key cleared"); }}>Clear</button>
         </form>
       </div>
 
@@ -462,8 +504,9 @@ export function App(): JSX.Element {
                 <label>Label<input placeholder="Optional display label" value={importLabel.value} onInput={(event) => { importLabel.value = (event.currentTarget as HTMLInputElement).value; }} /></label>
                 <label>__Secure-1PSID<input autocomplete="off" placeholder="Value only" value={importPsid.value} onInput={(event) => { importPsid.value = (event.currentTarget as HTMLInputElement).value; }} /></label>
                 <label>__Secure-1PSIDTS<input autocomplete="off" placeholder="Value only" value={importPsidts.value} onInput={(event) => { importPsidts.value = (event.currentTarget as HTMLInputElement).value; }} /></label>
+                <label>Batch<textarea rows={5} autocomplete="off" placeholder="PSID PSIDTS label" value={importBatch.value} onInput={(event) => { importBatch.value = (event.currentTarget as HTMLTextAreaElement).value; }} /></label>
                 <div class="help">Only paste the value after the equals sign. Do not paste cookie names, equals signs, semicolons, full Cookie headers, or JSON blobs.</div>
-                <div class="actions"><button class="primary" type="submit">Import</button><button type="button" onClick={() => { importLabel.value = ""; importPsid.value = ""; importPsidts.value = ""; }}>Reset</button></div>
+                <div class="actions"><button class="primary" type="submit" disabled={!!actionBusy.value}>{actionBusy.value === "import" ? "Importing" : "Import"}</button><button type="button" onClick={() => { importLabel.value = ""; importPsid.value = ""; importPsidts.value = ""; importBatch.value = ""; }}>Reset</button></div>
               </form>
             </div>
           </section>
@@ -471,11 +514,12 @@ export function App(): JSX.Element {
             <div class="panel-head"><div class="panel-title">Batch actions</div><span class="badge">{selected.value.size} selected</span></div>
             <div class="panel-body">
               <div class="actions">
-                {["refresh", "check", "enable", "disable"].map((action) => <button type="button" key={action} onClick={() => void runAction(action, selectedIdentifiers())}>{action.slice(0, 1).toUpperCase() + action.slice(1)}</button>)}
-                <button type="button" class="danger" onClick={() => void runAction("delete", selectedIdentifiers())}>Delete</button>
-                <button type="button" class="danger" onClick={deleteVisible}>Delete filtered</button>
+                {["refresh", "check", "enable", "disable"].map((action) => <button type="button" disabled={!!actionBusy.value} key={action} onClick={() => void runAction(action, selectedIdentifiers())}>{actionBusy.value === action ? "Working" : action.slice(0, 1).toUpperCase() + action.slice(1)}</button>)}
+                <button type="button" disabled={!!actionBusy.value} class="danger" onClick={() => void runAction("delete", selectedIdentifiers())}>Delete</button>
+                <button type="button" disabled={!!actionBusy.value} class="danger" onClick={deleteVisible}>Delete loaded</button>
                 <button id="export-metadata" type="button" onClick={exportMetadata}>Export metadata</button>
               </div>
+              {lastDiagnostics.value ? <p class="help">{resultSummary("last action", lastDiagnostics.value)}</p> : null}
               <p class="help">Actions use account identifiers from the sanitized admin API response. No session secrets are displayed here.</p>
             </div>
           </section>
@@ -499,6 +543,7 @@ export function App(): JSX.Element {
                 <label>Enabled<select value={enabledFilter.value} onChange={(event) => { enabledFilter.value = (event.currentTarget as HTMLSelectElement).value; }}><option value="">All</option><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
                 <label>Category<select id="category-filter" value={categoryFilter.value} onChange={(event) => { categoryFilter.value = (event.currentTarget as HTMLSelectElement).value; }}><option value="">All categories</option>{categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
                 <label>Cooldown<select id="cooldown-filter" value={cooldownFilter.value} onChange={(event) => { cooldownFilter.value = (event.currentTarget as HTMLSelectElement).value; }}><option value="">All</option><option value="active">Not cooling</option><option value="cooling">Cooling</option></select></label>
+                <label>Source<input placeholder="source/source_id/source_name" value={sourceFilter.value} onInput={(event) => { sourceFilter.value = (event.currentTarget as HTMLInputElement).value; }} /></label>
                 <button type="button" onClick={() => void loadAccounts("reset")}>Apply</button>
               </div>
             </div>
