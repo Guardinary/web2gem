@@ -1,147 +1,170 @@
 import { spawn } from "node:child_process";
+import { outputLine } from "./io.mjs";
 
 if (!(await commandAvailable("docker"))) {
-  console.log("Docker smoke skipped: docker executable not found");
-  process.exit(0);
+	outputLine("Docker smoke skipped: docker executable not found");
+	process.exit(0);
 }
 
 const image = `web2gem:smoke-${process.pid}`;
 let container = "";
 
 try {
-  await run("docker", ["build", "-t", image, "."]);
-  container = (await output("docker", [
-    "run",
-    "-d",
-    "--rm",
-    "-p",
-    "127.0.0.1::52389",
-    "-e",
-    "API_KEYS=smoke-key",
-    "-e",
-    "CURRENT_INPUT_FILE_ENABLED=false",
-    image,
-  ])).trim();
+	await run("docker", ["build", "-t", image, "."]);
+	container = (
+		await output("docker", [
+			"run",
+			"-d",
+			"--rm",
+			"-p",
+			"127.0.0.1::52389",
+			"-e",
+			"API_KEYS=smoke-key",
+			"-e",
+			"CURRENT_INPUT_FILE_ENABLED=false",
+			image,
+		])
+	).trim();
 
-  const port = await mappedPort(container);
-  const base = `http://127.0.0.1:${port}`;
-  await waitForHealth(base);
+	const port = await mappedPort(container);
+	const base = `http://127.0.0.1:${port}`;
+	await waitForHealth(base);
 
-  const health = await fetch(`${base}/`);
-  assert(health.status === 200, `health status ${health.status}`);
-  const healthBody = await health.json();
-  assert(healthBody.status === "ok", "health payload did not report ok");
+	const health = await fetch(`${base}/`);
+	assert(health.status === 200, `health status ${health.status}`);
+	const healthBody = await health.json();
+	assert(healthBody.status === "ok", "health payload did not report ok");
 
-  const authFailure = await fetch(`${base}/v1/models`);
-  assert(authFailure.status === 401, `auth failure status ${authFailure.status}`);
+	const authFailure = await fetch(`${base}/v1/models`);
+	assert(
+		authFailure.status === 401,
+		`auth failure status ${authFailure.status}`,
+	);
 
-  const models = await fetch(`${base}/v1/models`, {
-    headers: { Authorization: "Bearer smoke-key" },
-  });
-  assert(models.status === 200, `authenticated models status ${models.status}`);
+	const models = await fetch(`${base}/v1/models`, {
+		headers: { Authorization: "Bearer smoke-key" },
+	});
+	assert(models.status === 200, `authenticated models status ${models.status}`);
 
-  const invalidModel = await fetch(`${base}/v1/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer smoke-key",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "not-a-model",
-      messages: [{ role: "user", content: "hello" }],
-    }),
-  });
-  assert(invalidModel.status === 400, `invalid model status ${invalidModel.status}`);
-  const invalidBody = await invalidModel.json();
-  assert(invalidBody.error && invalidBody.error.code === "model_not_found", "invalid model did not return model_not_found");
+	const invalidModel = await fetch(`${base}/v1/chat/completions`, {
+		method: "POST",
+		headers: {
+			Authorization: "Bearer smoke-key",
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			model: "not-a-model",
+			messages: [{ role: "user", content: "hello" }],
+		}),
+	});
+	assert(
+		invalidModel.status === 400,
+		`invalid model status ${invalidModel.status}`,
+	);
+	const invalidBody = await invalidModel.json();
+	assert(
+		invalidBody.error && invalidBody.error.code === "model_not_found",
+		"invalid model did not return model_not_found",
+	);
 
-  console.log("Docker smoke check passed");
+	outputLine("Docker smoke check passed");
 } finally {
-  if (container) {
-    await output("docker", ["stop", container], { allowFailure: true });
-  }
-  await output("docker", ["rmi", image], { allowFailure: true });
+	if (container) {
+		await output("docker", ["stop", container], { allowFailure: true });
+	}
+	await output("docker", ["rmi", image], { allowFailure: true });
 }
 
 async function mappedPort(containerId) {
-  for (let i = 0; i < 30; i++) {
-    const raw = (await output("docker", ["port", containerId, "52389/tcp"], { allowFailure: true })).trim();
-    const match = /:(\d+)\s*$/.exec(raw);
-    if (match) return Number(match[1]);
-    await delay(250);
-  }
-  throw new Error("Docker smoke failed: container port was not mapped");
+	for (let i = 0; i < 30; i++) {
+		const raw = (
+			await output("docker", ["port", containerId, "52389/tcp"], {
+				allowFailure: true,
+			})
+		).trim();
+		const match = /:(\d+)\s*$/.exec(raw);
+		if (match) return Number(match[1]);
+		await delay(250);
+	}
+	throw new Error("Docker smoke failed: container port was not mapped");
 }
 
 async function waitForHealth(base) {
-  let lastError = null;
-  for (let i = 0; i < 60; i++) {
-    try {
-      const resp = await fetch(`${base}/`);
-      if (resp.status === 200) return;
-      lastError = new Error(`health status ${resp.status}`);
-    } catch (err) {
-      lastError = err;
-    }
-    await delay(250);
-  }
-  throw new Error(`Docker smoke failed: health route did not become ready: ${lastError}`);
+	let lastError = null;
+	for (let i = 0; i < 60; i++) {
+		try {
+			const resp = await fetch(`${base}/`);
+			if (resp.status === 200) return;
+			lastError = new Error(`health status ${resp.status}`);
+		} catch (err) {
+			lastError = err;
+		}
+		await delay(250);
+	}
+	throw new Error(
+		`Docker smoke failed: health route did not become ready: ${lastError}`,
+	);
 }
 
 function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function assert(ok, message) {
-  if (!ok) throw new Error(`Docker smoke failed: ${message}`);
+	if (!ok) throw new Error(`Docker smoke failed: ${message}`);
 }
 
 async function commandAvailable(command) {
-  try {
-    await output(command, ["--version"], { allowFailure: true });
-    return true;
-  } catch (error) {
-    return !(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
-  }
+	try {
+		await output(command, ["--version"], { allowFailure: true });
+		return true;
+	} catch (error) {
+		return !(
+			error &&
+			typeof error === "object" &&
+			"code" in error &&
+			error.code === "ENOENT"
+		);
+	}
 }
 
 function run(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: process.cwd(),
-      stdio: "inherit",
-    });
-    child.on("error", reject);
-    child.on("exit", (code, signal) => {
-      if (code === 0 || options.allowFailure) {
-        resolve();
-        return;
-      }
-      const suffix = signal ? `signal ${signal}` : `exit code ${code}`;
-      reject(new Error(`${command} ${args.join(" ")} failed with ${suffix}`));
-    });
-  });
+	return new Promise((resolve, reject) => {
+		const child = spawn(command, args, {
+			cwd: process.cwd(),
+			stdio: "inherit",
+		});
+		child.on("error", reject);
+		child.on("exit", (code, signal) => {
+			if (code === 0 || options.allowFailure) {
+				resolve();
+				return;
+			}
+			const suffix = signal ? `signal ${signal}` : `exit code ${code}`;
+			reject(new Error(`${command} ${args.join(" ")} failed with ${suffix}`));
+		});
+	});
 }
 
 function output(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: process.cwd(),
-      stdio: ["ignore", "pipe", options.allowFailure ? "ignore" : "inherit"],
-    });
-    let stdout = "";
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.on("error", reject);
-    child.on("exit", (code, signal) => {
-      if (code === 0 || options.allowFailure) {
-        resolve(stdout);
-        return;
-      }
-      const suffix = signal ? `signal ${signal}` : `exit code ${code}`;
-      reject(new Error(`${command} ${args.join(" ")} failed with ${suffix}`));
-    });
-  });
+	return new Promise((resolve, reject) => {
+		const child = spawn(command, args, {
+			cwd: process.cwd(),
+			stdio: ["ignore", "pipe", options.allowFailure ? "ignore" : "inherit"],
+		});
+		let stdout = "";
+		child.stdout.setEncoding("utf8");
+		child.stdout.on("data", (chunk) => {
+			stdout += chunk;
+		});
+		child.on("error", reject);
+		child.on("exit", (code, signal) => {
+			if (code === 0 || options.allowFailure) {
+				resolve(stdout);
+				return;
+			}
+			const suffix = signal ? `signal ${signal}` : `exit code ${code}`;
+			reject(new Error(`${command} ${args.join(" ")} failed with ${suffix}`));
+		});
+	});
 }

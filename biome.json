@@ -1,26 +1,104 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
-  "files": {
-    "includes": [
-      "src/**/*.ts",
-      "src/**/*.tsx",
-      "scripts/**/*.mjs",
-      "tests/**/*.js",
-      "tests/**/*.mjs",
-      "*.json",
-      "*.mjs"
-    ]
-  },
-  "formatter": {
-    "enabled": false
-  },
-  "linter": {
-    "enabled": true,
-    "rules": {
-      "preset": "recommended",
-      "suspicious": {
-        "noControlCharactersInRegex": "off"
-      }
-    }
-  }
+	"$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
+	"files": {
+		"includes": [
+			"src/**/*.ts",
+			"src/**/*.tsx",
+			"scripts/**/*.mjs",
+			"tests/**/*.js",
+			"tests/**/*.mjs",
+			"src/**/*.css",
+			"*.json",
+			"*.jsonc",
+			"*.mjs"
+		]
+	},
+	"javascript": {
+		"globals": ["FixedLengthStream"]
+	},
+	"formatter": {
+		"enabled": true,
+		"lineEnding": "lf"
+	},
+	"overrides": [
+		{
+			"includes": ["src/generated/**"],
+			"formatter": {
+				"enabled": false
+			},
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noTemplateCurlyInString": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/index.ts", "src/test-index.ts", "vitest.config.mjs"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noDefaultExport": "off"
+					}
+				}
+			}
+		}
+	],
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"a11y": {
+				"preset": "all"
+			},
+			"correctness": {
+				"preset": "all",
+				"noNodejsModules": "off",
+				"noProcessGlobal": "off",
+				"noUnresolvedImports": "off",
+				"useImportExtensions": "off",
+				"useQwikValidLexicalScope": "off",
+				"useUniqueElementIds": "off"
+			},
+			"security": {
+				"preset": "all"
+			},
+			"performance": {
+				"recommended": true
+			},
+			"complexity": {
+				"recommended": true,
+				"noUselessStringConcat": "info"
+			},
+			"style": {
+				"recommended": true,
+				"noCommonJs": "warn",
+				"noDefaultExport": "warn",
+				"noEnum": "warn",
+				"noNamespace": "warn",
+				"noNestedTernary": "info",
+				"noParameterAssign": "warn",
+				"useAsConstAssertion": "info",
+				"useConsistentArrayType": "info",
+				"useThrowNewError": "info",
+				"useThrowOnlyError": "warn"
+			},
+			"suspicious": {
+				"preset": "all",
+				"noAlert": "off",
+				"noBitwiseOperators": "off",
+				"noControlCharactersInRegex": "off",
+				"noDeprecatedImports": "off",
+				"noEmptyBlockStatements": "off",
+				"noEqualsToNull": "off",
+				"noMisplacedAssertion": "off",
+				"noUnknownAttribute": "off",
+				"noUnnecessaryConditions": "off",
+				"useArraySortCompare": "off",
+				"useAwait": "off",
+				"useStaticResponseMethods": "off"
+			}
+		}
+	}
 }

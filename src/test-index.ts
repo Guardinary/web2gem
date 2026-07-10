@@ -1,5 +1,3 @@
-import worker from "./index";
-
-export default worker;
+export { default } from "./index";
 export * from "./public-exports";
 export * from "./test-exports";

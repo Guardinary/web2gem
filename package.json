@@ -1,90 +1,91 @@
 {
-  "name": "web2gem",
-  "version": "1.1.0",
-  "private": true,
-  "type": "module",
-  "engines": {
-    "node": ">=22"
-  },
-  "packageManager": "pnpm@11.10.0",
-  "scripts": {
-    "build": "node scripts/build.mjs",
-    "check:static": "biome lint --diagnostic-level=error",
-    "typecheck": "tsc --noEmit",
-    "check:arch": "node scripts/check-architecture.mjs",
-    "check:size": "pnpm build && node scripts/check-bundle-size.mjs",
-    "check:bench": "node scripts/build.mjs --test-bundle && node scripts/check-benchmark.mjs",
-    "unit:quick": "node scripts/ensure-test-bundle-fresh.mjs && vitest run",
-    "unit": "node scripts/unit.mjs",
-    "coverage": "node scripts/coverage.mjs",
-    "coverage:ci": "node scripts/coverage.mjs --ci",
-    "smoke": "node scripts/build.mjs --test-bundle && node scripts/smoke.mjs",
-    "docker:smoke": "node scripts/docker-smoke.mjs",
-    "bench": "node scripts/build.mjs --test-bundle && node scripts/bench.mjs",
-    "docker:start": "node scripts/docker-server.mjs",
-    "dev": "pnpm build && wrangler dev",
-    "db:migrations:apply": "wrangler d1 migrations apply GEMINI_DB --remote",
-    "deploy": "pnpm build && pnpm db:migrations:apply && wrangler deploy"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^2.5.3",
-    "@cloudflare/workers-types": "^5.20260708.1",
-    "@preact/signals": "^2.9.3",
-    "@vitest/coverage-v8": "^4.1.10",
-    "esbuild": "^0.28.1",
-    "preact": "^10.29.6",
-    "typescript": "^7.0.2",
-    "valibot": "^1.4.2",
-    "vitest": "^4.1.10",
-    "wrangler": "^4.107.1"
-  },
-  "cloudflare": {
-    "bindings": {
-      "API_KEYS": {
-        "description": "Optional public API keys. Leave empty to disable shared API authentication."
-      },
-      "ADMIN_KEYS": {
-        "description": "Admin keys for the account-pool WebUI and `/admin/accounts` API. Set at least one non-placeholder value before importing Gemini accounts."
-      },
-      "GEMINI_BL": {
-        "description": "Gemini Web build label. Update only if upstream Gemini Web responses become empty after a frontend change."
-      },
-      "GEMINI_ORIGIN": {
-        "description": "Upstream Gemini origin. Keep the default unless Cloudflare egress is rate-limited and you operate a compatible forwarding endpoint."
-      },
-      "UPSTREAM_SOCKET": {
-        "description": "Prefer `cloudflare:sockets` upstream transport when available. Docker uses a separate `.env.docker.example` default of `false`."
-      },
-      "DEFAULT_MODEL": {
-        "description": "Model used when a request omits `model`."
-      },
-      "RETRY_ATTEMPTS": {
-        "description": "Upstream retry attempts. Minimum runtime value is `1`."
-      },
-      "RETRY_DELAY_SEC": {
-        "description": "Delay between upstream retry attempts in seconds."
-      },
-      "REQUEST_TIMEOUT_SEC": {
-        "description": "Upstream request timeout in seconds."
-      },
-      "LOG_REQUESTS": {
-        "description": "Enable structured runtime stage logs."
-      },
-      "CURRENT_INPUT_FILE_ENABLED": {
-        "description": "Enable Gemini text attachments for large prompt context when an authenticated account-pool session is available."
-      },
-      "CURRENT_INPUT_FILE_MIN_BYTES": {
-        "description": "Inline prompt byte threshold before text attachment handling is attempted."
-      },
-      "CURRENT_INPUT_FILE_NAME": {
-        "description": "Filename used for large message context attachments."
-      },
-      "CURRENT_TOOLS_FILE_NAME": {
-        "description": "Filename used for large tool-definition context attachments."
-      },
-      "GENERIC_FILE_UPLOAD_MAX_BYTES": {
-        "description": "Maximum bytes per request-local attachment."
-      }
-    }
-  }
+	"name": "web2gem",
+	"version": "1.1.0",
+	"private": true,
+	"type": "module",
+	"engines": {
+		"node": ">=22"
+	},
+	"packageManager": "pnpm@11.10.0",
+	"scripts": {
+		"build": "node scripts/build.mjs",
+		"check:static": "biome check --assist-enabled=false --diagnostic-level=error",
+		"format": "biome format --write",
+		"typecheck": "tsc --noEmit",
+		"check:arch": "node scripts/check-architecture.mjs",
+		"check:size": "pnpm build && node scripts/check-bundle-size.mjs",
+		"check:bench": "node scripts/build.mjs --test-bundle && node scripts/check-benchmark.mjs",
+		"unit:quick": "node scripts/ensure-test-bundle-fresh.mjs && vitest run",
+		"unit": "node scripts/unit.mjs",
+		"coverage": "node scripts/coverage.mjs",
+		"coverage:ci": "node scripts/coverage.mjs --ci",
+		"smoke": "node scripts/build.mjs --test-bundle && node scripts/smoke.mjs",
+		"docker:smoke": "node scripts/docker-smoke.mjs",
+		"bench": "node scripts/build.mjs --test-bundle && node scripts/bench.mjs",
+		"docker:start": "node scripts/docker-server.mjs",
+		"dev": "pnpm build && wrangler dev",
+		"db:migrations:apply": "wrangler d1 migrations apply GEMINI_DB --remote",
+		"deploy": "pnpm build && pnpm db:migrations:apply && wrangler deploy"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.3",
+		"@cloudflare/workers-types": "^5.20260708.1",
+		"@preact/signals": "^2.9.3",
+		"@vitest/coverage-v8": "^4.1.10",
+		"esbuild": "^0.28.1",
+		"preact": "^10.29.6",
+		"typescript": "^7.0.2",
+		"valibot": "^1.4.2",
+		"vitest": "^4.1.10",
+		"wrangler": "^4.107.1"
+	},
+	"cloudflare": {
+		"bindings": {
+			"API_KEYS": {
+				"description": "Optional public API keys. Leave empty to disable shared API authentication."
+			},
+			"ADMIN_KEYS": {
+				"description": "Admin keys for the account-pool WebUI and `/admin/accounts` API. Set at least one non-placeholder value before importing Gemini accounts."
+			},
+			"GEMINI_BL": {
+				"description": "Gemini Web build label. Update only if upstream Gemini Web responses become empty after a frontend change."
+			},
+			"GEMINI_ORIGIN": {
+				"description": "Upstream Gemini origin. Keep the default unless Cloudflare egress is rate-limited and you operate a compatible forwarding endpoint."
+			},
+			"UPSTREAM_SOCKET": {
+				"description": "Prefer `cloudflare:sockets` upstream transport when available. Docker uses a separate `.env.docker.example` default of `false`."
+			},
+			"DEFAULT_MODEL": {
+				"description": "Model used when a request omits `model`."
+			},
+			"RETRY_ATTEMPTS": {
+				"description": "Upstream retry attempts. Minimum runtime value is `1`."
+			},
+			"RETRY_DELAY_SEC": {
+				"description": "Delay between upstream retry attempts in seconds."
+			},
+			"REQUEST_TIMEOUT_SEC": {
+				"description": "Upstream request timeout in seconds."
+			},
+			"LOG_REQUESTS": {
+				"description": "Enable structured runtime stage logs."
+			},
+			"CURRENT_INPUT_FILE_ENABLED": {
+				"description": "Enable Gemini text attachments for large prompt context when an authenticated account-pool session is available."
+			},
+			"CURRENT_INPUT_FILE_MIN_BYTES": {
+				"description": "Inline prompt byte threshold before text attachment handling is attempted."
+			},
+			"CURRENT_INPUT_FILE_NAME": {
+				"description": "Filename used for large message context attachments."
+			},
+			"CURRENT_TOOLS_FILE_NAME": {
+				"description": "Filename used for large tool-definition context attachments."
+			},
+			"GENERIC_FILE_UPLOAD_MAX_BYTES": {
+				"description": "Maximum bytes per request-local attachment."
+			}
+		}
+	}
 }

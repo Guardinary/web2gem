@@ -1,23 +1,23 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  test: {
-    coverage: {
-      provider: "v8",
-      reportsDirectory: "coverage",
-      reporter: ["text", "lcov", "json-summary"],
-      include: ["dist-coverage/worker.test.js"],
-      exclude: ["dist-coverage/worker.js", "src/test-index.ts"],
-      thresholds: {
-        statements: 69,
-        branches: 55,
-        functions: 82,
-        lines: 75,
-      },
-    },
-    environment: "node",
-    fileParallelism: true,
-    include: ["tests/unit/*.test.mjs"],
-    testTimeout: 30000,
-  },
+	test: {
+		coverage: {
+			provider: "v8",
+			reportsDirectory: "coverage",
+			reporter: ["text", "lcov", "json-summary"],
+			include: ["dist-coverage/worker.test.js"],
+			exclude: ["dist-coverage/worker.js", "src/test-index.ts"],
+			thresholds: {
+				statements: 69,
+				branches: 55,
+				functions: 82,
+				lines: 75,
+			},
+		},
+		environment: "node",
+		fileParallelism: true,
+		include: ["tests/unit/*.test.mjs"],
+		testTimeout: 30000,
+	},
 });

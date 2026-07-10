@@ -3,6 +3,6 @@ import { cases, suiteName } from "./uploads.cases.mjs";
 import { resetTestState } from "./helpers.js";
 
 describe(suiteName, () => {
-  beforeEach(resetTestState);
-  for (const [name, runCase] of cases) test(name, runCase);
+	beforeEach(resetTestState);
+	for (const [name, runCase] of cases) test(name, runCase);
 });
