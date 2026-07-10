@@ -979,6 +979,27 @@ export const cases = [
 		},
 	],
 	[
+		"streams long cumulative WRB text without losing append state",
+		async () => {
+			const extractor = mod.createStreamTextExtractor();
+			let cumulative = "";
+			let emitted = "";
+			for (let i = 0; i < 512; i++) {
+				cumulative += `${String(i).padStart(4, "0")}:${"x".repeat(123)}\n`;
+				emitted += [...extractor.consumeLine(wrbLine([cumulative]))].join("");
+			}
+			assert.equal(emitted, cumulative.trimStart());
+			assert.deepEqual(
+				[...extractor.consumeLine(wrbLine([cumulative.slice(0, -256)]))],
+				[],
+			);
+			assert.deepEqual(
+				[...extractor.consumeLine(wrbLine([`${cumulative}tail`]))],
+				["tail"],
+			);
+		},
+	],
+	[
 		"streams visible deltas after artifact-bearing cumulative chunks",
 		async () => {
 			const extractor = mod.createStreamTextExtractor();

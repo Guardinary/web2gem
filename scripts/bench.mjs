@@ -4,6 +4,9 @@ import { errorLine, outputLine } from "./io.mjs";
 const mod = await import("../dist/worker.test.js");
 
 const ITERATIONS = positiveInt(process.env.BENCH_ITERS, 2000);
+const JSON_OUTPUT = /^(1|true|yes|on)$/i.test(
+	String(process.env.BENCH_JSON || ""),
+);
 const WARMUP = positiveInt(
 	process.env.BENCH_WARMUP,
 	Math.min(500, Math.floor(ITERATIONS / 4)),
@@ -434,12 +437,25 @@ if (!selectedCases.length) {
 	process.exit(1);
 }
 
-outputLine(`Benchmark iterations=${ITERATIONS} warmup=${WARMUP}`);
-if (caseFilters.length)
-	outputLine(`Benchmark filters=${caseFilters.join(",")}`);
+const results = [];
 for (const item of selectedCases) {
 	const result = await bench(item.fn, item);
-	outputLine(formatResult(item.name, result));
+	results.push({ name: item.name, ...result });
+}
+if (JSON_OUTPUT) {
+	outputLine(
+		JSON.stringify({
+			iterations: ITERATIONS,
+			warmup: WARMUP,
+			filters: caseFilters,
+			results,
+		}),
+	);
+} else {
+	outputLine(`Benchmark iterations=${ITERATIONS} warmup=${WARMUP}`);
+	if (caseFilters.length)
+		outputLine(`Benchmark filters=${caseFilters.join(",")}`);
+	for (const result of results) outputLine(formatResult(result.name, result));
 }
 
 async function bench(fn, options = {}) {
@@ -464,7 +480,7 @@ async function bench(fn, options = {}) {
 		p99Ms: percentile(samples, 0.99),
 		meanMs: totalMs / iterations,
 		opsPerSec: iterations / (totalMs / 1000),
-		details: formatDetails(lastValue),
+		details: benchmarkDetails(lastValue),
 	};
 }
 
@@ -478,13 +494,19 @@ function formatResult(name, result) {
 		`mean=${formatMs(result.meanMs)}`,
 		`ops/s=${Math.round(result.opsPerSec)}`,
 	];
-	if (result.details) fields.push(result.details);
+	const details = formatDetails(result.details);
+	if (details) fields.push(details);
 	return fields.join("  ");
 }
 
-function formatDetails(value) {
-	if (!value || typeof value !== "object" || !value.__benchDetails) return "";
-	return Object.entries(value.__benchDetails)
+function benchmarkDetails(value) {
+	if (!value || typeof value !== "object" || !value.__benchDetails) return null;
+	return value.__benchDetails;
+}
+
+function formatDetails(details) {
+	if (!details || typeof details !== "object") return "";
+	return Object.entries(details)
 		.map(
 			([key, val]) =>
 				`${key}=${typeof val === "number" ? Math.round(val) : String(val)}`,

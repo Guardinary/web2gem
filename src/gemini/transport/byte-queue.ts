@@ -36,6 +36,13 @@ export function createByteQueue(initial?: ByteChunk | null): ByteQueue {
 	let scanOffset = 0;
 	let scanBytes = 0;
 	let scanPrev = -1;
+	let scanMode: "line" | "http-chunk-size" | null = null;
+	let scanHttpSize = 0;
+	let scanHttpDigits = 0;
+	let scanHttpInvalid = false;
+	let scanHttpAfterDigitWhitespace = false;
+	let scanHttpInExtension = false;
+	let scanHttpErrorLine = "";
 	if (initial?.length) {
 		chunks.push(initial);
 		length = initial.length;
@@ -46,6 +53,34 @@ export function createByteQueue(initial?: ByteChunk | null): ByteQueue {
 		scanOffset = headOffset;
 		scanBytes = 0;
 		scanPrev = -1;
+		scanMode = null;
+		scanHttpSize = 0;
+		scanHttpDigits = 0;
+		scanHttpInvalid = false;
+		scanHttpAfterDigitWhitespace = false;
+		scanHttpInExtension = false;
+		scanHttpErrorLine = "";
+	};
+	const ensureScan = (mode: "line" | "http-chunk-size") => {
+		if (
+			scanActive &&
+			scanMode === mode &&
+			scanChunkIndex >= headIndex &&
+			(scanChunkIndex !== headIndex || scanOffset >= headOffset)
+		)
+			return;
+		scanActive = true;
+		scanChunkIndex = headIndex;
+		scanOffset = headOffset;
+		scanBytes = 0;
+		scanPrev = -1;
+		scanMode = mode;
+		scanHttpSize = 0;
+		scanHttpDigits = 0;
+		scanHttpInvalid = false;
+		scanHttpAfterDigitWhitespace = false;
+		scanHttpInExtension = false;
+		scanHttpErrorLine = "";
 	};
 	const compact = () => {
 		while (headIndex < chunks.length) {
@@ -104,65 +139,50 @@ export function createByteQueue(initial?: ByteChunk | null): ByteQueue {
 		resetScan();
 		return out;
 	};
-	const consumeHttpChunkSizeLine = (
-		lineLength: number,
-		consumeLength: number,
-	): { size: number; errorLine: string } => {
+	const consumeBytes = (consumeLength: number) => {
 		compact();
-		let copied = 0;
 		let remaining = consumeLength;
-		let size = 0;
-		let digits = 0;
-		let invalid = false;
-		let afterDigitWhitespace = false;
-		let inExtension = false;
-		let errorLine = "";
-
-		const parseByte = (b: number | undefined) => {
-			if (b === undefined || inExtension) return;
-			if (b === 59) {
-				if (digits <= 0 || afterDigitWhitespace) invalid = true;
-				inExtension = true;
-				return;
-			}
-			if (errorLine.length < 80)
-				errorLine += b >= 32 && b <= 126 ? String.fromCharCode(b) : "?";
-			if (isHttpWhitespaceByte(b)) {
-				if (digits > 0) afterDigitWhitespace = true;
-				return;
-			}
-			if (afterDigitWhitespace) {
-				invalid = true;
-				return;
-			}
-			const nibble = hexNibbleByte(b);
-			if (nibble < 0) {
-				invalid = true;
-				return;
-			}
-			digits += 1;
-			size = size * 16 + nibble;
-			if (!Number.isSafeInteger(size)) invalid = true;
-		};
-
 		while (remaining > 0) {
-			compact();
 			const first = chunks[headIndex];
 			if (!first) break;
 			const take = Math.min(remaining, first.length - headOffset);
-			const parse = Math.min(take, lineLength - copied);
-			for (let i = 0; i < parse; i++) parseByte(first[headOffset + i]);
-			copied += parse;
 			headOffset += take;
 			length -= take;
 			remaining -= take;
+			if (headOffset >= first.length) {
+				headIndex += 1;
+				headOffset = 0;
+			}
 		}
 		compact();
 		resetScan();
-		return {
-			size: invalid || digits <= 0 ? -1 : size,
-			errorLine: trimHttpChunkSizeErrorLine(errorLine),
-		};
+	};
+	const scanHttpChunkSizeByte = (b: number) => {
+		if (scanHttpInExtension) return;
+		if (b === 59) {
+			if (scanHttpDigits <= 0 || scanHttpAfterDigitWhitespace)
+				scanHttpInvalid = true;
+			scanHttpInExtension = true;
+			return;
+		}
+		if (scanHttpErrorLine.length < 80)
+			scanHttpErrorLine += b >= 32 && b <= 126 ? String.fromCharCode(b) : "?";
+		if (isHttpWhitespaceByte(b)) {
+			if (scanHttpDigits > 0) scanHttpAfterDigitWhitespace = true;
+			return;
+		}
+		if (scanHttpAfterDigitWhitespace) {
+			scanHttpInvalid = true;
+			return;
+		}
+		const nibble = hexNibbleByte(b);
+		if (nibble < 0) {
+			scanHttpInvalid = true;
+			return;
+		}
+		scanHttpDigits += 1;
+		scanHttpSize = scanHttpSize * 16 + nibble;
+		if (!Number.isSafeInteger(scanHttpSize)) scanHttpInvalid = true;
 	};
 	const api: ByteQueue = {
 		get length() {
@@ -222,17 +242,7 @@ export function createByteQueue(initial?: ByteChunk | null): ByteQueue {
 		},
 		readLineIfAvailable() {
 			compact();
-			if (
-				!scanActive ||
-				scanChunkIndex < headIndex ||
-				(scanChunkIndex === headIndex && scanOffset < headOffset)
-			) {
-				scanActive = true;
-				scanChunkIndex = headIndex;
-				scanOffset = headOffset;
-				scanBytes = 0;
-				scanPrev = -1;
-			}
+			ensureScan("line");
 			for (let c = scanChunkIndex; c < chunks.length; c++) {
 				const chunk = chunks[c];
 				if (!chunk) continue;
@@ -257,17 +267,7 @@ export function createByteQueue(initial?: ByteChunk | null): ByteQueue {
 		},
 		readHttpChunkSizeLineIfAvailable() {
 			compact();
-			if (
-				!scanActive ||
-				scanChunkIndex < headIndex ||
-				(scanChunkIndex === headIndex && scanOffset < headOffset)
-			) {
-				scanActive = true;
-				scanChunkIndex = headIndex;
-				scanOffset = headOffset;
-				scanBytes = 0;
-				scanPrev = -1;
-			}
+			ensureScan("http-chunk-size");
 			for (let c = scanChunkIndex; c < chunks.length; c++) {
 				const chunk = chunks[c];
 				if (!chunk) continue;
@@ -277,8 +277,16 @@ export function createByteQueue(initial?: ByteChunk | null): ByteQueue {
 				for (let i = start; i < chunk.length; i++) {
 					const b = chunk[i];
 					if (b === undefined) continue;
-					if (scanPrev === 13 && b === 10)
-						return consumeHttpChunkSizeLine(scanBytes - 1, scanBytes + 1);
+					if (scanPrev === 13 && b === 10) {
+						const result = {
+							size: scanHttpInvalid || scanHttpDigits <= 0 ? -1 : scanHttpSize,
+							errorLine: trimHttpChunkSizeErrorLine(scanHttpErrorLine),
+						};
+						consumeBytes(scanBytes + 1);
+						return result;
+					}
+					if (scanPrev >= 0 && !scanHttpInExtension)
+						scanHttpChunkSizeByte(scanPrev);
 					scanPrev = b;
 					scanBytes += 1;
 					scanChunkIndex = c;

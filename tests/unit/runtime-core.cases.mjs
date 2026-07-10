@@ -1046,6 +1046,23 @@ export const cases = [
 				errorLine: "a",
 			});
 			assert.equal(dec.decode(chunkSizeQueue.read(4)), "body");
+
+			const byteSplitChunkSize = mod.createByteQueue();
+			for (const byte of enc.encode("1;" + "x".repeat(4096) + "\r\nbody")) {
+				byteSplitChunkSize.push(new Uint8Array([byte]));
+			}
+			assert.deepEqual(byteSplitChunkSize.readHttpChunkSizeLineIfAvailable(), {
+				size: 1,
+				errorLine: "1",
+			});
+			assert.equal(dec.decode(byteSplitChunkSize.read(4)), "body");
+
+			const invalidChunkSize = mod.createByteQueue(enc.encode("a "));
+			invalidChunkSize.push(enc.encode(";ext=1\r\n"));
+			assert.deepEqual(invalidChunkSize.readHttpChunkSizeLineIfAvailable(), {
+				size: -1,
+				errorLine: "a",
+			});
 		},
 	],
 	[

@@ -25,6 +25,7 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 - When a supported gzip response is decoded, remove `content-encoding` and `content-length` from the response headers exposed to callers.
 - Unsupported or unsolicited compressed responses must remain raw bytes; do not construct unsupported decompression streams.
 - Chunked response parsing must accept valid chunk extensions such as `5;foo=bar`, reject invalid hex, reject unsafe integer sizes, and tolerate split chunk-size lines across socket reads.
+- `ByteQueue.readHttpChunkSizeLineIfAvailable()` must parse chunk-size digits incrementally while scanning for CRLF. Do not rescan and reparse the complete line after the terminator is found; long extensions may arrive one byte per socket read.
 - Keep-alive sockets are pooled per origin, capped by `SOCKET_KEEP_ALIVE_MAX_IDLE_PER_ORIGIN`, and expire after `SOCKET_KEEP_ALIVE_IDLE_MS`.
 
 ### 4. Validation & Error Matrix
@@ -52,6 +53,7 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 - Unit test socket gzip decoding when `CompressionStream` and `DecompressionStream` are present.
 - Unit test unsupported decompression behavior by patching `DecompressionStream` away.
 - Unit test keep-alive reuse and expiry/cap behavior after changing socket pooling.
+- Unit test a long chunk extension split across one-byte queue pushes and assert the parsed size plus remaining body bytes.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke` after changing transport fallback or socket response parsing.
 
 ### 7. Wrong vs Correct
@@ -68,6 +70,72 @@ const chunkSize = parseInt(sizeText, 16);
 ```typescript
 const chunkSize = parseHttpChunkSizeLine(line);
 if (chunkSize < 0) throw new Error("socket: invalid chunk size");
+```
+
+## Scenario: Runtime Benchmark Regression Gates
+
+### 1. Scope / Trigger
+
+Use this contract when adding benchmark cases, changing hot-path algorithms, changing `scripts/bench.mjs`, or changing `scripts/check-benchmark.mjs`.
+
+### 2. Signatures
+
+- `BENCH_JSON=1 node scripts/bench.mjs` emits one JSON document with `{ iterations, warmup, filters, results }`.
+- Each result contains `name`, `iterations`, `warmup`, `medianMs`, `p95Ms`, `p99Ms`, `meanMs`, `opsPerSec`, and optional `details`.
+- `pnpm check:bench` gates a representative default case matrix.
+- `BENCH_GATE_BUDGETS` may override the matrix with a JSON object mapping benchmark names to positive maximum median milliseconds.
+- `BENCH_GATE_CASE` plus `BENCH_MAX_MEDIAN_MS` remains the explicit single-case compatibility mode.
+
+### 3. Contracts
+
+- Human-readable benchmark output remains the default for local investigation; the performance gate consumes machine-readable output.
+- The default gate must cover more than one subsystem. It currently includes held tool sieving, cumulative stream extraction, split socket chunk-line parsing, and structured-output uniqueness.
+- Every gated result must contain a finite numeric `medianMs`; missing, `null`, string, or non-finite values fail closed.
+- Thresholds are absolute CI regression ceilings with hardware headroom, not claims about a specific workstation baseline.
+- Intentional delay cases such as `sse_slow_consumer` remain observational and must not enter the CPU gate.
+- Optimize only after repeated baseline runs. If an attempted fast path is slower, remove it instead of weakening the benchmark.
+
+### 4. Validation & Error Matrix
+
+- Gated result is missing -> `Benchmark gate failed: missing benchmark median for <case>`.
+- `medianMs` exceeds its case budget -> fail with measured and maximum formatted durations.
+- `BENCH_GATE_BUDGETS` is malformed, empty, or contains non-positive values -> fail before running comparisons.
+- Legacy text snapshot with an explicit input path -> parse the selected single-case median for compatibility.
+- JSON output requested for one filtered case -> one parseable result with raw numeric millisecond fields.
+
+### 5. Good/Base/Bad Cases
+
+- Good: add a representative case, record repeated baselines, then add a threshold with CI headroom.
+- Base: use `BENCH_CASES`, `BENCH_ITERS`, and `BENCH_WARMUP` for reproducible focused investigation.
+- Bad: parse human-formatted microsecond/millisecond strings inside new gate logic when structured numeric output is available.
+- Bad: gate the full benchmark suite or intentional timers, making normal validation slow and flaky.
+- Bad: keep an algorithm change that only wins one noisy run or regresses behavior fixtures.
+
+### 6. Tests Required
+
+- Unit test machine-readable benchmark output with a fast filtered case.
+- Unit test multi-case JSON gate success.
+- Unit test a missing gated result and an over-budget result fail with the case name.
+- Run `pnpm check:bench` after benchmark or hot-path changes.
+- Run `pnpm unit` because script behavior is covered by `tests/unit/scripts.cases.mjs`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+const median = /median=([0-9.]+)ms/.exec(stdout)?.[1];
+if (Number(median) > 20) process.exit(1);
+```
+
+#### Correct
+
+```javascript
+const results = parseBenchmarkResults(stdout);
+for (const [name, maxMedianMs] of Object.entries(budgets)) {
+  const medianMs = results.get(name)?.medianMs;
+  if (!Number.isFinite(medianMs) || medianMs > maxMedianMs) fail(name);
+}
 ```
 
 ## Scenario: Runtime Config And Bounded JSON Reads

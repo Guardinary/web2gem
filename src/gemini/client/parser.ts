@@ -598,7 +598,9 @@ function* iterateLines(source: string): Generator<string> {
 }
 
 export function createStreamTextExtractor() {
-	let prevVisible = "";
+	let prevVisibleParts: string[] = [];
+	let prevVisibleMaterialized: string | null = "";
+	let prevVisibleLength = 0;
 	let prevVisibleHead = "";
 	let prevVisibleTail = "";
 	let prevRaw = "";
@@ -613,12 +615,34 @@ export function createStreamTextExtractor() {
 		prevRawHasArtifacts = hasArtifactMarkers(raw);
 	};
 	const rememberVisible = (visible: string) => {
-		prevVisible = visible;
+		prevVisibleParts = visible ? [visible] : [];
+		prevVisibleMaterialized = visible;
+		prevVisibleLength = visible.length;
 		prevVisibleHead = visible.slice(0, STREAM_APPEND_PROBE_CHARS);
 		prevVisibleTail = visible.slice(-STREAM_APPEND_PROBE_CHARS);
 	};
+	const materializeVisible = () => {
+		if (prevVisibleMaterialized !== null) return prevVisibleMaterialized;
+		const visible = prevVisibleParts.join("");
+		prevVisibleParts = visible ? [visible] : [];
+		prevVisibleMaterialized = visible;
+		return visible;
+	};
 	const appendVisibleDelta = (delta: string) => {
-		rememberVisible(prevVisible + delta);
+		if (!delta) return;
+		const oldLength = prevVisibleLength;
+		prevVisibleParts.push(delta);
+		prevVisibleMaterialized = null;
+		prevVisibleLength += delta.length;
+		if (oldLength < STREAM_APPEND_PROBE_CHARS) {
+			prevVisibleHead = `${prevVisibleHead}${delta}`.slice(
+				0,
+				STREAM_APPEND_PROBE_CHARS,
+			);
+		}
+		prevVisibleTail = `${prevVisibleTail}${delta}`.slice(
+			-STREAM_APPEND_PROBE_CHARS,
+		);
 	};
 	const rawAppendDelta = (raw: string): string | null => {
 		if (!prevRaw || raw.length <= prevRaw.length || prevRawHasArtifacts)
@@ -637,19 +661,19 @@ export function createStreamTextExtractor() {
 		return delta;
 	};
 	const visibleAppendDelta = (visible: string): string | null => {
-		if (!prevVisible || visible.length <= prevVisible.length) return null;
-		if (prevVisible.length <= STREAM_APPEND_PROBE_CHARS * 2) {
-			if (!visible.startsWith(prevVisible)) return null;
+		if (!prevVisibleLength || visible.length <= prevVisibleLength) return null;
+		if (prevVisibleLength <= STREAM_APPEND_PROBE_CHARS * 2) {
+			if (!visible.startsWith(materializeVisible())) return null;
 		} else if (
 			visible.slice(0, prevVisibleHead.length) !== prevVisibleHead ||
 			visible.slice(
-				prevVisible.length - prevVisibleTail.length,
-				prevVisible.length,
+				prevVisibleLength - prevVisibleTail.length,
+				prevVisibleLength,
 			) !== prevVisibleTail
 		) {
 			return null;
 		}
-		return visible.slice(prevVisible.length);
+		return visible.slice(prevVisibleLength);
 	};
 	const consumeLine = function* (line: unknown): Generator<string> {
 		for (const t of extractTextsFromLine(line)) {
@@ -662,7 +686,7 @@ export function createStreamTextExtractor() {
 				rememberRaw(raw);
 			} else {
 				const visible = stripArtifacts(raw);
-				if (!prevVisible) {
+				if (!prevVisibleLength) {
 					delta = visible;
 					rememberVisible(visible);
 					rememberRaw(raw);
@@ -672,12 +696,12 @@ export function createStreamTextExtractor() {
 						delta = appendedVisibleDelta;
 						rememberVisible(visible);
 						rememberRaw(raw);
-					} else if (prevVisible.startsWith(visible)) {
+					} else if (materializeVisible().startsWith(visible)) {
 						continue;
 					} else {
-						delta = trimContinuationOverlap(prevVisible, visible);
+						delta = trimContinuationOverlap(materializeVisible(), visible);
 						if (!delta) {
-							if (visible.length > prevVisible.length) {
+							if (visible.length > prevVisibleLength) {
 								rememberVisible(visible);
 								rememberRaw(raw);
 							}

@@ -238,6 +238,80 @@ export const cases = [
 		},
 	],
 	[
+		"accepts machine-readable multi-case benchmark results",
+		async () => {
+			await withTempFile(
+				"bench.json",
+				JSON.stringify({
+					results: [
+						{ name: "stream_sieve_held_tool", medianMs: 1.5 },
+						{ name: "stream_text_cumulative_deltas", medianMs: 3.25 },
+					],
+				}),
+				async (benchPath) => {
+					const result = await runNodeScript(
+						"scripts/check-benchmark.mjs",
+						benchPath,
+						{
+							BENCH_GATE_BUDGETS: JSON.stringify({
+								stream_sieve_held_tool: 2,
+								stream_text_cumulative_deltas: 4,
+							}),
+						},
+					);
+					assert.equal(result.code, 0);
+					assert.match(result.stdout, /stream_sieve_held_tool/);
+					assert.match(result.stdout, /stream_text_cumulative_deltas/);
+				},
+			);
+		},
+	],
+	[
+		"emits machine-readable benchmark results",
+		async () => {
+			const result = await runNodeScript("scripts/bench.mjs", null, {
+				BENCH_CASES: "rand_hex_32",
+				BENCH_ITERS: "2",
+				BENCH_WARMUP: "1",
+				BENCH_JSON: "1",
+			});
+			assert.equal(result.code, 0);
+			const parsed = JSON.parse(result.stdout);
+			assert.deepEqual(parsed.filters, ["rand_hex_32"]);
+			assert.equal(parsed.results.length, 1);
+			assert.equal(parsed.results[0].name, "rand_hex_32");
+			assert.equal(typeof parsed.results[0].medianMs, "number");
+		},
+	],
+	[
+		"rejects machine-readable benchmark results missing a gated case",
+		async () => {
+			await withTempFile(
+				"bench.json",
+				JSON.stringify({
+					results: [{ name: "stream_sieve_held_tool", medianMs: 1.5 }],
+				}),
+				async (benchPath) => {
+					const result = await runNodeScript(
+						"scripts/check-benchmark.mjs",
+						benchPath,
+						{
+							BENCH_GATE_BUDGETS: JSON.stringify({
+								stream_sieve_held_tool: 2,
+								stream_text_cumulative_deltas: 4,
+							}),
+						},
+					);
+					assert.equal(result.code, 1);
+					assert.match(
+						result.stderr,
+						/missing benchmark median for stream_text_cumulative_deltas/,
+					);
+				},
+			);
+		},
+	],
+	[
 		"skips Docker smoke when Docker is not installed",
 		async () => {
 			await withTempDir(async (dir) => {
