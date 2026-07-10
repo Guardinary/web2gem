@@ -5,6 +5,7 @@ import { errorLine, outputLine } from "./io.mjs";
 const summaryPath = process.argv[2] || "coverage/coverage-summary.json";
 
 const lineGates = [
+	["src/admin-ui", 87],
 	["src/attachments", 88],
 	["src/completion", 92],
 	["src/config", 95],
@@ -26,6 +27,7 @@ const lineGates = [
 ];
 
 const branchGates = [
+	["src/admin-ui", 60],
 	["src/attachments", 75],
 	["src/gemini/accounts", 65],
 	["src/gemini/client", 75],

@@ -38,10 +38,17 @@ export async function rejects(input, expected, message) {
 	}
 }
 
+export function throws(input, expected, message) {
+	const assertion = assertionFor(input, message);
+	if (expected === undefined) assertion.toThrow();
+	else assertion.toThrow(expected);
+}
+
 export const assert = {
 	deepEqual,
 	doesNotMatch,
 	equal,
 	match,
 	rejects,
+	throws,
 };

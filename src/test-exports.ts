@@ -1,5 +1,17 @@
 // Internal compatibility surface used by local unit and smoke tests.
 export {
+	identifier,
+	identifierKey,
+	isCooling,
+	isRefreshable,
+	metadataCsv,
+	parseBatchImport,
+	relativeTime,
+	resultSummary,
+	sessionLabel,
+	validateCookieValue,
+} from "./admin-ui/logic";
+export {
 	buildHeaders,
 	buildPayload,
 	cleanText,

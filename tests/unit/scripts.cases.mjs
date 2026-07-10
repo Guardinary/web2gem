@@ -351,6 +351,7 @@ function coverageEntry(linePct = 100, branchPct = 100) {
 function fullCoverageSummary() {
 	return {
 		total: coverageEntry(),
+		"src/admin-ui/logic.ts": coverageEntry(),
 		"src/attachments/plan.ts": coverageEntry(),
 		"src/completion/index.ts": coverageEntry(),
 		"src/config/index.ts": coverageEntry(),

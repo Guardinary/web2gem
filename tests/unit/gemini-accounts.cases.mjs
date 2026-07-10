@@ -571,6 +571,62 @@ export const cases = [
 			assert.equal(prepareCalls, 0);
 		},
 	],
+	[
+		"admin UI pure logic parses safe batch imports and rejects cookie headers",
+		() => {
+			assert.deepEqual(
+				mod.parseBatchImport("psid-a psidts-a First account\npsid-b,psidts-b"),
+				[
+					{ psid: "psid-a", psidts: "psidts-a", label: "First account" },
+					{ psid: "psid-b", psidts: "psidts-b" },
+				],
+			);
+			assert.equal(mod.parseBatchImport("   ").length, 0);
+			assert.throws(
+				() => mod.parseBatchImport("__Secure-1PSID=secret psidts"),
+				/value only/,
+			);
+			assert.throws(
+				() => mod.validateCookieValue("secret; other", "cookie"),
+				/value only/,
+			);
+		},
+	],
+	[
+		"admin UI pure logic keeps identifiers summaries and CSV sanitized",
+		() => {
+			const account = {
+				id: "account-a",
+				row_id: "row-a",
+				label: 'A "quoted" account',
+				enabled: 1,
+				status: "active",
+				account_category: "full_session",
+				has_cookie: true,
+				has_sapisid: true,
+				has_session_token: false,
+				cooldown_until_ms: 2000,
+			};
+			assert.deepEqual(mod.identifier(account), { id: "account-a" });
+			assert.equal(mod.identifierKey(account), "account-a");
+			assert.equal(mod.sessionLabel(account), "cookie / sapisid");
+			assert.equal(mod.isRefreshable(account), true);
+			assert.equal(mod.isCooling(account, 1000), true);
+			assert.equal(mod.relativeTime(61000, 1000), "in 1m");
+			assert.equal(
+				mod.resultSummary("refresh", {
+					checked: 2,
+					refreshed: 1,
+					errors: [{ error: "safe failure" }],
+				}),
+				"refresh completed: checked 2, refreshed 1 - safe failure",
+			);
+			const csv = mod.metadataCsv([account]);
+			assert.match(csv, /^id,row_id,label,enabled,status,/);
+			assert.match(csv, /"A ""quoted"" account"/);
+			assert.doesNotMatch(csv, /cookie_header|session_token/);
+		},
+	],
 ];
 
 async function seedAccount(store, id, input) {

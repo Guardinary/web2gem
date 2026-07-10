@@ -381,7 +381,7 @@ Use this contract when changing test coverage commands, build sourcemap behavior
 - Unit helpers read `process.env.TEST_BUNDLE` when set and default to `../../dist/worker.test.js` for the normal workflow.
 - Vitest V8 coverage is the coverage collector. Its sourcemapped bundle percentages are the baseline for global thresholds and `scripts/check-coverage.mjs` directory gates.
 - Coverage thresholds are regression floors, not aspirational 100% targets. No directory or aggregate threshold should be 100%; stable areas should normally retain 3–5 percentage points of measured headroom so one defensive branch does not block unrelated work.
-- Global thresholds must remain representative of the repository baseline, and newer high-risk owners such as `src/attachments`, `src/gemini/accounts`, and `src/http/admin` require explicit line and branch gates instead of relying only on broad parent-directory aggregation.
+- Global thresholds must remain representative of the repository baseline, and newer high-risk owners such as `src/admin-ui`, `src/attachments`, `src/gemini/accounts`, and `src/http/admin` require explicit line and branch gates instead of relying only on broad parent-directory aggregation. Browser UI coverage is sourced from browser-independent logic exported through the test bundle; generated embedded HTML is validated separately by route/smoke assertions.
 - Generated coverage output belongs under `coverage/` and coverage build output belongs under `dist-coverage/`; both must stay git-ignored.
 - Do not change `src/index.ts`, `src/public-exports.ts`, or `wrangler.jsonc` to make coverage work.
 

@@ -338,6 +338,10 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Admin auth header: `Authorization: Bearer <admin-key>`.
 - Gemini import payload: `{ provider: "gemini", "__Secure-1PSID": string, "__Secure-1PSIDTS": string, label?: string }`.
 - Mutation payload: `{ identifiers: Array<{ id?: string; account_id?: string; row_id?: string }> }`.
+- `src/admin-ui/state.ts` owns shared Preact signals and UI draft types.
+- `src/admin-ui/logic.ts` owns browser-independent identifiers, validation, parsing, formatting, summaries, and sanitized CSV construction.
+- `src/admin-ui/actions.ts` owns browser storage, API calls, pagination transitions, destructive confirmation, downloads, and toast side effects.
+- `src/admin-ui/components.tsx` owns reusable metric, account-row, and edit-modal presentation; `app.tsx` remains the composition shell.
 
 ### 3. Contracts
 
@@ -351,6 +355,7 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Cursor pagination must use the admin API's `nextCursor` without requesting or caching raw D1 rows. The server `nextCursor` is the last returned row id, matching the route's `id > cursor` query semantics.
 - Client-side metadata export may include sanitized account IDs, status/category, timestamps, counters, redacted errors, and source metadata. It must not export raw cookies, SAPISID values, session tokens, SQL bind values, or D1 API tokens.
 - Public API auth remains separate from admin auth. A public API key must not authorize UI-driven admin API mutations.
+- Browser-independent UI behavior must not read module-global signals or browser globals. Pass data (and time where determinism matters) into pure helpers, then keep signal/browser mutation in `actions.ts`.
 
 ### 4. Validation & Error Matrix
 
@@ -362,17 +367,20 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Admin API returns non-2xx JSON error -> show the sanitized error message, not raw response bodies or request payload secrets.
 - List response includes secret-presence flags -> render safe labels such as present/missing; do not derive previews from raw values.
 - Metadata export requested with no current rows -> no-op user error.
+- Batch import parser receives an empty string -> return no batch items so the single-account form remains authoritative; malformed non-empty rows -> safe client-side validation error.
 - Cursor pagination response with `nextCursor=null` -> disable the next-page control.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: static UI calls `fetch("/admin/accounts", { headers: { Authorization: "Bearer " + key } })`.
+- Good: unit tests import `admin-ui/logic.ts` through `src/test-exports.ts` without importing the browser entrypoint or adding a DOM emulator.
 - Good: import form submits only `provider`, `__Secure-1PSID`, `__Secure-1PSIDTS`, and optional display metadata.
 - Base: UI displays sanitized account status, enabled state, IDs, row IDs, timestamps, source metadata, and redacted error text from the existing admin API response.
 - Base: UI may show refreshability, cooldown, success/failure counters, and category filters derived from sanitized admin fields.
 - Bad: serving a separate Next.js/React build for this Worker-only admin console.
 - Bad: using `/admin/accounts?admin_key=...`, `x-api-key` public auth, or full `Cookie: __Secure-1PSID=...` examples.
 - Bad: adding a Gemini TXT export that serializes raw cookie values through the browser UI.
+- Bad: components implementing their own cookie parsing, identifier selection, or CSV field list instead of using `logic.ts`.
 - Bad: adding UI text or docs that reintroduce `GEMINI_COOKIE` or single-cookie fallback setup.
 
 ### 6. Tests Required
@@ -381,6 +389,7 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Unit test non-GET UI requests return 404 and perform zero D1 reads.
 - Unit or snapshot-style assertions should verify static HTML/JS includes the admin API path, bearer admin header usage, value-only dual-cookie fields, and existing action names.
 - Unit or snapshot-style assertions should cover static UI controls for category/cooldown filters, pagination, safe metadata export, editing safe metadata, and success/failure counters.
+- Unit tests should cover value-only cookie validation, batch rows, identifier preference, deterministic relative time, mutation summaries, and CSV escaping/field allowlisting through the pure logic owner.
 - Unit test admin list cursor pagination so `nextCursor` does not skip the first row on the next page.
 - Unit or grep-style assertions should verify the UI bundle does not contain `GEMINI_COOKIE`, raw cookie examples, SAPISID value examples, session-token examples, or query-parameter admin-key patterns.
 - Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke` after changing the UI route, static HTML, or Worker routing.
