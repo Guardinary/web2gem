@@ -590,7 +590,7 @@ export const cases = [
 		"keeps application route policy ordering explicit",
 		async () => {
 			const execution = { waitUntil() {} };
-			const cases = [
+			const routeCases = [
 				{
 					method: "OPTIONS",
 					path: "/v1/models",
@@ -628,7 +628,7 @@ export const cases = [
 					status: 404,
 				},
 			];
-			for (const item of cases) {
+			for (const item of routeCases) {
 				const response = await mod.handleApplicationRequest(
 					new Request(`https://worker.example${item.path}`, {
 						method: item.method,
@@ -1174,7 +1174,7 @@ export const cases = [
 			assert.equal(dec.decode(chunkSizeQueue.read(4)), "body");
 
 			const byteSplitChunkSize = mod.createByteQueue();
-			for (const byte of enc.encode("1;" + "x".repeat(4096) + "\r\nbody")) {
+			for (const byte of enc.encode(`1;${"x".repeat(4096)}\r\nbody`)) {
 				byteSplitChunkSize.push(new Uint8Array([byte]));
 			}
 			assert.deepEqual(byteSplitChunkSize.readHttpChunkSizeLineIfAvailable(), {

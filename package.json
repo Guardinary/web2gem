@@ -9,7 +9,7 @@
 	"packageManager": "pnpm@11.10.0",
 	"scripts": {
 		"build": "node scripts/build.mjs",
-		"check:static": "biome check --assist-enabled=false --diagnostic-level=error",
+		"check:static": "biome check --assist-enabled=false --diagnostic-level=warn --error-on-warnings",
 		"worker:types": "pnpm build && wrangler types worker-configuration.d.ts --env-interface WorkerBindings --include-runtime false --strict-vars false --env-file .dev.vars.example",
 		"check:worker-types": "pnpm build && wrangler types worker-configuration.d.ts --env-interface WorkerBindings --include-runtime false --strict-vars false --env-file .dev.vars.example --check",
 		"format": "biome format --write",

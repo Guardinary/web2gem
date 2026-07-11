@@ -1,6 +1,6 @@
-import {
-	type ImageGenerationByteInput,
-	type ImageGenerationUserImageInput,
+import type {
+	ImageGenerationByteInput,
+	ImageGenerationUserImageInput,
 } from "../../completion/image-generation";
 import { MAX_ATTACHMENTS_PER_REQUEST } from "../../attachments/plan";
 import type { RuntimeConfig } from "../../config";

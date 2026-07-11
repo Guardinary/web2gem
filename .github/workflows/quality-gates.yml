@@ -6,6 +6,7 @@ on:
     branches:
       - dev
       - main
+      - gemini-account-pool
   workflow_dispatch:
 
 permissions:
@@ -111,7 +112,7 @@ jobs:
 
   docker-smoke:
     name: Release Required Gate - Docker Smoke
-    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') }}
+    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/gemini-account-pool') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

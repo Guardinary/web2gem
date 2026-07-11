@@ -6,7 +6,8 @@
 
 ## Workflow Layout
 
-- `.github/workflows/quality-gates.yml` runs pull request, `dev`, and `main` quality checks.
+- `.github/workflows/quality-gates.yml` runs pull request plus `dev`, `main`, and
+  `gemini-account-pool` push quality checks.
 - `.github/workflows/release-artifacts.yml` builds GitHub Release assets and publishes the GHCR image for a release tag.
 - `.github/workflows/reusable-versioned-release.yml` owns shared version calculation, synchronized package/Worker version update, release gates, commit, tag push, and release revision output.
 - `.github/workflows/release-dockerhub.yml` calls the reusable versioned release workflow, then publishes Docker Hub images.
@@ -58,6 +59,72 @@ Registry-specific release workflows should not duplicate the version bump / tag 
 - `revision_sha`
 
 Registry publish jobs should check out `revision_sha` before building Docker images so image labels and contents match the version commit.
+
+## Scenario: Static And Independent Branch Quality Gates
+
+### 1. Scope / Trigger
+
+Use this contract when changing Biome severity, `check:static`, quality workflow
+push branches, or release-required Docker smoke conditions.
+
+### 2. Signatures
+
+- `pnpm check:static` runs Biome with warning diagnostics visible and
+  `--error-on-warnings` enabled.
+- `.github/workflows/quality-gates.yml` owns pull-request, push, matrix unit, and
+  Docker smoke gates.
+
+### 3. Contracts
+
+- Authored source and tests must have zero warning-or-higher Biome diagnostics.
+- Framework-inapplicable rules may be disabled only through the narrowest path
+  override; Preact admin UI source disables Solid-specific destructured-props
+  diagnostics without weakening other correctness rules.
+- Non-blocking security info diagnostics remain enabled.
+- Push gates cover `dev`, `main`, and the independently released
+  `gemini-account-pool` branch.
+- Docker smoke runs on pushes to each of those three branches.
+
+### 4. Validation & Error Matrix
+
+- New Biome warning -> `pnpm check:static` exits non-zero.
+- Solid-specific props info in `src/admin-ui/**` -> suppressed by the Preact-only
+  override; the same override must not apply to all source.
+- Push to `gemini-account-pool` -> required Ubuntu quality, Node matrix, and Docker
+  smoke jobs are eligible.
+- Pull request -> quality jobs run; Docker smoke remains push-only.
+
+### 5. Good/Base/Bad Cases
+
+- Good: fix an actionable warning before enabling `--error-on-warnings`.
+- Good: add a branch to both the push trigger and Docker smoke condition.
+- Base: info-level fixture security diagnostics remain reviewable but non-blocking.
+- Bad: set all security rules off to make static output quiet.
+- Bad: document a branch as independently released while excluding its pushes
+  from required quality gates.
+
+### 6. Tests Required
+
+- Script test asserts `check:static` contains warning visibility and
+  `--error-on-warnings`.
+- Script test asserts all three push branches and the account-pool Docker smoke
+  condition are present.
+- Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`,
+  `pnpm smoke`, and `pnpm docker:smoke` when Docker is available.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```json
+"check:static": "biome check --diagnostic-level=error"
+```
+
+#### Correct
+
+```json
+"check:static": "biome check --diagnostic-level=warn --error-on-warnings"
+```
 
 ## Scenario: Package And Worker Version Synchronization
 

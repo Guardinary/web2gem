@@ -35,6 +35,16 @@
 			}
 		},
 		{
+			"includes": ["src/admin-ui/**"],
+			"linter": {
+				"rules": {
+					"correctness": {
+						"noSolidDestructuredProps": "off"
+					}
+				}
+			}
+		},
+		{
 			"includes": ["src/index.ts", "src/test-index.ts", "vitest.config.mjs"],
 			"linter": {
 				"rules": {

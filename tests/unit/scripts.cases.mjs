@@ -453,6 +453,28 @@ export const cases = [
 		},
 	],
 	[
+		"keeps static warnings blocking and account-pool branch gates required",
+		async () => {
+			const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+			const workflow = await readFile(
+				".github/workflows/quality-gates.yml",
+				"utf8",
+			);
+			assert.match(
+				packageJson.scripts["check:static"],
+				/--diagnostic-level=warn.*--error-on-warnings/,
+			);
+			assert.match(
+				workflow,
+				/branches:\s*\n\s+- dev\s*\n\s+- main\s*\n\s+- gemini-account-pool/,
+			);
+			assert.match(
+				workflow,
+				/github\.ref == 'refs\/heads\/gemini-account-pool'/,
+			);
+		},
+	],
+	[
 		"parses JSONC config syntax without treating URL-like strings as comments",
 		() => {
 			const wrangler = parseJsoncObject(`{
@@ -567,14 +589,14 @@ function runArchitectureCheck(cwd) {
 }
 
 function runNodeScript(script, arg, env = {}, cwd = process.cwd()) {
-	return new Promise((resolve) => {
+	return new Promise((done) => {
 		const args = arg == null ? [script] : [script, arg];
 		execFile(
 			process.execPath,
 			args,
 			{ cwd, env: { ...process.env, ...env } },
 			(error, stdout, stderr) => {
-				resolve({
+				done({
 					code: error && typeof error.code === "number" ? error.code : 0,
 					stdout,
 					stderr,

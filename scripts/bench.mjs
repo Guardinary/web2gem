@@ -760,7 +760,7 @@ async function runSseChunks({ chunks, delayMs }) {
 }
 
 function delay(ms) {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+	return new Promise((done) => setTimeout(done, ms));
 }
 
 function runSocketSingleChunkBody() {
