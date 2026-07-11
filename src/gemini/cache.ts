@@ -7,6 +7,7 @@ type OriginScopedStringCacheOptions = {
 	payloadKey: string;
 	logLabel: string;
 	accountScoped?: boolean;
+	l1MaxEntries?: number;
 };
 
 type OriginScopedStringCachePayload = Record<string, unknown> & {
@@ -41,11 +42,8 @@ export function createOriginScopedStringCache(
 	options: OriginScopedStringCacheOptions,
 ) {
 	const refreshes = new Map<string, Promise<string>>();
-	let l1: { scope: string; value: string; expiresAt: number } = {
-		scope: "",
-		value: "",
-		expiresAt: 0,
-	};
+	const l1 = new Map<string, { value: string; expiresAt: number }>();
+	const l1MaxEntries = positiveInt(options.l1MaxEntries, 32);
 
 	const cacheKey = (scope: string): Request =>
 		new Request(`${options.cachePrefix}${encodeURIComponent(scope)}`);
@@ -55,17 +53,21 @@ export function createOriginScopedStringCache(
 		value: string,
 		now: number = Date.now(),
 	): void => {
-		l1 = {
-			scope,
+		l1.delete(scope);
+		l1.set(scope, {
 			value,
 			expiresAt: now + options.ttlSec * 1000,
-		};
+		});
+		while (l1.size > l1MaxEntries) {
+			const oldestScope = l1.keys().next().value;
+			if (oldestScope === undefined) break;
+			l1.delete(oldestScope);
+		}
 	};
 
 	const clearL1 = (scope?: string): void => {
-		if (!scope || l1.scope === scope) {
-			l1 = { scope: "", value: "", expiresAt: 0 };
-		}
+		if (scope) l1.delete(scope);
+		else l1.clear();
 	};
 
 	const put = (
@@ -100,8 +102,11 @@ export function createOriginScopedStringCache(
 	const getCached = async (cfg: RuntimeConfig): Promise<string> => {
 		const scope = geminiAccountCacheScope(cfg, !!options.accountScoped);
 		const now = Date.now();
-		if (l1.scope === scope && l1.expiresAt > now) {
-			return l1.value;
+		const cached = l1.get(scope);
+		if (cached && cached.expiresAt > now) {
+			l1.delete(scope);
+			l1.set(scope, cached);
+			return cached.value;
 		}
 		clearL1(scope);
 		const cache = workerCache();
@@ -188,6 +193,12 @@ export function createOriginScopedStringCache(
 function validString(value: unknown): string {
 	const text = typeof value === "string" ? value.trim() : "";
 	return text ? text : "";
+}
+
+function positiveInt(value: number | undefined, fallback: number): number {
+	return Number.isInteger(value) && Number(value) > 0
+		? Number(value)
+		: fallback;
 }
 
 function logCacheError(

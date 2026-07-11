@@ -1359,6 +1359,39 @@ export const cases = [
 		},
 	],
 	[
+		"keeps bounded account-scoped metadata hot across alternating accounts",
+		async () => {
+			const cache = createMemoryCache();
+			const metadata = mod.createOriginScopedStringCache({
+				cachePrefix: "https://internal-cache/test-metadata/",
+				ttlSec: 60,
+				payloadKey: "value",
+				logLabel: "test metadata",
+				accountScoped: true,
+				l1MaxEntries: 2,
+			});
+			const account = (accountId) => ({
+				gemini_origin: "https://gemini.example",
+				gemini_account: { accountId, cookieHash: `${accountId}-hash` },
+				log_requests: false,
+			});
+
+			await withCaches(cache, async () => {
+				await metadata.setCached(account("a"), "value-a");
+				await metadata.setCached(account("b"), "value-b");
+				assert.equal(await metadata.getCached(account("a")), "value-a");
+				assert.equal(await metadata.getCached(account("b")), "value-b");
+				assert.equal(cache.stats.match, 0);
+
+				await metadata.setCached(account("c"), "value-c");
+				assert.equal(await metadata.getCached(account("a")), "value-a");
+				assert.equal(cache.stats.match, 1);
+				assert.equal(await metadata.getCached(account("c")), "value-c");
+				assert.equal(cache.stats.match, 1);
+			});
+		},
+	],
+	[
 		"caches Gemini build labels in the Workers cache API",
 		async () => {
 			const cfg = {

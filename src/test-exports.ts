@@ -174,7 +174,10 @@ export {
 	writeStreamWarningEvent,
 } from "./http/core/stream-errors";
 export { httpFetch } from "./gemini/transport/http";
-export { geminiAccountCacheScope } from "./gemini/cache";
+export {
+	createOriginScopedStringCache,
+	geminiAccountCacheScope,
+} from "./gemini/cache";
 export { base64ToBytes } from "./attachments/media";
 export {
 	collectOpenAIInlineUploadImages,

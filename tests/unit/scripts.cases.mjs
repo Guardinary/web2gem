@@ -434,6 +434,37 @@ export const cases = [
 		},
 	],
 	[
+		"keeps release workflows on the complete canonical quality gate",
+		async () => {
+			const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+			const runner = await readFile("scripts/check-release.mjs", "utf8");
+			const workflows = await Promise.all([
+				readFile(".github/workflows/release-artifacts.yml", "utf8"),
+				readFile(".github/workflows/reusable-versioned-release.yml", "utf8"),
+			]);
+			assert.equal(
+				packageJson.scripts["check:release"],
+				"node scripts/check-release.mjs",
+			);
+			for (const check of [
+				"check:static",
+				"check:worker-types",
+				"typecheck",
+				"check:arch",
+				"coverage:ci",
+				"smoke",
+				"check:bench",
+				"check:size",
+			]) {
+				assert.match(runner, new RegExp(`"${check.replace(":", "\\:")}"`));
+			}
+			for (const workflow of workflows) {
+				assert.match(workflow, /pnpm check:release\s+pnpm docker:smoke/);
+				assert.doesNotMatch(workflow, /pnpm coverage:ci/);
+			}
+		},
+	],
+	[
 		"keeps generated Worker binding types aligned with runtime config",
 		async () => {
 			const packageJson = JSON.parse(await readFile("package.json", "utf8"));

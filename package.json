@@ -17,6 +17,7 @@
 		"check:arch": "node scripts/check-architecture.mjs",
 		"check:size": "pnpm build && node scripts/check-bundle-size.mjs",
 		"check:bench": "node scripts/build.mjs --test-bundle && node scripts/check-benchmark.mjs",
+		"check:release": "node scripts/check-release.mjs",
 		"unit:quick": "node scripts/ensure-test-bundle-fresh.mjs && vitest run",
 		"unit": "node scripts/unit.mjs",
 		"coverage": "node scripts/coverage.mjs",
