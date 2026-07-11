@@ -93,7 +93,7 @@ Use this contract when preparing a major/minor/patch release or changing the ver
 
 - Run `pnpm smoke` after any version change.
 - Run `pnpm check:static` when the smoke script or release workflow metadata changes.
-- Confirm README migration/release examples match the active major line.
+- Confirm README branch-difference and release examples match the branch being published; do not present an independently released variant as a mainline upgrade.
 
 ### 7. Wrong vs Correct
 

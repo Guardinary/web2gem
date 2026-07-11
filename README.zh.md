@@ -4,9 +4,11 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem)
 
-面向 Gemini Web 的 OpenAI 兼容和 Google Gemini 兼容 HTTP 适配器，可部署到 Cloudflare Workers，也可作为 Docker 服务自托管。零成本, 跨平台, 单文件。
+带持久化 Gemini Web 账号池的 API 网关，兼容 OpenAI 和 Google Gemini 接口。可以部署到 Cloudflare Workers，也可以使用 Docker 自托管，并通过一个管理页面维护多个 Gemini 账号。
 
-TypeScript 代码位于 `src/`，本地质量检查脚本位于 `scripts/`，`dist/worker.js` 由 `pnpm build` 生成并用于 Wrangler 部署，`scripts/docker-server.mjs` 提供 Docker HTTP 适配层。
+> 当前文档对应独立发布的 `gemini-account-pool` 分支。它使用 D1 持久化存储，与 `main` 的部署模型不同。
+
+[部署到 Cloudflare](#方式一部署到-cloudflare-workers) · [使用 Docker](#方式二通过-docker-部署) · [导入账号](#账号池管理) · [API 示例](#api-接口)
 
 ## 目录
 
@@ -14,18 +16,22 @@ TypeScript 代码位于 `src/`，本地质量检查脚本位于 `scripts/`，`di
   - [目录](#目录)
   - [概览](#概览)
   - [核心功能](#核心功能)
+  - [开始前准备](#开始前准备)
   - [API 接口](#api-接口)
     - [健康检查](#健康检查)
     - [OpenAI Chat Completions](#openai-chat-completions)
     - [OpenAI Responses](#openai-responses)
+    - [OpenAI Images API](#openai-images-api)
     - [Google Gemini API](#google-gemini-api)
   - [模型](#模型)
   - [快速开始](#快速开始)
-    - [方式一：通过 Release 单文件 Worker 产物部署](#方式一通过-release-单文件-worker-产物部署)
+    - [方式一：部署到 Cloudflare Workers](#方式一部署到-cloudflare-workers)
     - [方式二：通过 Docker 部署](#方式二通过-docker-部署)
-  - [从 v1 迁移到 v2](#从-v1-迁移到-v2)
+  - [与 main 分支的区别](#与-main-分支的区别)
   - [配置](#配置)
+  - [账号池管理](#账号池管理)
   - [认证](#认证)
+  - [常见问题](#常见问题)
   - [开发](#开发)
   - [测试](#测试)
   - [项目结构](#项目结构)
@@ -35,7 +41,15 @@ TypeScript 代码位于 `src/`，本地质量检查脚本位于 `scripts/`，`di
 
 ## 概览
 
-`web2gem` 将常见 OpenAI 和 Google Gemini API 请求形状转换为 Gemini Web 请求。它既可以运行在 Cloudflare Workers 上，也可以作为 Docker 托管的 Node 服务运行。在 Workers 上，当常规 `fetch` 路径受到限流时，可以使用 `cloudflare:sockets` 作为上游 HTTP 传输方式；Docker 部署默认使用标准 `fetch` 传输。
+`web2gem` 让 OpenAI 兼容客户端和 Google Gemini 兼容客户端通过熟悉的 HTTP API 使用 Gemini Web。本分支增加了持久化账号池：账号只需导入一次，服务会把运行状态保存在 D1 中，为每个请求选择可用账号，并记录失败、冷却和刷新结果。
+
+典型使用流程：
+
+1. 部署 Worker 或 Docker 服务。
+2. 配置 D1 和唯一的 `ADMIN_KEY`。
+3. 打开 `/admin`，导入一个或多个 Gemini 账号。
+4. 如果接口会共享给其他人，配置 `API_KEYS`。
+5. 将 OpenAI 兼容或 Gemini 兼容客户端的 Base URL 指向部署地址。
 
 主要兼容目标如下：
 
@@ -51,21 +65,28 @@ TypeScript 代码位于 `src/`，本地质量检查脚本位于 `scripts/`，`di
 
 ## 核心功能
 
-| 功能                  | 说明                                                                                                           |
-| --------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Flash 模型开箱即用   | 无需任何鉴权，也无需任何配置，部署单文件即可开始使用flash模型，无用量限制，完全免费。                          |
-| OpenAI 兼容 API       | Chat Completions 和 Responses 端点，文本/工具调用流程支持流式输出。                                             |
-| Google 兼容 API       | 面向 Gemini 风格客户端的 `generateContent` 和 `streamGenerateContent` 路由。                                   |
-| 工具调用              | 将工具定义转换为提示词指令，并把 DSML/XML 风格工具调用输出解析回 API 响应。                                    |
-| 结构化输出            | 对非流式结构化响应进行最终 JSON 校验和规范化；默认拒绝流式结构化输出。                                         |
-| 大上下文处理          | 在配置 Gemini cookie 时，可将大段提示上下文作为 Gemini 文本附件上传。                                          |
-| 生图                  | 支持非流式 Chat/Responses 请求中的显式 OpenAI `image_generation` 元数据，以及 `/v1/images/generations`、`/v1/images/edits`。 |
-| 图片输入处理          | 通过 Gemini provider 路径解析用户提供的内联/base64 图片输入；Worker 不抓取远程图片或文件 URL。                 |
-| 通用文件附件          | 请求内 `input_file` 和非图片内联数据可通过 Gemini Web 上传引用传入，支持任意文件名和 MIME；不实现 `/v1/files` 持久文件服务。 |
-| Worker 和 Docker 部署 | 可通过 Wrangler 部署到 Cloudflare Workers，也可用 Docker / Docker Compose 自托管。                             |
-| 上游 socket 传输      | Workers 上默认使用 `cloudflare:sockets`；Docker 默认使用标准 `fetch` 传输，除非运行时提供兼容的 sockets 能力。 |
-| CORS 和 API key 保护  | 处理浏览器预检请求，并支持可选的 bearer/API-key 认证。                                                         |
-| 本地测试 bundle       | 构建独立的 `dist/worker.test.js`，让单元测试可检查内部实现，同时不把测试辅助导出泄漏到生产 bundle。            |
+| 功能 | 用户能获得什么 |
+| --- | --- |
+| 持久化账号池 | 在 D1 中保存多个 Gemini Web 账号，不需要把单个 cookie 直接放进运行环境。 |
+| 内置管理页面 | 在 `/admin` 中导入、查看、启用、禁用、刷新、检查和删除账号。 |
+| 账号健康状态 | 记录可用性、冷却时间、失败原因、刷新状态和调用结果，同时不暴露原始凭据。 |
+| OpenAI 兼容 API | 支持 Chat Completions、Responses、Images、模型列表、流式文本、工具调用和结构化输出。 |
+| Google 兼容 API | 支持 `generateContent`、`streamGenerateContent` 和 Gemini 风格模型列表。 |
+| Worker 与 Docker | 可使用 Cloudflare Workers + D1，也可通过 Docker + D1 HTTP binding 运行。 |
+| 可选公共鉴权 | 使用逗号分隔的 `API_KEYS` 保护公共接口；管理接口始终使用独立的 `ADMIN_KEY`。 |
+| 默认安全失败 | 存储缺失、账号不可用、配置错误或管理操作失败时返回脱敏错误，不会回退到内置凭据。 |
+
+## 开始前准备
+
+你需要准备：
+
+- 一个或多个你有权使用的 Gemini Web 账号；
+- 一个 Cloudflare D1 数据库；
+- 一个用于管理页面的强随机 `ADMIN_KEY`；
+- 如果使用 Docker，还需要 Cloudflare account ID、D1 database ID 和 API token；
+- 如果接口会公开或共享，可额外配置一个或多个 `API_KEYS`。
+
+导入账号前，健康检查和公开模型列表可以正常响应，但生成请求必须同时具备 `GEMINI_DB` 和至少一个可用账号。Gemini Web 属于可能随时变化的上游 Web 协议，本项目更适合个人、研究和内部使用场景。
 
 ## API 接口
 
@@ -163,7 +184,7 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 | -------------------------------- | ------------------------------------------ |
 | `gemini-3.5-flash`               | 快速通用模型。                             |
 | `gemini-3.5-flash-thinking`      | 深度思考模式，输出更长。                   |
-| `gemini-3.1-pro`                 | Pro 路由；真实路由需要有效 Gemini cookie。 |
+| `gemini-3.1-pro`                 | Pro 路由；需要账号池中存在可用账号。       |
 | `gemini-3.1-pro-enhanced`        | 实验性的增强 Pro 输出模式。                |
 | `gemini-auto`                    | Gemini Web 自动模型选择。                  |
 | `gemini-3.5-flash-thinking-lite` | 动态思考，自适应深度。                     |
@@ -173,9 +194,11 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 ## 快速开始
 
-两种部署方式都可以不设置 secrets。只有需要认证或依赖 cookie 的 Gemini Web 能力时，才需要配置可选 secrets。
+所有生成请求都需要 `GEMINI_DB` 和至少一个已导入账号。管理账号池必须配置 `ADMIN_KEY`；如果接口会共享给其他人，建议同时配置 `API_KEYS`。
 
-### 方式一：通过 Release 单文件 Worker 产物部署
+### 方式一：部署到 Cloudflare Workers
+
+#### 推荐：部署按钮
 
 如果想从源码一键部署到 Cloudflare Workers，可以使用下面的部署按钮：
 
@@ -184,6 +207,8 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 该按钮会 fork 仓库，创建 Worker，根据 `wrangler.jsonc` 自动创建 `GEMINI_DB` D1 数据库，先构建 Worker，再通过 deploy 脚本执行 `wrangler d1 migrations apply GEMINI_DB --remote`，然后部署 Worker。部署向导中需要填写 `ADMIN_KEY`；`API_KEYS` 可选。部署完成后，打开管理页面导入你自己的 Gemini 账号值。
 
 部署表单会把 `wrangler.jsonc` `vars` 中的非隐私 Worker 配置以明文展示。只有 [`.env.example`](.env.example) 和 [`.dev.vars.example`](.dev.vars.example) 中的 secrets 会隐藏；当前只有 `API_KEYS` 和 `ADMIN_KEY`。
+
+#### 手动部署：Release bundle
 
 从项目 [Releases](https://github.com/Guardinary/web2gem/releases) 页面下载构建产物 `worker.js`，在 Cloudflare Worker 控制台打开你的 Worker，将 Worker 源码替换为该文件内容。然后在 Worker 控制台设置中添加 `nodejs_compat` 兼容性标记。
 
@@ -198,7 +223,7 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 | `web2gem_<tag>_docker_linux_arm64.tar.gz` | `linux/arm64` Docker 镜像归档。 |
 | `sha256sums.txt` | 发布文件校验和。 |
 
-在 Worker 控制台中打开该 Worker 的设置页，配置公开 API 鉴权、admin 鉴权和必需的 `GEMINI_DB` D1 binding。需要保护共享访问时设置 `API_KEYS`；使用账号池管理接口前设置 `ADMIN_KEY`。
+手动部署时还需要创建并绑定 `GEMINI_DB`、执行仓库内的 schema，并在打开 `/admin` 前设置 `ADMIN_KEY`。需要保护客户端访问时再设置 `API_KEYS`。D1 命令和账号导入流程见[账号池管理](#账号池管理)。
 
 如果不使用 Release 产物、而是从源码构建，`pnpm deploy` 会先构建 `dist/worker.js`，再对 `GEMINI_DB` binding 执行 D1 migrations，并通过仓库内的 `wrangler.jsonc` 部署。
 
@@ -211,13 +236,17 @@ cp .env.docker.example .env
 docker compose up -d
 ```
 
-仓库提供的 [`compose.yaml`](compose.yaml) 默认拉取 `ghcr.io/guardinary/web2gem:latest`，映射 `${PORT:-52389}:${PORT:-52389}`，并从 `.env` 传入运行时变量。共享部署时在 `.env` 中设置 `API_KEYS`；同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`，让 Docker 注入必需的 `GEMINI_DB` binding。如需固定镜像版本，可在 `.env` 中设置 `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:<tag>`。
+在 PowerShell 中，请使用 `Copy-Item .env.docker.example .env` 代替 `cp`。
+
+仓库提供的 [`compose.yaml`](compose.yaml) 默认拉取 `ghcr.io/guardinary/web2gem:latest`，映射 `${PORT:-52389}:${PORT:-52389}`，并从 `.env` 传入运行时变量。设置 `ADMIN_KEY`，并同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`，让 Docker 可以管理账号并注入必需的 `GEMINI_DB` binding。共享部署时再设置 `API_KEYS`。如需固定镜像版本，可设置 `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:<tag>`。
 
 容器启动后，可验证本地健康检查路由：
 
 ```sh
 curl http://127.0.0.1:52389/
 ```
+
+然后打开 `http://127.0.0.1:52389/admin`，输入 `ADMIN_KEY` 并导入第一个账号。
 
 如果你在 `.env` 中修改了 `PORT`，请使用修改后的宿主机端口。Docker 部署在 [`.env.docker.example`](.env.docker.example) 中默认将 `UPSTREAM_SOCKET` 设为 `false`，因为 `cloudflare:sockets` 只在 Cloudflare Workers 运行时可用。其他运行时变量与下方配置表相同。
 
@@ -237,44 +266,21 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 
 如果上游 Gemini Web 路径开始返回空输出，先检查 `GEMINI_BL` 是否需要从当前 Gemini Web 前端刷新。如果 Cloudflare 出口请求被限流，可以把 `GEMINI_ORIGIN` 设置成你自己的转发服务或代理地址。
 
-## 从 v1 迁移到 v2
+## 与 main 分支的区别
 
-v2 是有意设计的破坏性版本。OpenAI 兼容和 Google 兼容的生成路由继续保持原有请求/响应契约，但运行时配置、bundle helper 和账号管理接口会执行更严格的规则。
+`gemini-account-pool` 是 `web2gem` 的持久化存储版本，与 `main` 独立发布。两者保留相近的 OpenAI 兼容和 Google 兼容生成接口，但账号配置与运行方式不同。
 
-### 运行时配置
+| 方面 | `main` | `gemini-account-pool` |
+| --- | --- | --- |
+| Gemini 凭据 | 直接读取当前运行环境中配置的 Gemini cookie。 | 将多个 Gemini 账号保存到 D1，并在每次生成请求时选择可用账号。 |
+| 持久化 | 不提供持久化 Gemini 账号存储。 | 在 `GEMINI_DB` 中持久化账号元数据、健康状态、冷却时间、刷新状态和协调锁。 |
+| 管理方式 | 不需要持久化账号池控制台。 | 提供 `/admin` WebUI 和资源化的 `/admin/accounts` API，使用唯一 `ADMIN_KEY` 保护。 |
+| 部署要求 | 可以在没有账号数据库的情况下运行。 | 生成请求需要配置 D1 binding，并至少导入一个可用 Gemini 账号；健康检查、预检和公开模型列表不需要选择账号。 |
+| Docker 集成 | 使用标准 Docker 适配层和运行时环境变量。 | 通过 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN` 注入 D1 HTTP binding。 |
+| 运行时配置 | 使用 main 分支的配置契约。 | 对 boolean、整数、origin、文件名、`API_KEYS` 和 `ADMIN_KEY` 执行严格校验，错误诊断会脱敏。 |
+| Admin API | 不适用于持久化账号池。 | 使用 `PATCH` / `DELETE /admin/accounts/:id`，以及 `POST /admin/accounts/:id/refresh` 或 `/check`；公共 `x-api-key` 永远不能授权管理操作。 |
 
-| v1 行为 | v2 替代方式 |
-| --- | --- |
-| 通过 `ADMIN_KEYS` 配置多个管理员密钥 | 已删除。非空 `ADMIN_KEYS` 会导致配置校验失败。使用 `ADMIN_KEY` 配置唯一管理员凭据；数组、其他非字符串值和占位值都会被拒绝。 |
-| JSON 数组或宽松解析的 `API_KEYS` | 使用一个逗号分隔字符串，例如 `key-a,key-b`。空成员、重复项、JSON 数组字符串和非字符串数组都会被拒绝。 |
-| truthy/falsy 布尔值转换 | 使用 boolean，或精确的小写字符串 `true` / `false`。 |
-| 宽松数值解析或自动截断 | 使用位于文档范围内的安全十进制整数。 |
-| 类 URL 的 `GEMINI_ORIGIN` | 使用不含凭据、路径、查询和 fragment 的绝对 HTTP(S) origin。 |
-| 带路径的上下文文件名 | 使用不含路径分隔符和控制字符的普通文件名。 |
-
-Docker 会在开始监听前使用生产 bundle 校验配置。Worker 配置无效时返回脱敏的 `invalid_runtime_config`，不会回显被拒绝的 secret 值。
-
-### Bundle helper
-
-生产 Worker bundle 不再导出内部 `getConfig` helper。启动校验请使用 `assertRuntimeConfig(env)`；`getConfig` 仅保留在本地测试 bundle 中。
-
-### 账号管理 API
-
-Admin 鉴权只接受通过 `Authorization: Bearer <key>` 或 `X-Admin-Key` 提交的唯一 `ADMIN_KEY`。公共 API 使用的 `x-api-key` 不再授权 admin 路由。
-
-| v1 路由 | v2 路由 |
-| --- | --- |
-| 在 body 中携带标识符的 `PATCH /admin/accounts` 或 `POST /admin/accounts/update` | `PATCH /admin/accounts/:id`，body 只包含更新字段 |
-| `POST /admin/accounts/enable` / `disable` | `PATCH /admin/accounts/:id`，body 使用 `{ "enabled": true }` 或 `{ "enabled": false }` |
-| 在 body 中携带标识符的 `DELETE /admin/accounts` | 无 body 的 `DELETE /admin/accounts/:id` |
-| 携带 identifiers 的 `POST /admin/accounts/refresh` | 无 body 的 `POST /admin/accounts/:id/refresh` |
-| 携带 identifiers 的 `POST /admin/accounts/check` | 无 body 的 `POST /admin/accounts/:id/check` |
-
-`GET /admin/accounts`、`POST /admin/accounts` 和 `GET /admin/accounts/stats` 保留。查询参数现在使用严格 allowlist：未知、重复、空、格式错误或越界的值会返回 400，不再被忽略或自动截断。意外的路由失败返回 `admin_request_failed`；意外的单账号诊断失败返回不含内部细节的 `admin_diagnostic_failed`。
-
-### 优化与回滚说明
-
-v2 增加四场景性能门禁，并优化累计流式 delta 处理和跨 chunk 行解析。使用 `pnpm check:bench` 复现门禁，使用 `pnpm bench` 运行完整基准。优化计划的每个方向都以独立提交落地，部署后如发现回归可以单独回退。
+生产 bundle 还让 Worker 与 Docker 共用同一个应用路由边界，并为流式处理、socket 解析和结构化输出路径提供代表性性能门禁。这些只是本分支的实现差异，不表示 `main` 会采用相同变更。
 
 ## 配置
 
@@ -301,7 +307,7 @@ v2 增加四场景性能门禁，并优化累计流式 delta 处理和跨 chunk 
 | `CURRENT_TOOLS_FILE_NAME`       | `tools.txt`                 | 大工具定义上下文附件使用的文件名。                                                                                                                                                 |
 | `GENERIC_FILE_UPLOAD_MAX_BYTES` | `20971520`                  | 每个请求内附件的最大字节数。默认上传路径不会向 `content-push.googleapis.com` 发送 Gemini cookie 或 SAPISID 鉴权；请求内附件不可用或上传失败时会忽略附件并在提示词中追加说明。        |
 
-使用 Wrangler CLI 管理 Worker 时，可通过以下命令设置可选 secrets：
+使用 Wrangler CLI 管理 Worker 时，可通过以下命令配置 secrets：
 
 - 共享部署时设置 `API_KEYS`。为空时会关闭认证。
 - 使用账号池管理接口前设置 `ADMIN_KEY`。缺失时 admin 接口不会公开放行。
@@ -312,7 +318,17 @@ wrangler secret put API_KEYS
 wrangler secret put ADMIN_KEY
 ```
 
-### D1 账号存储
+## 账号池管理
+
+最简单的使用方式是内置 WebUI：
+
+1. 打开 `https://your-worker.example/admin`。
+2. 输入配置好的 `ADMIN_KEY`，并选择使用 session storage 或 local storage 保存到浏览器。
+3. 导入 `__Secure-1PSID` 和 `__Secure-1PSIDTS` 的纯值。
+4. 确认账号显示为已启用且可用。
+5. 通过任意受支持的 API 路由发送生成请求。
+
+建议使用新的或专门的 Gemini 浏览器会话。不要粘贴完整 Cookie header、浏览器 Cookie 导出、Cookie 名称、等号、分号或无关的 access token。管理响应和账号列表均已脱敏，不会返回保存的会话凭据。
 
 当前分支要求 Worker 和 Docker 部署使用 D1 后端的 Gemini 账号池。未配置 `GEMINI_DB` 时，公开 Gemini 生成路由会以 `gemini_account_pool_required` fail closed。已配置 D1 但没有可选账号时，Gemini 生成会返回脱敏的 `no_available_gemini_account`。
 
@@ -326,7 +342,7 @@ wrangler d1 execute <database-name> --file migrations/0001_gemini_accounts.sql -
 
 Docker 部署时，在 `.env` 中同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`。三者都存在时，`scripts/docker-server.mjs` 会注入一个基于 Cloudflare D1 HTTP API 的 D1 兼容 `GEMINI_DB` binding。只设置一部分时，启动会以配置错误失败。
 
-账号池可以通过内置 WebUI `/admin` 管理，也可以通过 `/admin/accounts` 下的管理 API 操作。管理 API 必须使用配置的唯一 `ADMIN_KEY` 鉴权，可通过 `Authorization: Bearer <key>` 或 `X-Admin-Key` 发送。公共 `API_KEYS` 和查询参数 `key` 不能调用这些管理接口。
+如果需要自动化，可以使用 `/admin/accounts` 下的管理 API。请求必须使用配置的唯一 `ADMIN_KEY` 鉴权，可通过 `Authorization: Bearer <key>` 或 `X-Admin-Key` 发送。公共 `API_KEYS` 和查询参数 `key` 不能调用这些管理接口。
 
 默认 Gemini 导入只接受裸 cookie 值：
 
@@ -337,7 +353,7 @@ curl -X POST "https://your-worker.example/admin/accounts" \
   -d '{"provider":"gemini","accounts":[{"__Secure-1PSID":"<仅值>","__Secure-1PSIDTS":"<仅值>","label":"primary"}]}'
 ```
 
-不要在两个 cookie 字段中提交完整 Cookie header、JSON cookie 导出、`access_token`、cookie 名称、等号或分号。重复导入会按照规范化 Cookie hash 跳过，返回已有的脱敏账号，并增加响应中的 `duplicates` 计数。如果 Cookie 刷新收敛到另一个账号已经占用的 hash，写回会被视为未变化的重复项，而不会因 D1 唯一约束错误导致刷新失败。列表响应使用 `limit` 和 `cursor` 分页，支持通过 `status`、`enabled`、`q`、`category`、`cooldown` 和 `source` 筛选，并且已经脱敏：只暴露 ID、row ID、hash/status 元数据和存在性标记，不返回原始 cookie、`SAPISID`、`SNlM0e`、`at` 或 session token。
+重复导入会被安全跳过。列表响应使用 `limit` 和 `cursor` 分页，支持通过 `status`、`enabled`、`q`、`category`、`cooldown` 和 `source` 筛选，并且只返回脱敏元数据。
 
 管理 API 还可以返回当前筛选条件下的聚合统计：
 
@@ -363,7 +379,7 @@ Refresh/check 响应包含 `checked`、`skipped`、`refreshed`、`unchanged`、`
 
 ## 认证
 
-当 `API_KEYS` 为空时，除 Cloudflare/Wrangler 基础设施外，所有路由都可被公开调用。任何共享部署都应至少设置一个 API key。
+当 `API_KEYS` 为空时，公开生成路由不需要客户端鉴权；管理路由仍然必须使用 `ADMIN_KEY`。任何共享部署都应至少设置一个 API key。
 
 `web2gem` 接受以下形式：
 
@@ -372,6 +388,18 @@ Refresh/check 响应包含 `checked`、`skipped`、`refreshed`、`unchanged`、`
 - `x-goog-api-key: <key>`
 
 健康检查路由 `GET /` 保持未认证，方便部署探针在没有 secrets 的情况下工作。
+
+## 常见问题
+
+| 现象 | 检查方式 |
+| --- | --- |
+| 返回 `gemini_account_pool_required` | 缺少 `GEMINI_DB`。为 Worker 添加 D1 binding，或为 Docker 同时填写三个 D1 凭据。 |
+| 返回 `no_available_gemini_account` | 打开 `/admin`，导入并启用账号，检查账号是否处于冷却状态或需要更新凭据。 |
+| 返回 `invalid_runtime_config` | 检查环境变量：boolean 只能是 `true`/`false`，整数必须在范围内，`ADMIN_KEY` 必须是单个非占位字符串。 |
+| 管理页面返回 401 | 确认 WebUI 输入值与 `ADMIN_KEY` 一致；公共 `API_KEYS` 不能授权管理操作。 |
+| Docker 在监听端口前退出 | 同时配置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`，再查看容器日志中的脱敏启动错误。 |
+| Gemini 返回空内容 | 检查 `GEMINI_BL` 是否仍与当前 Gemini Web 前端一致。如果 Cloudflare 出口受限，配置兼容的 `GEMINI_ORIGIN`。 |
+| 图片编辑请求被拒绝 | 使用内联 base64/data URL 或 multipart 图片数据；服务不会抓取远程 `http://`、`https://` 图片 URL。 |
 
 ## 开发
 
