@@ -17,15 +17,18 @@ import {
 } from "./logic";
 import {
 	accountStats,
-	actionBusy,
 	adminKey,
 	accounts,
+	batchBusy,
 	categoryFilter,
+	confirmationDraft,
 	cooldownFilter,
 	cursorStack,
+	editBusy,
 	editDraft,
 	enabledFilter,
 	importBatch,
+	importBusy,
 	importLabel,
 	importPsid,
 	importPsidts,
@@ -37,6 +40,7 @@ import {
 	nextCursor,
 	pageIndex,
 	query,
+	rowBusy,
 	selected,
 	sourceFilter,
 	statusFilter,
@@ -45,6 +49,7 @@ import {
 import type { AccountIdentifier, GeminiAccount } from "./types";
 
 let toastId = 0;
+let confirmationResolver: ((confirmed: boolean) => void) | null = null;
 
 export function showToast(message: string, kind?: "error"): void {
 	const id = ++toastId;
@@ -172,7 +177,7 @@ export async function loadAccounts(
 export async function submitImport(event: Event): Promise<void> {
 	event.preventDefault();
 	try {
-		actionBusy.value = "import";
+		importBusy.value = true;
 		const batch = parseBatchImport(importBatch.value);
 		const result =
 			batch.length > 1
@@ -201,26 +206,52 @@ export async function submitImport(event: Event): Promise<void> {
 			"error",
 		);
 	} finally {
-		actionBusy.value = "";
+		importBusy.value = false;
 	}
 }
+
+export function resolveConfirmation(confirmed: boolean): void {
+	const resolve = confirmationResolver;
+	confirmationResolver = null;
+	confirmationDraft.value = null;
+	resolve?.(confirmed);
+}
+
+function confirmDeletion(count: number, targetLabel: string): Promise<boolean> {
+	resolveConfirmation(false);
+	confirmationDraft.value = { action: "delete", count, targetLabel };
+	return new Promise((resolve) => {
+		confirmationResolver = resolve;
+	});
+}
+
+type RunActionOptions = {
+	targetLabel?: string;
+	scope?: "batch" | "row";
+};
 
 export async function runAction(
 	action: string,
 	identifiers: AccountIdentifier[],
-	targetLabel = "selected account(s)",
+	options: RunActionOptions = {},
 ): Promise<void> {
 	if (!identifiers.length) {
 		showToast("Select at least one account", "error");
 		return;
 	}
-	if (
-		action === "delete" &&
-		!window.confirm(`Delete ${identifiers.length} ${targetLabel}?`)
-	)
-		return;
+	const targetLabel = options.targetLabel || "selected account(s)";
+	if (action === "delete") {
+		const confirmed = await confirmDeletion(identifiers.length, targetLabel);
+		if (!confirmed) return;
+	}
+	const keys = identifiers.map((item) => item.id);
+	const rowScoped = options.scope === "row" && keys.length === 1;
 	try {
-		actionBusy.value = action;
+		if (rowScoped) {
+			rowBusy.value = { ...rowBusy.value, [keys[0] || ""]: action };
+		} else {
+			batchBusy.value = action;
+		}
 		const result = await runAccountAction(adminKey.value, action, identifiers);
 		lastDiagnostics.value = result;
 		showToast(
@@ -234,7 +265,13 @@ export async function runAction(
 			"error",
 		);
 	} finally {
-		actionBusy.value = "";
+		if (rowScoped) {
+			const next = { ...rowBusy.value };
+			delete next[keys[0] || ""];
+			rowBusy.value = next;
+		} else {
+			batchBusy.value = "";
+		}
 	}
 }
 
@@ -250,6 +287,7 @@ export async function submitEdit(event: Event): Promise<void> {
 		return;
 	}
 	try {
+		editBusy.value = true;
 		const result = await updateAccount(adminKey.value, {
 			...identifier(account),
 			label: draft.label.trim() || null,
@@ -267,6 +305,8 @@ export async function submitEdit(event: Event): Promise<void> {
 			error instanceof Error ? error.message : "Update failed",
 			"error",
 		);
+	} finally {
+		editBusy.value = false;
 	}
 }
 

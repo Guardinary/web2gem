@@ -834,6 +834,10 @@ export const cases = [
 			assert.match(html, /stats\?/);
 			assert.match(html, /duplicates/);
 			assert.match(html, /Delete loaded/);
+			assert.match(html, /More account details/);
+			assert.match(html, /Delete account\?/);
+			assert.match(html, /data-dialog-initial/);
+			assert.doesNotMatch(html, /window\.confirm/);
 			assert.doesNotMatch(html, /Delete filtered/);
 			assert.match(html, /success_count/);
 			assert.match(html, /failure_count/);
@@ -895,6 +899,21 @@ export const cases = [
 			};
 			assert.deepEqual(mod.identifier(account), { id: "account-a" });
 			assert.equal(mod.identifierKey(account), "account-a");
+			assert.equal(mod.accountDisplayName(account), 'A "quoted" account');
+			assert.equal(mod.accountBusyLabel("refresh"), "Refresh in progress");
+			assert.deepEqual(
+				mod.destructiveConfirmationText(2, "selected accounts"),
+				{
+					title: "Delete 2 accounts?",
+					description:
+						"This permanently deletes 2 selected accounts. This action cannot be undone.",
+					confirmLabel: "Delete 2 accounts",
+				},
+			);
+			assert.equal(
+				mod.destructiveConfirmationText(1, "loaded account(s)").description,
+				"This permanently deletes 1 loaded account. This action cannot be undone.",
+			);
 			assert.equal(mod.sessionLabel(account), "cookie / sapisid");
 			assert.equal(mod.isRefreshable(account), true);
 			assert.equal(mod.isCooling(account, 1000), true);

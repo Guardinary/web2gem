@@ -83,6 +83,15 @@ button:disabled {
 .danger:hover:not(:disabled) {
 	background: var(--danger-bg);
 }
+.danger-solid {
+	background: var(--danger);
+	border-color: var(--danger);
+	color: white;
+}
+.danger-solid:hover:not(:disabled) {
+	background: #8f1c13;
+	border-color: #8f1c13;
+}
 input,
 select,
 textarea {
@@ -348,11 +357,127 @@ tr:hover td {
 	display: inline-flex;
 	gap: 6px;
 }
-.cell-actions button {
+.cell-actions button,
+.account-actions button,
+.action-menu summary {
 	min-height: 32px;
 	border-radius: 11px;
 	padding: 0 9px;
 	font-size: 12px;
+}
+.account-actions {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 136px;
+}
+.action-menu {
+	position: relative;
+}
+.action-menu summary {
+	display: inline-flex;
+	align-items: center;
+	border: 1px solid var(--line);
+	background: rgba(255, 253, 248, 0.82);
+	cursor: pointer;
+	font-weight: 700;
+	list-style: none;
+}
+.action-menu summary::-webkit-details-marker {
+	display: none;
+}
+.action-menu-items {
+	position: static;
+	display: grid;
+	min-width: 132px;
+	gap: 5px;
+	margin-top: 6px;
+	border: 1px solid var(--line);
+	border-radius: 14px;
+	background: #fffdf8;
+	box-shadow: var(--shadow-lift);
+	padding: 7px;
+}
+.action-menu-items button {
+	width: 100%;
+	text-align: left;
+}
+.row-busy {
+	position: absolute;
+	top: calc(100% + 5px);
+	left: 0;
+	color: var(--muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+.account-cards {
+	display: none;
+}
+.account-card {
+	display: grid;
+	gap: 13px;
+	border-top: 1px solid var(--line);
+	padding: 16px;
+}
+.account-card[aria-busy="true"] {
+	background: var(--info-bg);
+}
+.account-card-head {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	align-items: start;
+	gap: 10px;
+}
+.account-select {
+	display: block;
+	padding-top: 2px;
+}
+.account-select input {
+	width: 20px;
+	min-height: 20px;
+}
+.account-card-badges {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.account-facts {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+	margin: 0;
+}
+.account-facts div {
+	min-width: 0;
+}
+.account-facts .wide {
+	grid-column: 1 / -1;
+}
+.account-facts dt {
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 800;
+	text-transform: uppercase;
+}
+.account-facts dd {
+	margin: 4px 0 0;
+	overflow-wrap: anywhere;
+}
+.account-details summary {
+	color: var(--primary);
+	cursor: pointer;
+	font-weight: 800;
+}
+.account-details .secondary {
+	margin-top: 12px;
+}
+.card-state {
+	display: none;
+	border-top: 1px solid var(--line);
+	padding: 38px 16px;
+	text-align: center;
+	color: var(--muted);
 }
 .empty,
 .loading {
@@ -413,6 +538,25 @@ tr:hover td {
 	font-size: 18px;
 	font-weight: 850;
 }
+.dialog-copy {
+	margin: 10px 0 0;
+	color: var(--muted);
+	line-height: 1.6;
+}
+.dialog-actions {
+	justify-content: flex-end;
+}
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
 .field-row {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
@@ -461,5 +605,29 @@ tr:hover td {
 	}
 	h1 {
 		font-size: 21px;
+	}
+	.panel-head,
+	.panel-body {
+		padding-left: 14px;
+		padding-right: 14px;
+	}
+	.pager {
+		justify-content: space-between;
+		font-size: 12px;
+	}
+	.dialog {
+		padding: 16px;
+	}
+}
+@media (max-width: 760px) {
+	.table-wrap {
+		display: none;
+	}
+	.account-cards,
+	.card-state {
+		display: grid;
+	}
+	.account-actions {
+		min-height: 38px;
 	}
 }

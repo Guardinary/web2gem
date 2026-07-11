@@ -27,6 +27,11 @@ export const categories = [
 ] as const;
 
 export type ToastItem = { id: number; message: string; kind?: "error" };
+export type ConfirmationDraft = {
+	action: "delete";
+	count: number;
+	targetLabel: string;
+};
 export type EditDraft = {
 	key: string;
 	label: string;
@@ -58,5 +63,9 @@ export const importPsidts = signal("");
 export const importBatch = signal("");
 export const keyStorageMode = signal<"session" | "local">("session");
 export const accountStats = signal<AccountStats | null>(null);
-export const actionBusy = signal("");
+export const importBusy = signal(false);
+export const editBusy = signal(false);
+export const batchBusy = signal("");
+export const rowBusy = signal<Record<string, string>>({});
+export const confirmationDraft = signal<ConfirmationDraft | null>(null);
 export const lastDiagnostics = signal<MutationResult | null>(null);

@@ -353,10 +353,10 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Admin auth header: `Authorization: Bearer <admin-key>`.
 - Gemini import payload: `{ provider: "gemini", "__Secure-1PSID": string, "__Secure-1PSIDTS": string, label?: string }`.
 - Mutation routes use `/admin/accounts/:id`; PATCH sends only mutable fields, while DELETE/refresh/check send no body.
-- `src/admin-ui/state.ts` owns shared Preact signals and UI draft types.
+- `src/admin-ui/state.ts` owns shared Preact signals and UI draft types, including separate page-loading, import, edit, batch, row-action, and destructive-confirmation state.
 - `src/admin-ui/logic.ts` owns browser-independent identifiers, validation, parsing, formatting, summaries, and sanitized CSV construction.
 - `src/admin-ui/actions.ts` owns browser storage, API calls, pagination transitions, destructive confirmation, downloads, and toast side effects.
-- `src/admin-ui/components.tsx` owns reusable metric, account-row, and edit-modal presentation; `app.tsx` remains the composition shell.
+- `src/admin-ui/components.tsx` owns reusable metric, desktop-row, mobile-card, action-menu, and dialog presentation; `app.tsx` remains the composition shell.
 
 ### 3. Contracts
 
@@ -371,6 +371,9 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Client-side metadata export may include sanitized account IDs, status/category, timestamps, counters, redacted errors, and source metadata. It must not export raw cookies, SAPISID values, session tokens, SQL bind values, or D1 API tokens.
 - Public API auth remains separate from admin auth. A public API key must not authorize UI-driven admin API mutations.
 - Browser-independent UI behavior must not read module-global signals or browser globals. Pass data (and time where determinism matters) into pure helpers, then keep signal/browser mutation in `actions.ts`.
+- Keep the wide account table for desktop inspection, but render account cards below the narrow-screen breakpoint. Cards must expose primary status, session health, counters, timing, and selection without horizontal scrolling; secondary source/error/timing metadata may use native disclosure.
+- Destructive actions must use the in-app confirmation state and dialog, not `window.confirm`. The dialog must identify the affected scope, receive initial focus, contain Tab navigation, close on Escape, and restore focus to the invoking control.
+- Page loading must remain distinct from mutations. Import, edit, batch, and row actions expose separate busy state; a row mutation disables and labels only that account's controls unless a broader operation genuinely requires a batch lock.
 
 ### 4. Validation & Error Matrix
 
@@ -384,6 +387,8 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Metadata export requested with no current rows -> no-op user error.
 - Batch import parser receives an empty string -> return no batch items so the single-account form remains authoritative; malformed non-empty rows -> safe client-side validation error.
 - Cursor pagination response with `nextCursor=null` -> disable the next-page control.
+- Delete requested for one row or a selected/loaded batch -> show a scoped confirmation dialog before the first API request; cancellation or Escape performs no mutation.
+- Row action in progress -> mark that account busy and keep unrelated account controls available; batch action in progress -> disable batch controls without presenting page loading.
 
 ### 5. Good/Base/Bad Cases
 
@@ -392,10 +397,12 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Good: import form submits only `provider`, `__Secure-1PSID`, `__Secure-1PSIDTS`, and optional display metadata.
 - Base: UI displays sanitized account status, enabled state, IDs, row IDs, timestamps, source metadata, and redacted error text from the v2 admin API response.
 - Base: UI may show refreshability, cooldown, success/failure counters, and category filters derived from sanitized admin fields.
+- Base: desktop uses the dense table while narrow screens use account cards with a `details` disclosure and compact primary/more action grouping.
 - Bad: serving a separate Next.js/React build for this Worker-only admin console.
 - Bad: using `/admin/accounts?admin_key=...`, `x-api-key` public auth, or full `Cookie: __Secure-1PSID=...` examples.
 - Bad: adding a Gemini TXT export that serializes raw cookie values through the browser UI.
 - Bad: components implementing their own cookie parsing, identifier selection, or CSV field list instead of using `logic.ts`.
+- Bad: native `window.confirm`, a 1680px-only mobile layout, or one global mutation flag that ambiguously disables every account row.
 - Bad: adding UI text or docs that reintroduce `GEMINI_COOKIE` or single-cookie fallback setup.
 
 ### 6. Tests Required
@@ -406,6 +413,7 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Unit or snapshot-style assertions should cover static UI controls for category/cooldown filters, pagination, safe metadata export, editing safe metadata, and success/failure counters.
 - Unit tests should cover value-only cookie validation, batch rows, stable account ID selection, deterministic relative time, mutation summaries, and CSV escaping/field allowlisting through the pure logic owner.
 - Unit tests should cover stable resource-path construction and aggregation of sanitized single-resource batch results.
+- Pure logic tests should cover confirmation copy, account display labels, and busy labels; generated-HTML assertions should cover mobile disclosure text, dialog focus markers, and absence of `window.confirm`.
 - Unit test admin list cursor pagination so `nextCursor` does not skip the first row on the next page.
 - Unit or grep-style assertions should verify the UI bundle does not contain `GEMINI_COOKIE`, raw cookie examples, SAPISID value examples, session-token examples, or query-parameter admin-key patterns.
 - Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke` after changing the UI route, static HTML, or Worker routing.

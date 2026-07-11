@@ -1,6 +1,15 @@
 import type { JSX } from "preact";
-import { openEdit, runAction, submitEdit } from "./actions";
+import { useEffect, useRef } from "preact/hooks";
 import {
+	openEdit,
+	resolveConfirmation,
+	runAction,
+	submitEdit,
+} from "./actions";
+import {
+	accountBusyLabel,
+	accountDisplayName,
+	destructiveConfirmationText,
 	formatTime,
 	identifier,
 	identifierKey,
@@ -12,13 +21,16 @@ import {
 } from "./logic";
 import {
 	accountStats,
-	actionBusy,
 	accounts,
+	confirmationDraft,
+	editBusy,
 	editDraft,
 	loading,
+	rowBusy,
 	selected,
 	statuses,
 } from "./state";
+import type { GeminiAccount } from "./types";
 
 export function MetricCards(): JSX.Element {
 	const stats = accountStats.value;
@@ -92,13 +104,85 @@ export function MetricCards(): JSX.Element {
 	);
 }
 
+function toggleSelected(account: GeminiAccount, checked: boolean): void {
+	const key = identifierKey(account);
+	const next = new Set(selected.value);
+	if (checked) next.add(key);
+	else next.delete(key);
+	selected.value = next;
+}
+
+function AccountActions({ account }: { account: GeminiAccount }): JSX.Element {
+	const key = identifierKey(account);
+	const enabled = Number(account.enabled) === 1;
+	const busy = rowBusy.value[key] || "";
+	const label = accountDisplayName(account);
+	const run = (action: string): void => {
+		void runAction(action, [identifier(account)], {
+			scope: "row",
+			targetLabel: `account “${label}”`,
+		});
+	};
+	return (
+		<div class="account-actions">
+			<button
+				type="button"
+				disabled={!!busy}
+				aria-label={`Check ${label}`}
+				onClick={() => run("check")}
+			>
+				{busy === "check" ? "Checking…" : "Check"}
+			</button>
+			<details class="action-menu">
+				<summary aria-label={`More actions for ${label}`}>More</summary>
+				<div class="action-menu-items">
+					<button
+						type="button"
+						disabled={!!busy}
+						onClick={() => openEdit(account)}
+					>
+						Edit
+					</button>
+					<button
+						type="button"
+						disabled={!!busy}
+						onClick={() => run("refresh")}
+					>
+						Refresh
+					</button>
+					<button
+						type="button"
+						disabled={!!busy}
+						onClick={() => run(enabled ? "disable" : "enable")}
+					>
+						{enabled ? "Disable" : "Enable"}
+					</button>
+					<button
+						type="button"
+						disabled={!!busy}
+						class="danger"
+						onClick={() => run("delete")}
+					>
+						Delete
+					</button>
+				</div>
+			</details>
+			{busy ? (
+				<span class="row-busy" role="status">
+					{accountBusyLabel(busy)}
+				</span>
+			) : null}
+		</div>
+	);
+}
+
 export function AccountRows(): JSX.Element {
 	const rows = accounts.value;
 	if (loading.value)
 		return (
 			<tr>
 				<td class="loading" colSpan={15}>
-					Loading accounts...
+					Loading accounts…
 				</td>
 			</tr>
 		);
@@ -115,44 +199,23 @@ export function AccountRows(): JSX.Element {
 			{rows.map((account) => {
 				const key = identifierKey(account);
 				const enabled = Number(account.enabled) === 1;
-				const refresh =
-					[
-						account.last_refresh_at_ms
-							? `ok ${relativeTime(account.last_refresh_at_ms)}`
-							: "",
-						account.last_refresh_attempt_at_ms
-							? `try ${relativeTime(account.last_refresh_attempt_at_ms)}`
-							: "",
-					]
-						.filter(Boolean)
-						.join(" / ") || "-";
+				const refresh = refreshSummary(account);
 				return (
-					<tr data-key={key} key={key}>
+					<tr data-key={key} key={key} aria-busy={!!rowBusy.value[key]}>
 						<td>
 							<input
 								type="checkbox"
+								aria-label={`Select ${accountDisplayName(account)}`}
 								checked={selected.value.has(key)}
-								onChange={(event) => {
-									const next = new Set(selected.value);
-									if ((event.currentTarget as HTMLInputElement).checked)
-										next.add(key);
-									else next.delete(key);
-									selected.value = next;
-								}}
+								onChange={(event) =>
+									toggleSelected(
+										account,
+										(event.currentTarget as HTMLInputElement).checked,
+									)
+								}
 							/>
 						</td>
-						<td>
-							<div class="row-main">
-								<div class="row-title">
-									{account.label ||
-										account.id ||
-										account.row_id ||
-										"Gemini account"}
-								</div>
-								<div class="row-sub">{account.id}</div>
-								<div class="row-sub">{account.row_id}</div>
-							</div>
-						</td>
+						<td>{accountIdentity(account)}</td>
 						<td>
 							<span class={`badge status-${account.status}`}>
 								{account.status}
@@ -167,16 +230,7 @@ export function AccountRows(): JSX.Element {
 						<td>
 							<span class="badge">{account.account_category || "-"}</span>
 						</td>
-						<td>
-							<div class="row-main">
-								<div class="row-sub nowrap">
-									{relativeTime(account.last_used_at_ms)}
-								</div>
-								<div class="row-sub nowrap">
-									{formatTime(account.last_used_at_ms)}
-								</div>
-							</div>
-						</td>
+						<td>{timeCell(account.last_used_at_ms)}</td>
 						<td>
 							<div class="row-main">
 								<div class="row-sub">{refresh}</div>
@@ -193,18 +247,7 @@ export function AccountRows(): JSX.Element {
 								{safeNumber(account.failure_count)}
 							</span>
 						</td>
-						<td>
-							<div class="row-main">
-								<div class="row-sub">
-									{isCooling(account)
-										? relativeTime(account.cooldown_until_ms)
-										: "-"}
-								</div>
-								<div class="row-sub nowrap">
-									{formatTime(account.cooldown_until_ms)}
-								</div>
-							</div>
-						</td>
+						<td>{timeCell(account.cooldown_until_ms, isCooling(account))}</td>
 						<td>
 							<div class="row-main">
 								<div class="row-sub">{account.last_error_code || "-"}</div>
@@ -222,52 +265,7 @@ export function AccountRows(): JSX.Element {
 							</div>
 						</td>
 						<td>
-							<div class="cell-actions">
-								<button
-									type="button"
-									disabled={!!actionBusy.value}
-									onClick={() => openEdit(account)}
-								>
-									Edit
-								</button>
-								<button
-									type="button"
-									disabled={!!actionBusy.value}
-									onClick={() =>
-										void runAction("refresh", [identifier(account)])
-									}
-								>
-									Refresh
-								</button>
-								<button
-									type="button"
-									disabled={!!actionBusy.value}
-									onClick={() => void runAction("check", [identifier(account)])}
-								>
-									Check
-								</button>
-								<button
-									type="button"
-									disabled={!!actionBusy.value}
-									onClick={() =>
-										void runAction(enabled ? "disable" : "enable", [
-											identifier(account),
-										])
-									}
-								>
-									{enabled ? "Disable" : "Enable"}
-								</button>
-								<button
-									type="button"
-									disabled={!!actionBusy.value}
-									class="danger"
-									onClick={() =>
-										void runAction("delete", [identifier(account)])
-									}
-								>
-									Delete
-								</button>
-							</div>
+							<AccountActions account={account} />
 						</td>
 					</tr>
 				);
@@ -276,9 +274,276 @@ export function AccountRows(): JSX.Element {
 	);
 }
 
+export function AccountCards(): JSX.Element {
+	if (loading.value)
+		return (
+			<div class="card-state" role="status">
+				Loading accounts…
+			</div>
+		);
+	if (!accounts.value.length)
+		return <div class="card-state">No accounts match the current filters.</div>;
+	return (
+		<div class="account-cards">
+			{accounts.value.map((account) => {
+				const key = identifierKey(account);
+				const enabled = Number(account.enabled) === 1;
+				return (
+					<article
+						class="account-card"
+						key={key}
+						aria-busy={!!rowBusy.value[key]}
+					>
+						<div class="account-card-head">
+							<label class="account-select">
+								<input
+									type="checkbox"
+									checked={selected.value.has(key)}
+									onChange={(event) =>
+										toggleSelected(
+											account,
+											(event.currentTarget as HTMLInputElement).checked,
+										)
+									}
+								/>
+								<span class="sr-only">
+									Select {accountDisplayName(account)}
+								</span>
+							</label>
+							{accountIdentity(account)}
+						</div>
+						<div class="account-card-badges">
+							<span class={`badge status-${account.status}`}>
+								{account.status}
+							</span>
+							<span class="badge">{enabled ? "enabled" : "disabled"}</span>
+							<span class="badge">{sessionLabel(account)}</span>
+						</div>
+						<dl class="account-facts">
+							<div>
+								<dt>Category</dt>
+								<dd>{account.account_category || "-"}</dd>
+							</div>
+							<div>
+								<dt>Last used</dt>
+								<dd>{relativeTime(account.last_used_at_ms)}</dd>
+							</div>
+							<div>
+								<dt>Outcome</dt>
+								<dd>
+									{safeNumber(account.success_count)} /{" "}
+									{safeNumber(account.failure_count)}
+								</dd>
+							</div>
+							<div>
+								<dt>Cooldown</dt>
+								<dd>
+									{isCooling(account)
+										? relativeTime(account.cooldown_until_ms)
+										: "-"}
+								</dd>
+							</div>
+						</dl>
+						<details class="account-details">
+							<summary>More account details</summary>
+							<dl class="account-facts secondary">
+								<div>
+									<dt>Refresh</dt>
+									<dd>{refreshSummary(account)}</dd>
+								</div>
+								<div>
+									<dt>Last success</dt>
+									<dd>{formatTime(account.last_success_at_ms)}</dd>
+								</div>
+								<div>
+									<dt>Last failure</dt>
+									<dd>{formatTime(account.last_failure_at_ms)}</dd>
+								</div>
+								<div>
+									<dt>Source</dt>
+									<dd>
+										{account.source_name ||
+											account.source_id ||
+											account.source ||
+											"-"}
+									</dd>
+								</div>
+								<div class="wide">
+									<dt>Last error</dt>
+									<dd>
+										{account.last_error_message_redacted ||
+											account.last_error_code ||
+											"-"}
+									</dd>
+								</div>
+							</dl>
+						</details>
+						<AccountActions account={account} />
+					</article>
+				);
+			})}
+		</div>
+	);
+}
+
+function accountIdentity(account: GeminiAccount): JSX.Element {
+	return (
+		<div class="row-main">
+			<div class="row-title">{accountDisplayName(account)}</div>
+			<div class="row-sub">{account.id}</div>
+			<div class="row-sub">{account.row_id}</div>
+		</div>
+	);
+}
+
+function refreshSummary(account: GeminiAccount): string {
+	return (
+		[
+			account.last_refresh_at_ms
+				? `ok ${relativeTime(account.last_refresh_at_ms)}`
+				: "",
+			account.last_refresh_attempt_at_ms
+				? `try ${relativeTime(account.last_refresh_attempt_at_ms)}`
+				: "",
+		]
+			.filter(Boolean)
+			.join(" / ") || "-"
+	);
+}
+
+function timeCell(value: number | null, showRelative = true): JSX.Element {
+	return (
+		<div class="row-main">
+			<div class="row-sub nowrap">
+				{showRelative ? relativeTime(value) : "-"}
+			</div>
+			<div class="row-sub nowrap">{formatTime(value)}</div>
+		</div>
+	);
+}
+
+type DialogSurfaceProps = {
+	labelledBy: string;
+	describedBy?: string;
+	onClose: () => void;
+	children: JSX.Element | JSX.Element[];
+};
+
+function DialogSurface({
+	labelledBy,
+	describedBy,
+	onClose,
+	children,
+}: DialogSurfaceProps): JSX.Element {
+	const dialogRef = useRef<HTMLDivElement>(null);
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
+	useEffect(() => {
+		const previous =
+			document.activeElement instanceof HTMLElement
+				? document.activeElement
+				: null;
+		const dialog = dialogRef.current;
+		const focusable = dialog ? dialogFocusable(dialog) : [];
+		const initial =
+			dialog?.querySelector<HTMLElement>("[data-dialog-initial]") ||
+			focusable[0];
+		initial?.focus();
+		const handleKeyDown = (event: KeyboardEvent): void => {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				onCloseRef.current();
+				return;
+			}
+			if (event.key !== "Tab" || !dialog) return;
+			const items = dialogFocusable(dialog);
+			if (!items.length) return;
+			const first = items[0];
+			const last = items[items.length - 1];
+			if (event.shiftKey && document.activeElement === first) {
+				event.preventDefault();
+				last?.focus();
+			} else if (!event.shiftKey && document.activeElement === last) {
+				event.preventDefault();
+				first?.focus();
+			}
+		};
+		document.addEventListener("keydown", handleKeyDown);
+		return () => {
+			document.removeEventListener("keydown", handleKeyDown);
+			previous?.focus();
+		};
+	}, []);
+	return (
+		<div class="modal open" aria-hidden="false">
+			<div
+				ref={dialogRef}
+				class="dialog"
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby={labelledBy}
+				aria-describedby={describedBy}
+			>
+				{children}
+			</div>
+		</div>
+	);
+}
+
+function dialogFocusable(dialog: HTMLElement): HTMLElement[] {
+	return [
+		...dialog.querySelectorAll<HTMLElement>(
+			"button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex='-1'])",
+		),
+	].filter((item) => !item.hasAttribute("hidden"));
+}
+
+export function ConfirmationModal(): JSX.Element | null {
+	const draft = confirmationDraft.value;
+	if (!draft) return null;
+	const copy = destructiveConfirmationText(draft.count, draft.targetLabel);
+	return (
+		<DialogSurface
+			labelledBy="confirm-title"
+			describedBy="confirm-description"
+			onClose={() => resolveConfirmation(false)}
+		>
+			<div class="dialog-head">
+				<div>
+					<div id="confirm-title" class="dialog-title">
+						{copy.title}
+					</div>
+					<p id="confirm-description" class="dialog-copy">
+						{copy.description}
+					</p>
+				</div>
+			</div>
+			<div class="actions dialog-actions">
+				<button
+					type="button"
+					class="danger danger-solid"
+					onClick={() => resolveConfirmation(true)}
+				>
+					{copy.confirmLabel}
+				</button>
+				<button
+					type="button"
+					data-dialog-initial
+					onClick={() => resolveConfirmation(false)}
+				>
+					Cancel
+				</button>
+			</div>
+		</DialogSurface>
+	);
+}
+
 export function EditModal(): JSX.Element | null {
 	const draft = editDraft.value;
 	if (!draft) return null;
+	const close = (): void => {
+		if (!editBusy.value) editDraft.value = null;
+	};
 	const update = (field: keyof typeof draft) => (event: Event) => {
 		editDraft.value = {
 			...draft,
@@ -287,102 +552,87 @@ export function EditModal(): JSX.Element | null {
 		};
 	};
 	return (
-		<div class="modal open" aria-hidden="false">
-			<div
-				class="dialog"
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby="edit-title"
-			>
-				<div class="dialog-head">
-					<div>
-						<div id="edit-title" class="dialog-title">
-							Edit account
-						</div>
-						<div class="help">{draft.key}</div>
+		<DialogSurface labelledBy="edit-title" onClose={close}>
+			<div class="dialog-head">
+				<div>
+					<div id="edit-title" class="dialog-title">
+						Edit account
 					</div>
-					<button
-						type="button"
-						onClick={() => {
-							editDraft.value = null;
-						}}
-					>
-						Close
+					<div class="help">{draft.key}</div>
+				</div>
+				<button type="button" disabled={editBusy.value} onClick={close}>
+					Close
+				</button>
+			</div>
+			<form
+				id="edit-form"
+				class="grid"
+				aria-busy={editBusy.value}
+				onSubmit={(event) => void submitEdit(event)}
+			>
+				<label>
+					Label
+					<input
+						data-dialog-initial
+						value={draft.label}
+						onInput={update("label")}
+						placeholder="Display label"
+					/>
+				</label>
+				<div class="field-row">
+					<label>
+						Status
+						<select value={draft.status} onChange={update("status")}>
+							{statuses.map((status) => (
+								<option key={status} value={status}>
+									{status}
+								</option>
+							))}
+						</select>
+					</label>
+					<label>
+						Enabled
+						<select value={draft.enabled} onChange={update("enabled")}>
+							<option value="true">Enabled</option>
+							<option value="false">Disabled</option>
+						</select>
+					</label>
+				</div>
+				<label>
+					State reason
+					<input
+						value={draft.stateReason}
+						onInput={update("stateReason")}
+						placeholder="Optional status note"
+					/>
+				</label>
+				<div class="field-row">
+					<label>
+						Source
+						<input
+							value={draft.source}
+							onInput={update("source")}
+							placeholder="Optional source"
+						/>
+					</label>
+					<label>
+						Source name
+						<input
+							value={draft.sourceName}
+							onInput={update("sourceName")}
+							placeholder="Optional source name"
+						/>
+					</label>
+				</div>
+				<div class="actions">
+					<button class="primary" type="submit" disabled={editBusy.value}>
+						{editBusy.value ? "Saving…" : "Save changes"}
+					</button>
+					<button type="button" disabled={editBusy.value} onClick={close}>
+						Cancel
 					</button>
 				</div>
-				<form
-					id="edit-form"
-					class="grid"
-					onSubmit={(event) => void submitEdit(event)}
-				>
-					<label>
-						Label
-						<input
-							value={draft.label}
-							onInput={update("label")}
-							placeholder="Display label"
-						/>
-					</label>
-					<div class="field-row">
-						<label>
-							Status
-							<select value={draft.status} onChange={update("status")}>
-								{statuses.map((status) => (
-									<option key={status} value={status}>
-										{status}
-									</option>
-								))}
-							</select>
-						</label>
-						<label>
-							Enabled
-							<select value={draft.enabled} onChange={update("enabled")}>
-								<option value="true">Enabled</option>
-								<option value="false">Disabled</option>
-							</select>
-						</label>
-					</div>
-					<label>
-						State reason
-						<input
-							value={draft.stateReason}
-							onInput={update("stateReason")}
-							placeholder="Optional status note"
-						/>
-					</label>
-					<div class="field-row">
-						<label>
-							Source
-							<input
-								value={draft.source}
-								onInput={update("source")}
-								placeholder="Optional source"
-							/>
-						</label>
-						<label>
-							Source name
-							<input
-								value={draft.sourceName}
-								onInput={update("sourceName")}
-								placeholder="Optional source name"
-							/>
-						</label>
-					</div>
-					<div class="actions">
-						<button class="primary" type="submit">
-							Save changes
-						</button>
-						<button
-							type="button"
-							onClick={() => {
-								editDraft.value = null;
-							}}
-						>
-							Cancel
-						</button>
-					</div>
-				</form>
-			</div>
-		</div>
+			</form>
+		</DialogSurface>
 	);
 }

@@ -1,7 +1,10 @@
 // Internal compatibility surface used by local unit and smoke tests.
 export { handleApplicationRequest } from "./app";
 export {
+	accountBusyLabel,
+	accountDisplayName,
 	accountResourcePath,
+	destructiveConfirmationText,
 	identifier,
 	identifierKey,
 	isCooling,

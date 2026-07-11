@@ -41,6 +41,28 @@ export function identifierKey(account: GeminiAccount): string {
 	return account.id;
 }
 
+export function accountDisplayName(account: GeminiAccount): string {
+	return account.label || account.id || account.row_id || "Gemini account";
+}
+
+export function accountBusyLabel(action: string): string {
+	if (!action) return "";
+	return `${action.slice(0, 1).toUpperCase()}${action.slice(1)} in progress`;
+}
+
+export function destructiveConfirmationText(
+	count: number,
+	targetLabel: string,
+): { title: string; description: string; confirmLabel: string } {
+	const rawScope = targetLabel.trim() || "selected account(s)";
+	const scope = rawScope.replace("(s)", count === 1 ? "" : "s");
+	return {
+		title: count === 1 ? "Delete account?" : `Delete ${count} accounts?`,
+		description: `This permanently deletes ${count} ${scope}. This action cannot be undone.`,
+		confirmLabel: count === 1 ? "Delete account" : `Delete ${count} accounts`,
+	};
+}
+
 export function accountResourcePath(
 	id: string,
 	action?: "refresh" | "check",

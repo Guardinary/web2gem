@@ -11,17 +11,24 @@ import {
 	selectedIdentifiers,
 	submitImport,
 } from "./actions";
-import { AccountRows, EditModal, MetricCards } from "./components";
+import {
+	AccountCards,
+	AccountRows,
+	ConfirmationModal,
+	EditModal,
+	MetricCards,
+} from "./components";
 import { identifier, identifierKey, resultSummary } from "./logic";
 import {
-	actionBusy,
 	adminKey,
 	accounts,
+	batchBusy,
 	categories,
 	categoryFilter,
 	cooldownFilter,
 	enabledFilter,
 	importBatch,
+	importBusy,
 	importLabel,
 	importPsid,
 	importPsidts,
@@ -49,7 +56,10 @@ export function App(): JSX.Element {
 		selected.value = new Set([...selected.value, ...rows.map(identifierKey)]);
 	};
 	const deleteVisible = (): void => {
-		void runAction("delete", rows.map(identifier), "loaded account(s)");
+		void runAction("delete", rows.map(identifier), {
+			scope: "batch",
+			targetLabel: "loaded account(s)",
+		});
 	};
 
 	return (
@@ -102,7 +112,7 @@ export function App(): JSX.Element {
 						</select>
 					</label>
 					<button class="primary" type="submit" disabled={loading.value}>
-						Save
+						{loading.value ? "Loading…" : "Save"}
 					</button>
 					<button type="button" onClick={clearAdminKey}>
 						Clear
@@ -179,9 +189,9 @@ export function App(): JSX.Element {
 									<button
 										class="primary"
 										type="submit"
-										disabled={!!actionBusy.value}
+										disabled={importBusy.value}
 									>
-										{actionBusy.value === "import" ? "Importing" : "Import"}
+										{importBusy.value ? "Importing…" : "Import"}
 									</button>
 									<button type="button" onClick={resetImport}>
 										Reset
@@ -200,30 +210,34 @@ export function App(): JSX.Element {
 								{["refresh", "check", "enable", "disable"].map((action) => (
 									<button
 										type="button"
-										disabled={!!actionBusy.value}
+										disabled={!!batchBusy.value}
 										key={action}
 										onClick={() =>
-											void runAction(action, selectedIdentifiers())
+											void runAction(action, selectedIdentifiers(), {
+												scope: "batch",
+											})
 										}
 									>
-										{actionBusy.value === action
-											? "Working"
+										{batchBusy.value === action
+											? `${action.slice(0, 1).toUpperCase() + action.slice(1)}…`
 											: action.slice(0, 1).toUpperCase() + action.slice(1)}
 									</button>
 								))}
 								<button
 									type="button"
-									disabled={!!actionBusy.value}
+									disabled={!!batchBusy.value}
 									class="danger"
 									onClick={() =>
-										void runAction("delete", selectedIdentifiers())
+										void runAction("delete", selectedIdentifiers(), {
+											scope: "batch",
+										})
 									}
 								>
 									Delete
 								</button>
 								<button
 									type="button"
-									disabled={!!actionBusy.value}
+									disabled={!!batchBusy.value}
 									class="danger"
 									onClick={deleteVisible}
 								>
@@ -402,6 +416,7 @@ export function App(): JSX.Element {
 								</tbody>
 							</table>
 						</div>
+						<AccountCards />
 						<div class="pager">
 							<button
 								type="button"
@@ -427,10 +442,12 @@ export function App(): JSX.Element {
 				</section>
 			</section>
 			<EditModal />
-			<div class="toast" aria-live="polite" aria-atomic="true">
+			<ConfirmationModal />
+			<div class="toast" aria-atomic="true">
 				{toastItems.value.map((item) => (
 					<div
 						key={item.id}
+						role={item.kind === "error" ? "alert" : "status"}
 						class={`toast-item${item.kind === "error" ? " error" : ""}`}
 					>
 						{item.message}
