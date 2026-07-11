@@ -44,6 +44,9 @@ jobs:
       - name: Required - Static Analysis
         run: pnpm check:static
 
+      - name: Required - Worker Binding Types
+        run: pnpm check:worker-types
+
       - name: Required - TypeScript
         run: pnpm typecheck
 

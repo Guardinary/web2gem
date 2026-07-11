@@ -240,6 +240,73 @@ const bundlePath = resolve(
 const mod = await import(pathToFileURL(bundlePath).href);
 ```
 
+## Scenario: Generated Worker Binding Types
+
+### 1. Scope / Trigger
+
+Use this contract when adding, removing, or renaming Wrangler vars, secrets, or Cloudflare bindings, or when changing the Worker entrypoint environment type.
+
+### 2. Signatures
+
+- Generated file: `worker-configuration.d.ts`.
+- Generated environment interface: `WorkerBindings`.
+- Generate command: `pnpm worker:types`.
+- CI check command: `pnpm check:worker-types`.
+- Worker entrypoint: `src/index.ts` satisfies `ExportedHandler<WorkerBindings>`.
+- Application boundary: `WorkerEnv = Partial<Record<keyof WorkerBindings | "ADMIN_KEYS", unknown>>`.
+
+### 3. Contracts
+
+- `wrangler.jsonc` and `.dev.vars.example` are the generation inputs. The example secret file contributes secret names only; it must not contain real credentials.
+- Generation uses `--include-runtime false` because runtime types continue to come from the pinned `@cloudflare/workers-types` dependency.
+- Generation uses `--strict-vars false` so runtime-config parsers may validate deployment-provided values rather than accepting only current literal defaults.
+- `WorkerBindings` types the Cloudflare entrypoint and known binding names.
+- `WorkerEnv` intentionally keeps binding values as `unknown` because Docker, tests, and deployment adapters may supply string forms that `getConfig` must validate strictly.
+- Removed `ADMIN_KEYS` remains an explicit compatibility-error key even though Wrangler no longer generates it.
+- Do not hand-edit the generated declaration; rerun `pnpm worker:types`.
+
+### 4. Validation & Error Matrix
+
+- Wrangler config or secret-template key changes without regeneration -> `pnpm check:worker-types` fails.
+- `CONFIG_ENV_KEYS` contains a key absent from generated bindings -> unit test failure naming the key.
+- `GEMINI_DB` binding disappears or changes type -> generated-type/unit/typecheck failure.
+- Invalid runtime value has a generated binding name -> `getConfig` still throws `RuntimeConfigError`; generated types do not replace runtime validation.
+- Removed `ADMIN_KEYS` is non-empty -> explicit runtime configuration failure, not silent omission.
+
+### 5. Good/Base/Bad Cases
+
+- Good: update `wrangler.jsonc` or `.dev.vars.example`, run `pnpm worker:types`, and commit the generated diff with the config change.
+- Base: the Worker entrypoint is statically checked while Docker continues passing values through the unknown-valued application boundary.
+- Bad: replace runtime parsing with casts from `WorkerBindings`, or broaden the application environment back to `Record<string, unknown>`.
+- Bad: generate full runtime types and remove the existing Workers types dependency as an unrelated change.
+
+### 6. Tests Required
+
+- `pnpm check:worker-types` in the required Ubuntu quality job.
+- Unit test generated declarations contain `WorkerBindings`, `GEMINI_DB: D1Database`, and every `CONFIG_ENV_KEYS` key.
+- `pnpm typecheck` to verify the Worker entrypoint and application boundary remain compatible.
+- `pnpm unit`, `pnpm coverage:ci`, and `pnpm smoke` after binding-type changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+export type WorkerEnv = Record<string, unknown>;
+export default { fetch: handleApplicationRequest };
+```
+
+#### Correct
+
+```typescript
+type WorkerEnvKey = keyof WorkerBindings | "ADMIN_KEYS";
+export type WorkerEnv = Partial<Record<WorkerEnvKey, unknown>>;
+
+export default {
+  fetch: handleApplicationRequest,
+} satisfies ExportedHandler<WorkerBindings>;
+```
+
 ---
 
 ## Validation

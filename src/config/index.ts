@@ -1,6 +1,8 @@
 export const VERSION = "2.0.0-worker";
 
-export type WorkerEnv = Record<string, unknown>;
+type WorkerEnvKey = keyof WorkerBindings | "ADMIN_KEYS";
+
+export type WorkerEnv = Partial<Record<WorkerEnvKey, unknown>>;
 
 export type GeminiAccountRuntimeContext = {
 	accountId: string;
@@ -303,7 +305,11 @@ export function assertRuntimeConfig(env: WorkerEnv = DEFAULT_ENV): void {
 	void getConfig(env);
 }
 
-function configValue(env: WorkerEnv, key: string, fallback: unknown): unknown {
+function configValue(
+	env: WorkerEnv,
+	key: WorkerEnvKey,
+	fallback: unknown,
+): unknown {
 	const value = env[key];
 	return value === undefined || value === null || value === ""
 		? fallback

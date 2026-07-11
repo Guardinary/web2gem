@@ -430,6 +430,20 @@ export const cases = [
 		},
 	],
 	[
+		"keeps generated Worker binding types aligned with runtime config",
+		async () => {
+			const generatedTypes = await readFile(
+				"worker-configuration.d.ts",
+				"utf8",
+			);
+			assert.match(generatedTypes, /interface WorkerBindings/);
+			assert.match(generatedTypes, /GEMINI_DB:\s*D1Database/);
+			for (const key of mod.CONFIG_ENV_KEYS) {
+				assert.match(generatedTypes, new RegExp(`\\b${key}:`), key);
+			}
+		},
+	],
+	[
 		"parses JSONC config syntax without treating URL-like strings as comments",
 		() => {
 			const wrangler = parseJsoncObject(`{
