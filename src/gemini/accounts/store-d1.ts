@@ -19,6 +19,8 @@ import {
 import type {
 	D1DatabaseLike,
 	D1Result,
+	GeminiAccountBulkCreateEntry,
+	GeminiAccountBulkCreateResult,
 	GeminiAccountCreateInput,
 	GeminiAccountCategory,
 	GeminiAccountAdminStats,
@@ -36,6 +38,26 @@ import type {
 } from "./types";
 
 const POOL_VERSION_KEY = "pool_version";
+const MAX_D1_BOUND_PARAMETERS = 100;
+const ACCOUNT_INSERT_SQL = `
+      INSERT INTO gemini_accounts (
+        id, label, enabled, status, state_reason, row_id, cookie_header, cookie_hash,
+        sapisid, session_token, session_token_hash, session_id, language, push_id,
+        last_token_bootstrap_at_ms, secure_1psid_hash, secure_1psidts_hash,
+        account_category, account_status_code, account_status_description, user_agent,
+        gemini_origin, source, source_id, source_name, imported_at_ms, cooldown_until_ms,
+        last_used_at_ms, last_success_at_ms, last_failure_at_ms, last_refresh_at_ms,
+        last_refresh_attempt_at_ms, last_error_code, last_error_message_redacted,
+        last_upstream_status, last_capability_probe_at_ms, capability_summary_json,
+        success_count, failure_count, created_at_ms, updated_at_ms
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      )
+`;
+const ACCOUNT_INSERT_IGNORE_COOKIE_CONFLICT_SQL = `${ACCOUNT_INSERT_SQL}
+      ON CONFLICT(cookie_hash) DO NOTHING
+`;
 const SELECTABLE_STATUSES = [
 	"active",
 	"transient_failed",
@@ -202,26 +224,48 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 	): Promise<GeminiAccountPublic> {
 		const row = await buildAccountInsertRow(input);
 		await this.db
-			.prepare(`
-      INSERT INTO gemini_accounts (
-        id, label, enabled, status, state_reason, row_id, cookie_header, cookie_hash,
-        sapisid, session_token, session_token_hash, session_id, language, push_id,
-        last_token_bootstrap_at_ms, secure_1psid_hash, secure_1psidts_hash,
-        account_category, account_status_code, account_status_description, user_agent,
-        gemini_origin, source, source_id, source_name, imported_at_ms, cooldown_until_ms,
-        last_used_at_ms, last_success_at_ms, last_failure_at_ms, last_refresh_at_ms,
-        last_refresh_attempt_at_ms, last_error_code, last_error_message_redacted,
-        last_upstream_status, last_capability_probe_at_ms, capability_summary_json,
-        success_count, failure_count, created_at_ms, updated_at_ms
-      ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-      )
-    `)
+			.prepare(ACCOUNT_INSERT_SQL)
 			.bind(...accountRowValues(row))
 			.run();
 		await this.bumpPoolVersion(input.nowMs);
 		return sanitizeGeminiAccount(row);
+	}
+
+	async createAccountsBulk(
+		entries: GeminiAccountBulkCreateEntry[],
+	): Promise<GeminiAccountBulkCreateResult> {
+		if (!entries.length)
+			return {
+				itemsByCookieHash: new Map(),
+				addedCookieHashes: new Set(),
+			};
+		const rows = await Promise.all(
+			entries.map((entry) =>
+				buildAccountInsertRow(entry.input, entry.cookieHash),
+			),
+		);
+		const statements = rows.map((row) =>
+			this.db
+				.prepare(ACCOUNT_INSERT_IGNORE_COOKIE_CONFLICT_SQL)
+				.bind(...accountRowValues(row)),
+		);
+		if (this.db.batch) {
+			await this.db.batch(statements);
+		} else {
+			for (const statement of statements) await statement.run();
+		}
+
+		const itemsByCookieHash = await this.findAccountsByCookieHashes(
+			entries.map((entry) => entry.cookieHash),
+		);
+		const addedCookieHashes = new Set<string>();
+		for (const row of rows) {
+			if (itemsByCookieHash.get(row.cookie_hash)?.id === row.id)
+				addedCookieHashes.add(row.cookie_hash);
+		}
+		if (addedCookieHashes.size > 0)
+			await this.bumpPoolVersion(entries[0]?.input.nowMs ?? Date.now());
+		return { itemsByCookieHash, addedCookieHashes };
 	}
 
 	async updateAccount(
@@ -463,10 +507,41 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 			.bind(POOL_VERSION_KEY, String(nowMs), nowMs)
 			.run();
 	}
+
+	private async findAccountsByCookieHashes(
+		requestedCookieHashes: string[],
+	): Promise<Map<string, GeminiAccountPublic>> {
+		const items = new Map<string, GeminiAccountPublic>();
+		for (
+			let offset = 0;
+			offset < requestedCookieHashes.length;
+			offset += MAX_D1_BOUND_PARAMETERS
+		) {
+			const chunk = requestedCookieHashes.slice(
+				offset,
+				offset + MAX_D1_BOUND_PARAMETERS,
+			);
+			const placeholders = chunk.map(() => "?").join(", ");
+			const result = await this.db
+				.prepare(`
+          SELECT ${ADMIN_ACCOUNT_SELECT}
+          FROM gemini_accounts
+          WHERE cookie_hash IN (${placeholders})
+        `)
+				.bind(...chunk)
+				.all<GeminiAccountPublicSqlRow>();
+			for (const row of result.results || []) {
+				const item = publicRowFromSql(row);
+				items.set(item.cookie_hash, item);
+			}
+		}
+		return items;
+	}
 }
 
 async function buildAccountInsertRow(
 	input: GeminiAccountCreateInput,
+	cookieHash?: string,
 ): Promise<GeminiAccountRow> {
 	const cookieHeader = normalizeGeminiCookieHeader(input.cookieHeader);
 	const hashes = await cookieHashes(cookieHeader);
@@ -480,7 +555,7 @@ async function buildAccountInsertRow(
 		state_reason: null,
 		row_id: await accountRowId({ cookieHeader, accountId: id }),
 		cookie_header: cookieHeader,
-		cookie_hash: await sha256Hex(cookieHeader),
+		cookie_hash: cookieHash || (await sha256Hex(cookieHeader)),
 		sapisid: input.sapisid || null,
 		session_token: input.sessionToken || null,
 		session_token_hash: sessionTokenHash,

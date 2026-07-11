@@ -185,6 +185,16 @@ export type GeminiAccountCreateInput = {
 	nowMs: number;
 };
 
+export type GeminiAccountBulkCreateEntry = {
+	cookieHash: string;
+	input: GeminiAccountCreateInput;
+};
+
+export type GeminiAccountBulkCreateResult = {
+	itemsByCookieHash: ReadonlyMap<string, GeminiAccountPublic>;
+	addedCookieHashes: ReadonlySet<string>;
+};
+
 export type GeminiAccountUpdate = {
 	label?: string | null;
 	enabled?: boolean;
@@ -275,6 +285,9 @@ export type GeminiAccountAdminStore = {
 		rowId?: string;
 	}): Promise<string | null>;
 	createAccount(input: GeminiAccountCreateInput): Promise<GeminiAccountPublic>;
+	createAccountsBulk?(
+		entries: GeminiAccountBulkCreateEntry[],
+	): Promise<GeminiAccountBulkCreateResult>;
 	updateAccount(
 		accountId: string,
 		update: GeminiAccountUpdate,

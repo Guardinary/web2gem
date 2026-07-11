@@ -8,6 +8,7 @@ import {
 	normalizeCreateAccounts,
 	normalizeListFilter,
 	updateFromBody,
+	WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS,
 } from "./admin-input";
 import type { GeminiAccountAdminFilterInput } from "./admin-input";
 import { normalizeGeminiCookieHeader, sha256Hex } from "./normalize";
@@ -16,6 +17,8 @@ import { d1BindingFromEnv } from "./runtime";
 import { D1GeminiAccountStore, isD1UniqueConstraintError } from "./store-d1";
 import type {
 	D1DatabaseLike,
+	GeminiAccountBulkCreateEntry,
+	GeminiAccountBulkCreateResult,
 	GeminiAccountAdminFilter,
 	GeminiAccountAdminStats,
 	GeminiAccountAdminStore,
@@ -75,6 +78,7 @@ export type GeminiAccountAdminServiceOptions = {
 	cfg: RuntimeConfig;
 	nowMs?: () => number;
 	rotateCookie?: GeminiAccountCookieRotator;
+	maxCreateAccounts?: number | null;
 };
 
 type GeminiAccountAdminFactoryOptions = Partial<
@@ -90,6 +94,7 @@ export class GeminiAccountAdminService {
 	private readonly cfg: RuntimeConfig;
 	private readonly nowMs: () => number;
 	private readonly pool: AccountPoolService;
+	private readonly maxCreateAccounts: number | null;
 
 	constructor(options: GeminiAccountAdminServiceOptions) {
 		const adminStore = options.adminStore || options.store;
@@ -100,6 +105,12 @@ export class GeminiAccountAdminService {
 		this.runtimeStore = runtimeStore;
 		this.cfg = options.cfg;
 		this.nowMs = options.nowMs || Date.now;
+		this.maxCreateAccounts =
+			options.maxCreateAccounts === undefined
+				? options.cfg.runtime_profile === "docker"
+					? null
+					: WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS
+				: options.maxCreateAccounts;
 		const poolOptions = {
 			nowMs: this.nowMs,
 			snapshotTtlMs: 1,
@@ -136,37 +147,40 @@ export class GeminiAccountAdminService {
 	}
 
 	async create(body: UnknownRecord): Promise<GeminiAccountCreateResult> {
-		const accounts = normalizeCreateAccounts(body);
+		const accounts = normalizeCreateAccounts(body, this.maxCreateAccounts);
+		const nowMs = this.nowMs();
+		const uniqueEntries = new Map<string, GeminiAccountBulkCreateEntry>();
+		const orderedCookieHashes: string[] = [];
+		for (const account of accounts) {
+			const input = createInputFromAccount(account, nowMs);
+			const cookieHash = await sha256Hex(
+				normalizeGeminiCookieHeader(input.cookieHeader),
+			);
+			orderedCookieHashes.push(cookieHash);
+			if (!uniqueEntries.has(cookieHash))
+				uniqueEntries.set(cookieHash, { cookieHash, input });
+		}
+
+		const entries = Array.from(uniqueEntries.values());
+		const stored = this.adminStore.createAccountsBulk
+			? await this.adminStore.createAccountsBulk(entries)
+			: await createAccountsCompatibility(this.adminStore, entries);
 		let added = 0;
 		let skipped = 0;
 		let duplicates = 0;
 		const items: GeminiAccountPublic[] = [];
-		for (const account of accounts) {
-			const input = createInputFromAccount(account, this.nowMs());
-			const cookieHash = await sha256Hex(
-				normalizeGeminiCookieHeader(input.cookieHeader),
-			);
-			const existing =
-				await this.adminStore.findAccountByCookieHash(cookieHash);
-			if (existing) {
-				items.push(existing);
-				skipped += 1;
-				duplicates += 1;
-				continue;
-			}
-			try {
-				const created = await this.adminStore.createAccount(input);
-				items.push(created);
+		const seen = new Set<string>();
+		for (const cookieHash of orderedCookieHashes) {
+			const item = stored.itemsByCookieHash.get(cookieHash);
+			if (!item) throw new Error("account import result is incomplete");
+			items.push(item);
+			if (stored.addedCookieHashes.has(cookieHash) && !seen.has(cookieHash)) {
 				added += 1;
-			} catch (error) {
-				if (!isD1UniqueConstraintError(error)) throw error;
-				const duplicate =
-					await this.adminStore.findAccountByCookieHash(cookieHash);
-				if (!duplicate) throw error;
-				items.push(duplicate);
+			} else {
 				skipped += 1;
 				duplicates += 1;
 			}
+			seen.add(cookieHash);
 		}
 		return { added, skipped, duplicates, items };
 	}
@@ -263,6 +277,32 @@ export class GeminiAccountAdminService {
 			};
 		}
 	}
+}
+
+async function createAccountsCompatibility(
+	store: GeminiAccountAdminStore,
+	entries: GeminiAccountBulkCreateEntry[],
+): Promise<GeminiAccountBulkCreateResult> {
+	const itemsByCookieHash = new Map<string, GeminiAccountPublic>();
+	const addedCookieHashes = new Set<string>();
+	for (const entry of entries) {
+		const existing = await store.findAccountByCookieHash(entry.cookieHash);
+		if (existing) {
+			itemsByCookieHash.set(entry.cookieHash, existing);
+			continue;
+		}
+		try {
+			const created = await store.createAccount(entry.input);
+			itemsByCookieHash.set(entry.cookieHash, created);
+			addedCookieHashes.add(entry.cookieHash);
+		} catch (error) {
+			if (!isD1UniqueConstraintError(error)) throw error;
+			const duplicate = await store.findAccountByCookieHash(entry.cookieHash);
+			if (!duplicate) throw error;
+			itemsByCookieHash.set(entry.cookieHash, duplicate);
+		}
+	}
+	return { itemsByCookieHash, addedCookieHashes };
 }
 
 export function createGeminiAccountAdminServiceFromEnv(

@@ -5,6 +5,7 @@ import {
 } from "../../scripts/d1-http-binding.mjs";
 import {
 	createDockerServer,
+	executionContext,
 	requestHeaders,
 	requestUrl,
 	resolveDockerEnv,
@@ -14,6 +15,12 @@ import { mod } from "./helpers.js";
 
 export const suiteName = "docker server";
 export const cases = [
+	[
+		"marks adapter execution contexts as Docker runtime",
+		() => {
+			assert.equal(executionContext().runtimeProfile, "docker");
+		},
+	],
 	[
 		"normalizes raw Node headers and forwarded request URLs",
 		async () => {

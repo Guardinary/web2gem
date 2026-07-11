@@ -44,6 +44,7 @@ function firstForwardedHeaderValue(value) {
 export function executionContext() {
 	const pending = new Set();
 	return {
+		runtimeProfile: "docker",
 		waitUntil(promise) {
 			const p = Promise.resolve(promise).catch((err) => {
 				errorLine("waitUntil failed:", err);

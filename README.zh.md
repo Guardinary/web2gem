@@ -343,6 +343,8 @@ wrangler d1 execute <database-name> --file migrations/0001_gemini_accounts.sql -
 
 Docker 部署时，在 `.env` 中同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`。三者都存在时，`scripts/docker-server.mjs` 会注入一个基于 Cloudflare D1 HTTP API 的 D1 兼容 `GEMINI_DB` binding。只设置一部分时，启动会以配置错误失败。
 
+Worker 的账号导入每个管理请求最多接受 40 个账号，以确保原生 D1 工作量低于 Workers Free 的单次调用查询上限。导入更多账号时，内置 `/admin` 页面会先提交完整批次；仅当 Worker 返回稳定的数量上限错误后，页面才会自动按每批 40 个顺序重试并汇总结果。直接调用管理 API 的客户端仍需自行拆分请求。Docker 不应用此账号数量上限，因此页面的首次完整请求会保持为单次请求；Docker 导入仍受统一的 256 KiB 管理请求体限制。
+
 如果需要自动化，可以使用 `/admin/accounts` 下的管理 API。请求必须使用配置的唯一 `ADMIN_KEY` 鉴权，可通过 `Authorization: Bearer <key>` 或 `X-Admin-Key` 发送。公共 `API_KEYS` 和查询参数 `key` 不能调用这些管理接口。
 
 默认 Gemini 导入只接受裸 cookie 值：

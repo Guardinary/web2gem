@@ -8,6 +8,20 @@ import type {
 } from "./types";
 
 const API_PATH = "/admin/accounts";
+const WORKER_ACCOUNT_IMPORT_BATCH_SIZE = 40;
+const WORKER_ACCOUNT_IMPORT_LIMIT_CODE = "gemini_import_account_limit_exceeded";
+
+export class AdminApiError extends Error {
+	readonly status: number;
+	readonly code: string | null;
+
+	constructor(message: string, status: number, code: string | null) {
+		super(message);
+		this.name = "AdminApiError";
+		this.status = status;
+		this.code = code;
+	}
+}
 
 export type ListOptions = {
 	adminKey: string;
@@ -68,14 +82,31 @@ async function request(
 		? await response.json()
 		: await response.text();
 	if (!response.ok) {
-		const message =
-			body && typeof body === "object" && "error" in body
-				? (body.error as { message?: string; code?: string }).message ||
-					(body.error as { code?: string }).code
-				: "";
-		throw new Error(message || `Request failed with status ${response.status}`);
+		const error = responseError(body);
+		throw new AdminApiError(
+			error.message || `Request failed with status ${response.status}`,
+			response.status,
+			error.code,
+		);
 	}
 	return body;
+}
+
+function responseError(body: unknown): {
+	message: string;
+	code: string | null;
+} {
+	if (!body || typeof body !== "object" || !("error" in body))
+		return { message: "", code: null };
+	const error = body.error;
+	if (!error || typeof error !== "object") return { message: "", code: null };
+	const message =
+		"message" in error && typeof error.message === "string"
+			? error.message
+			: "";
+	const code =
+		"code" in error && typeof error.code === "string" ? error.code : null;
+	return { message: message || code || "", code };
 }
 
 export async function listAccounts(options: ListOptions): Promise<AccountPage> {
@@ -143,6 +174,41 @@ export async function createAccounts(
 			},
 		}),
 	);
+}
+
+export async function createAccountsWithLimitFallback(
+	adminKey: string,
+	input: CreateBatchInput,
+): Promise<MutationResult> {
+	try {
+		return await createAccounts(adminKey, input);
+	} catch (error) {
+		if (
+			!(error instanceof AdminApiError) ||
+			error.status !== 413 ||
+			error.code !== WORKER_ACCOUNT_IMPORT_LIMIT_CODE ||
+			input.accounts.length <= WORKER_ACCOUNT_IMPORT_BATCH_SIZE
+		) {
+			throw error;
+		}
+	}
+
+	const results: MutationResult[] = [];
+	for (
+		let offset = 0;
+		offset < input.accounts.length;
+		offset += WORKER_ACCOUNT_IMPORT_BATCH_SIZE
+	) {
+		results.push(
+			await createAccounts(adminKey, {
+				accounts: input.accounts.slice(
+					offset,
+					offset + WORKER_ACCOUNT_IMPORT_BATCH_SIZE,
+				),
+			}),
+		);
+	}
+	return mergeMutationResults(results);
 }
 
 export async function updateAccount(

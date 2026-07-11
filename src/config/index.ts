@@ -4,6 +4,8 @@ type WorkerEnvKey = keyof WorkerBindings | "ADMIN_KEYS";
 
 export type WorkerEnv = Partial<Record<WorkerEnvKey, unknown>>;
 
+export type RuntimeProfile = "worker" | "docker";
+
 export type GeminiAccountRuntimeContext = {
 	accountId: string;
 	cookieHash: string;
@@ -42,6 +44,7 @@ export type StaticRuntimeConfig = Readonly<{
 export type RuntimeExecutionContext = {
 	supports_authenticated_session?: boolean;
 	execution_ctx?: Pick<ExecutionContext, "waitUntil">;
+	runtime_profile?: RuntimeProfile;
 };
 
 export type GeminiAccountSessionContext = {

@@ -147,7 +147,12 @@ export type GeminiAccountAdminFilterInput = Partial<
 	cooldown?: unknown;
 };
 
-export function normalizeCreateAccounts(body: UnknownRecord): UnknownRecord[] {
+export const WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS = 40;
+
+export function normalizeCreateAccounts(
+	body: UnknownRecord,
+	maxAccounts: number | null = WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS,
+): UnknownRecord[] {
 	if (
 		Array.isArray(body.tokens) &&
 		body.tokens.some((token) => cleanOptionalString(token))
@@ -186,6 +191,12 @@ export function normalizeCreateAccounts(body: UnknownRecord): UnknownRecord[] {
 			400,
 			"gemini_import_account_required",
 			"Gemini account payload is required",
+		);
+	if (maxAccounts != null && accounts.length > maxAccounts)
+		throw new GeminiAccountAdminError(
+			413,
+			"gemini_import_account_limit_exceeded",
+			`Gemini account import exceeds the Worker limit of ${maxAccounts} accounts`,
 		);
 	const topLevelGemini = !topProvider || topProvider === "gemini";
 	if (topProvider && topProvider !== "gemini") {

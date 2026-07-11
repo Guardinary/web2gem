@@ -487,6 +487,120 @@ lease.cookieHeader = update.cookieHeader;
 lease.cookieHash = await sha256Hex(update.cookieHeader);
 ```
 
+## Scenario: D1 Batch Account Import
+
+### 1. Scope / Trigger
+
+Use this contract when changing Gemini account creation, batch import limits,
+D1 insert/query shape, pool-version updates, or Worker/Docker import behavior.
+
+### 2. Signatures
+
+- `GeminiAccountAdminStore.createAccountsBulk?(entries)` accepts unique
+  `{ cookieHash, input }` entries and returns `itemsByCookieHash` plus
+  `addedCookieHashes`.
+- `D1GeminiAccountStore.createAccountsBulk(entries)` is the native D1 owner.
+- `normalizeCreateAccounts(body, maxAccounts)` enforces the runtime-specific
+  account-count ceiling before cookie hashing or store access.
+- `ApplicationExecutionContext.runtimeProfile` is `"docker"` only for the Node
+  adapter; application runtime config normalizes it to `runtime_profile`.
+
+### 3. Contracts
+
+- Workers accept at most 40 accounts per admin import. A 40-account all-new
+  import uses 40 conflict-ignoring insert statements, one hash lookup query, and
+  one conditional pool-version update: 42 D1 queries total.
+- Docker has no account-count ceiling. It remains bounded by the shared 256 KiB
+  admin request-body limit and reconstructs imported rows in chunks of at most
+  100 cookie-hash bind parameters.
+- The Docker distinction is request-local adapter metadata, not a public
+  environment variable or user-controlled HTTP header.
+- Normalize and hash each input, collapse duplicate cookie hashes before store
+  access, then project sanitized items back into original input order.
+- D1 inserts use `ON CONFLICT(cookie_hash) DO NOTHING`; a duplicate cookie must
+  not roll back unrelated inserts in the same native batch.
+- Use `db.batch(statements)` when available. D1-compatible adapters without
+  `batch`, including Docker's HTTP adapter, execute the same prepared statements
+  sequentially.
+- Determine added rows by matching the prepared row ID with the post-insert row
+  selected by cookie hash. Bump `pool_version` once only when at least one row
+  was added.
+- Stores without `createAccountsBulk` retain the bounded compatibility path;
+  Worker validation still caps that path before hashing or store calls.
+- The built-in admin UI submits the full import first. It retries sequentially
+  in groups of 40 only after HTTP 413
+  `gemini_import_account_limit_exceeded`; direct API callers retain the explicit
+  per-request ceiling, and Docker avoids chunking when the first request succeeds.
+
+### 4. Validation & Error Matrix
+
+- Worker payload with 41 accounts -> HTTP 413
+  `gemini_import_account_limit_exceeded`, zero hashes and zero D1 access.
+- Docker payload with more than 40 accounts and at most 256 KiB -> process it;
+  do not return the Worker count-limit error.
+- Admin UI payload with more than 40 accounts on Worker -> one rejected full
+  request followed by ordered requests of at most 40; merge successful results.
+- Admin UI import with any other error -> no automatic retry.
+- Existing, repeated-in-payload, or concurrently inserted cookie -> sanitized
+  duplicate item, increment `skipped` and `duplicates`.
+- All rows conflict -> no pool-version update.
+- Mixed new/conflicting rows -> add independent new rows and update the pool
+  version once.
+- Post-insert cookie-hash lookup lacks an expected row -> fail with a generic
+  internal admin error; never include Cookie values or hashes in the response.
+
+### 5. Good/Base/Bad Cases
+
+- Good: 40 Worker inserts run through one `batch()` call and stay at 42 queries.
+- Good: 101 Docker imports use sequential inserts plus two 100-parameter-bounded
+  reconstruction queries.
+- Base: duplicate input positions return the same sanitized account item while
+  only the first newly inserted position contributes to `added`.
+- Bad: perform `findAccountByCookieHash` plus `createAccount` plus a version bump
+  for every D1-backed input.
+- Bad: apply the 40-account Worker ceiling to Docker or expose a public runtime
+  profile environment setting.
+
+### 6. Tests Required
+
+- Assert 40 all-new Worker accounts produce one native batch, 42 recorded D1
+  statements, and one pool-version update.
+- Assert 41 Worker accounts fail before any D1 statement.
+- Assert the Docker adapter marks its execution context and a 101-account Docker
+  import succeeds without native `batch`, using two reconstruction queries.
+- Assert mixed existing/new/in-payload duplicates preserve order and counts.
+- Assert an all-duplicate batch does not update the pool version.
+- Assert a store without bulk capability preserves compatibility semantics.
+- Assert the admin UI retries only the stable Worker limit error in ordered
+  40-account chunks, keeps Docker to one request, and preserves merged items.
+- Search complete response JSON for Cookie/session fragments and run
+  `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`,
+  `pnpm coverage:ci`, and `pnpm smoke`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+for (const input of inputs) {
+  if (!(await store.findAccountByCookieHash(input.cookieHash))) {
+    await store.createAccount(input);
+  }
+}
+```
+
+#### Correct
+
+```typescript
+const entries = Array.from(uniqueEntries.values());
+const stored = this.adminStore.createAccountsBulk
+  ? await this.adminStore.createAccountsBulk(entries)
+  : await createAccountsCompatibility(this.adminStore, entries);
+for (const cookieHash of orderedCookieHashes) {
+  items.push(stored.itemsByCookieHash.get(cookieHash));
+}
+```
+
 ## Scenario: Account-aware Gemini Provider Lease And Caches
 
 ### 1. Scope / Trigger

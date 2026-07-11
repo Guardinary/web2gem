@@ -94,6 +94,8 @@ export function mergeMutationResults(
 	}
 	const errors = results.flatMap((result) => result.errors || []);
 	if (errors.length) merged.errors = errors;
+	const items = results.flatMap((result) => result.items || []);
+	if (items.length) merged.items = items;
 	return merged;
 }
 

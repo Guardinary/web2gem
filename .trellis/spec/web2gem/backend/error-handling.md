@@ -287,6 +287,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 - Public `API_KEYS` presented to an admin route -> `401 invalid_admin_key`, with no D1 read.
 - Admin route with no `GEMINI_DB` binding -> `503 gemini_account_store_unavailable`.
 - Create with unsafe Gemini import shape -> `400` with a safe `gemini_import_*` code.
+- Worker create with more than 40 accounts -> `413 gemini_import_account_limit_exceeded` before hashing or D1 access; Docker does not apply this count ceiling.
 - Constructing `GeminiAccountAdminService` without either a combined store or both explicit capabilities -> developer configuration error before request handling.
 - Invalid or missing path ID -> `400 invalid_account_id`; a well-formed missing account -> `404 account_not_found`.
 - Legacy `/update`, `/enable`, `/disable`, body-identifier delete, collection `/refresh` and collection `/check` routes -> `404 admin_route_not_found`.
@@ -365,6 +366,13 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - The UI may render sanitized account metadata from `GeminiAccountPublic`, including IDs, row IDs, labels, statuses, boolean secret-presence flags, redacted error text, and source metadata.
 - The UI must not render raw `cookie_header`, SAPISID values, session tokens, SQL bind values, or D1 API tokens.
 - The UI must import Gemini accounts with value-only `__Secure-1PSID` and `__Secure-1PSIDTS` fields. It must not accept or show full cookie headers, cookie-name/value examples, JSON blobs, `tokens`, `access_token`, or legacy single-cookie fallback fields.
+- Batch import submits the complete payload first. Only an `AdminApiError` with
+  HTTP 413 and code `gemini_import_account_limit_exceeded` may trigger
+  sequential 40-account retries through the same create route; merge sanitized
+  results in request order. Successful Docker imports remain one request.
+- Import fallback must not retry authentication, validation, network, or generic
+  server failures. A later chunk failure propagates normally even though earlier
+  chunks may already be committed and can be retried safely as duplicates.
 - Row and batch actions must reuse the resource API: PATCH `enabled` for enable/disable, DELETE for delete, and POST `/:id/refresh` or `/:id/check`. Batch actions issue sequential single-account requests; do not add UI-only mutation routes.
 - Editing account labels/status/enabled/source metadata must use `PATCH /admin/accounts/:id` with safe update fields only.
 - Cursor pagination must use the admin API's `nextCursor` without requesting or caching raw D1 rows. The server `nextCursor` is the last returned row id, matching the route's `id > cursor` query semantics.
@@ -383,6 +391,10 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Admin key supplied in URL query or form action -> forbidden implementation pattern.
 - Import field contains `=`, `;`, JSON-looking text, or cookie names -> reject client-side before API call; server validation remains authoritative.
 - Admin API returns non-2xx JSON error -> show the sanitized error message, not raw response bodies or request payload secrets.
+- Worker batch import above 40 -> first request returns the stable 413 limit
+  code, then the UI retries sequential chunks of at most 40 and aggregates
+  sanitized counts/items; Docker success does not enter the fallback.
+- Non-limit import error -> propagate after one request; do not split or retry.
 - List response includes secret-presence flags -> render safe labels such as present/missing; do not derive previews from raw values.
 - Metadata export requested with no current rows -> no-op user error.
 - Batch import parser receives an empty string -> return no batch items so the single-account form remains authoritative; malformed non-empty rows -> safe client-side validation error.
@@ -413,6 +425,9 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Unit or snapshot-style assertions should cover static UI controls for category/cooldown filters, pagination, safe metadata export, editing safe metadata, and success/failure counters.
 - Unit tests should cover value-only cookie validation, batch rows, stable account ID selection, deterministic relative time, mutation summaries, and CSV escaping/field allowlisting through the pure logic owner.
 - Unit tests should cover stable resource-path construction and aggregation of sanitized single-resource batch results.
+- Unit tests should cover full-first import, stable-code-only fallback into
+  ordered 40-account requests, one-request Docker success, non-limit failure
+  propagation, and ordered mutation-item aggregation.
 - Pure logic tests should cover confirmation copy, account display labels, and busy labels; generated-HTML assertions should cover mobile disclosure text, dialog focus markers, and absence of `window.confirm`.
 - Unit test admin list cursor pagination so `nextCursor` does not skip the first row on the next page.
 - Unit or grep-style assertions should verify the UI bundle does not contain `GEMINI_COOKIE`, raw cookie examples, SAPISID value examples, session-token examples, or query-parameter admin-key patterns.

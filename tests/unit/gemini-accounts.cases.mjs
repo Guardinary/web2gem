@@ -279,6 +279,180 @@ export const cases = [
 		},
 	],
 	[
+		"bulk account import stays below the Worker D1 query limit",
+		async () => {
+			const db = new FakeD1();
+			const service = mod.createGeminiAccountAdminServiceFromD1(
+				db,
+				baseConfig(),
+				{ nowMs: () => 5000 },
+			);
+			const result = await service.create(importPayload(40));
+			assert.equal(result.added, 40);
+			assert.equal(result.skipped, 0);
+			assert.equal(result.duplicates, 0);
+			assert.deepEqual(
+				result.items.map((item) => item.label),
+				Array.from({ length: 40 }, (_, index) => `account-${index}`),
+			);
+			assert.equal(db.batchCalls, 1);
+			assert.equal(db.statements.length, 42);
+			assert.equal(
+				db.statements.filter((entry) =>
+					entry.sql.includes("INSERT INTO gemini_pool_meta"),
+				).length,
+				1,
+			);
+			assert.equal(db.meta.get("pool_version").value, "5000");
+		},
+	],
+	[
+		"bulk account import preserves duplicate counts and input order",
+		async () => {
+			const db = new FakeD1();
+			const store = new mod.D1GeminiAccountStore(db);
+			await seedAccount(store, "existing", {
+				label: "existing",
+				cookieHeader: importCookieHeader(0),
+				nowMs: 1000,
+			});
+			db.statements.length = 0;
+			const service = mod.createGeminiAccountAdminServiceFromD1(
+				db,
+				baseConfig(),
+				{ nowMs: () => 6000 },
+			);
+			const result = await service.create({
+				provider: "gemini",
+				accounts: [
+					importAccount(0),
+					importAccount(1),
+					{ ...importAccount(1), label: "ignored duplicate label" },
+					importAccount(2),
+				],
+			});
+			assert.deepEqual(
+				{
+					added: result.added,
+					skipped: result.skipped,
+					duplicates: result.duplicates,
+				},
+				{ added: 2, skipped: 2, duplicates: 2 },
+			);
+			assert.deepEqual(
+				result.items.map((item) => item.label),
+				["existing", "account-1", "account-1", "account-2"],
+			);
+			assert.equal(
+				db.statements.filter((entry) =>
+					entry.sql.includes("INSERT INTO gemini_pool_meta"),
+				).length,
+				1,
+			);
+
+			db.statements.length = 0;
+			const allDuplicate = await service.create({
+				provider: "gemini",
+				accounts: [importAccount(0), importAccount(0)],
+			});
+			assert.equal(allDuplicate.added, 0);
+			assert.equal(allDuplicate.duplicates, 2);
+			assert.equal(
+				db.statements.some((entry) =>
+					entry.sql.includes("INSERT INTO gemini_pool_meta"),
+				),
+				false,
+			);
+		},
+	],
+	[
+		"account import keeps a bounded compatibility path without bulk store support",
+		async () => {
+			const db = new FakeD1();
+			const store = new mod.D1GeminiAccountStore(db);
+			const service = new mod.GeminiAccountAdminService({
+				adminStore: {
+					findAccountByCookieHash: (cookieHash) =>
+						store.findAccountByCookieHash(cookieHash),
+					createAccount: (input) => store.createAccount(input),
+				},
+				runtimeStore: store,
+				cfg: baseConfig(),
+				nowMs: () => 7000,
+			});
+			const result = await service.create({
+				provider: "gemini",
+				accounts: [importAccount(1), importAccount(1), importAccount(2)],
+			});
+			assert.deepEqual(
+				{
+					added: result.added,
+					skipped: result.skipped,
+					duplicates: result.duplicates,
+				},
+				{ added: 2, skipped: 1, duplicates: 1 },
+			);
+			assert.deepEqual(
+				result.items.map((item) => item.label),
+				["account-1", "account-1", "account-2"],
+			);
+			assert.equal(db.batchCalls, 0);
+		},
+	],
+	[
+		"account import count limit applies to Worker but not Docker runtime",
+		async () => {
+			const workerDb = new FakeD1();
+			const workerResponse = await mod.default.fetch(
+				new Request("https://worker.example/admin/accounts", {
+					method: "POST",
+					headers: {
+						Authorization: "Bearer admin-secret",
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify(importPayload(41)),
+				}),
+				{ ADMIN_KEY: "admin-secret", GEMINI_DB: workerDb },
+				{},
+			);
+			assert.equal(workerResponse.status, 413);
+			assert.equal(
+				(await workerResponse.json()).error.code,
+				"gemini_import_account_limit_exceeded",
+			);
+			assert.equal(workerDb.statements.length, 0);
+			assert.equal(workerDb.batchCalls, 0);
+
+			const dockerDb = new FakeD1();
+			const dockerResponse = await mod.default.fetch(
+				new Request("https://docker.example/admin/accounts", {
+					method: "POST",
+					headers: {
+						Authorization: "Bearer admin-secret",
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify(importPayload(101)),
+				}),
+				{
+					ADMIN_KEY: "admin-secret",
+					GEMINI_DB: {
+						prepare: (sql) => dockerDb.prepare(sql),
+					},
+				},
+				{ runtimeProfile: "docker" },
+			);
+			assert.equal(dockerResponse.status, 200);
+			assert.equal((await dockerResponse.json()).added, 101);
+			assert.equal(dockerDb.batchCalls, 0);
+			assert.equal(
+				dockerDb.statements.filter((entry) =>
+					entry.sql.includes("WHERE cookie_hash IN"),
+				).length,
+				2,
+			);
+		},
+	],
+	[
 		"admin input owner strictly normalizes filters and update payloads",
 		() => {
 			const accounts = mod.normalizeCreateAccounts({
@@ -780,11 +954,114 @@ export const cases = [
 			);
 			assert.deepEqual(
 				mod.mergeMutationResults([
-					{ updated: 1, skipped: 0 },
-					{ updated: 1, skipped: 1, errors: [{ error: "safe" }] },
+					{ updated: 1, skipped: 0, items: [{ id: "account-a" }] },
+					{
+						updated: 1,
+						skipped: 1,
+						items: [{ id: "account-b" }],
+						errors: [{ error: "safe" }],
+					},
 				]),
-				{ updated: 2, skipped: 1, errors: [{ error: "safe" }] },
+				{
+					updated: 2,
+					skipped: 1,
+					errors: [{ error: "safe" }],
+					items: [{ id: "account-a" }, { id: "account-b" }],
+				},
 			);
+		},
+	],
+	[
+		"admin UI retries only Worker-limited imports in ordered 40-account chunks",
+		async () => {
+			const originalFetch = globalThis.fetch;
+			const requestSizes = [];
+			try {
+				globalThis.fetch = async (_path, init) => {
+					const payload = JSON.parse(String(init?.body || "{}"));
+					requestSizes.push(payload.accounts.length);
+					if (requestSizes.length === 1) {
+						return Response.json(
+							{
+								error: {
+									message: "Worker import limit exceeded",
+									code: "gemini_import_account_limit_exceeded",
+								},
+							},
+							{ status: 413 },
+						);
+					}
+					return Response.json({
+						added: payload.accounts.length,
+						duplicates: 0,
+						skipped: 0,
+					});
+				};
+
+				const result = await mod.createAccountsWithLimitFallback(
+					"admin-secret",
+					{ accounts: uiImportBatch(81) },
+				);
+				assert.deepEqual(requestSizes, [81, 40, 40, 1]);
+				assert.deepEqual(result, { added: 81, duplicates: 0, skipped: 0 });
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		},
+	],
+	[
+		"admin UI keeps successful large Docker imports to one request",
+		async () => {
+			const originalFetch = globalThis.fetch;
+			const requestSizes = [];
+			try {
+				globalThis.fetch = async (_path, init) => {
+					const payload = JSON.parse(String(init?.body || "{}"));
+					requestSizes.push(payload.accounts.length);
+					return Response.json({ added: payload.accounts.length });
+				};
+
+				const result = await mod.createAccountsWithLimitFallback(
+					"admin-secret",
+					{ accounts: uiImportBatch(81) },
+				);
+				assert.deepEqual(requestSizes, [81]);
+				assert.deepEqual(result, { added: 81 });
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		},
+	],
+	[
+		"admin UI does not retry non-limit import failures",
+		async () => {
+			const originalFetch = globalThis.fetch;
+			let requestCount = 0;
+			try {
+				globalThis.fetch = async () => {
+					requestCount += 1;
+					return Response.json(
+						{
+							error: {
+								message: "safe failure",
+								code: "admin_request_failed",
+							},
+						},
+						{ status: 500 },
+					);
+				};
+
+				await assert.rejects(
+					() =>
+						mod.createAccountsWithLimitFallback("admin-secret", {
+							accounts: uiImportBatch(81),
+						}),
+					/safe failure/,
+				);
+				assert.equal(requestCount, 1);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
 		},
 	],
 	[
@@ -833,6 +1110,8 @@ export const cases = [
 			assert.match(html, /sessionStorage/);
 			assert.match(html, /stats\?/);
 			assert.match(html, /duplicates/);
+			assert.match(html, /40-account batches/);
+			assert.match(html, /gemini_import_account_limit_exceeded/);
 			assert.match(html, /Delete loaded/);
 			assert.match(html, /More account details/);
 			assert.match(html, /Delete account\?/);
@@ -942,6 +1221,33 @@ async function seedAccount(store, id, input) {
 	});
 }
 
+function importAccount(index) {
+	return {
+		"__Secure-1PSID": `psid-${index}`,
+		"__Secure-1PSIDTS": `psidts-${index}`,
+		label: `account-${index}`,
+	};
+}
+
+function importCookieHeader(index) {
+	return `__Secure-1PSID=psid-${index}; __Secure-1PSIDTS=psidts-${index}`;
+}
+
+function importPayload(count) {
+	return {
+		provider: "gemini",
+		accounts: Array.from({ length: count }, (_, index) => importAccount(index)),
+	};
+}
+
+function uiImportBatch(count) {
+	return Array.from({ length: count }, (_, index) => ({
+		psid: `psid-${index}`,
+		psidts: `psidts-${index}`,
+		label: `account-${index}`,
+	}));
+}
+
 const ACCOUNT_COLUMNS = [
 	"id",
 	"label",
@@ -992,11 +1298,17 @@ class FakeD1 {
 		this.meta = new Map([["pool_version", { value: "0", updated_at_ms: 0 }]]);
 		this.locks = new Map();
 		this.statements = [];
+		this.batchCalls = 0;
 		this.hiddenCookieHashLookups = 0;
 	}
 
 	prepare(sql) {
 		return new FakeStatement(this, sql);
+	}
+
+	async batch(statements) {
+		this.batchCalls += 1;
+		return Promise.all(statements.map((statement) => statement.run()));
 	}
 
 	lastSql() {
@@ -1046,6 +1358,13 @@ class FakeStatement {
 			this.sql.includes("WHERE row_id = ?")
 		) {
 			return this.idLookup((row) => row.row_id === this.values[0]);
+		}
+		if (this.sql.includes("WHERE cookie_hash IN")) {
+			const hashes = new Set(this.values);
+			const rows = Array.from(this.db.rows.values())
+				.filter((candidate) => hashes.has(candidate.cookie_hash))
+				.map(publicClone);
+			return { results: rows, meta: { changes: 0 } };
 		}
 		if (this.sql.includes("WHERE cookie_hash = ?")) {
 			if (this.db.hiddenCookieHashLookups > 0) {
@@ -1142,6 +1461,11 @@ class FakeStatement {
 			ACCOUNT_COLUMNS.forEach((name, index) => {
 				row[name] = this.values[index];
 			});
+			const duplicate = Array.from(this.db.rows.values()).find(
+				(candidate) => candidate.cookie_hash === row.cookie_hash,
+			);
+			if (duplicate && this.sql.includes("ON CONFLICT(cookie_hash) DO NOTHING"))
+				return changed(0);
 			this.db.rows.set(row.id, row);
 			return changed(1);
 		}

@@ -1,6 +1,6 @@
 import {
 	createAccount,
-	createAccounts,
+	createAccountsWithLimitFallback,
 	getAccountStats,
 	listAccounts,
 	runAccountAction,
@@ -181,7 +181,9 @@ export async function submitImport(event: Event): Promise<void> {
 		const batch = parseBatchImport(importBatch.value);
 		const result =
 			batch.length > 1
-				? await createAccounts(adminKey.value, { accounts: batch })
+				? await createAccountsWithLimitFallback(adminKey.value, {
+						accounts: batch,
+					})
 				: await createAccount(
 						adminKey.value,
 						batch[0] || {

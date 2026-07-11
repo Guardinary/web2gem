@@ -183,7 +183,8 @@ export function App(): JSX.Element {
 								<div class="help">
 									Only paste the value after the equals sign. Do not paste
 									cookie names, equals signs, semicolons, full Cookie headers,
-									or JSON blobs.
+									or JSON blobs. Large Worker imports automatically retry in
+									40-account batches; Docker keeps the initial single request.
 								</div>
 								<div class="actions">
 									<button

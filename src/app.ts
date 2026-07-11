@@ -47,7 +47,12 @@ const GOOGLE_GENERATE_PATH_RE =
 const GOOGLE_STREAM_GENERATE_PATH_RE =
 	/^\/v(?:1beta|1)\/models\/[^/?#]+:streamGenerateContent$/;
 
-export type ApplicationExecutionContext = Pick<ExecutionContext, "waitUntil">;
+export type ApplicationExecutionContext = Pick<
+	ExecutionContext,
+	"waitUntil"
+> & {
+	runtimeProfile?: "docker";
+};
 
 type ApplicationRequestContext = {
 	request: Request;
@@ -79,6 +84,8 @@ export async function handleApplicationRequest(
 		cfg = withAccountPoolAvailability(
 			createRuntimeConfig(getConfig(env), {
 				execution_ctx: executionContext,
+				runtime_profile:
+					executionContext.runtimeProfile === "docker" ? "docker" : "worker",
 			}),
 			env,
 		);
