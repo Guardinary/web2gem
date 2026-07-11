@@ -1,7 +1,21 @@
 import { performance } from "node:perf_hooks";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { errorLine, outputLine } from "./io.mjs";
 
-const mod = await import("../dist/worker.test.js");
+const benchmarkBundlePath = resolve(
+	process.cwd(),
+	process.env.BENCH_TEST_BUNDLE || "dist/worker.test.js",
+);
+let mod;
+try {
+	mod = await import(pathToFileURL(benchmarkBundlePath).href);
+} catch (error) {
+	errorLine(
+		`Benchmark bundle load failed: ${benchmarkBundlePath}: ${error instanceof Error ? error.message : String(error)}`,
+	);
+	process.exit(1);
+}
 
 const ITERATIONS = positiveInt(process.env.BENCH_ITERS, 2000);
 const JSON_OUTPUT = /^(1|true|yes|on)$/i.test(

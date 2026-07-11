@@ -13,6 +13,7 @@ await runPnpm(["build"], {
 await runPnpm(["exec", "vitest", "run", "--coverage"], {
 	...process.env,
 	TEST_BUNDLE: `../../${coverageBuildDir}/worker.test.js`,
+	BENCH_TEST_BUNDLE: `${coverageBuildDir}/worker.test.js`,
 });
 
 if (ci) {

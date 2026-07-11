@@ -281,6 +281,21 @@ export const cases = [
 		},
 	],
 	[
+		"reports an invalid benchmark bundle path",
+		async () => {
+			const result = await runNodeScript("scripts/bench.mjs", null, {
+				BENCH_TEST_BUNDLE: "dist/missing-worker.test.js",
+				BENCH_CASES: "rand_hex_32",
+				BENCH_ITERS: "2",
+				BENCH_WARMUP: "1",
+				BENCH_JSON: "1",
+			});
+			assert.equal(result.code, 1);
+			assert.match(result.stderr, /Benchmark bundle load failed/);
+			assert.match(result.stderr, /missing-worker\.test\.js/);
+		},
+	],
+	[
 		"rejects machine-readable benchmark results missing a gated case",
 		async () => {
 			await withTempFile(

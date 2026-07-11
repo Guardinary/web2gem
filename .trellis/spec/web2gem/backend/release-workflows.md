@@ -181,6 +181,65 @@ PORT=52389
 WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:latest
 ```
 
+## Scenario: Generated Test Bundle Selection
+
+### 1. Scope / Trigger
+
+Use this contract when a quality script launches another Node process that imports a generated Worker test bundle, especially when builds use different output directories such as `dist/` and `dist-coverage/`.
+
+### 2. Signatures
+
+- `BENCH_TEST_BUNDLE`: repository-relative or absolute path consumed by `scripts/bench.mjs`.
+- Default benchmark bundle: `dist/worker.test.js`.
+- Coverage benchmark bundle: `dist-coverage/worker.test.js`.
+- `TEST_BUNDLE`: Vitest test-loader path; its relative semantics belong to `tests/unit/helpers.js` and must not be reused as a script working-directory path.
+
+### 3. Contracts
+
+- Every generated-artifact consumer must select the artifact produced by its own build phase explicitly.
+- Script bundle paths resolve from the repository working directory, not from the importing source file or a test helper directory.
+- `pnpm check:bench` builds and consumes the normal `dist/worker.test.js` bundle.
+- `pnpm coverage:ci` builds and consumes `dist-coverage/worker.test.js`, including benchmark subprocesses launched from tests.
+- A clean checkout must not require a stale bundle left by an earlier command.
+
+### 4. Validation & Error Matrix
+
+- Configured bundle exists and exports benchmark helpers -> benchmark runs normally.
+- Configured bundle is missing or cannot be imported -> exit nonzero with `Benchmark bundle load failed` and the resolved path.
+- Coverage build exists but normal bundle is absent -> coverage and its benchmark-output test still pass.
+- Normal benchmark gate starts without a test bundle -> its build step creates the normal bundle before execution.
+
+### 5. Good/Base/Bad Cases
+
+- Good: coverage passes `BENCH_TEST_BUNDLE=dist-coverage/worker.test.js` to Vitest subprocesses.
+- Base: direct benchmark execution defaults to `dist/worker.test.js` after `build.mjs --test-bundle`.
+- Bad: a subprocess hardcodes `../dist/worker.test.js` while its parent build writes only to `dist-coverage/`.
+
+### 6. Tests Required
+
+- Script test asserting machine-readable benchmark output works with the selected bundle.
+- Script test asserting an invalid bundle path exits with a clear diagnostic.
+- Clean-state `pnpm coverage:ci` run after a normal build has removed `dist/worker.test.js`.
+- `pnpm check:bench` and `pnpm smoke` to preserve normal generated-bundle consumers.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+const mod = await import("../dist/worker.test.js");
+```
+
+#### Correct
+
+```javascript
+const bundlePath = resolve(
+  process.cwd(),
+  process.env.BENCH_TEST_BUNDLE || "dist/worker.test.js",
+);
+const mod = await import(pathToFileURL(bundlePath).href);
+```
+
 ---
 
 ## Validation
