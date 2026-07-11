@@ -515,7 +515,10 @@ export const cases = [
 			assert.equal(cfg.request_timeout_sec, 3600);
 			assert.equal(cfg.current_input_file_min_bytes, 0);
 			assert.equal(cfg.generic_file_upload_max_bytes, 104857600);
-			assert.equal(mod.assertRuntimeConfig({ LOG_REQUESTS: "true" }), undefined);
+			assert.equal(
+				mod.assertRuntimeConfig({ LOG_REQUESTS: "true" }),
+				undefined,
+			);
 		},
 	],
 	[
@@ -577,6 +580,83 @@ export const cases = [
 				{},
 			);
 			assert.equal(resp.status, 200);
+		},
+	],
+	[
+		"keeps application route policy ordering explicit",
+		async () => {
+			const execution = { waitUntil() {} };
+			const cases = [
+				{
+					method: "OPTIONS",
+					path: "/v1/models",
+					env: { LOG_REQUESTS: "false" },
+					status: 204,
+				},
+				{
+					method: "GET",
+					path: "/",
+					env: { API_KEYS: "required" },
+					status: 200,
+				},
+				{
+					method: "GET",
+					path: "/v1/models",
+					env: { API_KEYS: "required" },
+					status: 401,
+				},
+				{
+					method: "GET",
+					path: "/admin",
+					env: { API_KEYS: "required" },
+					status: 200,
+				},
+				{
+					method: "GET",
+					path: "/missing",
+					env: {},
+					status: 404,
+				},
+				{
+					method: "POST",
+					path: "/missing",
+					env: {},
+					status: 404,
+				},
+			];
+			for (const item of cases) {
+				const response = await mod.handleApplicationRequest(
+					new Request(`https://worker.example${item.path}`, {
+						method: item.method,
+					}),
+					item.env,
+					execution,
+				);
+				assert.equal(
+					response.status,
+					item.status,
+					`${item.method} ${item.path}`,
+				);
+			}
+		},
+	],
+	[
+		"keeps the Worker entrypoint aligned with the application core",
+		async () => {
+			const request = () => new Request("https://worker.example/v1/models");
+			const execution = { waitUntil() {} };
+			const direct = await mod.handleApplicationRequest(
+				request(),
+				{},
+				execution,
+			);
+			const worker = await mod.default.fetch(request(), {}, execution);
+			assert.equal(worker.status, direct.status);
+			assert.equal(
+				worker.headers.get("content-type"),
+				direct.headers.get("content-type"),
+			);
+			assert.equal(await worker.text(), await direct.text());
 		},
 	],
 	[

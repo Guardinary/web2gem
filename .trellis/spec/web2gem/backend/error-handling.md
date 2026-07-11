@@ -174,7 +174,9 @@ try {
 
 ## Top-Level Worker Errors
 
-`src/index.ts` catches unhandled route errors, logs through `log(cfg, ...)`, and returns a JSON 500 response. Keep this as the final fallback, not the primary validation mechanism.
+`src/app.ts` catches unhandled application-route errors, logs through `log(cfg, ...)`, and returns a JSON 500 response. Keep this as the final fallback, not the primary validation mechanism. `src/index.ts` must remain a thin Worker adapter and must not add a second error-mapping path.
+
+The Docker adapter links Node request aborts and premature response closes to the Web `Request.signal`. Once that signal is aborted, disconnect-related stream failures are expected cancellation and must not be converted into a second generic adapter error response or noisy application failure.
 
 ## Scenario: D1 Account Storage And Docker Adapter Redaction
 

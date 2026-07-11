@@ -10,6 +10,7 @@ import {
 	resolveDockerEnv,
 	startDockerServer,
 } from "../../scripts/docker-server.mjs";
+import { mod } from "./helpers.js";
 
 export const suiteName = "docker server";
 export const cases = [
@@ -137,6 +138,81 @@ export const cases = [
 				assert.equal(resp.headers.get("x-head-check"), "ok");
 				assert.equal(await resp.text(), "");
 				assert.equal(seen.method, "HEAD");
+			} finally {
+				await close(server);
+			}
+		},
+	],
+	[
+		"keeps representative Docker responses aligned with the Worker entrypoint",
+		async () => {
+			const env = { API_KEYS: "required" };
+			const server = createDockerServer({ env, worker: mod.default });
+			await listen(server);
+			try {
+				const port = server.address().port;
+				for (const path of ["/", "/v1/models", "/missing"]) {
+					const direct = await mod.default.fetch(
+						new Request(`http://127.0.0.1:${port}${path}`),
+						env,
+						{ waitUntil() {} },
+					);
+					const docker = await fetch(`http://127.0.0.1:${port}${path}`);
+					assert.equal(docker.status, direct.status, path);
+					assert.equal(
+						docker.headers.get("content-type"),
+						direct.headers.get("content-type"),
+						path,
+					);
+					assert.equal(
+						docker.headers.get("access-control-allow-origin"),
+						direct.headers.get("access-control-allow-origin"),
+						path,
+					);
+					assert.equal(await docker.text(), await direct.text(), path);
+				}
+			} finally {
+				await close(server);
+			}
+		},
+	],
+	[
+		"propagates Docker client disconnects to the Worker request signal",
+		async () => {
+			let markStarted;
+			const started = new Promise((resolve) => {
+				markStarted = resolve;
+			});
+			let markAborted;
+			const aborted = new Promise((resolve) => {
+				markAborted = resolve;
+			});
+			const server = createDockerServer({
+				worker: {
+					async fetch(request) {
+						markStarted();
+						request.signal.addEventListener(
+							"abort",
+							() => markAborted(request.signal.reason),
+							{ once: true },
+						);
+						await aborted;
+						return new Response("aborted");
+					},
+				},
+			});
+			await listen(server);
+			try {
+				const port = server.address().port;
+				const controller = new AbortController();
+				const response = fetch(`http://127.0.0.1:${port}/slow`, {
+					signal: controller.signal,
+				});
+				await started;
+				controller.abort();
+				await assert.rejects(() => response, /abort/i);
+				const reason = await aborted;
+				assert.match(String(reason), /docker client disconnected/);
 			} finally {
 				await close(server);
 			}

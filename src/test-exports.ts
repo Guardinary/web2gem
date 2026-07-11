@@ -1,4 +1,5 @@
 // Internal compatibility surface used by local unit and smoke tests.
+export { handleApplicationRequest } from "./app";
 export {
 	identifier,
 	identifierKey,

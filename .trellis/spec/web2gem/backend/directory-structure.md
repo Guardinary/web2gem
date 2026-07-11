@@ -3,7 +3,8 @@
 ## Source Layout
 
 - The root `package.json` / `src/` tree is the default `web2gem` package. The Cloudflare Worker build and architecture guard are scoped to this root package unless a task explicitly expands the scope.
-- `src/index.ts` owns Worker routing, CORS wrapping, auth gating, and top-level error conversion.
+- `src/app.ts` is the application composition root. It owns route matching, CORS wrapping, public/admin auth policy ordering, request parsing before account-runtime acquisition, provider composition, and top-level error conversion using Web-standard `Request` / `Response` types.
+- `src/index.ts` is the thin Cloudflare Worker entrypoint. It delegates `fetch` to `handleApplicationRequest` and exports only stable public helpers; protocol route branches must not be added there.
 - `src/http/` owns HTTP boundary concerns only. Generic CORS/auth/JSON/SSE helpers live under `http/core/`, stream framing helpers under `http/stream/`, and protocol adapters under `http/openai/` and `http/google/`.
 - HTTP protocol adapters should import `http/core/*` and `http/stream/*` owner modules directly. `src/http/index.ts` is a public/top-level barrel for the Worker entrypoint and compatibility exports, not an internal dependency for protocol adapters.
 - `src/completion/` owns provider-neutral completion contracts and shared business behavior: prompt/context preparation, provider text-generation ports, empty-output handling, stream/tool-sieve event consumption, and completion turn finalization. It must not import `src/gemini/**` directly.
@@ -19,7 +20,64 @@
 - `src/gemini/completion-provider.ts` is the Gemini adapter for `src/completion/ports.ts`. It may import completion port types; other Gemini implementation modules should not depend on completion business modules.
 - `src/shared/` must stay leaf-level and provider-neutral.
 - Media and attachment helpers live under `src/attachments/**`; do not add compatibility shims under `src/shared/`.
-- `scripts/docker-server.mjs` adapts Node HTTP requests to the Worker `fetch` entrypoint. Do not duplicate route, auth, completion, or provider logic in the Docker server path.
+- `scripts/docker-server.mjs` adapts Node HTTP requests to the Worker `fetch` entrypoint. It owns Node header/body/response-stream translation and propagates client disconnects into the Web `Request.signal`; it must not duplicate route, auth, completion, or provider logic.
+
+## Scenario: Shared Application Routing Boundary
+
+### 1. Scope / Trigger
+
+Use this contract when adding or moving routes, changing route-level authentication or CORS, changing top-level request errors, or modifying the Cloudflare Worker and Docker request adapters.
+
+### 2. Signatures
+
+- `handleApplicationRequest(request, env, executionContext): Promise<Response>` in `src/app.ts` is the shared Web-standard application entrypoint.
+- `src/index.ts` exposes the Cloudflare default export with `fetch: handleApplicationRequest`.
+- `handleDockerRequest(req, res, options)` translates Node HTTP to the Worker `fetch` contract and links disconnects to `Request.signal`.
+
+### 3. Contracts
+
+- Route matching, CORS, configuration composition, public/admin auth ordering, JSON validation, account-runtime acquisition, protocol dispatch, and sanitized top-level errors have one owner: `src/app.ts`.
+- `src/index.ts` contains no protocol-specific route branches and exports only `src/public-exports.ts`.
+- The Docker adapter delegates to the built Worker entrypoint and owns only platform translation, D1 binding injection, response streaming, and disconnect propagation.
+- Public authentication and request-body validation must finish before any account lease acquisition or D1 account read.
+
+### 4. Validation & Error Matrix
+
+- CORS preflight -> 204 before runtime configuration or authentication.
+- Health and admin UI routes -> retain their documented auth exemptions and ordering.
+- Invalid public auth or invalid generation JSON -> 4xx with zero account-store reads.
+- Docker request abort or premature response close -> abort the shared `Request.signal`; do not emit a second adapter 500.
+- Unexpected application error -> sanitized JSON 500 through the application boundary.
+
+### 5. Good/Base/Bad Cases
+
+- Good: add a route branch or matcher in `src/app.ts` and cover its method/path/auth/body/account policy in route tests.
+- Base: Cloudflare and Docker both delegate to the same Worker/application handler and return equivalent status, protocol headers, and body.
+- Bad: add a Docker-only route, auth shortcut, protocol handler, or error envelope.
+
+### 6. Tests Required
+
+- Route-matrix tests for OPTIONS, health, models, admin, generation, and not-found behavior.
+- Tests proving invalid auth/body requests do not acquire account leases or read D1.
+- Representative Cloudflare-versus-Docker response parity for status, content type, CORS, and body.
+- Docker disconnect test asserting the application `Request.signal` is aborted.
+- Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, `pnpm coverage:ci`, `pnpm smoke`, and `pnpm check:size`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+// scripts/docker-server.mjs
+if (req.url === "/v1/models") return sendModels(res);
+```
+
+#### Correct
+
+```typescript
+// src/index.ts
+export default { fetch: handleApplicationRequest };
+```
 
 ## Provider Ports and Stream Events
 
@@ -38,7 +96,7 @@ Use the completion provider port when code needs model text generation, request-
 
 ### 3. Contracts
 
-- `src/index.ts` is the composition root: create the concrete Gemini provider there and pass it into HTTP handlers.
+- `src/app.ts` is the composition root: create the concrete Gemini provider there and pass it into HTTP handlers.
 - HTTP handlers may depend on completion ports/events, but must not call `gemini/client` or `gemini/uploads`.
 - Completion modules may depend on prompt compatibility, tool-call, toolstream, shared, config, and model types, but not `src/gemini/**`.
 - Stream adapters should format protocol-specific SSE frames from completion events rather than coordinating provider callbacks directly.
@@ -53,7 +111,7 @@ Use the completion provider port when code needs model text generation, request-
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `src/index.ts` creates `createGeminiCompletionProvider(cfg)` and passes it to `handleChat`.
+- Good: `src/app.ts` creates `createGeminiCompletionProvider(cfg)` and passes it to `handleChat`.
 - Base: completion consumes `CompletionProvider.streamText(...)` through completion event helpers.
 - Bad: `src/completion/runtime.ts` imports `../gemini/client` or HTTP stream code calls provider delta callbacks directly.
 

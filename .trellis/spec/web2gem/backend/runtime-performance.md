@@ -165,7 +165,7 @@ Use this contract when changing environment config parsing, config cache keys, r
 - `GEMINI_ORIGIN` must be an absolute HTTP(S) origin with no credentials, path, query, or fragment. Context filenames must be plain filenames without path separators or control characters.
 - `StaticRuntimeConfig` contains only environment/default-derived values. `RuntimeExecutionContext` contains request-local `execution_ctx` and authenticated-session availability; `GeminiAccountSessionContext` contains cookie/SAPISID/account identity/writeback state.
 - Parsed static config and its key arrays are frozen. Request/session composition must return a distinct object.
-- The Worker composition root must call `createRuntimeConfig(getConfig(env), executionContext)` before adding account-pool availability or acquiring a lease. Do not attach request/account fields directly to the cached object returned by `getConfig`.
+- The application composition root in `src/app.ts` must call `createRuntimeConfig(getConfig(env), executionContext)` before adding account-pool availability or acquiring a lease. Do not attach request/account fields directly to the cached object returned by `getConfig`.
 - `GEMINI_COOKIE` and `SAPISID` are not public runtime config keys on the D1 account-pool branch. Do not add them back to `CONFIG_ENV_KEYS`; account leases populate `RuntimeConfig.cookie` and `RuntimeConfig.sapisid` internally after selecting a D1 account.
 - Do not cache config solely by env object identity. Cloudflare-style env objects may be reused and mutated in tests or local harnesses, so `getConfig` must recompute when `configCacheKey(env)` changes.
 - `requestContentLength` accepts only safe base-10 integer strings after trimming; invalid, signed, fractional, or unsafe values return `null`.
@@ -191,7 +191,7 @@ Use this contract when changing environment config parsing, config cache keys, r
 ### 5. Good/Base/Bad Cases
 
 - Good: add `NEW_FEATURE_FLAG` to `CONFIG_ENV_KEYS` in the same change that reads it in `getConfig`.
-- Good: call `createRuntimeConfig(staticConfig, { execution_ctx })` at the composition root and let account leases clone that runtime with session fields.
+- Good: call `createRuntimeConfig(staticConfig, { execution_ctx })` in `src/app.ts` and let account leases clone that runtime with session fields.
 - Good: validate the built Worker module through `assertRuntimeConfig` before Docker starts listening.
 - Base: use `requestContentLength(request)` for route-level body byte telemetry and oversized preflight checks.
 - Bad: reuse `_configCacheValue` when `_configCacheEnv === env` without checking `_configCacheKey`.

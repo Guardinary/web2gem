@@ -69,9 +69,21 @@ export async function handleDockerRequest(req, res, options = {}) {
 	const requestEnv = options.env || defaultDockerEnv();
 	const fallbackPort = Number(options.port || port);
 	const method = req.method || "GET";
+	const abortController = new AbortController();
+	const abortRequest = () => {
+		if (!abortController.signal.aborted)
+			abortController.abort(new Error("docker client disconnected"));
+	};
+	const abortOnResponseClose = () => {
+		if (!res.writableEnded) abortRequest();
+	};
+	req.once("aborted", abortRequest);
+	res.once("close", abortOnResponseClose);
+	if (req.aborted) abortRequest();
 	const init = {
 		method,
 		headers: requestHeaders(req.rawHeaders),
+		signal: abortController.signal,
 	};
 
 	if (method !== "GET" && method !== "HEAD") {
@@ -79,26 +91,34 @@ export async function handleDockerRequest(req, res, options = {}) {
 		init.duplex = "half";
 	}
 
-	const request = new Request(requestUrl(req, fallbackPort), init);
-	const response = await workerImpl.fetch(
-		request,
-		requestEnv,
-		executionContext(),
-	);
+	try {
+		const request = new Request(requestUrl(req, fallbackPort), init);
+		const response = await workerImpl.fetch(
+			request,
+			requestEnv,
+			executionContext(),
+		);
 
-	res.statusCode = response.status;
-	response.headers.forEach((value, key) => {
-		res.setHeader(key, value);
-	});
+		res.statusCode = response.status;
+		response.headers.forEach((value, key) => {
+			res.setHeader(key, value);
+		});
 
-	if (!response.body || method === "HEAD") {
-		res.end();
-		return;
+		if (!response.body || method === "HEAD") {
+			res.end();
+			return;
+		}
+
+		const body = Readable.fromWeb(response.body);
+		body.pipe(res);
+		await finished(res);
+	} catch (error) {
+		if (abortController.signal.aborted) return;
+		throw error;
+	} finally {
+		req.off("aborted", abortRequest);
+		res.off("close", abortOnResponseClose);
 	}
-
-	const body = Readable.fromWeb(response.body);
-	body.pipe(res);
-	await finished(res);
 }
 
 function defaultDockerEnv() {
