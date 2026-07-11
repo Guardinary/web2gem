@@ -16,25 +16,54 @@ export type GeminiRichImage = GeminiParsedImage & {
 	outputFormat?: GeminiImageOutputFormat;
 };
 
+export type GeneratedImageHydrationLimits = {
+	maxImageBytes: number;
+	maxTotalBytes: number;
+};
+
+export const DEFAULT_GENERATED_IMAGE_HYDRATION_LIMITS = Object.freeze({
+	maxImageBytes: 16 * 1024 * 1024,
+	maxTotalBytes: 48 * 1024 * 1024,
+});
+
 type FetchedImageBytes = {
 	base64: string;
 	outputFormat: GeminiImageOutputFormat;
+	byteLength: number;
 };
+
+class GeneratedImageLimitError extends Error {}
 
 export async function hydrateGeneratedImages(
 	cfg: RuntimeConfig,
 	activeCfg: RuntimeConfig,
 	images: GeminiParsedImage[],
+	limits: GeneratedImageHydrationLimits = DEFAULT_GENERATED_IMAGE_HYDRATION_LIMITS,
 ): Promise<GeminiRichImage[]> {
 	const out: GeminiRichImage[] = [];
+	let remainingBytes = Math.max(0, Math.floor(limits.maxTotalBytes));
 	for (const image of images) {
 		if (image.source !== "generated") {
 			out.push(image);
 			continue;
 		}
 		try {
-			const fetched = await fetchGeneratedImageBytes(cfg, activeCfg, image);
-			out.push({ ...image, ...fetched });
+			if (remainingBytes <= 0)
+				throw new GeneratedImageLimitError(
+					"generated image aggregate byte limit reached",
+				);
+			const fetched = await fetchGeneratedImageBytes(
+				cfg,
+				activeCfg,
+				image,
+				Math.min(remainingBytes, Math.max(0, Math.floor(limits.maxImageBytes))),
+			);
+			remainingBytes -= fetched.byteLength;
+			out.push({
+				...image,
+				base64: fetched.base64,
+				outputFormat: fetched.outputFormat,
+			});
 		} catch (e) {
 			log(
 				cfg,
@@ -50,13 +79,20 @@ async function fetchGeneratedImageBytes(
 	cfg: RuntimeConfig,
 	activeCfg: RuntimeConfig,
 	image: GeminiParsedImage,
+	maxBytes: number,
 ): Promise<FetchedImageBytes> {
 	const headers = generatedImageFetchHeaders(activeCfg);
 	let lastErr: unknown = null;
 	for (const target of generatedImagePreviewFetchUrls(image.url)) {
 		try {
-			return await fetchGeneratedImageBytesFromUrl(cfg, target, headers);
+			return await fetchGeneratedImageBytesFromUrl(
+				cfg,
+				target,
+				headers,
+				maxBytes,
+			);
 		} catch (e) {
+			if (e instanceof GeneratedImageLimitError) throw e;
 			lastErr = e;
 		}
 	}
@@ -68,8 +104,11 @@ async function fetchGeneratedImageBytesFromUrl(
 	cfg: RuntimeConfig,
 	target: string,
 	headers: Record<string, string>,
+	maxBytes: number,
 ): Promise<FetchedImageBytes> {
 	try {
+		if (maxBytes <= 0)
+			throw new GeneratedImageLimitError("generated image byte limit reached");
 		const resp = await httpFetch(target, {
 			method: "GET",
 			headers,
@@ -77,7 +116,7 @@ async function fetchGeneratedImageBytesFromUrl(
 			socket: false,
 			cfg,
 		});
-		const bytes = await responseBytes(resp);
+		const bytes = await responseBytes(resp, maxBytes);
 		if (!resp.ok)
 			throw upstreamImageFetchFailedError(
 				`upstream HTTP ${resp.status}`,
@@ -92,8 +131,10 @@ async function fetchGeneratedImageBytesFromUrl(
 		return {
 			base64: bytesToBase64(bytes),
 			outputFormat,
+			byteLength: bytes.byteLength,
 		};
 	} catch (e) {
+		if (e instanceof GeneratedImageLimitError) throw e;
 		throw upstreamImageFetchFailedError(e);
 	}
 }
@@ -127,11 +168,16 @@ export function generatedImageFetchHeaders(
 
 async function responseBytes(
 	resp: Awaited<ReturnType<typeof httpFetch>>,
+	maxBytes: number,
 ): Promise<Uint8Array> {
-	if ("bytes" in resp && typeof resp.bytes === "function") {
-		return resp.bytes();
-	}
 	if (!resp.body) return new Uint8Array(0);
+	const declaredLength = Number(resp.headers.get("content-length"));
+	if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+		await resp.body.cancel().catch(() => undefined);
+		throw new GeneratedImageLimitError(
+			`generated image exceeds ${maxBytes} byte limit`,
+		);
+	}
 	const reader = resp.body.getReader();
 	const chunks: Uint8Array[] = [];
 	let total = 0;
@@ -139,6 +185,12 @@ async function responseBytes(
 		const { done, value } = await reader.read();
 		if (done) break;
 		if (!value) continue;
+		if (total + value.byteLength > maxBytes) {
+			await reader.cancel().catch(() => undefined);
+			throw new GeneratedImageLimitError(
+				`generated image exceeds ${maxBytes} byte limit`,
+			);
+		}
 		chunks.push(value);
 		total += value.byteLength;
 	}

@@ -76,6 +76,12 @@ export const cases = [
 				[104, 101, 108, 108, 111],
 			);
 			assert.deepEqual(Array.from(mod.base64ToBytes("-_8")), [251, 255]);
+			for (const invalid of ["not base64!?", "a===", "aGV=sbG8", "A"]) {
+				assert.throws(
+					() => mod.base64ToBytes(invalid),
+					/invalid base64 payload/,
+				);
+			}
 		},
 	],
 	[
@@ -87,6 +93,10 @@ export const cases = [
 					[104, 101, 108, 108, 111],
 				);
 				assert.deepEqual(Array.from(mod.base64ToBytes("-_8")), [251, 255]);
+				assert.throws(
+					() => mod.base64ToBytes("aGV=sbG8"),
+					/invalid base64 payload/,
+				);
 				assert.deepEqual(mod.parseUploadUrl("data:text/plain,hello"), {
 					b64: "aGVsbG8=",
 					mime: "text/plain",

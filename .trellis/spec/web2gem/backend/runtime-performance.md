@@ -257,6 +257,102 @@ const cfg = getConfig(env); // throws RuntimeConfigError on malformed values
 assertRuntimeConfig(env);   // production bundle validation for Docker startup
 ```
 
+## Scenario: Worker Request And Image Resource Budgets
+
+### 1. Scope / Trigger
+
+Use this contract when changing generation request parsing, inline Base64
+decoding, multipart image edits, generated-image hydration, or deployment
+defaults that affect Worker memory and CPU pressure.
+
+### 2. Signatures
+
+- `REQUEST_BODY_MAX_BYTES` maps to
+  `StaticRuntimeConfig.request_body_max_bytes` and accepts integers from `1` to
+  `104857600`.
+- `readRouteJsonPost(request, cfg, path)` applies the JSON body budget before
+  route handlers can acquire an account lease or call Gemini.
+- `base64ToBytes(value)` supports strict standard Base64 and Base64URL input.
+- `hydrateGeneratedImages(cfg, activeCfg, images, limits?)` defaults to `16 MiB`
+  per generated image and `48 MiB` total decoded image bytes.
+
+### 3. Contracts
+
+- Authored Worker configuration defaults buffered generation JSON to `16 MiB`;
+  Docker Compose defaults it to `64 MiB`. Explicit valid deployment values
+  override both profiles.
+- The JSON budget includes inline Base64 text because it limits the complete
+  buffered request envelope before JSON parsing.
+- Multipart image edits do not use `REQUEST_BODY_MAX_BYTES`. Their request
+  capacity remains governed by `GENERIC_FILE_UPLOAD_MAX_BYTES` plus the existing
+  multipart form overhead.
+- When the generic JSON limit is lower than the large-context inline limit,
+  return `request_body_too_large`. When the large-context limit is lower or
+  equal and text attachments are unavailable, preserve the more specific
+  `large_context_inline_unsupported` error.
+- Declared oversized JSON must be rejected before reading the body. Streamed
+  oversized JSON and generated-image responses must cancel their active reader.
+- Compact Base64 should use native `Uint8Array.fromBase64` as the validation and
+  decode authority when available. Preserve strict malformed-input rejection,
+  Base64URL support, and the validated fallback for older runtimes.
+- Generated-image hydration tracks decoded bytes, does not retry preview URLs
+  after a budget failure, and preserves the source URL without Base64 when an
+  individual or aggregate budget is exceeded.
+
+### 4. Validation & Error Matrix
+
+- JSON `Content-Length` above `REQUEST_BODY_MAX_BYTES` -> HTTP 413
+  `request_body_too_large` before D1 or Gemini work.
+- Chunked JSON crosses the configured limit -> cancel the reader and return the
+  route's OpenAI- or Google-compatible 413 envelope.
+- Multipart image edit with a lower JSON limit -> ignore the JSON limit and use
+  the multipart attachment limit.
+- Malformed Base64 or Base64URL -> deterministic `invalid base64 payload`.
+- Generated image `Content-Length` or streamed bytes exceed the remaining
+  budget -> cancel, skip preview fallback, and return the original image URL.
+- Invalid `REQUEST_BODY_MAX_BYTES` outside `1..104857600` -> sanitized
+  `invalid_runtime_config` failure.
+
+### 5. Good/Base/Bad Cases
+
+- Good: tune Docker JSON capacity through `REQUEST_BODY_MAX_BYTES` without
+  increasing the Worker-authored default.
+- Base: a normal generated image hydrates to Base64 while remaining budgets are
+  decremented by decoded byte length.
+- Bad: apply the JSON envelope limit to multipart parsing or reduce
+  `GENERIC_FILE_UPLOAD_MAX_BYTES` as a substitute.
+- Bad: call `response.bytes()` for generated images without content-length and
+  incremental stream bounds.
+
+### 6. Tests Required
+
+- Test Worker `16 MiB`, Docker Compose `64 MiB`, maximum valid override, and
+  invalid range values.
+- Test OpenAI and Google declared oversized JSON before any D1 read.
+- Test streamed JSON and image overflow cancellation.
+- Test multipart image edits remain independent from the JSON limit.
+- Test malformed standard Base64 and Base64URL in native and fallback modes.
+- Test individual and aggregate generated-image budgets preserve URL-only output.
+- Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`,
+  `pnpm coverage:ci`, `pnpm smoke`, `pnpm check:bench`, and `pnpm check:size`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+const body = await response.bytes();
+return bytesToBase64(body);
+```
+
+#### Correct
+
+```typescript
+const bytes = await responseBytes(response, remainingBytes);
+remainingBytes -= bytes.byteLength;
+return bytesToBase64(bytes);
+```
+
 ## Scenario: Gemini Account Runtime Snapshot And Refresh Cost
 
 ### 1. Scope / Trigger

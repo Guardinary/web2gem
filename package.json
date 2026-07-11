@@ -70,6 +70,9 @@
 			"REQUEST_TIMEOUT_SEC": {
 				"description": "Upstream request timeout in seconds."
 			},
+			"REQUEST_BODY_MAX_BYTES": {
+				"description": "Maximum buffered JSON request body bytes. Workers default to 16 MiB; Docker Compose defaults to 64 MiB. Multipart image edits use their separate upload limit."
+			},
 			"LOG_REQUESTS": {
 				"description": "Enable structured runtime stage logs."
 			},

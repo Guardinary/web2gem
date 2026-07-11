@@ -1386,7 +1386,7 @@ export const cases = [
 					method: "POST",
 					body: remoteForm,
 				}),
-				baseConfig({ cookie: "SID=ok" }),
+				baseConfig({ cookie: "SID=ok", request_body_max_bytes: 1 }),
 				fakeProvider({
 					async generateRich() {
 						generated = true;

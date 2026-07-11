@@ -28,6 +28,7 @@ export type StaticRuntimeConfig = Readonly<{
 	retry_attempts: number;
 	retry_delay_sec: number;
 	request_timeout_sec: number;
+	request_body_max_bytes: number;
 	log_requests: boolean;
 	current_input_file_enabled: boolean;
 	current_input_file_min_bytes: number;
@@ -78,6 +79,7 @@ const DEFAULT_CONFIG = Object.freeze({
 	RETRY_ATTEMPTS: 3,
 	RETRY_DELAY_SEC: 2,
 	REQUEST_TIMEOUT_SEC: 180,
+	REQUEST_BODY_MAX_BYTES: 16 * 1024 * 1024,
 	LOG_REQUESTS: false,
 	CURRENT_INPUT_FILE_ENABLED: true,
 	CURRENT_INPUT_FILE_MIN_BYTES: 95000,
@@ -143,6 +145,7 @@ export const CONFIG_ENV_KEYS = [
 	"RETRY_ATTEMPTS",
 	"RETRY_DELAY_SEC",
 	"REQUEST_TIMEOUT_SEC",
+	"REQUEST_BODY_MAX_BYTES",
 	"LOG_REQUESTS",
 	"CURRENT_INPUT_FILE_ENABLED",
 	"CURRENT_INPUT_FILE_MIN_BYTES",
@@ -234,6 +237,16 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): StaticRuntimeConfig {
 			),
 			1,
 			3600,
+		),
+		request_body_max_bytes: parseStrictInteger(
+			"REQUEST_BODY_MAX_BYTES",
+			configValue(
+				activeEnv,
+				"REQUEST_BODY_MAX_BYTES",
+				DEFAULT_CONFIG.REQUEST_BODY_MAX_BYTES,
+			),
+			1,
+			100 * 1024 * 1024,
 		),
 		log_requests: parseStrictBoolean(
 			"LOG_REQUESTS",

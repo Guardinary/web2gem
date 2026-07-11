@@ -579,6 +579,76 @@ export const cases = [
 		},
 	],
 	[
+		"bounds individual and aggregate generated image hydration",
+		async () => {
+			assert.deepEqual(mod.DEFAULT_GENERATED_IMAGE_HYDRATION_LIMITS, {
+				maxImageBytes: 16 * 1024 * 1024,
+				maxTotalBytes: 48 * 1024 * 1024,
+			});
+			const cfg = baseGeminiClientConfig();
+			const tinyPng = mod.base64ToBytes(TINY_PNG_BASE64);
+			let canceled = false;
+			let calls = 0;
+			await withFetch(
+				async () => {
+					calls += 1;
+					return new Response(
+						new ReadableStream({
+							start(controller) {
+								controller.enqueue(tinyPng);
+							},
+							cancel() {
+								canceled = true;
+							},
+						}),
+						{ status: 200 },
+					);
+				},
+				async () => {
+					const oversized = await mod.hydrateGeneratedImages(
+						cfg,
+						cfg,
+						[
+							{
+								url: "https://images.example/oversized.png",
+								source: "generated",
+							},
+						],
+						{ maxImageBytes: tinyPng.byteLength - 1, maxTotalBytes: 1000 },
+					);
+					assert.equal(oversized[0].base64, undefined);
+				},
+			);
+			assert.equal(calls, 1);
+			assert.equal(canceled, true);
+
+			calls = 0;
+			await withFetch(
+				async () => {
+					calls += 1;
+					return new Response(tinyPng, { status: 200 });
+				},
+				async () => {
+					const images = await mod.hydrateGeneratedImages(
+						cfg,
+						cfg,
+						[
+							{ url: "https://images.example/one.png", source: "generated" },
+							{ url: "https://images.example/two.png", source: "generated" },
+						],
+						{
+							maxImageBytes: tinyPng.byteLength,
+							maxTotalBytes: tinyPng.byteLength + 1,
+						},
+					);
+					assert.equal(images[0].base64, TINY_PNG_BASE64);
+					assert.equal(images[1].base64, undefined);
+				},
+			);
+			assert.equal(calls, 2);
+		},
+	],
+	[
 		"fetches s1024 generated image fallback URLs and detects jpeg bytes",
 		async () => {
 			const cfg = baseGeminiClientConfig();

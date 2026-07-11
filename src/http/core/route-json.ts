@@ -10,6 +10,7 @@ type RouteJsonConfig = {
 	current_input_file_enabled?: unknown;
 	current_input_file_min_bytes?: unknown;
 	generic_file_upload_max_bytes?: unknown;
+	request_body_max_bytes?: unknown;
 	supports_authenticated_session?: unknown;
 	log_requests?: unknown;
 };
@@ -64,6 +65,8 @@ function oversizedInlineBodyRejection(
 	if (contentLength == null) return null;
 	const threshold = contextFileThreshold(cfg);
 	const bodyLimit = inlineContextBodyReadLimit(cfg, threshold);
+	const requestBodyLimit = positiveIntegerOrNull(cfg.request_body_max_bytes);
+	if (requestBodyLimit != null && requestBodyLimit < bodyLimit) return null;
 	if (contentLength <= bodyLimit) return null;
 	logStage(cfg, "request_json_reject", {
 		path,
@@ -106,10 +109,13 @@ async function readJsonForRoute(
 function oversizedInlineBodyReadOptions(
 	cfg: RouteJsonConfig,
 ): ReadJsonRequestOptions | undefined {
+	const requestBodyLimit = positiveIntegerOrNull(cfg.request_body_max_bytes);
 	const unavailable = inlineContextUnavailableReason(cfg);
-	if (!unavailable) return undefined;
+	if (!unavailable) return requestBodyReadOptions(requestBodyLimit);
 	const threshold = contextFileThreshold(cfg);
 	const bodyLimit = inlineContextBodyReadLimit(cfg, threshold);
+	if (requestBodyLimit != null && requestBodyLimit < bodyLimit)
+		return requestBodyReadOptions(requestBodyLimit);
 	return {
 		maxBodyBytes: bodyLimit,
 		oversizedError: {
@@ -118,6 +124,26 @@ function oversizedInlineBodyReadOptions(
 			message: `request body is too large to parse without Gemini text attachments (at least ${bodyLimit + 1} UTF-8 bytes > ${bodyLimit}; inline prompt threshold ${threshold}) and ${unavailable}; configure the Gemini account pool with CURRENT_INPUT_FILE_ENABLED=true so this worker can use text attachments, or reduce the request size`,
 		},
 	};
+}
+
+function requestBodyReadOptions(
+	requestBodyLimit: number | null,
+): ReadJsonRequestOptions | undefined {
+	if (requestBodyLimit == null) return undefined;
+	return {
+		maxBodyBytes: requestBodyLimit,
+		oversizedError: {
+			status: 413,
+			code: "request_body_too_large",
+			message: `request body exceeds configured JSON limit (${requestBodyLimit} bytes)`,
+		},
+	};
+}
+
+function positiveIntegerOrNull(value: unknown): number | null {
+	const numberValue = Number(value);
+	if (!Number.isSafeInteger(numberValue) || numberValue <= 0) return null;
+	return numberValue;
 }
 
 export function inlineContextBodyReadLimit(

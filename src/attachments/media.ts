@@ -453,16 +453,21 @@ export function validateBase64Shape(raw: unknown): string {
 }
 
 export function base64ToBytes(b64: unknown): Uint8Array {
-	const compact = validateBase64Shape(b64);
-	const hasBase64UrlAlphabet = /[-_]/.test(compact);
+	const source = String(b64 || "");
 	const nativeFromBase64 = (Uint8Array as Uint8ArrayBase64Constructor)
 		.fromBase64;
 	if (typeof nativeFromBase64 === "function") {
-		return nativeFromBase64(
-			compact,
-			hasBase64UrlAlphabet ? { alphabet: "base64url" } : undefined,
-		);
+		try {
+			return nativeFromBase64(
+				source,
+				/[-_]/.test(source) ? { alphabet: "base64url" } : undefined,
+			);
+		} catch (_) {
+			throw new Error("invalid base64 payload");
+		}
 	}
+	const compact = validateBase64Shape(source);
+	const hasBase64UrlAlphabet = /[-_]/.test(compact);
 	let standardB64 = compact;
 	if (hasBase64UrlAlphabet) {
 		standardB64 = compact.replace(/-/g, "+").replace(/_/g, "/");

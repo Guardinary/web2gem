@@ -484,6 +484,72 @@ export const cases = [
 		},
 	],
 	[
+		"rejects configured JSON body limits before account or provider work",
+		async () => {
+			const paths = [
+				"/v1/chat/completions",
+				"/v1beta/models/gemini-3.5-flash:generateContent",
+			];
+			for (const path of paths) {
+				let d1Reads = 0;
+				const resp = await mod.default.fetch(
+					new Request(`https://worker.example${path}`, {
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+							"Content-Length": "11",
+						},
+						body: "12345678901",
+					}),
+					{
+						API_KEYS: "",
+						REQUEST_BODY_MAX_BYTES: "10",
+						GEMINI_DB: {
+							prepare() {
+								d1Reads += 1;
+								throw new Error("oversized JSON should not read D1");
+							},
+						},
+					},
+					{},
+				);
+				assert.equal(resp.status, 413);
+				const body = await resp.json();
+				assert.equal(body.error.code, "request_body_too_large");
+				assert.equal(d1Reads, 0);
+			}
+		},
+	],
+	[
+		"cancels streamed JSON bodies at the configured application limit",
+		async () => {
+			let canceled = false;
+			const result = await mod.readRouteJsonPost(
+				new Request("https://worker.example/v1/responses", {
+					method: "POST",
+					body: new ReadableStream({
+						start(controller) {
+							controller.enqueue(new TextEncoder().encode('{"x":"12345"'));
+						},
+						cancel() {
+							canceled = true;
+						},
+					}),
+					duplex: "half",
+				}),
+				{
+					current_input_file_enabled: true,
+					request_body_max_bytes: 10,
+					supports_authenticated_session: true,
+				},
+				"/v1/responses",
+			);
+			assert.equal(result.status, 413);
+			assert.equal(result.code, "request_body_too_large");
+			assert.equal(canceled, true);
+		},
+	],
+	[
 		"rejects oversized chat body by Content-Length before JSON parsing",
 		async () => {
 			const bodyText = "x".repeat(40);

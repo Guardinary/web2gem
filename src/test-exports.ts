@@ -40,8 +40,10 @@ export {
 	wrbResponseShapeSummary,
 } from "./gemini/client";
 export {
+	DEFAULT_GENERATED_IMAGE_HYDRATION_LIMITS,
 	generatedImageFetchHeaders,
 	generatedImagePreviewFetchUrls,
+	hydrateGeneratedImages,
 } from "./gemini/client/generated-images";
 export {
 	CONFIG_ENV_KEYS,

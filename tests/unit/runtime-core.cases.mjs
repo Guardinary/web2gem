@@ -361,6 +361,7 @@ export const cases = [
 		"parses LOG_REQUESTS boolean config",
 		async () => {
 			assert.equal(mod.getConfig({}).log_requests, false);
+			assert.equal(mod.getConfig({}).request_body_max_bytes, 16 * 1024 * 1024);
 			assert.equal(
 				mod.getConfig({ LOG_REQUESTS: "false" }).log_requests,
 				false,
@@ -495,6 +496,8 @@ export const cases = [
 				{ RETRY_ATTEMPTS: "0" },
 				{ RETRY_DELAY_SEC: "-1" },
 				{ REQUEST_TIMEOUT_SEC: "3601" },
+				{ REQUEST_BODY_MAX_BYTES: "0" },
+				{ REQUEST_BODY_MAX_BYTES: "104857601" },
 				{ CURRENT_INPUT_FILE_MIN_BYTES: "01" },
 				{ GENERIC_FILE_UPLOAD_MAX_BYTES: "104857601" },
 				{ CURRENT_INPUT_FILE_NAME: "../message.txt" },
@@ -511,12 +514,14 @@ export const cases = [
 				RETRY_ATTEMPTS: "10",
 				RETRY_DELAY_SEC: "0",
 				REQUEST_TIMEOUT_SEC: "3600",
+				REQUEST_BODY_MAX_BYTES: "104857600",
 				CURRENT_INPUT_FILE_MIN_BYTES: "0",
 				GENERIC_FILE_UPLOAD_MAX_BYTES: "104857600",
 			});
 			assert.equal(cfg.retry_attempts, 10);
 			assert.equal(cfg.retry_delay_sec, 0);
 			assert.equal(cfg.request_timeout_sec, 3600);
+			assert.equal(cfg.request_body_max_bytes, 104857600);
 			assert.equal(cfg.current_input_file_min_bytes, 0);
 			assert.equal(cfg.generic_file_upload_max_bytes, 104857600);
 			assert.equal(

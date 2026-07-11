@@ -88,6 +88,7 @@ export function baseConfig(overrides = {}) {
 		current_input_file_name: "message.txt",
 		current_tools_file_name: "tools.txt",
 		generic_file_upload_max_bytes: 20 * 1024 * 1024,
+		request_body_max_bytes: 16 * 1024 * 1024,
 		cookie: "",
 		log_requests: false,
 		...overrides,

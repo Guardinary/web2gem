@@ -344,6 +344,10 @@ export const cases = [
 			const compose = await readFile("compose.yaml", "utf8");
 			assert.match(compose, /\$\{PORT:-52389\}:\$\{PORT:-52389\}/);
 			assert.doesNotMatch(compose, /\$\{PORT:-52389\}:52389/);
+			assert.match(
+				compose,
+				/REQUEST_BODY_MAX_BYTES:\s*"\$\{REQUEST_BODY_MAX_BYTES:-67108864\}"/,
+			);
 		},
 	],
 	[
