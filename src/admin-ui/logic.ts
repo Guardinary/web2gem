@@ -34,11 +34,45 @@ export function text(value: unknown): string {
 }
 
 export function identifier(account: GeminiAccount): AccountIdentifier {
-	return account.id ? { id: account.id } : { row_id: account.row_id };
+	return { id: account.id };
 }
 
 export function identifierKey(account: GeminiAccount): string {
-	return account.id || account.row_id;
+	return account.id;
+}
+
+export function accountResourcePath(
+	id: string,
+	action?: "refresh" | "check",
+): string {
+	const resource = `/admin/accounts/${encodeURIComponent(id)}`;
+	return action ? `${resource}/${action}` : resource;
+}
+
+export function mergeMutationResults(
+	results: readonly MutationResult[],
+): MutationResult {
+	const merged: MutationResult = {};
+	for (const key of [
+		"added",
+		"duplicates",
+		"skipped",
+		"updated",
+		"removed",
+		"checked",
+		"refreshed",
+		"unchanged",
+		"failed",
+	] as const) {
+		const values = results
+			.map((result) => result[key])
+			.filter((value): value is number => value !== undefined);
+		if (values.length)
+			merged[key] = values.reduce((sum, value) => sum + value, 0);
+	}
+	const errors = results.flatMap((result) => result.errors || []);
+	if (errors.length) merged.errors = errors;
+	return merged;
 }
 
 export function formatTime(value: number | null): string {

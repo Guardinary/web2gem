@@ -1,11 +1,13 @@
 // Internal compatibility surface used by local unit and smoke tests.
 export { handleApplicationRequest } from "./app";
 export {
+	accountResourcePath,
 	identifier,
 	identifierKey,
 	isCooling,
 	isRefreshable,
 	metadataCsv,
+	mergeMutationResults,
 	parseBatchImport,
 	relativeTime,
 	resultSummary,
@@ -13,11 +15,10 @@ export {
 	validateCookieValue,
 } from "./admin-ui/logic";
 export {
-	boundedConcurrency as boundedAdminConcurrency,
 	createInputFromAccount as createGeminiAccountInputFromAdmin,
 	hasAccountUpdate,
+	listFilterFromSearchParams as geminiAccountListFilterFromSearchParams,
 	normalizeCreateAccounts,
-	normalizeIdentifiers as normalizeGeminiAccountIdentifiers,
 	normalizeListFilter as normalizeGeminiAccountListFilter,
 	updateFromBody as geminiAccountUpdateFromAdminBody,
 } from "./gemini/accounts/admin-input";

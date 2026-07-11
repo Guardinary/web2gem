@@ -279,7 +279,7 @@ export const cases = [
 		},
 	],
 	[
-		"admin input owner normalizes filters identifiers and update payloads",
+		"admin input owner strictly normalizes filters and update payloads",
 		() => {
 			const accounts = mod.normalizeCreateAccounts({
 				provider: "gemini",
@@ -302,16 +302,6 @@ export const cases = [
 				},
 			);
 			assert.deepEqual(
-				mod.normalizeGeminiAccountIdentifiers({
-					identifiers: [
-						{ id: "account-a" },
-						{ account_id: "account-a" },
-						{ row_id: "row-b" },
-					],
-				}),
-				[{ id: "account-a", account_id: "account-a" }, { row_id: "row-b" }],
-			);
-			assert.deepEqual(
 				mod.normalizeGeminiAccountListFilter({
 					limit: 999,
 					q: " q ",
@@ -326,7 +316,7 @@ export const cases = [
 				},
 			);
 			const update = mod.geminiAccountUpdateFromAdminBody(
-				{ label: " next ", enabled: 1, source: "" },
+				{ label: " next ", enabled: true, source: "" },
 				2000,
 			);
 			assert.deepEqual(update, {
@@ -337,11 +327,35 @@ export const cases = [
 			});
 			assert.equal(mod.hasAccountUpdate(update), true);
 			assert.equal(mod.hasAccountUpdate({ nowMs: 2000 }), false);
-			assert.equal(mod.boundedAdminConcurrency(100), 10);
+			assert.throws(
+				() => mod.geminiAccountUpdateFromAdminBody({ enabled: "false" }, 2000),
+				/enabled must be a boolean/,
+			);
+			assert.throws(
+				() =>
+					mod.geminiAccountUpdateFromAdminBody(
+						{ id: "legacy-body-id", label: "x" },
+						2000,
+					),
+				/unsupported account update field: id/,
+			);
+			assert.deepEqual(
+				mod.geminiAccountListFilterFromSearchParams(
+					new URLSearchParams("limit=25&enabled=false&category=full_session"),
+				),
+				{ limit: 25, enabled: false, category: "full_session" },
+			);
+			assert.throws(
+				() =>
+					mod.geminiAccountListFilterFromSearchParams(
+						new URLSearchParams("enabled=yes"),
+					),
+				/enabled must be true, false, 1, or 0/,
+			);
 		},
 	],
 	[
-		"admin service bounds list pagination and deduplicates identifier mutations",
+		"admin service keeps resource mutations idempotent and path-id based",
 		async () => {
 			const db = new FakeD1();
 			const store = new mod.D1GeminiAccountStore(db);
@@ -402,28 +416,24 @@ export const cases = [
 			);
 			assert.equal(secondPage.nextCursor, null);
 
-			const disabled = await service.setEnabled(
-				{
-					identifiers: [
-						{ id: "a" },
-						{ account_id: "a" },
-						{ row_id: db.rows.get("a").row_id },
-					],
-				},
-				false,
-			);
+			const disabled = await service.update("a", { enabled: false });
 			assert.equal(disabled.updated, 1);
 			assert.equal(db.rows.get("a").enabled, 0);
+			const disabledAgain = await service.update("a", { enabled: false });
+			assert.equal(disabledAgain.updated, 1);
+			assert.equal(db.rows.get("a").enabled, 0);
 
-			const removed = await service.delete({
-				identifiers: [{ row_id: db.rows.get("b").row_id }, { id: "b" }],
-			});
+			const removed = await service.delete("b");
 			assert.equal(removed.removed, 1);
 			assert.equal(db.rows.has("b"), false);
+			await assert.rejects(
+				() => service.delete("missing"),
+				/account not found/,
+			);
 		},
 	],
 	[
-		"admin refresh and check return countable sanitized deduped diagnostics",
+		"admin refresh and check preserve sanitized single-resource diagnostics",
 		async () => {
 			const db = new FakeD1();
 			const store = new mod.D1GeminiAccountStore(db);
@@ -457,16 +467,10 @@ export const cases = [
 					},
 				},
 			);
-			const result = await service.refresh({
-				identifiers: [
-					{ id: "refreshable" },
-					{ account_id: "refreshable" },
-					{ row_id: db.rows.get("skipped").row_id },
-				],
-			});
-			assert.equal(result.checked, 2);
+			const result = await service.refresh("refreshable");
+			assert.equal(result.checked, 1);
 			assert.equal(result.refreshed, 1);
-			assert.equal(result.skipped, 1);
+			assert.equal(result.skipped, 0);
 			assert.equal(result.failed, 0);
 			assert.equal(rotateCalls, 1);
 			assert.doesNotMatch(
@@ -474,11 +478,33 @@ export const cases = [
 				/psid-refresh|ts-old|ts-new|SNlM0e|SAPISID/,
 			);
 
-			const check = await service.check({
-				identifiers: [{ id: "refreshable" }, { id: "refreshable" }],
-			});
+			const skipped = await service.refresh("skipped");
+			assert.equal(skipped.checked, 1);
+			assert.equal(skipped.skipped, 1);
+			const check = await service.check("refreshable");
 			assert.equal(check.checked, 1);
 			assert.equal(check.unchanged + check.refreshed, 1);
+			await assert.rejects(() => service.check("missing"), /account not found/);
+
+			await seedAccount(store, "failure", {
+				cookieHeader:
+					"__Secure-1PSID=psid-failure; __Secure-1PSIDTS=ts-failure",
+				nowMs: 1000,
+			});
+			const failingService = mod.createGeminiAccountAdminServiceFromD1(
+				db,
+				baseConfig(),
+				{
+					nowMs: () => 130_000,
+					rotateCookie: async () => {
+						throw new Error("SQL cookie secret should stay internal");
+					},
+				},
+			);
+			const failed = await failingService.refresh("failure");
+			assert.equal(failed.failed, 1);
+			assert.equal(failed.errors[0].error, "admin_diagnostic_failed");
+			assert.doesNotMatch(JSON.stringify(failed), /SQL|cookie secret/);
 		},
 	],
 	[
@@ -547,7 +573,7 @@ export const cases = [
 			);
 
 			const listed = await mod.default.fetch(
-				new Request("https://worker.example/admin/accounts?limit=999", {
+				new Request("https://worker.example/admin/accounts?limit=200", {
 					headers: { "X-Admin-Key": "admin-secret" },
 				}),
 				env,
@@ -567,6 +593,198 @@ export const cases = [
 			);
 			assert.equal(stats.status, 200);
 			assert.equal((await stats.json()).total, 1);
+		},
+	],
+	[
+		"worker enforces the account admin v2 route auth validation and error contract",
+		async () => {
+			const db = new FakeD1();
+			const env = {
+				ADMIN_KEYS: "admin-secret",
+				GEMINI_DB: db,
+			};
+			const adminHeaders = {
+				Authorization: "Bearer admin-secret",
+				"Content-Type": "application/json",
+			};
+			const created = await mod.default.fetch(
+				new Request("https://worker.example/admin/accounts", {
+					method: "POST",
+					headers: adminHeaders,
+					body: JSON.stringify({
+						provider: "gemini",
+						"__Secure-1PSID": "v2-psid",
+						"__Secure-1PSIDTS": "v2-ts",
+					}),
+				}),
+				env,
+				{},
+			);
+			const id = (await created.json()).items[0].id;
+			const resource = `https://worker.example/admin/accounts/${encodeURIComponent(id)}`;
+
+			for (const enabled of [false, false, true]) {
+				const response = await mod.default.fetch(
+					new Request(resource, {
+						method: "PATCH",
+						headers: adminHeaders,
+						body: JSON.stringify({ enabled }),
+					}),
+					env,
+					{},
+				);
+				assert.equal(response.status, 200);
+				assert.equal((await response.json()).items[0].enabled, enabled ? 1 : 0);
+			}
+
+			for (const action of ["refresh", "check"]) {
+				db.rows.get(id).account_category = "psid_only";
+				const response = await mod.default.fetch(
+					new Request(`${resource}/${action}`, {
+						method: "POST",
+						headers: { Authorization: "Bearer admin-secret" },
+					}),
+					env,
+					{},
+				);
+				assert.equal(response.status, 200);
+				assert.equal((await response.json()).skipped, 1);
+			}
+
+			for (const [path, method] of [
+				["/admin/accounts/update", "POST"],
+				["/admin/accounts/enable", "POST"],
+				["/admin/accounts/disable", "POST"],
+				["/admin/accounts/refresh", "POST"],
+				["/admin/accounts/check", "POST"],
+				["/admin/accounts", "PATCH"],
+				["/admin/accounts", "DELETE"],
+			]) {
+				const response = await mod.default.fetch(
+					new Request(`https://worker.example${path}`, {
+						method,
+						headers: adminHeaders,
+						body: method === "DELETE" ? undefined : "{}",
+					}),
+					env,
+					{},
+				);
+				assert.equal(response.status, 404, `${method} ${path}`);
+			}
+
+			const publicHeader = await mod.default.fetch(
+				new Request("https://worker.example/admin/accounts", {
+					headers: { "x-api-key": "admin-secret" },
+				}),
+				env,
+				{},
+			);
+			assert.equal(publicHeader.status, 401);
+
+			for (const query of [
+				"limit=999",
+				"enabled=yes",
+				"status=unknown",
+				"unknown=value",
+				"limit=10&limit=20",
+			]) {
+				const response = await mod.default.fetch(
+					new Request(`https://worker.example/admin/accounts?${query}`, {
+						headers: { "X-Admin-Key": "admin-secret" },
+					}),
+					env,
+					{},
+				);
+				assert.equal(response.status, 400, query);
+			}
+			const mutationQuery = await mod.default.fetch(
+				new Request(`${resource}?unexpected=1`, {
+					method: "PATCH",
+					headers: adminHeaders,
+					body: JSON.stringify({ enabled: true }),
+				}),
+				env,
+				{},
+			);
+			assert.equal(mutationQuery.status, 400);
+			const actionBody = await mod.default.fetch(
+				new Request(`${resource}/check`, {
+					method: "POST",
+					headers: adminHeaders,
+					body: JSON.stringify({ id }),
+				}),
+				env,
+				{},
+			);
+			assert.equal(actionBody.status, 400);
+			assert.equal(
+				(await actionBody.json()).error.code,
+				"admin_request_body_not_allowed",
+			);
+
+			const removed = await mod.default.fetch(
+				new Request(resource, {
+					method: "DELETE",
+					headers: { Authorization: "Bearer admin-secret" },
+				}),
+				env,
+				{},
+			);
+			assert.equal(removed.status, 200);
+			const missing = await mod.default.fetch(
+				new Request(resource, {
+					method: "DELETE",
+					headers: { Authorization: "Bearer admin-secret" },
+				}),
+				env,
+				{},
+			);
+			assert.equal(missing.status, 404);
+			assert.equal((await missing.json()).error.code, "account_not_found");
+
+			const internal = await mod.default.fetch(
+				new Request("https://worker.example/admin/accounts", {
+					headers: { Authorization: "Bearer admin-secret" },
+				}),
+				{
+					ADMIN_KEYS: "admin-secret",
+					GEMINI_DB: {
+						prepare() {
+							throw new Error("SQL secret-cookie-fragment");
+						},
+					},
+				},
+				{},
+			);
+			assert.equal(internal.status, 500);
+			const internalBody = await internal.json();
+			assert.deepEqual(internalBody, {
+				error: {
+					message: "admin request failed",
+					code: "admin_request_failed",
+				},
+			});
+			assert.doesNotMatch(JSON.stringify(internalBody), /SQL|secret-cookie/);
+		},
+	],
+	[
+		"admin WebUI logic builds v2 resource paths and aggregates batch results",
+		() => {
+			assert.equal(
+				mod.accountResourcePath("account/a"),
+				"/admin/accounts/account%2Fa",
+			);
+			assert.equal(
+				mod.accountResourcePath("account-a", "refresh"),
+				"/admin/accounts/account-a/refresh",
+			);
+			assert.deepEqual(
+				mod.mergeMutationResults([
+					{ updated: 1, skipped: 0 },
+					{ updated: 1, skipped: 1, errors: [{ error: "safe" }] },
+				]),
+				{ updated: 2, skipped: 1, errors: [{ error: "safe" }] },
+			);
 		},
 	],
 	[
@@ -619,6 +837,12 @@ export const cases = [
 			assert.doesNotMatch(html, /Delete filtered/);
 			assert.match(html, /success_count/);
 			assert.match(html, /failure_count/);
+			assert.match(html, /encodeURIComponent/);
+			assert.match(html, /method:"PATCH"/);
+			assert.doesNotMatch(
+				html,
+				/\/admin\/accounts\/(?:update|enable|disable|refresh|check)|x-api-key/,
+			);
 			assert.doesNotMatch(
 				html,
 				/GEMINI_COOKIE|SAPISID=|SNlM0e=|psid-secret|ts-secret|Cookie:\s*__Secure/i,

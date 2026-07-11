@@ -243,7 +243,7 @@ export function App(): JSX.Element {
 								</p>
 							) : null}
 							<p class="help">
-								Actions use account identifiers from the sanitized admin API
+								Actions use stable account IDs from the sanitized admin API
 								response. No session secrets are displayed here.
 							</p>
 						</div>

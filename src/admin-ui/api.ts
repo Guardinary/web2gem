@@ -1,4 +1,5 @@
 import { parseMutation, parsePage, parseStats } from "./schemas";
+import { accountResourcePath, mergeMutationResults } from "./logic";
 import type {
 	AccountIdentifier,
 	AccountPage,
@@ -29,7 +30,8 @@ export type CreateBatchInput = {
 	accounts: CreateInput[];
 };
 
-export type UpdateInput = AccountIdentifier & {
+export type UpdateInput = {
+	id: string;
 	label: string | null;
 	status: string;
 	enabled: boolean;
@@ -147,8 +149,12 @@ export async function updateAccount(
 	adminKey: string,
 	input: UpdateInput,
 ): Promise<MutationResult> {
+	const { id, ...patch } = input;
 	return parseMutation(
-		await request(adminKey, API_PATH, { method: "PATCH", body: input }),
+		await request(adminKey, accountResourcePath(id), {
+			method: "PATCH",
+			body: patch,
+		}),
 	);
 }
 
@@ -157,12 +163,35 @@ export async function runAccountAction(
 	action: string,
 	identifiers: AccountIdentifier[],
 ): Promise<MutationResult> {
-	const method = action === "delete" ? "DELETE" : "POST";
-	const suffix = action === "delete" ? "" : `/${action}`;
-	return parseMutation(
-		await request(adminKey, `${API_PATH}${suffix}`, {
-			method,
-			body: { identifiers },
-		}),
-	);
+	if (!identifiers.length) return {};
+	const results: MutationResult[] = [];
+	for (const { id } of identifiers) {
+		results.push(await runSingleAccountAction(adminKey, action, id));
+	}
+	return mergeMutationResults(results);
+}
+
+async function runSingleAccountAction(
+	adminKey: string,
+	action: string,
+	id: string,
+): Promise<MutationResult> {
+	if (action === "enable" || action === "disable")
+		return parseMutation(
+			await request(adminKey, accountResourcePath(id), {
+				method: "PATCH",
+				body: { enabled: action === "enable" },
+			}),
+		);
+	if (action === "delete")
+		return parseMutation(
+			await request(adminKey, accountResourcePath(id), { method: "DELETE" }),
+		);
+	if (action === "refresh" || action === "check")
+		return parseMutation(
+			await request(adminKey, accountResourcePath(id, action), {
+				method: "POST",
+			}),
+		);
+	throw new Error(`Unsupported account action: ${action}`);
 }

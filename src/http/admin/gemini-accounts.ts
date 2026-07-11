@@ -3,7 +3,12 @@ import {
 	createGeminiAccountAdminServiceFromEnv,
 	GeminiAccountAdminError,
 } from "../../gemini/accounts/admin";
-import { errorLogSummary } from "../../shared/runtime";
+import {
+	accountIdFromPathSegment,
+	assertNoAdminQueryParams,
+	listFilterFromSearchParams,
+} from "../../gemini/accounts/admin-input";
+import { errorLogSummary, log } from "../../shared/runtime";
 import { isRecord } from "../../shared/types";
 import { jsonResponse, readJsonRequest } from "../core/json";
 
@@ -27,50 +32,55 @@ export async function handleGeminiAccountAdminRequest(
 		);
 
 	try {
-		const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
 		const method = request.method.toUpperCase();
 		const path = url.pathname;
 		if (method === "GET" && path === ADMIN_PATH_PREFIX) {
-			return jsonResponse(await service.list(listFilterFromUrl(url)));
+			const filter = listFilterFromSearchParams(url.searchParams);
+			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
+			return jsonResponse(await service.list(filter));
 		}
 
 		if (method === "GET" && path === `${ADMIN_PATH_PREFIX}/stats`) {
-			return jsonResponse(await service.stats(listFilterFromUrl(url)));
+			const filter = listFilterFromSearchParams(url.searchParams, {
+				stats: true,
+			});
+			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
+			return jsonResponse(await service.stats(filter));
 		}
 
 		if (method === "POST" && path === ADMIN_PATH_PREFIX) {
-			return jsonResponse(await service.create(await readAdminJson(request)));
+			assertNoAdminQueryParams(url.searchParams);
+			const body = await readAdminJson(request);
+			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
+			return jsonResponse(await service.create(body));
 		}
 
-		if (
-			(method === "PATCH" && path === ADMIN_PATH_PREFIX) ||
-			(method === "POST" && path === `${ADMIN_PATH_PREFIX}/update`)
-		) {
-			return jsonResponse(await service.update(await readAdminJson(request)));
-		}
-
-		if (method === "POST" && path === `${ADMIN_PATH_PREFIX}/enable`) {
-			return jsonResponse(
-				await service.setEnabled(await readAdminJson(request), true),
-			);
-		}
-
-		if (method === "POST" && path === `${ADMIN_PATH_PREFIX}/disable`) {
-			return jsonResponse(
-				await service.setEnabled(await readAdminJson(request), false),
-			);
-		}
-
-		if (method === "DELETE" && path === ADMIN_PATH_PREFIX) {
-			return jsonResponse(await service.delete(await readAdminJson(request)));
-		}
-
-		if (method === "POST" && path === `${ADMIN_PATH_PREFIX}/refresh`) {
-			return jsonResponse(await service.refresh(await readAdminJson(request)));
-		}
-
-		if (method === "POST" && path === `${ADMIN_PATH_PREFIX}/check`) {
-			return jsonResponse(await service.check(await readAdminJson(request)));
+		const resource = accountResourceFromPath(path);
+		if (resource) {
+			if (method === "PATCH" && resource.action === null) {
+				assertNoAdminQueryParams(url.searchParams);
+				const body = await readAdminJson(request);
+				const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
+				return jsonResponse(await service.update(resource.id, body));
+			}
+			if (method === "DELETE" && resource.action === null) {
+				assertNoAdminQueryParams(url.searchParams);
+				assertAdminBodyAbsent(request);
+				const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
+				return jsonResponse(await service.delete(resource.id));
+			}
+			if (method === "POST" && resource.action === "refresh") {
+				assertNoAdminQueryParams(url.searchParams);
+				assertAdminBodyAbsent(request);
+				const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
+				return jsonResponse(await service.refresh(resource.id));
+			}
+			if (method === "POST" && resource.action === "check") {
+				assertNoAdminQueryParams(url.searchParams);
+				assertAdminBodyAbsent(request);
+				const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
+				return jsonResponse(await service.check(resource.id));
+			}
 		}
 
 		return adminErrorResponse(
@@ -81,6 +91,8 @@ export async function handleGeminiAccountAdminRequest(
 			),
 		);
 	} catch (error) {
+		if (!(error instanceof GeminiAccountAdminError))
+			log(cfg, `admin error: ${errorLogSummary(error)}`);
 		return adminErrorResponse(error);
 	}
 }
@@ -107,7 +119,6 @@ export function adminAuthorized(
 	const candidates = [
 		bearer?.[1] ? bearer[1] : null,
 		headers.get("x-admin-key"),
-		headers.get("x-api-key"),
 	];
 	for (const raw of candidates) {
 		const candidate = String(raw || "").trim();
@@ -148,43 +159,6 @@ async function readAdminJson(request: Request) {
 	return parsed.value;
 }
 
-function listFilterFromUrl(url: URL) {
-	const enabledRaw = url.searchParams.get("enabled");
-	const filter: {
-		limit?: number;
-		cursor?: string;
-		status?: string;
-		enabled?: boolean;
-		q?: string;
-		category?: string;
-		cooldown?: string;
-		source?: string;
-	} = {};
-	const limit = parseInteger(url.searchParams.get("limit"));
-	if (limit !== undefined) filter.limit = limit;
-	const cursor = url.searchParams.get("cursor") || "";
-	if (cursor) filter.cursor = cursor;
-	const status = url.searchParams.get("status") || "";
-	if (status) filter.status = status;
-	if (enabledRaw != null)
-		filter.enabled = /^(1|true|yes|on)$/i.test(enabledRaw);
-	const q = url.searchParams.get("q") || "";
-	if (q) filter.q = q;
-	const category = url.searchParams.get("category") || "";
-	if (category) filter.category = category;
-	const cooldown = url.searchParams.get("cooldown") || "";
-	if (cooldown) filter.cooldown = cooldown;
-	const source = url.searchParams.get("source") || "";
-	if (source) filter.source = source;
-	return filter;
-}
-
-function parseInteger(value: string | null): number | undefined {
-	if (value == null || value.trim() === "") return undefined;
-	const n = Number(value);
-	return Number.isInteger(n) ? n : undefined;
-}
-
 function adminErrorResponse(error: unknown): Response {
 	if (error instanceof GeminiAccountAdminError) {
 		return jsonResponse(
@@ -197,10 +171,41 @@ function adminErrorResponse(error: unknown): Response {
 			error: {
 				message: "admin request failed",
 				code: "admin_request_failed",
-				detail: errorLogSummary(error),
 			},
 		},
 		500,
+	);
+}
+
+type AccountResourceRoute = {
+	id: string;
+	action: "refresh" | "check" | null;
+};
+
+function accountResourceFromPath(path: string): AccountResourceRoute | null {
+	if (!path.startsWith(`${ADMIN_PATH_PREFIX}/`)) return null;
+	const remainder = path.slice(ADMIN_PATH_PREFIX.length + 1);
+	const segments = remainder.split("/");
+	if (segments.length === 1 && segments[0] && segments[0] !== "stats")
+		return { id: accountIdFromPathSegment(segments[0]), action: null };
+	if (
+		segments.length === 2 &&
+		segments[0] &&
+		(segments[1] === "refresh" || segments[1] === "check")
+	)
+		return {
+			id: accountIdFromPathSegment(segments[0]),
+			action: segments[1],
+		};
+	return null;
+}
+
+function assertAdminBodyAbsent(request: Request): void {
+	if (request.body === null) return;
+	throw new GeminiAccountAdminError(
+		400,
+		"admin_request_body_not_allowed",
+		"request body is not allowed for this admin route",
 	);
 }
 

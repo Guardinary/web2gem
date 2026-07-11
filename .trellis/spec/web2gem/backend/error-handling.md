@@ -255,29 +255,29 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 - Env key: `ADMIN_KEYS` accepts comma-separated admin keys. `ADMIN_KEY` and JSON-array strings are rejected by runtime configuration v2.
 - Admin routes live under `/admin/accounts`.
 - Supported operations:
-  - `GET /admin/accounts?limit=&cursor=&status=&enabled=`
+  - `GET /admin/accounts?limit=&cursor=&status=&enabled=&q=&category=&cooldown=&source=`
+  - `GET /admin/accounts/stats?status=&enabled=&q=&category=&cooldown=&source=`
   - `POST /admin/accounts`
-  - `PATCH /admin/accounts`
-  - `POST /admin/accounts/update`
-  - `POST /admin/accounts/enable`
-  - `POST /admin/accounts/disable`
-  - `DELETE /admin/accounts`
-  - `POST /admin/accounts/refresh`
-  - `POST /admin/accounts/check`
+  - `PATCH /admin/accounts/:id`
+  - `DELETE /admin/accounts/:id`
+  - `POST /admin/accounts/:id/refresh`
+  - `POST /admin/accounts/:id/check`
 - Default create payload accepts only `provider`, `accounts[]`, `__Secure-1PSID`, `__Secure-1PSIDTS`, and safe metadata such as `label`, `user_agent`, `gemini_origin`, `source`, `source_id`, and `source_name`.
-- Identifier payloads accept `id`, `account_id`, or `row_id`; `identifiers[]` is the batch form.
-- `admin-input.ts` exports `normalizeCreateAccounts`, `createInputFromAccount`, `updateFromBody`, `normalizeIdentifiers`, `normalizeListFilter`, and `boundedConcurrency` as the single validation/normalization owner.
+- Mutation and diagnostic routes take the stable account `id` from the URL path. Request bodies must not contain `id`, `account_id`, `row_id`, or `identifiers`.
+- `admin-input.ts` exports `accountIdFromPathSegment`, `listFilterFromSearchParams`, `assertNoAdminQueryParams`, `normalizeCreateAccounts`, `createInputFromAccount`, `updateFromBody`, and `normalizeListFilter` as the single validation/normalization owner.
 - `GeminiAccountAdminService` accepts explicit `adminStore` and `runtimeStore` capabilities; the legacy combined `store` option remains a compatibility construction path.
 
 ### 3. Contracts
 
 - Admin auth is separate from public caller auth. Public `API_KEYS`, `x-goog-api-key`, and query-string `key` must not authorize account-pool admin routes.
-- Admin routes accept admin credentials through `Authorization: Bearer <key>`, `X-Admin-Key`, or `x-api-key`, matched only against `cfg.admin_keys`.
+- Admin routes accept admin credentials through `Authorization: Bearer <key>` or `X-Admin-Key`, matched only against `cfg.admin_keys`. `x-api-key` is public-API authentication only and must not authorize admin routes.
 - Missing, empty, or placeholder-only admin config fails closed with `401 admin_auth_not_configured`. Placeholder values include `changeme`, `change-me`, `your-admin-key`, `admin`, `password`, `test`, `example`, and `sample`.
 - Service-layer admin methods return sanitized DTOs before the HTTP route serializes responses. Route handlers must not receive raw D1 account rows for list/create/update/delete/refresh/check results.
 - Default Gemini import must reject full Cookie headers, JSON-looking cookie blobs, `access_token`, `accessToken`, `cookie`, `cookies`, extra non-null payload keys, provider mismatches, missing PSID/PSIDTS, and dual-field values containing cookie names, `=`, or `;`.
 - List pagination is bounded: default `limit` is 50 and maximum `limit` is 200.
-- Delete/update/enable/disable/refresh/check resolve and dedupe `id` / `account_id` / `row_id` before mutating D1 rows or scheduling refresh work.
+- PATCH/DELETE/refresh/check operate on exactly one stable path `id`. WebUI batch actions call the single-resource endpoints sequentially and aggregate only sanitized result counts/errors.
+- Query parameters are allowlisted per route. Unknown, duplicate, empty, malformed, or out-of-range values return explicit 400 errors instead of being ignored or clamped at the HTTP boundary.
+- PATCH accepts only documented mutable fields with strict boolean/string/null/non-negative-safe-integer types. DELETE/refresh/check accept no request body or query parameters.
 - HTTP and service orchestration must consume normalized values from `admin-input.ts`; do not re-parse the same untyped payload fields in route or persistence code.
 - Refresh/check are explicit admin-only diagnostics. Startup, health, public model listing, and public liveness routes must not select accounts, call `/app`, rotate cookies, run model/capability probes, or mutate account/session state.
 
@@ -288,15 +288,19 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 - Admin route with no `GEMINI_DB` binding -> `503 gemini_account_store_unavailable`.
 - Create with unsafe Gemini import shape -> `400` with a safe `gemini_import_*` code.
 - Constructing `GeminiAccountAdminService` without either a combined store or both explicit capabilities -> developer configuration error before request handling.
-- Update/delete with no resolvable identifier -> `400 account_identifier_required` or `404 account_not_found`.
+- Invalid or missing path ID -> `400 invalid_account_id`; a well-formed missing account -> `404 account_not_found`.
+- Legacy `/update`, `/enable`, `/disable`, body-identifier delete, collection `/refresh` and collection `/check` routes -> `404 admin_route_not_found`.
+- `x-api-key` presented to an admin route -> `401 invalid_admin_key` even when its value equals a configured admin key.
+- Invalid list/stats query or mutation query/body -> explicit 400 admin validation code with no D1 mutation.
 - Refresh/check missing, disabled, or not-refreshable account -> count as `skipped` with a sanitized reason.
-- Unexpected D1/upstream/admin failure -> safe error code/message or `errorLogSummary(error)` only; do not serialize arbitrary `error.message`.
+- Unexpected route-level D1/upstream/admin failure -> generic `admin_request_failed`. Unexpected per-account diagnostic failure -> `admin_diagnostic_failed`. Logs may include `errorLogSummary(error)` metadata only; do not serialize arbitrary `error.message`.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: `/admin/accounts` checks admin auth before constructing a store or reading D1.
 - Good: `createGeminiAccountAdminServiceFromD1(...).create(...)` returns `GeminiAccountPublic` items with `has_cookie`/hash/status metadata and no `cookie_header`, `sapisid`, or `session_token`.
 - Good: D1 factory passes the same adapter as both `adminStore` and `runtimeStore`, while `AccountPoolService` sees only the runtime capability type.
+- Good: `PATCH /admin/accounts/<id>` uses `{ "enabled": false }` idempotently and returns the sanitized updated account.
 - Good: refresh/check responses include `checked`, `skipped`, `refreshed`, `unchanged`, `failed`, `errors`, `results`, and sanitized `items`.
 - Base: `/`, `/v1/models`, and `/v1beta/models` return static responses without constructing account runtime or reading D1 account rows.
 - Bad: reusing `authorized(request, url, cfg)` for admin routes, because it accepts public `API_KEYS` and query-string `key`.
@@ -310,8 +314,9 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 - Unit test public `API_KEYS` cannot authorize admin routes and unauthenticated admin failures perform zero D1 `prepare` calls.
 - Unit test safe dual-field Gemini import accepts and unsafe token/cookie/blob/provider/extra-key shapes reject.
 - Unit test admin-input projections directly, including identifier dedupe, filter bounds, update normalization, and combined-store compatibility.
-- Unit test admin list limit clamping and cursor/filter behavior.
-- Unit test update/delete/refresh/check identifier dedupe.
+- Unit test strict query allowlists, duplicate parameters, boolean syntax, bounds, and cursor/filter behavior.
+- Unit test resource-path update/delete/refresh/check success, missing-account behavior, invalid IDs, forbidden request bodies, and legacy-route rejection.
+- Unit test `x-api-key` cannot authorize admin routes even when it matches an admin key.
 - Unit test refresh/check count fields, skipped reasons, and sanitized item/error payloads.
 - Unit test health/model-list routes perform zero D1 account reads when `GEMINI_DB` is configured.
 - Unit or review checks should search full admin JSON responses for raw cookie/session fragments, not only known fields.
@@ -330,7 +335,8 @@ return jsonResponse(await store.getAccountForRefresh(id));
 ```typescript
 const auth = adminAuthorized(request, cfg);
 if (!auth.ok) return adminErrorResponse(auth);
-return jsonResponse(await service.refresh(body)); // service returns sanitized DTOs
+const id = accountIdFromPathSegment(pathSegment);
+return jsonResponse(await service.refresh(id)); // service returns sanitized DTOs
 ```
 
 ## Scenario: Gemini Account Admin WebUI
@@ -346,7 +352,7 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - API route used by the UI: `/admin/accounts`.
 - Admin auth header: `Authorization: Bearer <admin-key>`.
 - Gemini import payload: `{ provider: "gemini", "__Secure-1PSID": string, "__Secure-1PSIDTS": string, label?: string }`.
-- Mutation payload: `{ identifiers: Array<{ id?: string; account_id?: string; row_id?: string }> }`.
+- Mutation routes use `/admin/accounts/:id`; PATCH sends only mutable fields, while DELETE/refresh/check send no body.
 - `src/admin-ui/state.ts` owns shared Preact signals and UI draft types.
 - `src/admin-ui/logic.ts` owns browser-independent identifiers, validation, parsing, formatting, summaries, and sanitized CSV construction.
 - `src/admin-ui/actions.ts` owns browser storage, API calls, pagination transitions, destructive confirmation, downloads, and toast side effects.
@@ -359,8 +365,8 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - The UI may render sanitized account metadata from `GeminiAccountPublic`, including IDs, row IDs, labels, statuses, boolean secret-presence flags, redacted error text, and source metadata.
 - The UI must not render raw `cookie_header`, SAPISID values, session tokens, SQL bind values, or D1 API tokens.
 - The UI must import Gemini accounts with value-only `__Secure-1PSID` and `__Secure-1PSIDTS` fields. It must not accept or show full cookie headers, cookie-name/value examples, JSON blobs, `tokens`, `access_token`, or legacy single-cookie fallback fields.
-- Row and batch actions must reuse existing admin API operations: refresh, check, enable, disable, and delete. Do not add UI-only mutation routes.
-- Editing account labels/status/enabled/source metadata must use `PATCH /admin/accounts` with identifier fields plus safe update fields only.
+- Row and batch actions must reuse the resource API: PATCH `enabled` for enable/disable, DELETE for delete, and POST `/:id/refresh` or `/:id/check`. Batch actions issue sequential single-account requests; do not add UI-only mutation routes.
+- Editing account labels/status/enabled/source metadata must use `PATCH /admin/accounts/:id` with safe update fields only.
 - Cursor pagination must use the admin API's `nextCursor` without requesting or caching raw D1 rows. The server `nextCursor` is the last returned row id, matching the route's `id > cursor` query semantics.
 - Client-side metadata export may include sanitized account IDs, status/category, timestamps, counters, redacted errors, and source metadata. It must not export raw cookies, SAPISID values, session tokens, SQL bind values, or D1 API tokens.
 - Public API auth remains separate from admin auth. A public API key must not authorize UI-driven admin API mutations.
@@ -384,7 +390,7 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Good: static UI calls `fetch("/admin/accounts", { headers: { Authorization: "Bearer " + key } })`.
 - Good: unit tests import `admin-ui/logic.ts` through `src/test-exports.ts` without importing the browser entrypoint or adding a DOM emulator.
 - Good: import form submits only `provider`, `__Secure-1PSID`, `__Secure-1PSIDTS`, and optional display metadata.
-- Base: UI displays sanitized account status, enabled state, IDs, row IDs, timestamps, source metadata, and redacted error text from the existing admin API response.
+- Base: UI displays sanitized account status, enabled state, IDs, row IDs, timestamps, source metadata, and redacted error text from the v2 admin API response.
 - Base: UI may show refreshability, cooldown, success/failure counters, and category filters derived from sanitized admin fields.
 - Bad: serving a separate Next.js/React build for this Worker-only admin console.
 - Bad: using `/admin/accounts?admin_key=...`, `x-api-key` public auth, or full `Cookie: __Secure-1PSID=...` examples.
@@ -398,7 +404,8 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Unit test non-GET UI requests return 404 and perform zero D1 reads.
 - Unit or snapshot-style assertions should verify static HTML/JS includes the admin API path, bearer admin header usage, value-only dual-cookie fields, and existing action names.
 - Unit or snapshot-style assertions should cover static UI controls for category/cooldown filters, pagination, safe metadata export, editing safe metadata, and success/failure counters.
-- Unit tests should cover value-only cookie validation, batch rows, identifier preference, deterministic relative time, mutation summaries, and CSV escaping/field allowlisting through the pure logic owner.
+- Unit tests should cover value-only cookie validation, batch rows, stable account ID selection, deterministic relative time, mutation summaries, and CSV escaping/field allowlisting through the pure logic owner.
+- Unit tests should cover stable resource-path construction and aggregation of sanitized single-resource batch results.
 - Unit test admin list cursor pagination so `nextCursor` does not skip the first row on the next page.
 - Unit or grep-style assertions should verify the UI bundle does not contain `GEMINI_COOKIE`, raw cookie examples, SAPISID value examples, session-token examples, or query-parameter admin-key patterns.
 - Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke` after changing the UI route, static HTML, or Worker routing.

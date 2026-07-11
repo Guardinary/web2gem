@@ -75,8 +75,7 @@ export type AccountStats = {
 };
 
 export type AccountIdentifier = {
-	id?: string;
-	row_id?: string;
+	id: string;
 };
 
 export type MutationResult = {
