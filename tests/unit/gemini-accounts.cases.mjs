@@ -59,14 +59,14 @@ export const cases = [
 				sessionToken: "at-1",
 				nowMs: 1000,
 			});
-			assert.equal(await store.getPoolVersion(), "1000");
+			assert.equal(await store.getPoolVersion(), "1");
 
 			const noChange = await store.writeCookieState("acct", {
 				cookieHeader: "__Secure-1PSID=psid; __Secure-1PSIDTS=ts",
 				nowMs: 2000,
 			});
 			assert.deepEqual(noChange, { changed: false });
-			assert.equal(await store.getPoolVersion(), "1000");
+			assert.equal(await store.getPoolVersion(), "1");
 			assert.equal(
 				db.rows.get("acct").session_token_hash,
 				await mod.hashNullable("at-1"),
@@ -79,14 +79,14 @@ export const cases = [
 				nowMs: 3000,
 			});
 			assert.deepEqual(writeResult, { changed: true });
-			assert.equal(await store.getPoolVersion(), "3000");
+			assert.equal(await store.getPoolVersion(), "2");
 			assert.doesNotMatch(
 				db.rows.get("acct").cookie_header,
 				/SNlM0e|must-not-enter-cookie/,
 			);
 
 			await store.writeAccountOutcome("acct", { kind: "success", nowMs: 4000 });
-			assert.equal(await store.getPoolVersion(), "3000");
+			assert.equal(await store.getPoolVersion(), "2");
 			assert.equal(db.rows.get("acct").success_count, 1);
 			assert.equal(db.rows.get("acct").last_used_at_ms, 4000);
 
@@ -97,9 +97,42 @@ export const cases = [
 				failureKind: "rate_limit",
 				nowMs: 5000,
 			});
-			assert.equal(await store.getPoolVersion(), "5000");
+			assert.equal(await store.getPoolVersion(), "3");
 			assert.equal(db.rows.get("acct").status, "rate_limited");
 			assert.equal(db.rows.get("acct").failure_count, 1);
+		},
+	],
+	[
+		"increments same-millisecond pool versions and rolls back failed publication",
+		async () => {
+			const db = new FakeD1();
+			db.meta.set("pool_version", {
+				value: "1700000000000",
+				updated_at_ms: 900,
+			});
+			const store = new mod.D1GeminiAccountStore(db);
+			await seedAccount(store, "first", {
+				cookieHeader: "__Secure-1PSID=first; __Secure-1PSIDTS=first-ts",
+				nowMs: 1000,
+			});
+			await seedAccount(store, "second", {
+				cookieHeader: "__Secure-1PSID=second; __Secure-1PSIDTS=second-ts",
+				nowMs: 1000,
+			});
+			assert.equal(await store.getPoolVersion(), "1700000000002");
+
+			db.failPoolVersionIncrement = true;
+			await assert.rejects(
+				() =>
+					store.updateAccount("first", {
+						enabled: false,
+						nowMs: 1000,
+					}),
+				/injected pool version failure/,
+			);
+			assert.equal(db.rows.get("first").enabled, 1);
+			db.failPoolVersionIncrement = false;
+			assert.equal(await store.getPoolVersion(), "1700000000002");
 		},
 	],
 	[
@@ -128,7 +161,7 @@ export const cases = [
 			assert.deepEqual(result, { changed: false, reason: "duplicate_cookie" });
 			assert.equal(db.rows.get("stale").cookie_hash, originalHash);
 			assert.equal(db.rows.get("stale").last_refresh_at_ms, null);
-			assert.equal(await store.getPoolVersion(), "1100");
+			assert.equal(await store.getPoolVersion(), "2");
 		},
 	],
 	[
@@ -303,7 +336,25 @@ export const cases = [
 				).length,
 				1,
 			);
-			assert.equal(db.meta.get("pool_version").value, "5000");
+			assert.equal(db.meta.get("pool_version").value, "1");
+		},
+	],
+	[
+		"rolls back a bulk import group when version publication fails",
+		async () => {
+			const db = new FakeD1();
+			db.failPoolVersionIncrement = true;
+			const service = mod.createGeminiAccountAdminServiceFromD1(
+				db,
+				baseConfig(),
+				{ nowMs: () => 5000 },
+			);
+			await assert.rejects(
+				() => service.create(importPayload(2)),
+				/injected pool version failure/,
+			);
+			assert.equal(db.rows.size, 0);
+			assert.equal(db.meta.get("pool_version").value, "0");
 		},
 	],
 	[
@@ -349,6 +400,7 @@ export const cases = [
 				).length,
 				1,
 			);
+			const versionAfterMixedImport = db.meta.get("pool_version").value;
 
 			db.statements.length = 0;
 			const allDuplicate = await service.create({
@@ -357,12 +409,7 @@ export const cases = [
 			});
 			assert.equal(allDuplicate.added, 0);
 			assert.equal(allDuplicate.duplicates, 2);
-			assert.equal(
-				db.statements.some((entry) =>
-					entry.sql.includes("INSERT INTO gemini_pool_meta"),
-				),
-				false,
-			);
+			assert.equal(db.meta.get("pool_version").value, versionAfterMixedImport);
 		},
 	],
 	[
@@ -396,7 +443,7 @@ export const cases = [
 				result.items.map((item) => item.label),
 				["account-1", "account-1", "account-2"],
 			);
-			assert.equal(db.batchCalls, 0);
+			assert.equal(db.batchCalls, 2);
 		},
 	],
 	[
@@ -437,19 +484,50 @@ export const cases = [
 					ADMIN_KEY: "admin-secret",
 					GEMINI_DB: {
 						prepare: (sql) => dockerDb.prepare(sql),
+						batch: (statements) => dockerDb.batch(statements),
 					},
 				},
 				{ runtimeProfile: "docker" },
 			);
 			assert.equal(dockerResponse.status, 200);
 			assert.equal((await dockerResponse.json()).added, 101);
-			assert.equal(dockerDb.batchCalls, 0);
+			assert.equal(dockerDb.batchCalls, 3);
+			assert.equal(dockerDb.meta.get("pool_version").value, "3");
+			assert.equal(
+				dockerDb.statements.filter((entry) =>
+					entry.sql.includes("INSERT INTO gemini_pool_meta"),
+				).length,
+				3,
+			);
 			assert.equal(
 				dockerDb.statements.filter((entry) =>
 					entry.sql.includes("WHERE cookie_hash IN"),
 				).length,
 				2,
 			);
+
+			const legacyDockerDb = new FakeD1();
+			const legacyDockerResponse = await mod.default.fetch(
+				new Request("https://docker.example/admin/accounts", {
+					method: "POST",
+					headers: {
+						Authorization: "Bearer admin-secret",
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify(importPayload(2)),
+				}),
+				{
+					ADMIN_KEY: "admin-secret",
+					GEMINI_DB: {
+						prepare: (sql) => legacyDockerDb.prepare(sql),
+					},
+				},
+				{ runtimeProfile: "docker" },
+			);
+			assert.equal(legacyDockerResponse.status, 200);
+			assert.equal((await legacyDockerResponse.json()).added, 2);
+			assert.equal(legacyDockerDb.batchCalls, 0);
+			assert.equal(legacyDockerDb.meta.get("pool_version").value, "1");
 		},
 	],
 	[
@@ -1300,6 +1378,8 @@ class FakeD1 {
 		this.statements = [];
 		this.batchCalls = 0;
 		this.hiddenCookieHashLookups = 0;
+		this.lastChanges = 0;
+		this.failPoolVersionIncrement = false;
 	}
 
 	prepare(sql) {
@@ -1308,7 +1388,20 @@ class FakeD1 {
 
 	async batch(statements) {
 		this.batchCalls += 1;
-		return Promise.all(statements.map((statement) => statement.run()));
+		const rows = cloneMap(this.rows);
+		const meta = cloneMap(this.meta);
+		const locks = cloneMap(this.locks);
+		this.lastChanges = 0;
+		try {
+			const results = [];
+			for (const statement of statements) results.push(await statement.run());
+			return results;
+		} catch (error) {
+			this.rows = rows;
+			this.meta = meta;
+			this.locks = locks;
+			throw error;
+		}
 	}
 
 	lastSql() {
@@ -1455,6 +1548,12 @@ class FakeStatement {
 	}
 
 	async run() {
+		const result = await this.executeRun();
+		this.db.lastChanges = result.meta?.changes || 0;
+		return result;
+	}
+
+	async executeRun() {
 		this.record();
 		if (this.sql.includes("INSERT INTO gemini_accounts")) {
 			const row = {};
@@ -1470,9 +1569,23 @@ class FakeStatement {
 			return changed(1);
 		}
 		if (this.sql.includes("INSERT INTO gemini_pool_meta")) {
+			if (this.db.failPoolVersionIncrement)
+				throw new Error("injected pool version failure");
+			const changedRowRequired = this.sql.includes("changes() > 0");
+			const insertedRowRequired = this.sql.includes("WHERE EXISTS");
+			const insertedRowIds = this.values.slice(2);
+			if (
+				(changedRowRequired && this.db.lastChanges <= 0) ||
+				(insertedRowRequired &&
+					!insertedRowIds.some((accountId) => this.db.rows.has(accountId)))
+			)
+				return changed(0);
+			const current = this.db.meta.get(this.values[0]);
+			const currentVersion = Number(current?.value) || 0;
+			const nowMs = Number(this.values[1]) || 0;
 			this.db.meta.set(this.values[0], {
-				value: this.values[1],
-				updated_at_ms: this.values[2],
+				value: String(currentVersion + 1),
+				updated_at_ms: Math.max(Number(current?.updated_at_ms) || 0, nowMs),
 			});
 			return changed(1);
 		}
@@ -1683,6 +1796,15 @@ class FakeStatement {
 
 function changed(count) {
 	return { success: true, meta: { changes: count } };
+}
+
+function cloneMap(input) {
+	return new Map(
+		Array.from(input, ([key, value]) => [
+			key,
+			value && typeof value === "object" ? { ...value } : value,
+		]),
+	);
 }
 
 function compactSql(sql) {

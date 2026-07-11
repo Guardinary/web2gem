@@ -430,6 +430,93 @@ export const cases = [
 			}
 		},
 	],
+	[
+		"maps ordered D1 HTTP batches and rejects unsafe or malformed batches",
+		async () => {
+			const requests = [];
+			const responses = [
+				{
+					success: true,
+					result: [
+						{ success: true, results: [{ id: 1 }], meta: { changes: 0 } },
+						{ success: true, results: [], meta: { changes: 2 } },
+					],
+				},
+				{ success: true, result: [] },
+				{
+					success: true,
+					result: [
+						{ success: true, results: [], meta: { changes: 0 } },
+						{ success: false, results: [], meta: { changes: 0 } },
+					],
+				},
+			];
+			const fetchImpl = async (url, init) => {
+				requests.push({ url: String(url), init });
+				return new Response(JSON.stringify(responses.shift()), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			};
+			const binding = createD1HttpBinding(
+				{
+					accountId: "account",
+					databaseId: "database",
+					apiToken: "d1-token-secret",
+				},
+				{ fetch: fetchImpl },
+			);
+			const statements = [
+				binding.prepare("SELECT ? AS id").bind(1),
+				binding.prepare("UPDATE t SET value = ?").bind("session-token-secret"),
+			];
+			assert.deepEqual(await binding.batch(statements), [
+				{ success: true, results: [{ id: 1 }], meta: { changes: 0 } },
+				{ success: true, results: [], meta: { changes: 2 } },
+			]);
+			assert.deepEqual(JSON.parse(requests[0].init.body), {
+				batch: [
+					{ sql: "SELECT ? AS id", params: [1] },
+					{
+						sql: "UPDATE t SET value = ?",
+						params: ["session-token-secret"],
+					},
+				],
+			});
+			assert.deepEqual(await binding.batch([]), []);
+			assert.equal(requests.length, 1);
+
+			const otherBinding = createD1HttpBinding(
+				{
+					accountId: "account",
+					databaseId: "other-database",
+					apiToken: "other-token-secret",
+				},
+				{ fetch: fetchImpl },
+			);
+			await assert.rejects(
+				() => binding.batch([otherBinding.prepare("SELECT 1")]),
+				/belongs to another binding/,
+			);
+			assert.equal(requests.length, 1);
+
+			for (const [message, pattern] of [
+				["unexpected result count", /unexpected result count/],
+				["failed member", /D1 HTTP batch query failed index=1/],
+			]) {
+				try {
+					await binding.batch(statements);
+					throw new Error(`expected ${message} failure`);
+				} catch (error) {
+					assert.match(error.message, pattern);
+					assert.doesNotMatch(
+						error.message,
+						/secret-cookie|session-token-secret|d1-token-secret/,
+					);
+				}
+			}
+		},
+	],
 ];
 
 function listen(server) {

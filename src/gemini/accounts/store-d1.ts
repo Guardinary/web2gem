@@ -18,6 +18,7 @@ import {
 } from "./store-d1-admin";
 import type {
 	D1DatabaseLike,
+	D1PreparedStatementLike,
 	D1Result,
 	GeminiAccountBulkCreateEntry,
 	GeminiAccountBulkCreateResult,
@@ -39,6 +40,7 @@ import type {
 
 const POOL_VERSION_KEY = "pool_version";
 const MAX_D1_BOUND_PARAMETERS = 100;
+const MAX_TRANSACTIONAL_ACCOUNT_INSERTS = 40;
 const ACCOUNT_INSERT_COLUMNS = [
 	"id",
 	"label",
@@ -254,11 +256,10 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		input: GeminiAccountCreateInput,
 	): Promise<GeminiAccountPublic> {
 		const row = await buildAccountInsertRow(input);
-		await this.db
-			.prepare(ACCOUNT_INSERT_SQL)
-			.bind(...accountRowValues(row))
-			.run();
-		await this.bumpPoolVersion(input.nowMs);
+		await this.runMutationWithPoolVersion(
+			this.db.prepare(ACCOUNT_INSERT_SQL).bind(...accountRowValues(row)),
+			input.nowMs,
+		);
 		return sanitizeGeminiAccount(row);
 	}
 
@@ -275,15 +276,36 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 				buildAccountInsertRow(entry.input, entry.cookieHash),
 			),
 		);
-		const statements = rows.map((row) =>
-			this.db
-				.prepare(ACCOUNT_INSERT_IGNORE_COOKIE_CONFLICT_SQL)
-				.bind(...accountRowValues(row)),
-		);
 		if (this.db.batch) {
-			await this.db.batch(statements);
+			for (
+				let offset = 0;
+				offset < rows.length;
+				offset += MAX_TRANSACTIONAL_ACCOUNT_INSERTS
+			) {
+				const group = rows.slice(
+					offset,
+					offset + MAX_TRANSACTIONAL_ACCOUNT_INSERTS,
+				);
+				const statements = group.map((row) =>
+					this.db
+						.prepare(ACCOUNT_INSERT_IGNORE_COOKIE_CONFLICT_SQL)
+						.bind(...accountRowValues(row)),
+				);
+				statements.push(
+					this.poolVersionIncrementForInsertedRows(
+						entries[0]?.input.nowMs ?? Date.now(),
+						group.map((row) => row.id),
+					),
+				);
+				await this.db.batch(statements);
+			}
 		} else {
-			for (const statement of statements) await statement.run();
+			for (const row of rows) {
+				await this.db
+					.prepare(ACCOUNT_INSERT_IGNORE_COOKIE_CONFLICT_SQL)
+					.bind(...accountRowValues(row))
+					.run();
+			}
 		}
 
 		const itemsByCookieHash = await this.findAccountsByCookieHashes(
@@ -294,7 +316,7 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 			if (itemsByCookieHash.get(row.cookie_hash)?.id === row.id)
 				addedCookieHashes.add(row.cookie_hash);
 		}
-		if (addedCookieHashes.size > 0)
+		if (!this.db.batch && addedCookieHashes.size > 0)
 			await this.bumpPoolVersion(entries[0]?.input.nowMs ?? Date.now());
 		return { itemsByCookieHash, addedCookieHashes };
 	}
@@ -332,42 +354,44 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 			source_name: valueOrCurrent(update.sourceName, current.source_name),
 			updated_at_ms: update.nowMs,
 		};
-		await this.db
-			.prepare(`
+		await this.runMutationWithPoolVersion(
+			this.db
+				.prepare(`
       UPDATE gemini_accounts
       SET label = ?, enabled = ?, status = ?, state_reason = ?, cooldown_until_ms = ?,
           account_status_code = ?, account_status_description = ?, user_agent = ?,
           gemini_origin = ?, source = ?, source_id = ?, source_name = ?, updated_at_ms = ?
       WHERE id = ?
     `)
-			.bind(
-				next.label,
-				next.enabled,
-				next.status,
-				next.state_reason,
-				next.cooldown_until_ms,
-				next.account_status_code,
-				next.account_status_description,
-				next.user_agent,
-				next.gemini_origin,
-				next.source,
-				next.source_id,
-				next.source_name,
-				next.updated_at_ms,
-				accountId,
-			)
-			.run();
-		await this.bumpPoolVersion(update.nowMs);
+				.bind(
+					next.label,
+					next.enabled,
+					next.status,
+					next.state_reason,
+					next.cooldown_until_ms,
+					next.account_status_code,
+					next.account_status_description,
+					next.user_agent,
+					next.gemini_origin,
+					next.source,
+					next.source_id,
+					next.source_name,
+					next.updated_at_ms,
+					accountId,
+				),
+			update.nowMs,
+		);
 		return sanitizeGeminiAccount(next);
 	}
 
 	async deleteAccount(accountId: string): Promise<boolean> {
-		const result = await this.db
-			.prepare("DELETE FROM gemini_accounts WHERE id = ?")
-			.bind(accountId)
-			.run();
+		const result = await this.runMutationWithPoolVersion(
+			this.db
+				.prepare("DELETE FROM gemini_accounts WHERE id = ?")
+				.bind(accountId),
+			Date.now(),
+		);
 		const removed = resultChanged(result) !== 0;
-		if (removed) await this.bumpPoolVersion(Date.now());
 		return removed;
 	}
 
@@ -436,8 +460,9 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 
 		const hashes = await cookieHashes(nextCookieHeader);
 		try {
-			await this.db
-				.prepare(`
+			await this.runMutationWithPoolVersion(
+				this.db
+					.prepare(`
         UPDATE gemini_accounts
         SET cookie_header = ?, cookie_hash = ?, sapisid = ?, session_token = ?,
             session_token_hash = ?, session_id = ?, language = ?, push_id = ?,
@@ -446,39 +471,39 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
             last_refresh_attempt_at_ms = ?, updated_at_ms = ?
         WHERE id = ?
       `)
-				.bind(
-					nextCookieHeader,
-					nextCookieHash,
-					valueOrCurrent(update.sapisid, current.sapisid),
-					sessionToken,
-					nextSessionTokenHash,
-					valueOrCurrent(update.sessionId, current.session_id),
-					valueOrCurrent(update.language, current.language),
-					valueOrCurrent(update.pushId, current.push_id),
-					hashes.secure1psidHash,
-					hashes.secure1psidtsHash,
-					geminiAccountCategory({
-						cookieHeader: nextCookieHeader,
-						sessionToken: sessionToken ?? null,
-					}),
-					update.status || current.status,
-					valueOrCurrent(update.stateReason, current.state_reason),
-					valueOrCurrent(update.lastRefreshAtMs, current.last_refresh_at_ms),
-					valueOrCurrent(
-						update.lastRefreshAttemptAtMs,
-						current.last_refresh_attempt_at_ms,
+					.bind(
+						nextCookieHeader,
+						nextCookieHash,
+						valueOrCurrent(update.sapisid, current.sapisid),
+						sessionToken,
+						nextSessionTokenHash,
+						valueOrCurrent(update.sessionId, current.session_id),
+						valueOrCurrent(update.language, current.language),
+						valueOrCurrent(update.pushId, current.push_id),
+						hashes.secure1psidHash,
+						hashes.secure1psidtsHash,
+						geminiAccountCategory({
+							cookieHeader: nextCookieHeader,
+							sessionToken: sessionToken ?? null,
+						}),
+						update.status || current.status,
+						valueOrCurrent(update.stateReason, current.state_reason),
+						valueOrCurrent(update.lastRefreshAtMs, current.last_refresh_at_ms),
+						valueOrCurrent(
+							update.lastRefreshAttemptAtMs,
+							current.last_refresh_attempt_at_ms,
+						),
+						update.nowMs,
+						accountId,
 					),
-					update.nowMs,
-					accountId,
-				)
-				.run();
+				update.nowMs,
+			);
 		} catch (error) {
 			if (!isD1UniqueConstraintError(error)) throw error;
 			const duplicate = await this.findAccountByCookieHash(nextCookieHash);
 			if (!duplicate || duplicate.id === accountId) throw error;
 			return { changed: false, reason: "duplicate_cookie" };
 		}
-		await this.bumpPoolVersion(update.nowMs);
 		return { changed: true };
 	}
 
@@ -487,7 +512,7 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		outcome: GeminiAccountOutcome,
 	): Promise<void> {
 		const isSuccess = outcome.kind === "success";
-		await this.db
+		const statement = this.db
 			.prepare(`
       UPDATE gemini_accounts
       SET status = COALESCE(?, status),
@@ -520,23 +545,65 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 				isSuccess ? 0 : 1,
 				outcome.nowMs,
 				accountId,
-			)
-			.run();
-		if (outcome.status || outcome.cooldownUntilMs != null)
-			await this.bumpPoolVersion(outcome.nowMs);
+			);
+		if (outcome.status || outcome.cooldownUntilMs != null) {
+			await this.runMutationWithPoolVersion(statement, outcome.nowMs);
+			return;
+		}
+		await statement.run();
+	}
+
+	private async runMutationWithPoolVersion(
+		mutation: D1PreparedStatementLike,
+		nowMs: number,
+	): Promise<D1Result> {
+		if (!this.db.batch) {
+			const result = await mutation.run();
+			if (resultChanged(result) > 0) await this.bumpPoolVersion(nowMs);
+			return result;
+		}
+		const [result] = await this.db.batch([
+			mutation,
+			this.poolVersionIncrementStatement(nowMs, "WHERE changes() > 0"),
+		]);
+		if (!result)
+			throw new Error("D1 account mutation batch returned no result");
+		return result;
 	}
 
 	private async bumpPoolVersion(nowMs: number): Promise<void> {
-		await this.db
+		await this.poolVersionIncrementStatement(nowMs).run();
+	}
+
+	private poolVersionIncrementStatement(
+		nowMs: number,
+		condition = "",
+		conditionValues: readonly unknown[] = [],
+	): D1PreparedStatementLike {
+		return this.db
 			.prepare(`
       INSERT INTO gemini_pool_meta (key, value, updated_at_ms)
-      VALUES (?, ?, ?)
+      SELECT ?, '1', ?
+      ${condition}
       ON CONFLICT(key) DO UPDATE SET
-        value = excluded.value,
-        updated_at_ms = excluded.updated_at_ms
+        value = CAST(CAST(gemini_pool_meta.value AS INTEGER) + 1 AS TEXT),
+        updated_at_ms = MAX(gemini_pool_meta.updated_at_ms, excluded.updated_at_ms)
     `)
-			.bind(POOL_VERSION_KEY, String(nowMs), nowMs)
-			.run();
+			.bind(POOL_VERSION_KEY, nowMs, ...conditionValues);
+	}
+
+	private poolVersionIncrementForInsertedRows(
+		nowMs: number,
+		accountIds: readonly string[],
+	): D1PreparedStatementLike {
+		const placeholders = accountIds.map(() => "?").join(", ");
+		return this.poolVersionIncrementStatement(
+			nowMs,
+			`WHERE EXISTS (
+        SELECT 1 FROM gemini_accounts WHERE id IN (${placeholders})
+      )`,
+			accountIds,
+		);
 	}
 
 	private async findAccountsByCookieHashes(

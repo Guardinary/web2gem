@@ -33,6 +33,7 @@ export function createD1HttpBinding(config, options = {}) {
 		});
 	}
 	const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(config.accountId)}/d1/database/${encodeURIComponent(config.databaseId)}/query`;
+	const owner = {};
 	return {
 		prepare(sql) {
 			return new D1HttpPreparedStatement({
@@ -41,7 +42,32 @@ export function createD1HttpBinding(config, options = {}) {
 				sql: String(sql || ""),
 				params: [],
 				fetchImpl,
+				owner,
 			});
+		},
+		async batch(statements) {
+			if (!Array.isArray(statements)) {
+				throw new D1HttpBindingError("D1 HTTP batch requires statements", {
+					code: "d1_http_invalid_batch",
+				});
+			}
+			if (!statements.length) return [];
+			const batch = statements.map((statement) => {
+				if (!(statement instanceof D1HttpPreparedStatement)) {
+					throw new D1HttpBindingError(
+						"D1 HTTP batch received an invalid statement",
+						{ code: "d1_http_invalid_batch_statement" },
+					);
+				}
+				return statement.batchQuery(owner);
+			});
+			const payload = await requestD1({
+				endpoint,
+				token: config.apiToken,
+				fetchImpl,
+				body: { batch },
+			});
+			return normalizeD1HttpBatchPayload(payload, batch.length);
 		},
 	};
 }
@@ -61,12 +87,13 @@ export class D1HttpBindingError extends Error {
 }
 
 class D1HttpPreparedStatement {
-	constructor({ endpoint, token, sql, params, fetchImpl }) {
+	constructor({ endpoint, token, sql, params, fetchImpl, owner }) {
 		this.endpoint = endpoint;
 		this.token = token;
 		this.sql = sql;
 		this.params = params;
 		this.fetchImpl = fetchImpl;
+		this.owner = owner;
 	}
 
 	bind(...values) {
@@ -76,7 +103,18 @@ class D1HttpPreparedStatement {
 			sql: this.sql,
 			params: values,
 			fetchImpl: this.fetchImpl,
+			owner: this.owner,
 		});
+	}
+
+	batchQuery(owner) {
+		if (owner !== this.owner) {
+			throw new D1HttpBindingError(
+				"D1 HTTP batch statement belongs to another binding",
+				{ code: "d1_http_batch_binding_mismatch" },
+			);
+		}
+		return { sql: this.sql, params: this.params };
 	}
 
 	async first(columnName) {
@@ -98,59 +136,97 @@ class D1HttpPreparedStatement {
 	}
 
 	async query() {
-		let response;
-		try {
-			response = await this.fetchImpl(this.endpoint, {
-				method: "POST",
-				headers: {
-					authorization: `Bearer ${this.token}`,
-					"content-type": "application/json",
-				},
-				body: JSON.stringify({ sql: this.sql, params: this.params }),
-			});
-		} catch (_) {
-			throw new D1HttpBindingError("D1 HTTP query failed before response", {
-				code: "d1_http_fetch_error",
-				status: 502,
-			});
-		}
-		if (!response?.ok) {
-			throw new D1HttpBindingError(
-				`D1 HTTP query failed status=${Number(response?.status) || 0}`,
-				{
-					code: "d1_http_status",
-					status: Number(response?.status) || 500,
-				},
-			);
-		}
-		let payload;
-		try {
-			payload = await response.json();
-		} catch (_) {
-			throw new D1HttpBindingError("D1 HTTP query returned invalid JSON", {
-				code: "d1_http_invalid_json",
-			});
-		}
-		const result = normalizeD1HttpPayload(payload);
-		if (!payload || payload.success === false || result.success === false) {
-			throw new D1HttpBindingError(safeCloudflareErrorMessage(payload), {
-				code: "d1_http_api_error",
-				status: 502,
-			});
-		}
-		return result;
+		const payload = await requestD1({
+			endpoint: this.endpoint,
+			token: this.token,
+			fetchImpl: this.fetchImpl,
+			body: { sql: this.sql, params: this.params },
+		});
+		return normalizeD1HttpPayload(payload);
 	}
+}
+
+async function requestD1({ endpoint, token, fetchImpl, body }) {
+	let response;
+	try {
+		response = await fetchImpl(endpoint, {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${token}`,
+				"content-type": "application/json",
+			},
+			body: JSON.stringify(body),
+		});
+	} catch (_) {
+		throw new D1HttpBindingError("D1 HTTP query failed before response", {
+			code: "d1_http_fetch_error",
+			status: 502,
+		});
+	}
+	if (!response?.ok) {
+		throw new D1HttpBindingError(
+			`D1 HTTP query failed status=${Number(response?.status) || 0}`,
+			{
+				code: "d1_http_status",
+				status: Number(response?.status) || 500,
+			},
+		);
+	}
+	let payload;
+	try {
+		payload = await response.json();
+	} catch (_) {
+		throw new D1HttpBindingError("D1 HTTP query returned invalid JSON", {
+			code: "d1_http_invalid_json",
+		});
+	}
+	if (!payload || payload.success === false) {
+		throw new D1HttpBindingError(safeCloudflareErrorMessage(payload), {
+			code: "d1_http_api_error",
+			status: 502,
+		});
+	}
+	return payload;
 }
 
 function normalizeD1HttpPayload(payload) {
 	const result = Array.isArray(payload.result)
 		? payload.result[0]
 		: payload.result;
+	if (!result || result.success === false) {
+		throw new D1HttpBindingError(safeCloudflareErrorMessage(payload), {
+			code: "d1_http_api_error",
+			status: 502,
+		});
+	}
+	return normalizeD1HttpResult(result);
+}
+
+function normalizeD1HttpBatchPayload(payload, expectedResults) {
+	const results = Array.isArray(payload.result) ? payload.result : [];
+	if (results.length !== expectedResults) {
+		throw new D1HttpBindingError(
+			"D1 HTTP batch returned an unexpected result count",
+			{ code: "d1_http_invalid_batch_result", status: 502 },
+		);
+	}
+	return results.map((result, index) => {
+		if (!result || result.success === false) {
+			throw new D1HttpBindingError(
+				`D1 HTTP batch query failed index=${index}`,
+				{ code: "d1_http_batch_query_error", status: 502 },
+			);
+		}
+		return normalizeD1HttpResult(result);
+	});
+}
+
+function normalizeD1HttpResult(result) {
 	const rows = result?.results;
-	const meta = result?.meta || payload.meta || {};
+	const meta = result?.meta || {};
 	return {
 		results: Array.isArray(rows) ? rows : [],
-		success: payload.success !== false && result?.success !== false,
+		success: result?.success !== false,
 		meta,
 	};
 }

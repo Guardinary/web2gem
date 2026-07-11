@@ -487,6 +487,100 @@ lease.cookieHeader = update.cookieHeader;
 lease.cookieHash = await sha256Hex(update.cookieHeader);
 ```
 
+## Scenario: Atomic Account-Pool Version Publication
+
+### 1. Scope / Trigger
+
+Use this contract when changing D1 account create/update/delete behavior, Cookie
+writeback, selection-affecting account outcomes, `pool_version`, or the Docker D1
+HTTP binding.
+
+### 2. Signatures
+
+- `D1GeminiAccountStore.getPoolVersion()` returns the opaque numeric string used
+  by `AccountPoolService` to detect stale selectable snapshots.
+- `D1DatabaseLike.batch(statements)` is the production transaction primitive for
+  native Worker D1 and Docker's Cloudflare D1 HTTP adapter.
+- `createD1HttpBinding(...).batch(statements)` serializes same-binding prepared
+  statements as `{ batch: [{ sql, params }] }` to the D1 REST `/query` endpoint.
+
+### 3. Contracts
+
+- `pool_version` is a strictly increasing numeric string. Increment the value
+  already stored in D1; never assign `String(nowMs)` as the version.
+- Existing timestamp-shaped numeric versions are valid starting values and need
+  no migration. Runtime consumers compare versions as opaque strings and must not
+  parse or sort them.
+- Create, update, delete, Cookie writeback, and outcomes that change status or
+  cooldown must execute the account mutation plus a conditional version increment
+  in one `batch()` transaction.
+- The conditional single-row increment uses SQLite `changes() > 0`. A missing-row
+  or no-op mutation does not publish invalidation.
+- Success/failure counters and other outcome metadata that do not affect account
+  selection do not increment `pool_version`.
+- If `batch` is absent on a compatibility D1-like adapter, run the mutation first
+  and increment only after a changed result. Production Worker and Docker bindings
+  must expose `batch`.
+- Docker batch statements must come from the same HTTP binding instance. Batch
+  errors may include a result index or sanitized Cloudflare code, but never SQL
+  bind values, Cookies, session tokens, authorization headers, or D1 API tokens.
+
+### 4. Validation & Error Matrix
+
+- Two writes with the same `nowMs` -> two distinct increasing versions.
+- Existing version `1700000000000` plus one write -> `1700000000001`.
+- Account mutation fails -> transaction rolls back; version unchanged.
+- Version increment fails -> account mutation rolls back.
+- Cookie-hash uniqueness race -> update and increment roll back; duplicate owner
+  is re-read; return the existing duplicate no-op result.
+- HTTP batch returns the wrong result count or a failed member -> sanitized
+  `D1HttpBindingError`; no request secrets in the message.
+- Statement from another HTTP binding -> reject before sending a network request.
+
+### 5. Good/Base/Bad Cases
+
+- Good: batch `[accountMutation, incrementWhereChangesPositive]` and return the
+  first statement result.
+- Good: keep `updated_at_ms` monotonic with `MAX(existing, incoming)` while the
+  version itself increments independently of wall-clock collisions.
+- Base: a D1-like test or compatibility adapter without `batch` uses the existing
+  sequential fallback and cannot claim transaction atomicity.
+- Bad: write the account row, then issue an independent timestamp assignment to
+  `pool_version`.
+- Bad: serialize arbitrary prepared-statement objects or cross-binding statements
+  through the Docker HTTP adapter.
+
+### 6. Tests Required
+
+- Assert same-millisecond creates increment an existing timestamp-shaped version
+  twice.
+- Inject version-publication failure and assert the account row and version both
+  roll back.
+- Assert duplicate Cookie convergence preserves the original row and version.
+- Assert HTTP batch request shape, ordered result mapping, empty batches,
+  cross-binding rejection, malformed result counts, failed members, and secret-safe
+  messages.
+- Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`,
+  `pnpm coverage:ci`, and `pnpm smoke`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+await mutation.run();
+await setPoolVersion(String(nowMs));
+```
+
+#### Correct
+
+```typescript
+await db.batch([
+  mutation,
+  incrementPoolVersion("WHERE changes() > 0"),
+]);
+```
+
 ## Scenario: D1 Batch Account Import
 
 ### 1. Scope / Trigger
@@ -511,20 +605,23 @@ D1 insert/query shape, pool-version updates, or Worker/Docker import behavior.
   import uses 40 conflict-ignoring insert statements, one hash lookup query, and
   one conditional pool-version update: 42 D1 queries total.
 - Docker has no account-count ceiling. It remains bounded by the shared 256 KiB
-  admin request-body limit and reconstructs imported rows in chunks of at most
-  100 cookie-hash bind parameters.
+  admin request-body limit, writes accounts in transactional groups of at most
+  40, and reconstructs imported rows in chunks of at most 100 cookie-hash bind
+  parameters.
 - The Docker distinction is request-local adapter metadata, not a public
   environment variable or user-controlled HTTP header.
 - Normalize and hash each input, collapse duplicate cookie hashes before store
   access, then project sanitized items back into original input order.
 - D1 inserts use `ON CONFLICT(cookie_hash) DO NOTHING`; a duplicate cookie must
   not roll back unrelated inserts in the same native batch.
-- Use `db.batch(statements)` when available. D1-compatible adapters without
-  `batch`, including Docker's HTTP adapter, execute the same prepared statements
-  sequentially.
+- Native Worker D1 and Docker's HTTP adapter use `db.batch(statements)`.
+  D1-compatible adapters without `batch` execute the same prepared statements
+  sequentially and publish one post-reconstruction version increment when rows
+  were added.
 - Determine added rows by matching the prepared row ID with the post-insert row
-  selected by cookie hash. Bump `pool_version` once only when at least one row
-  was added.
+  selected by cookie hash. A transactional group appends one conditional version
+  statement whose `EXISTS` predicate checks those generated IDs. All-conflict
+  groups execute the condition but do not change `pool_version`.
 - Stores without `createAccountsBulk` retain the bounded compatibility path;
   Worker validation still caps that path before hashing or store calls.
 - The built-in admin UI submits the full import first. It retries sequentially
@@ -543,17 +640,17 @@ D1 insert/query shape, pool-version updates, or Worker/Docker import behavior.
 - Admin UI import with any other error -> no automatic retry.
 - Existing, repeated-in-payload, or concurrently inserted cookie -> sanitized
   duplicate item, increment `skipped` and `duplicates`.
-- All rows conflict -> no pool-version update.
-- Mixed new/conflicting rows -> add independent new rows and update the pool
-  version once.
+- All rows in a group conflict -> conditional version statement changes zero rows.
+- Mixed new/conflicting rows -> add independent new rows and increment the pool
+  version once for that changed group.
 - Post-insert cookie-hash lookup lacks an expected row -> fail with a generic
   internal admin error; never include Cookie values or hashes in the response.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: 40 Worker inserts run through one `batch()` call and stay at 42 queries.
-- Good: 101 Docker imports use sequential inserts plus two 100-parameter-bounded
-  reconstruction queries.
+- Good: 101 Docker imports use three transactional insert groups plus two
+  100-parameter-bounded reconstruction queries.
 - Base: duplicate input positions return the same sanitized account item while
   only the first newly inserted position contributes to `added`.
 - Bad: perform `findAccountByCookieHash` plus `createAccount` plus a version bump
@@ -567,7 +664,10 @@ D1 insert/query shape, pool-version updates, or Worker/Docker import behavior.
   statements, and one pool-version update.
 - Assert 41 Worker accounts fail before any D1 statement.
 - Assert the Docker adapter marks its execution context and a 101-account Docker
-  import succeeds without native `batch`, using two reconstruction queries.
+  import uses three batches, three version increments, and two reconstruction
+  queries.
+- Assert a compatibility D1-like adapter without `batch` still imports accounts
+  and increments once after reconstruction.
 - Assert mixed existing/new/in-payload duplicates preserve order and counts.
 - Assert an all-duplicate batch does not update the pool version.
 - Assert a store without bulk capability preserves compatibility semantics.
