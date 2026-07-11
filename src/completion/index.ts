@@ -10,12 +10,17 @@ export type {
 	CompletionTextInput,
 	GeneratedImage,
 } from "./ports";
-export type { CompletionStreamEvent } from "./runtime";
+export type {
+	CompletionStreamEvent,
+	CompletionStreamLifecycle,
+} from "./runtime";
 export {
+	createCompletionStreamLifecycle,
 	consumeBufferedToolTextDeltas,
 	consumePlainTextDeltas,
 	consumeToolSieveTextDeltas,
 	runCompletionText,
+	recordCompletionStreamEvent,
 	streamBufferedToolTextCompletionEvents,
 	streamPlainCompletionEvents,
 	streamToolSieveCompletionEvents,

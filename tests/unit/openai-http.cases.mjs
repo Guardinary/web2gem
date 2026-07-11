@@ -159,7 +159,7 @@ export const cases = [
 					input: `draw ${"x".repeat(100)}`,
 				},
 				"responses",
-				true,
+				false,
 			);
 			assert.equal(tooLarge.error.code, "image_generation_prompt_too_large");
 
@@ -189,7 +189,7 @@ export const cases = [
 					],
 				},
 				"responses",
-				false,
+				true,
 			);
 			assert.equal(uploadFailed.error.status, 504);
 			assert.equal(uploadFailed.error.code, "image_upload_refused");
@@ -2870,7 +2870,7 @@ export const cases = [
 		},
 	],
 	[
-		"returns OpenAI chat empty upstream warning with visible fallback text",
+		"returns OpenAI chat upstream_empty error without model text",
 		async () => {
 			const resp = await mod.handleChat(
 				{
@@ -2889,11 +2889,11 @@ export const cases = [
 					},
 				}),
 			);
-			assert.equal(resp.status, 200);
+			assert.equal(resp.status, 502);
 			const body = await resp.json();
-			assert.equal(body.warning.code, "upstream_empty");
-			assert.equal(body.choices[0].message.content, mod.EMPTY_UPSTREAM_MSG);
-			assert.equal(body.choices[0].finish_reason, "stop");
+			assert.equal(body.error.code, "upstream_empty");
+			assert.equal(body.error.message, mod.EMPTY_UPSTREAM_MSG);
+			assert.equal(body.choices, undefined);
 		},
 	],
 	[
@@ -3202,12 +3202,10 @@ export const cases = [
 				upstream,
 			);
 			const errorFrames = collectSSEData(errorWrites);
-			assert.match(
-				errorFrames[0].choices[0].delta.content,
-				/upstream error: gateway down \[upstream_down\]/,
-			);
-			assert.equal(errorFrames[1].choices[0].finish_reason, "stop");
-			assert.equal(errorFrames[2], "[DONE]");
+			assert.equal(errorFrames[0].error.code, "upstream_down");
+			assert.equal(errorFrames[0].error.message, "gateway down");
+			assert.equal(errorFrames[0].choices, undefined);
+			assert.equal(errorFrames[1], "[DONE]");
 
 			const responsesUsage = mod.openAIResponsesUsage(-5, "abcd");
 			assert.equal(responsesUsage.input_tokens, 0);
@@ -3251,7 +3249,7 @@ export const cases = [
 		},
 	],
 	[
-		"returns OpenAI Responses empty upstream warning with fallback message",
+		"returns OpenAI Responses upstream_empty error without model output",
 		async () => {
 			const resp = await mod.handleResponses(
 				{
@@ -3265,10 +3263,11 @@ export const cases = [
 					},
 				}),
 			);
-			assert.equal(resp.status, 200);
+			assert.equal(resp.status, 502);
 			const body = await resp.json();
-			assert.equal(body.warning.code, "upstream_empty");
-			assert.equal(body.output[0].content[0].text, mod.EMPTY_UPSTREAM_MSG);
+			assert.equal(body.error.code, "upstream_empty");
+			assert.equal(body.error.message, mod.EMPTY_UPSTREAM_MSG);
+			assert.equal(body.output, undefined);
 		},
 	],
 	[
@@ -3483,12 +3482,12 @@ export const cases = [
 			assert.equal(
 				frames.some(
 					(frame) =>
-						frame.choices &&
+						frame.choices?.[0]?.delta &&
 						String(frame.choices[0].delta.content || "").includes(
 							"stream interrupted after partial output",
 						),
 				),
-				true,
+				false,
 			);
 			assert.equal(
 				frames.some(
@@ -3508,7 +3507,7 @@ export const cases = [
 		},
 	],
 	[
-		"streams OpenAI chat upstream error text before any output",
+		"streams OpenAI chat protocol error before any output",
 		async () => {
 			const writes = [];
 			const logs = [];
@@ -3536,22 +3535,10 @@ export const cases = [
 					),
 			);
 			const frames = collectSSEData(writes);
-			assert.equal(
-				frames.some(
-					(frame) =>
-						frame.choices &&
-						String(frame.choices[0].delta.content || "").includes(
-							"upstream error: upstream down secret",
-						),
-				),
-				true,
-			);
-			assert.equal(
-				frames.some(
-					(frame) => frame.choices && frame.choices[0].finish_reason === "stop",
-				),
-				true,
-			);
+			const errorFrame = frames.find((frame) => frame.error);
+			assert.equal(errorFrame.error.code, "upstream_down");
+			assert.equal(errorFrame.error.message, "upstream down secret");
+			assert.equal(errorFrame.choices, undefined);
 			assert.equal(frames[frames.length - 1], "[DONE]");
 			const failureLog = logs.find((line) =>
 				line.includes("openai chat stream failed before output"),
@@ -3594,7 +3581,7 @@ export const cases = [
 		},
 	],
 	[
-		"streams OpenAI chat empty upstream fallback through handler path",
+		"streams OpenAI chat upstream_empty protocol error through handler path",
 		async () => {
 			const resp = await mod.handleChat(
 				{
@@ -3607,25 +3594,14 @@ export const cases = [
 			);
 			assert.equal(resp.status, 200);
 			const frames = collectSSEData([await resp.text()]);
-			assert.equal(
-				frames.some(
-					(frame) =>
-						frame.choices &&
-						frame.choices[0].delta.content === mod.EMPTY_UPSTREAM_MSG,
-				),
-				true,
-			);
-			assert.equal(
-				frames.some(
-					(frame) => frame.choices && frame.choices[0].finish_reason === "stop",
-				),
-				true,
-			);
+			const errorFrame = frames.find((frame) => frame.error);
+			assert.equal(errorFrame.error.code, "upstream_empty");
+			assert.equal(errorFrame.error.message, mod.EMPTY_UPSTREAM_MSG);
 			assert.equal(frames[frames.length - 1], "[DONE]");
 		},
 	],
 	[
-		"streams OpenAI chat upstream errors through handler path",
+		"streams OpenAI chat protocol errors through handler path",
 		async () => {
 			const resp = await mod.handleChat(
 				{
@@ -3642,22 +3618,9 @@ export const cases = [
 			);
 			assert.equal(resp.status, 200);
 			const frames = collectSSEData([await resp.text()]);
-			assert.equal(
-				frames.some(
-					(frame) =>
-						frame.choices &&
-						String(frame.choices[0].delta.content || "").includes(
-							"upstream error: handler upstream down [handler_down]",
-						),
-				),
-				true,
-			);
-			assert.equal(
-				frames.some(
-					(frame) => frame.choices && frame.choices[0].finish_reason === "stop",
-				),
-				true,
-			);
+			const errorFrame = frames.find((frame) => frame.error);
+			assert.equal(errorFrame.error.code, "handler_down");
+			assert.equal(errorFrame.error.message, "handler upstream down");
 			assert.equal(frames[frames.length - 1], "[DONE]");
 		},
 	],
@@ -3765,7 +3728,7 @@ export const cases = [
 		},
 	],
 	[
-		"streams OpenAI chat empty fallback when tool sieve produces no output",
+		"streams OpenAI chat upstream_empty error when tool sieve has no output",
 		async () => {
 			const writes = [];
 			await mod.streamOpenAIChatWithToolSieve(
@@ -3791,20 +3754,9 @@ export const cases = [
 				},
 			);
 			const frames = collectSSEData(writes);
-			assert.equal(
-				frames.some(
-					(frame) =>
-						frame.choices &&
-						frame.choices[0].delta.content === mod.EMPTY_UPSTREAM_MSG,
-				),
-				true,
-			);
-			assert.equal(
-				frames.some(
-					(frame) => frame.choices && frame.choices[0].finish_reason === "stop",
-				),
-				true,
-			);
+			const errorFrame = frames.find((frame) => frame.error);
+			assert.equal(errorFrame.error.code, "upstream_empty");
+			assert.equal(errorFrame.error.message, mod.EMPTY_UPSTREAM_MSG);
 			assert.equal(frames[frames.length - 1], "[DONE]");
 		},
 	],
@@ -3859,7 +3811,7 @@ export const cases = [
 							"stream interrupted after partial output",
 						),
 				),
-				true,
+				false,
 			);
 			assert.equal(
 				frames.some(
@@ -3920,7 +3872,7 @@ export const cases = [
 							"stream interrupted after partial output",
 						),
 				),
-				true,
+				false,
 			);
 			const completed = frames.find(
 				(frame) => frame.type === "response.completed",
@@ -4088,7 +4040,7 @@ export const cases = [
 							"stream interrupted after partial output",
 						),
 				),
-				true,
+				false,
 			);
 			assert.equal(
 				frames.some(
@@ -4108,7 +4060,7 @@ export const cases = [
 		},
 	],
 	[
-		"streams Responses empty upstream fallback text",
+		"streams Responses upstream_empty failure without output text",
 		async () => {
 			const writes = [];
 			await mod.streamResponsesWithToolSieve(
@@ -4127,21 +4079,10 @@ export const cases = [
 				},
 			);
 			const frames = collectSSEData(writes);
-			assert.equal(
-				frames.some(
-					(frame) =>
-						frame.type === "response.output_text.delta" &&
-						frame.delta === mod.EMPTY_UPSTREAM_MSG,
-				),
-				true,
-			);
-			const completed = frames.find(
-				(frame) => frame.type === "response.completed",
-			);
-			assert.equal(
-				completed.response.output[0].content[0].text,
-				mod.EMPTY_UPSTREAM_MSG,
-			);
+			const failed = frames.find((frame) => frame.type === "response.failed");
+			assert.equal(failed.response.error.code, "upstream_empty");
+			assert.equal(failed.response.error.message, mod.EMPTY_UPSTREAM_MSG);
+			assert.deepEqual(failed.response.output, []);
 		},
 	],
 ];

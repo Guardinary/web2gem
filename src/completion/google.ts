@@ -1,7 +1,6 @@
 import { streamBufferedToolTextCompletionEvents } from "./runtime";
 import type { CompletionProvider } from "./ports";
 import type { ResolvedModel } from "../models";
-import { upstreamErrorMessage } from "../shared/runtime";
 import {
 	combinedTokenCount,
 	createTokenCounter,
@@ -22,6 +21,7 @@ export type GoogleToolCompletionEvent =
 			finishReason: string | null;
 	  }
 	| { type: "warning"; error: unknown; message?: string }
+	| { type: "error"; error: unknown }
 	| { type: "tool_policy_violation"; violation: ToolPolicyViolation }
 	| {
 			type: "done";
@@ -48,13 +48,6 @@ export async function* streamGoogleToolCompletionEvents(
 ): AsyncIterable<GoogleToolCompletionEvent> {
 	const { prompt, rm, fileRefs, tools, effectiveReq, promptTokens, signal } =
 		params;
-	const streamErrorText = (e: unknown) =>
-		`⚠️ upstream error: ${upstreamErrorMessage(e)}`;
-	const streamInterruptedWarningText = (e: unknown) =>
-		streamErrorText(e).replace(
-			"upstream error",
-			"stream interrupted after partial output",
-		);
 	const extraTokenCounter = createTokenCounter();
 	let completionCounts = emptyTokenCounts();
 	let buffered = "";
@@ -104,14 +97,16 @@ export async function* streamGoogleToolCompletionEvents(
 			finishReason: null,
 		};
 	} else if (!emittedText && !clean) {
-		const note = issue ? streamErrorText(issue.error) : EMPTY_UPSTREAM_MSG;
-		extraTokenCounter.append(note);
-		yield { type: "candidate", parts: [{ text: note }], finishReason: null };
+		yield {
+			type: "error",
+			error: issue?.error || {
+				message: EMPTY_UPSTREAM_MSG,
+				code: "upstream_empty",
+			},
+		};
+		return;
 	} else if (issue) {
-		const warning = `\n\n${streamInterruptedWarningText(issue.error)}`;
-		yield { type: "warning", error: issue.error, message: warning.trim() };
-		extraTokenCounter.append(warning);
-		yield { type: "candidate", parts: [{ text: warning }], finishReason: null };
+		yield { type: "warning", error: issue.error };
 	}
 	const candidateTokens = combinedTokenCount(
 		completionCounts,

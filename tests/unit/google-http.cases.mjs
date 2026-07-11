@@ -635,7 +635,7 @@ export const cases = [
 		},
 	],
 	[
-		"emits Google tool stream upstream error text before any output",
+		"emits Google tool stream protocol error before any output",
 		async () => {
 			const events = [];
 			for await (const event of mod.streamGoogleToolCompletionEvents(
@@ -656,10 +656,9 @@ export const cases = [
 			)) {
 				events.push(event);
 			}
-			assert.equal(events[0].type, "candidate");
-			assert.match(events[0].parts[0].text, /upstream error: upstream down/);
-			assert.equal(events[1].type, "done");
-			assert.equal(events[1].usageMetadata.promptTokenCount, 2);
+			assert.equal(events[0].type, "error");
+			assert.equal(events[0].error.code, "upstream_down");
+			assert.equal(events.length, 1);
 		},
 	],
 	[
@@ -693,10 +692,7 @@ export const cases = [
 				true,
 			);
 			const warning = events.find((event) => event.type === "warning");
-			assert.match(
-				warning.message,
-				/stream interrupted after partial output: stream broke/,
-			);
+			assert.equal(warning.error.message, "stream broke");
 			assert.equal(
 				events.some(
 					(event) =>
@@ -705,7 +701,7 @@ export const cases = [
 							"stream interrupted after partial output",
 						),
 				),
-				true,
+				false,
 			);
 		},
 	],
@@ -1038,7 +1034,7 @@ export const cases = [
 		},
 	],
 	[
-		"returns Google empty upstream warning with fallback candidate",
+		"returns Google upstream_empty error without fallback candidate",
 		async () => {
 			const resp = await mod.handleGoogleGenerate(
 				{
@@ -1061,13 +1057,11 @@ export const cases = [
 				"/v1beta/models/gemini-3.5-flash:generateContent",
 				false,
 			);
-			assert.equal(resp.status, 200);
+			assert.equal(resp.status, 502);
 			const body = await resp.json();
-			assert.equal(body.promptFeedback.warning.code, "upstream_empty");
-			assert.match(
-				body.candidates[0].content.parts[0].text,
-				/unable to generate a response/,
-			);
+			assert.equal(body.error.code, "upstream_empty");
+			assert.equal(body.error.message, mod.EMPTY_UPSTREAM_MSG);
+			assert.equal(body.candidates, undefined);
 		},
 	],
 	[

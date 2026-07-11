@@ -22,6 +22,46 @@ function abortingAsyncIterable(error) {
 export const suiteName = "toolcall";
 export const cases = [
 	[
+		"reduces completion stream lifecycle events consistently",
+		() => {
+			const lifecycle = mod.createCompletionStreamLifecycle();
+			const failure = new Error("late failure");
+			const toolCalls = [
+				{
+					id: "call_1",
+					type: "function",
+					function: { name: "x", arguments: "{}" },
+				},
+			];
+			for (const event of [
+				{ type: "text_delta", text: "partial" },
+				{ type: "tool_calls", toolCalls },
+				{ type: "warning", error: failure, message: "late failure" },
+				{
+					type: "done",
+					emittedText: true,
+					completionTokens: 2,
+					completionCounts: { ascii: 7, nonAscii: 0, hasText: true },
+				},
+			])
+				mod.recordCompletionStreamEvent(lifecycle, event);
+			assert.equal(lifecycle.emittedText, true);
+			assert.equal(lifecycle.empty, false);
+			assert.equal(lifecycle.issue.error, failure);
+			assert.deepEqual(lifecycle.toolCalls, toolCalls);
+			assert.deepEqual(lifecycle.completionCounts, {
+				ascii: 7,
+				nonAscii: 0,
+				hasText: true,
+			});
+
+			const emptyLifecycle = mod.createCompletionStreamLifecycle();
+			mod.recordCompletionStreamEvent(emptyLifecycle, { type: "empty" });
+			assert.equal(emptyLifecycle.empty, true);
+			assert.equal(emptyLifecycle.emittedText, false);
+		},
+	],
+	[
 		"emits plain text deltas and token counts",
 		async () => {
 			const emitted = [];

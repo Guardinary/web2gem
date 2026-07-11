@@ -1,6 +1,6 @@
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
-import { runCompletionText, upstreamEmptyWarning } from "../../completion";
+import { EMPTY_UPSTREAM_MSG, runCompletionText } from "../../completion";
 import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
 import { prepareGoogleCompletion } from "../../completion/google-request";
@@ -160,8 +160,13 @@ export async function handleGoogleGenerate(
 			fileRefs: fileRefs ? fileRefs.length : 0,
 		});
 	const upstreamEmpty = !text;
-	if (upstreamEmpty)
+	if (upstreamEmpty) {
 		log(cfg, `google generate produced no content model=${rm.name}`);
+		return jsonResponse(
+			googleErrorResponseBody(EMPTY_UPSTREAM_MSG, "upstream_empty"),
+			502,
+		);
+	}
 
 	const finalized = finalizeGoogleCompletionResult(text, {
 		effectiveReq,
@@ -181,7 +186,6 @@ export async function handleGoogleGenerate(
 		promptTokens,
 		candidateTokens,
 		upstreamEmpty,
-		warning: upstreamEmptyWarning(cfg),
 	});
 
 	return jsonResponse(responseObj);

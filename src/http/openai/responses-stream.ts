@@ -1,5 +1,7 @@
 import {
 	EMPTY_UPSTREAM_MSG,
+	createCompletionStreamLifecycle,
+	recordCompletionStreamEvent,
 	streamPlainCompletionEvents,
 	streamToolSieveCompletionEvents,
 } from "../../completion";
@@ -206,6 +208,7 @@ export async function streamResponsesWithToolSieve(
 	});
 	let toolCalls: OpenAIToolCall[] | null = null;
 	let issue: StreamIssue | null = null;
+	const lifecycle = createCompletionStreamLifecycle();
 	let violation:
 		| Extract<
 				CompletionStreamEvent,
@@ -218,18 +221,17 @@ export async function streamResponsesWithToolSieve(
 			{ prompt, rm, fileRefs, tools, toolPolicy },
 			{ signal, coalesceTextDeltas: true },
 		)) {
+			recordCompletionStreamEvent(lifecycle, event);
 			if (event.type === "text_delta") {
 				await emitText(event.text, false);
 			} else if (event.type === "tool_calls") {
 				toolCalls = event.toolCalls;
 			} else if (event.type === "tool_policy_violation") {
 				violation = event.violation;
-			} else if (event.type === "warning" || event.type === "stream_error") {
-				issue = event;
-			} else if (event.type === "done") {
-				completionCounts = event.completionCounts;
 			}
 		}
+		issue = lifecycle.issue;
+		completionCounts = lifecycle.completionCounts;
 		if (issue) {
 			if (!textLength && !toolCalls) {
 				log(
@@ -250,7 +252,6 @@ export async function streamResponsesWithToolSieve(
 			await writeResponsesEvent(write, "response.warning", {
 				warning: streamWarningObject(issue.error, warning.trim()),
 			});
-			await emitText(warning);
 		}
 		if (violation) {
 			log(
@@ -266,14 +267,13 @@ export async function streamResponsesWithToolSieve(
 			{ prompt, rm, fileRefs },
 			{ signal, coalesceTextDeltas: true },
 		)) {
+			recordCompletionStreamEvent(lifecycle, event);
 			if (event.type === "text_delta") {
 				await emitText(event.text, false);
-			} else if (event.type === "warning" || event.type === "stream_error") {
-				issue = event;
-			} else if (event.type === "done") {
-				completionCounts = event.completionCounts;
 			}
 		}
+		issue = lifecycle.issue;
+		completionCounts = lifecycle.completionCounts;
 		if (issue) {
 			if (!textLength) {
 				log(
@@ -294,12 +294,12 @@ export async function streamResponsesWithToolSieve(
 			await writeResponsesEvent(write, "response.warning", {
 				warning: streamWarningObject(issue.error, warning.trim()),
 			});
-			await emitText(warning);
 		}
 	}
 	if (!textLength && !toolCalls) {
 		log(cfg, `openai responses stream produced no content model=${rm.name}`);
-		await emitText(EMPTY_UPSTREAM_MSG);
+		await fail(EMPTY_UPSTREAM_MSG, "upstream_empty");
+		return;
 	}
 	await finishMessage();
 

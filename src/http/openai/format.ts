@@ -1,6 +1,9 @@
-import { streamErrorText } from "../core/stream-errors";
 import type { SSEWrite } from "../core/sse";
-import { nowSec } from "../../shared/runtime";
+import {
+	nowSec,
+	upstreamErrorCode,
+	upstreamErrorMessage,
+} from "../../shared/runtime";
 import { tokenEst } from "../../shared/tokens";
 import { isRecord } from "../../shared/types";
 import type { GeneratedImage } from "../../completion/ports";
@@ -79,11 +82,7 @@ export async function writeOpenAIChatStreamError(
 	e: unknown,
 ): Promise<void> {
 	let result = write(
-		`data: ${JSON.stringify(openAIChatChunk(id, model, { content: streamErrorText(e) }, null))}\n\n`,
-	);
-	if (isPromiseLike(result)) await result;
-	result = write(
-		`data: ${JSON.stringify(openAIChatChunk(id, model, {}, "stop"))}\n\n`,
+		`event: error\ndata: ${JSON.stringify({ error: { message: upstreamErrorMessage(e), type: "api_error", code: upstreamErrorCode(e) || "upstream_error", param: null }, id, model: String(model || "") })}\n\n`,
 	);
 	if (isPromiseLike(result)) await result;
 	result = write("data: [DONE]\n\n");

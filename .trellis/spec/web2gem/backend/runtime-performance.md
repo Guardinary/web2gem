@@ -829,3 +829,56 @@ if (isPartialToolMarkupPrefix(state.buffer)) return [];
 ```typescript
 if (!state.confirmedToolCandidate && isPartialToolMarkupPrefix(state.buffer)) return [];
 ```
+## Scenario: Shared Completion Stream Lifecycle
+
+### 1. Scope / Trigger
+
+Use this contract when changing completion events or OpenAI Chat, OpenAI
+Responses, or Google streaming adapters.
+
+### 2. Signatures
+
+- `createCompletionStreamLifecycle()` creates protocol-neutral stream state.
+- `recordCompletionStreamEvent(lifecycle, event)` records output, terminal issue,
+  empty output, tool calls, policy violation, and completion counts.
+
+### 3. Contracts
+
+- Completion owns lifecycle state; HTTP adapters own JSON and SSE framing.
+- Record every completion event exactly once before protocol-specific handling.
+- Abort propagation, warning/error classification, coalescer flushes, and terminal
+  frame ordering remain protocol-specific and behavior-compatible.
+
+### 4. Validation & Error Matrix
+
+- text then warning -> `emittedText=true` and terminal issue retained.
+- empty event -> `empty=true`; adapter emits its existing fallback.
+- done event -> completion counts replace initial empty counts.
+- abort -> event producer throws; no lifecycle error conversion occurs.
+
+### 5. Good/Base/Bad Cases
+
+- Good: update the central lifecycle reducer when adding a new stateful event.
+- Base: adapters branch only for protocol payload emission.
+- Bad: recreate local `issue`, `empty`, and completion-count reducers per adapter.
+
+### 6. Tests Required
+
+- Unit-test lifecycle reduction for text, empty, issue, tool, and done events.
+- Run OpenAI and Google streaming route tests plus smoke and coverage gates.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+if (event.type === "warning") issue = event;
+else if (event.type === "done") completionCounts = event.completionCounts;
+```
+
+#### Correct
+
+```typescript
+recordCompletionStreamEvent(lifecycle, event);
+if (event.type === "text_delta") await writeProtocolDelta(event.text);
+```

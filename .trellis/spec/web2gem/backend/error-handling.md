@@ -10,6 +10,71 @@ OpenAI-compatible routes convert parse failures with `openAIErrorResponse`. Goog
 
 Use `upstreamErrorMessage` and `upstreamErrorCode` from `src/shared/runtime.ts` when converting unknown errors. OpenAI upstream failures should use OpenAI-style error envelopes when possible.
 
+## Scenario: Completion Error Presentation
+
+### 1. Scope / Trigger
+
+Use this contract when changing completion finalization, empty upstream handling,
+or OpenAI/Google streaming error and warning behavior.
+
+### 2. Signatures
+
+- `CompletionStreamLifecycle` records emitted output, empty output, terminal
+  issue, tool calls, policy violation, and completion counts.
+- `writeOpenAIChatStreamError(...)`, `writeResponsesEvent(...,
+  "response.failed", ...)`, and `writeGoogleStreamError(...)` own native stream
+  error serialization.
+- `EMPTY_UPSTREAM_MSG` is an error message only; it must not become model output.
+
+### 3. Contracts
+
+- Request validation and generation failures before output use native protocol
+  errors and produce no assistant/model content.
+- A completed response without text or tool calls is HTTP 502 / stream failure
+  with code `upstream_empty`.
+- A failure after partial output preserves already-emitted model content, emits
+  warning metadata, and then emits the protocol's valid terminal sequence.
+- Warning/error text is excluded from candidates, assistant deltas, Responses
+  output items, token counts, and persisted model output.
+- Abort errors propagate and are never converted into protocol warnings.
+
+### 4. Validation & Error Matrix
+
+- Non-stream empty -> native JSON error, status 502, code `upstream_empty`.
+- Stream empty before output -> native stream error, then required terminator.
+- Upstream failure before output -> native stream error with upstream code.
+- Upstream failure after output -> retain content, warning metadata, terminator.
+- Tool-policy violation -> native protocol failure, no synthesized model text.
+
+### 5. Good/Base/Bad Cases
+
+- Good: client receives `partial answer`, warning metadata, and a terminator.
+- Base: successful output contains only upstream model text and tool calls.
+- Bad: append `⚠️ upstream error` to assistant or candidate text.
+
+### 6. Tests Required
+
+- Cover empty and pre-output failure for non-streaming and streaming Chat,
+  Responses, and Google routes.
+- Cover partial interruption and assert warning presence, original output
+  preservation, absence of synthetic output text, and valid termination.
+- Run unit, coverage, smoke, static, type, architecture, and Worker type gates.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+await writeChunk({ content: `⚠️ upstream error: ${message}` }, null);
+```
+
+#### Correct
+
+```typescript
+await writeStreamWarningEvent(write, error);
+await writeProtocolTerminator(write);
+```
+
 Do not silently change request semantics after a failure. A request with an explicit `model` must either use that model or return `model_not_found`; do not fall back to `DEFAULT_MODEL` for empty or unknown explicit model values. A request that requires authenticated Gemini text-file attachments must either complete with those attachments or return the corresponding error; do not retry it as anonymous or without failed context files. Request-local image and generic file inputs are the exception: if validation, fetch, or upload is unavailable or partially fails, the worker may continue as text-only only when it adds a dropped-attachment note to the prompt and logs safe metadata. Transport-only socket-to-fetch fallback is allowed because it preserves headers, cookie, model, body, and file references.
 
 Gemini content-push upload must use multipart without `Cookie` or SAPISID-derived `Authorization`. Do not fall back to cookie-backed resumable upload after multipart rejection; request-local attachment failures degrade with prompt notes, while required `message.txt` / `tools.txt` context-file failures still fail the request.

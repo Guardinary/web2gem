@@ -1,4 +1,4 @@
-import { createTokenCounter } from "../shared/tokens";
+import { createTokenCounter, emptyTokenCounts } from "../shared/tokens";
 import type { TokenCharCounts } from "../shared/tokens";
 import { isAbortError } from "../shared/runtime";
 import {
@@ -49,6 +49,57 @@ export type CompletionStreamEvent =
 			completionTokens: number;
 			completionCounts: TokenCharCounts & { hasText: boolean };
 	  };
+
+export type CompletionStreamLifecycle = {
+	emittedText: boolean;
+	empty: boolean;
+	issue: Extract<
+		CompletionStreamEvent,
+		{ type: "warning" } | { type: "stream_error" }
+	> | null;
+	toolCalls: OpenAIToolCall[] | null;
+	violation: ToolPolicyViolation | null;
+	completionCounts: TokenCharCounts & { hasText: boolean };
+};
+
+export function createCompletionStreamLifecycle(): CompletionStreamLifecycle {
+	return {
+		emittedText: false,
+		empty: false,
+		issue: null,
+		toolCalls: null,
+		violation: null,
+		completionCounts: emptyTokenCounts(),
+	};
+}
+
+export function recordCompletionStreamEvent(
+	lifecycle: CompletionStreamLifecycle,
+	event: CompletionStreamEvent,
+): void {
+	switch (event.type) {
+		case "text_delta":
+		case "buffered_text":
+			lifecycle.emittedText ||= !!event.text;
+			break;
+		case "warning":
+		case "stream_error":
+			lifecycle.issue = event;
+			break;
+		case "tool_calls":
+			lifecycle.toolCalls = event.toolCalls;
+			break;
+		case "tool_policy_violation":
+			lifecycle.violation = event.violation;
+			break;
+		case "empty":
+			lifecycle.empty = true;
+			break;
+		case "done":
+			lifecycle.emittedText ||= event.emittedText;
+			lifecycle.completionCounts = event.completionCounts;
+	}
+}
 
 export async function consumePlainTextDeltas(
 	deltas: AsyncIterable<unknown>,

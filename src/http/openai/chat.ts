@@ -1,10 +1,6 @@
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
-import {
-	EMPTY_UPSTREAM_MSG,
-	runCompletionText,
-	upstreamEmptyWarning,
-} from "../../completion";
+import { EMPTY_UPSTREAM_MSG, runCompletionText } from "../../completion";
 import type {
 	CompletionProvider,
 	CompletionRichOutput,
@@ -225,12 +221,11 @@ export async function handleChat(
 			finalized.error.status,
 			finalized.error.code,
 		);
-	let { toolCalls, upstreamEmpty } = finalized;
+	const { toolCalls } = finalized;
 	text = finalized.text;
 	if (!text && !toolCalls) {
-		upstreamEmpty = true;
 		log(cfg, `openai chat generate produced no content model=${rm.name}`);
-		text = EMPTY_UPSTREAM_MSG; // 可见提示,避免客户端“无返回”
+		return openAIErrorResponse(EMPTY_UPSTREAM_MSG, 502, "upstream_empty");
 	}
 	const msg: Record<string, unknown> = {
 		role: "assistant",
@@ -254,7 +249,6 @@ export async function handleChat(
 			};
 		})(),
 	};
-	if (upstreamEmpty) payload.warning = upstreamEmptyWarning(cfg);
 	return jsonResponse(payload);
 }
 

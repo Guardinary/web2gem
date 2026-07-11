@@ -1,17 +1,14 @@
-import { streamPlainCompletionEvents } from "../../completion";
-import type {
-	CompletionProvider,
-	CompletionStreamEvent,
+import {
+	createCompletionStreamLifecycle,
+	recordCompletionStreamEvent,
+	streamPlainCompletionEvents,
 } from "../../completion";
+import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
 import type { ResolvedModel } from "../../models";
 import type { FileRef, LooseRequest } from "../../completion/types";
 import { streamGoogleToolCompletionEvents } from "../../completion/google";
-import {
-	combinedTokenCount,
-	createTokenCounter,
-	emptyTokenCounts,
-} from "../../shared/tokens";
+import { combinedTokenCount, createTokenCounter } from "../../shared/tokens";
 import { errorLogSummary, log, upstreamErrorCode } from "../../shared/runtime";
 import type { SSEWrite } from "../core/sse";
 import {
@@ -26,10 +23,6 @@ import {
 	writeGoogleStreamError,
 } from "./format";
 
-type StreamIssue = Extract<
-	CompletionStreamEvent,
-	{ type: "warning" } | { type: "stream_error" }
->;
 type ResolvedCompletionModel = Extract<ResolvedModel, { name: string }>;
 type GooglePlainStreamParams = {
 	provider: CompletionProvider;
@@ -51,7 +44,7 @@ export async function streamGooglePlain(
 ) {
 	const { provider, prompt, rm, fileRefs, promptTokens, signal } = params;
 	const extraTokenCounter = createTokenCounter();
-	let completionCounts = emptyTokenCounts();
+	const lifecycle = createCompletionStreamLifecycle();
 	const textCoalescer = createDeltaCoalescer(
 		(delta) => {
 			const text = delta.text || "";
@@ -63,52 +56,41 @@ export async function streamGooglePlain(
 		undefined,
 		{ emitFirstImmediately: true },
 	);
-	let emittedText = false;
-	let issue: StreamIssue | null = null;
 	for await (const event of streamPlainCompletionEvents(
 		provider,
 		{ prompt, rm, fileRefs },
 		{ signal, coalesceTextDeltas: true },
 	)) {
+		recordCompletionStreamEvent(lifecycle, event);
 		if (event.type === "text_delta") {
-			emittedText = true;
 			const appended = textCoalescer.append("text", event.text);
 			if (appended) await appended;
-		} else if (event.type === "warning" || event.type === "stream_error") {
-			issue = event;
-		} else if (event.type === "done") {
-			completionCounts = event.completionCounts;
 		}
 	}
-	let flushed = textCoalescer.flush();
+	const flushed = textCoalescer.flush();
 	if (flushed) await flushed;
-	if (issue) {
-		if (!emittedText) {
+	if (lifecycle.issue) {
+		if (!lifecycle.emittedText) {
 			log(
 				cfg,
-				`google stream failed before output model=${rm.name} code=${upstreamErrorCode(issue.error) || "upstream_error"} error=${errorLogSummary(issue.error)}`,
+				`google stream failed before output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "upstream_error"} error=${errorLogSummary(lifecycle.issue.error)}`,
 			);
-			await writeGoogleStreamError(write, rm.name, issue.error);
+			await writeGoogleStreamError(write, rm.name, lifecycle.issue.error);
 			return;
 		}
-		const warning = `\n\n${streamInterruptedWarningText(issue.error)}`;
+		const warning = `\n\n${streamInterruptedWarningText(lifecycle.issue.error)}`;
 		log(
 			cfg,
-			`google stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(issue.error) || "stream_interrupted"} error=${errorLogSummary(issue.error)}`,
+			`google stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "stream_interrupted"} error=${errorLogSummary(lifecycle.issue.error)}`,
 		);
-		await writeStreamWarningEvent(write, issue.error, warning.trim());
-		extraTokenCounter.append(warning);
-		const appended = textCoalescer.append("text", warning);
-		if (appended) await appended;
-		flushed = textCoalescer.flush();
-		if (flushed) await flushed;
+		await writeStreamWarningEvent(write, lifecycle.issue.error, warning.trim());
 	}
 	const candidateTokens = combinedTokenCount(
-		completionCounts,
+		lifecycle.completionCounts,
 		extraTokenCounter,
 	);
 	await write(
-		`data: ${JSON.stringify(googleStreamDonePayload(rm.name, promptTokens, candidateTokens, issue ? issue.error : null))}\n\n`,
+		`data: ${JSON.stringify(googleStreamDonePayload(rm.name, promptTokens, candidateTokens, lifecycle.issue ? lifecycle.issue.error : null))}\n\n`,
 	);
 }
 
@@ -143,6 +125,13 @@ export async function streamGoogleTools(
 				event.parts,
 				event.finishReason,
 			);
+		} else if (event.type === "error") {
+			log(
+				cfg,
+				`google tool stream failed before output model=${rm.name} code=${upstreamErrorCode(event.error) || "upstream_error"} error=${errorLogSummary(event.error)}`,
+			);
+			await writeGoogleStreamError(write, rm.name, event.error);
+			return;
 		} else if (event.type === "warning") {
 			log(
 				cfg,
