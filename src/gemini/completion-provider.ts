@@ -13,7 +13,12 @@ import type {
 	CompletionTextInput,
 } from "../completion/ports";
 import type { AttachmentPlan } from "../attachments/types";
-import { isAbortError, logStage } from "../shared/runtime";
+import {
+	errorLogSummary,
+	isAbortError,
+	log,
+	logStage,
+} from "../shared/runtime";
 import type { ErrorWithMetadata } from "../shared/types";
 import type { GeminiAccountLease } from "./accounts/types";
 import type { GeminiAccountRuntime } from "./accounts/runtime";
@@ -76,24 +81,39 @@ export function createGeminiCompletionProvider(
 		leasePromise = null;
 	};
 
-	const markFailureAndRelease = async (error: unknown): Promise<void> => {
+	const finalizeOutcome = async (
+		kind: "success" | "failure",
+		error?: unknown,
+	): Promise<void> => {
 		const selected = lease;
-		try {
-			if (selected && !isAbortError(error)) await selected.markFailure(error);
-		} finally {
-			releaseLease();
-			terminal = true;
+		const persistence = selected
+			? kind === "success"
+				? selected.markSuccess()
+				: error !== undefined && !isAbortError(error)
+					? selected.markFailure(error)
+					: null
+			: null;
+		releaseLease();
+		terminal = true;
+		if (!persistence) return;
+		const guarded = persistence.catch((persistenceError: unknown) => {
+			log(
+				cfg,
+				`account outcome persistence failed: ${errorLogSummary(persistenceError)}`,
+			);
+		});
+		if (cfg.execution_ctx) {
+			try {
+				cfg.execution_ctx.waitUntil(guarded);
+			} catch (registrationError) {
+				log(
+					cfg,
+					`account outcome waitUntil registration failed: ${errorLogSummary(registrationError)}`,
+				);
+			}
+			return;
 		}
-	};
-
-	const markSuccessAndRelease = async (): Promise<void> => {
-		const selected = lease;
-		try {
-			if (selected) await selected.markSuccess();
-		} finally {
-			releaseLease();
-			terminal = true;
-		}
+		await guarded;
 	};
 
 	const withGenerationLease = async <T>(
@@ -102,10 +122,10 @@ export function createGeminiCompletionProvider(
 		const activeCfg = await acquireConfig();
 		try {
 			const result = await fn(activeCfg);
-			await markSuccessAndRelease();
+			await finalizeOutcome("success");
 			return result;
 		} catch (error) {
-			await markFailureAndRelease(error);
+			await finalizeOutcome("failure", error);
 			throw error;
 		}
 	};
@@ -117,7 +137,7 @@ export function createGeminiCompletionProvider(
 		try {
 			return await fn(activeCfg);
 		} catch (error) {
-			await markFailureAndRelease(error);
+			await finalizeOutcome("failure", error);
 			throw error;
 		}
 	};
@@ -181,9 +201,9 @@ export function createGeminiCompletionProvider(
 					const text = String(delta || "");
 					if (text) yield text;
 				}
-				await markSuccessAndRelease();
+				await finalizeOutcome("success");
 			} catch (error) {
-				await markFailureAndRelease(error);
+				await finalizeOutcome("failure", error);
 				throw error;
 			}
 		},

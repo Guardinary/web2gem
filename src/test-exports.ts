@@ -88,6 +88,7 @@ export { classifyGeminiAccountOutcome } from "./gemini/accounts/classify";
 export {
 	createGeminiAccountRuntimeFromEnv,
 	d1BindingFromEnv,
+	getGeminiAccountRuntimeFromEnv,
 	GeminiAccountRuntime,
 } from "./gemini/accounts/runtime";
 export {

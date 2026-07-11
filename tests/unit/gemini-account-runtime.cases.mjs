@@ -17,6 +17,26 @@ export const cases = [
 		},
 	],
 	[
+		"reuses the default runtime by D1 binding identity",
+		async () => {
+			const firstDb = { prepare() {} };
+			const secondDb = { prepare() {} };
+			const first = mod.getGeminiAccountRuntimeFromEnv({ GEMINI_DB: firstDb });
+			const repeated = mod.getGeminiAccountRuntimeFromEnv({
+				GEMINI_DB: firstDb,
+			});
+			const isolated = mod.getGeminiAccountRuntimeFromEnv({
+				GEMINI_DB: secondDb,
+			});
+			assert.equal(first, repeated);
+			assert.equal(first === isolated, false);
+			assert.equal(
+				first === mod.createGeminiAccountRuntimeFromEnv({ GEMINI_DB: firstDb }),
+				false,
+			);
+		},
+	],
+	[
 		"caches selectable snapshots and probes pool version without row reads every request",
 		async () => {
 			let now = 1000;
@@ -58,6 +78,39 @@ export const cases = [
 		},
 	],
 	[
+		"caches empty snapshots and coalesces concurrent cold loads",
+		async () => {
+			let now = 1000;
+			const store = new FakeStore([]);
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => now,
+				snapshotTtlMs: 10_000,
+				versionProbeTtlMs: 1_000,
+			});
+
+			assert.deepEqual(
+				await Promise.all([
+					pool.selectableSnapshot(),
+					pool.selectableSnapshot(),
+					pool.selectableSnapshot(),
+				]),
+				[[], [], []],
+			);
+			assert.equal(store.getPoolVersionCalls, 1);
+			assert.equal(store.listSelectableCalls, 1);
+
+			now = 1100;
+			assert.equal(await pool.acquireLease(baseConfig()), null);
+			assert.equal(store.getPoolVersionCalls, 1);
+			assert.equal(store.listSelectableCalls, 1);
+
+			now = 2500;
+			assert.equal(await pool.acquireLease(baseConfig()), null);
+			assert.equal(store.getPoolVersionCalls, 2);
+			assert.equal(store.listSelectableCalls, 1);
+		},
+	],
+	[
 		"uses local in-flight counts and idempotent release for selection",
 		async () => {
 			const store = new FakeStore([accountRow("a"), accountRow("b")]);
@@ -75,6 +128,20 @@ export const cases = [
 			assert.equal(pool.localInFlight("a"), 0);
 			second.release();
 			assert.equal(store.writeCalls, 0);
+		},
+	],
+	[
+		"applies terminal failures to the local selectable snapshot",
+		async () => {
+			const store = new FakeStore([accountRow("a")]);
+			const pool = new mod.AccountPoolService(store, { nowMs: () => 5000 });
+			const lease = await pool.acquireLease(baseConfig());
+			await lease.markFailure(
+				Object.assign(new Error("unauthorized"), { status: 401 }),
+			);
+			lease.release();
+			assert.equal(await pool.acquireLease(baseConfig()), null);
+			assert.equal(store.outcomeCalls, 1);
 		},
 	],
 	[

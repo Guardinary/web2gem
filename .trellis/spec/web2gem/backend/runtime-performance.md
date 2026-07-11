@@ -266,6 +266,9 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 ### 2. Signatures
 
 - `AccountPoolService.acquireLease(baseConfig)` returns a lease or `null`.
+- `getGeminiAccountRuntimeFromEnv(env)` returns one default runtime per valid D1
+  binding object inside a warm isolate; `createGeminiAccountRuntimeFromEnv(env,
+  options)` remains an uncached factory.
 - `GeminiAccountRuntimeStore.getPoolVersion()` reads one metadata row.
 - `GeminiAccountRuntimeStore.listSelectableAccounts(nowMs, limit)` reads a bounded selectable snapshot.
 - `GeminiAccountAdminStore` owns list/stats/identifier/CRUD operations; `GeminiAccountStore` remains their compatibility intersection for the D1 adapter.
@@ -275,6 +278,13 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 ### 3. Contracts
 
 - A fresh selectable snapshot must satisfy account selection without a D1 account-row read and without any D1 write.
+- Snapshot freshness is timestamp-based, not row-count-based. An empty selectable
+  result must remain cacheable.
+- Concurrent stale snapshot callers share one pending version probe and optional
+  row reload. Clear the pending promise by identity in `finally`.
+- Default application routing must reuse the same runtime for the same D1 binding
+  so snapshot, round-robin, in-flight, account-state, and refresh-dedupe state can
+  work across requests. Request leases remain provider-local.
 - `AccountPoolService` must accept only `GeminiAccountRuntimeStore`. Account admin composition supplies explicit admin/runtime stores; the D1 factory may pass one `D1GeminiAccountStore` instance for both capabilities.
 - Version probes read only `gemini_pool_meta.pool_version`; reload selectable rows only when the version changes or the snapshot TTL expires.
 - Local fairness uses in-memory round-robin and in-flight counts. Do not write durable round-robin pointers or last-used timestamps synchronously during selection.
@@ -288,6 +298,9 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 ### 4. Validation & Error Matrix
 
 - Snapshot fresh and version probe not due -> no store calls.
+- Empty snapshot fresh and version probe not due -> no store calls and no lease.
+- Three concurrent cold snapshot reads -> one metadata read and one selectable-row
+  read with all callers receiving the same result.
 - Version probe due and version unchanged -> exactly one metadata read, no row reload.
 - Version changed -> metadata read plus bounded selectable row reload.
 - Selection with two available accounts and one local in-flight -> choose the lower in-flight account.
@@ -300,16 +313,25 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 ### 5. Good/Base/Bad Cases
 
 - Good: `pendingRefresh.set(key, promise)` happens before awaiting account state or hashes.
+- Good: cache the default runtime in a `WeakMap` keyed by the D1 binding object.
+- Good: assign the pending snapshot promise before any caller can await it.
 - Good: selection increments local in-flight and release is idempotent.
 - Good: cookie writeback handles both the preflight duplicate and the post-update unique-constraint race without changing lease state.
 - Base: snapshot TTL/probe values are short enough for operator changes to propagate but long enough to avoid D1 reads on every request.
 - Bad: `await sha256(cookie)` before checking the pending refresh map.
 - Bad: writing `last_used_at_ms` or global round-robin state during every lease acquisition.
+- Bad: construct a new default `AccountPoolService` for every valid generation
+  request, which resets all isolate-local scheduling and cache state.
+- Bad: use `snapshotRows.length > 0` as the freshness marker, which makes empty
+  pools hit D1 on every request.
 - Bad: catch every unique constraint as a duplicate without confirming another row owns the target Cookie hash.
 
 ### 6. Tests Required
 
 - Unit tests with fake store counters for snapshot reads, version probes, row reloads, and selection write counts.
+- Unit test same-binding runtime reuse, different-binding isolation, and uncached
+  explicit factory behavior.
+- Unit test concurrent cold snapshot coalescing and empty-snapshot probe windows.
 - Unit tests for in-flight spread and idempotent release.
 - Unit tests for refresh debounce, pending dedupe, D1 lock conflict, failure propagation, and lock release.
 - Unit test a D1 cookie-hash convergence race returns `duplicate_cookie`, preserves the original row, and does not bump the pool version.
@@ -318,6 +340,18 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm check:static`, `pnpm unit`, and `pnpm smoke`.
 
 ### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+return createGeminiAccountRuntimeFromEnv(env);
+```
+
+#### Correct
+
+```typescript
+return getGeminiAccountRuntimeFromEnv(env);
+```
 
 #### Wrong
 
@@ -377,6 +411,15 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - Upload-only provider calls keep the lease for the later generation call. If preparation returns an error after upload/bootstrap, the HTTP handler must call `provider.dispose()` before returning.
 - Non-streaming generation marks account success only after the Gemini call resolves. Streaming marks success only after the async iterator completes normally.
 - Non-abort provider failures mark the selected account failure and release the lease. Abort/disconnect errors release without recording noisy account failure.
+- Terminal outcomes update the isolate-local snapshot before durable persistence,
+  so an auth-failed or cooling account is not immediately selected again locally.
+- Account outcome persistence is auxiliary state management. Its rejection must
+  never replace a successful upstream result, replace the original upstream
+  failure, or enter the success path's failure classifier.
+- Guard every outcome promise with a safe rejection handler. Register the guarded
+  promise with `execution_ctx.waitUntil` when available; otherwise await the
+  guarded promise for deterministic non-Worker callers. Release the local lease
+  before waiting or returning.
 - No eligible account must throw a sanitized 503 error with code `no_available_gemini_account` and must not call upstream Gemini.
 - Account-marked configs must not use the process-global single-cookie rotation singleton. Cookie/session recovery goes through account runtime leases.
 - `/app` page tokens and content-push `push_id` caches must include account identity or cookie hash when `gemini_account` is present. Build-label cache remains origin-scoped.
@@ -394,26 +437,60 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - `/app` page token fetch for account A then account B -> distinct cache keys; tokens cannot cross accounts.
 - Account stream yields a first delta -> no success marked yet; stream completion -> success and release.
 - Account stream throws after partial output -> failure and release; no alternate-account retry after visible output.
+- Successful generation plus D1 outcome rejection -> preserve the generated
+  result, release once, and handle the background rejection.
+- Upstream generation failure plus D1 outcome rejection -> preserve the original
+  upstream error, release once, and do not record the D1 error as an account
+  failure.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: provider closure stores the lease promise and reuses `lease.config` for upload and generation.
+- Good: create one guarded outcome promise, release the lease, then pass the
+  guarded promise to `waitUntil`.
 - Good: HTTP prepare-error branches call `provider.dispose?.()` before returning a validation error after possible upload work.
 - Good: generated-image byte hydration receives the same account-backed config as rich generation.
 - Base: no-D1 public generation fails closed with `gemini_account_pool_required`; static health/model routes still do not read D1.
 - Bad: calling `AccountPoolService.acquireLease` while parsing JSON, checking public API keys, listing models, or serving health checks.
 - Bad: keying page tokens or push IDs by raw cookie header.
 - Bad: releasing the lease immediately after successful upload and selecting another account for generation.
+- Bad: await `markSuccess()` inside the generation `try` with an unguarded
+  rejection; a persistence failure then enters the upstream failure branch.
 
 ### 6. Tests Required
 
 - Provider unit tests for lease reuse across upload plus text/rich generation.
 - Provider stream tests for success only after iterator completion and release on stream failure.
+- Provider tests proving `waitUntil` registration, successful-result preservation,
+  original-error preservation, and handled outcome-write rejection.
+- Runtime test proving a terminal auth failure immediately removes the account
+  from the local selectable set.
 - Route tests proving auth and request-validation failures do not touch D1.
 - Cache tests proving account-scoped page-token and push-id isolation.
 - Upload tests proving content-push requests omit Cookie and Authorization.
 - Runtime tests proving page-token writeback keeps session tokens out of outbound Cookie headers.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm check:static`, `pnpm unit`, and `pnpm smoke`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+const result = await generate(activeCfg);
+await lease.markSuccess();
+lease.release();
+return result;
+```
+
+#### Correct
+
+```typescript
+const result = await generate(activeCfg);
+const guarded = lease.markSuccess().catch((error) => logSafe(error));
+lease.release();
+cfg.execution_ctx?.waitUntil(guarded);
+return result;
+```
 
 ## Scenario: Streaming Delta Coalescing
 

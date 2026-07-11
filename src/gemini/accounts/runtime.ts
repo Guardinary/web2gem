@@ -11,6 +11,11 @@ import type {
 	GeminiAccountSecretRow,
 } from "./types";
 
+const DEFAULT_RUNTIME_BY_DB = new WeakMap<
+	D1DatabaseLike,
+	GeminiAccountRuntime
+>();
+
 export class GeminiAccountRuntime {
 	constructor(readonly pool: AccountPoolService) {}
 
@@ -32,6 +37,19 @@ export function createGeminiAccountRuntimeFromEnv(
 			rotateCookie,
 		}),
 	);
+}
+
+export function getGeminiAccountRuntimeFromEnv(
+	env: WorkerEnv | null | undefined,
+): GeminiAccountRuntime | null {
+	const db = d1BindingFromEnv(env);
+	if (!db) return null;
+	const existing = DEFAULT_RUNTIME_BY_DB.get(db);
+	if (existing) return existing;
+	const runtime = createGeminiAccountRuntimeFromEnv(env);
+	if (!runtime) return null;
+	DEFAULT_RUNTIME_BY_DB.set(db, runtime);
+	return runtime;
 }
 
 export function d1BindingFromEnv(

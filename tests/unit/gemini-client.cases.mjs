@@ -2660,6 +2660,86 @@ export const cases = [
 			assert.equal(lease.releaseCalls, 1);
 		},
 	],
+	[
+		"keeps successful results when background outcome persistence fails",
+		async () => {
+			const background = [];
+			const lease = fakeLease(accountCfg("success-write-fail", "hash"), {
+				async markSuccess() {
+					this.successCalls += 1;
+					throw new Error("D1 write failed");
+				},
+			});
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig({
+					execution_ctx: {
+						waitUntil(promise) {
+							background.push(promise);
+						},
+					},
+				}),
+				{
+					accountRuntime: fakeRuntime([lease]),
+					client: {
+						async generate() {
+							return "ok";
+						},
+					},
+				},
+			);
+
+			assert.equal(
+				await provider.generateText({
+					prompt: "test",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				}),
+				"ok",
+			);
+			assert.equal(lease.successCalls, 1);
+			assert.equal(lease.failureCalls, 0);
+			assert.equal(lease.releaseCalls, 1);
+			assert.equal(background.length, 1);
+			await Promise.all(background);
+		},
+	],
+	[
+		"preserves the original upstream error when outcome persistence fails",
+		async () => {
+			const upstreamError = new Error("upstream failed");
+			const lease = fakeLease(accountCfg("failure-write-fail", "hash"), {
+				async markFailure() {
+					this.failureCalls += 1;
+					throw new Error("D1 write failed");
+				},
+			});
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: fakeRuntime([lease]),
+					client: {
+						async generate() {
+							throw upstreamError;
+						},
+					},
+				},
+			);
+
+			let seenError;
+			try {
+				await provider.generateText({
+					prompt: "test",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				});
+			} catch (error) {
+				seenError = error;
+			}
+			assert.equal(seenError, upstreamError);
+			assert.equal(lease.failureCalls, 1);
+			assert.equal(lease.releaseCalls, 1);
+		},
+	],
 ];
 
 async function bodyBytes(body) {
@@ -2702,7 +2782,7 @@ function fakeRuntime(leases) {
 	};
 }
 
-function fakeLease(config) {
+function fakeLease(config, overrides = {}) {
 	return {
 		accountId: config.gemini_account.accountId,
 		rowId: config.gemini_account.rowId,
@@ -2726,5 +2806,6 @@ function fakeLease(config) {
 		release() {
 			this.releaseCalls += 1;
 		},
+		...overrides,
 	};
 }

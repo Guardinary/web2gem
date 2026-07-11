@@ -11,6 +11,7 @@ import { normalizeGeminiCookieHeader, sha256Hex } from "./normalize";
 import type {
 	GeminiAccountCookieRotator,
 	GeminiAccountLease,
+	GeminiAccountOutcome,
 	GeminiAccountPageState,
 	GeminiAccountRefreshResult,
 	GeminiAccountSecretRow,
@@ -56,6 +57,8 @@ export class AccountPoolService {
 	private snapshotVersion = "";
 	private snapshotExpiresAtMs = 0;
 	private nextVersionProbeAtMs = 0;
+	private pendingSnapshotLoad: Promise<GeminiAccountSnapshotRow[]> | null =
+		null;
 	private roundRobinCursor = 0;
 
 	constructor(
@@ -109,11 +112,24 @@ export class AccountPoolService {
 	async selectableSnapshot(
 		nowMs: number = this.nowMs(),
 	): Promise<GeminiAccountSnapshotRow[]> {
-		const hasFreshSnapshot =
-			this.snapshotRows.length > 0 && nowMs < this.snapshotExpiresAtMs;
+		const hasFreshSnapshot = nowMs < this.snapshotExpiresAtMs;
 		if (hasFreshSnapshot && nowMs < this.nextVersionProbeAtMs)
 			return this.snapshotRows;
+		if (this.pendingSnapshotLoad) return this.pendingSnapshotLoad;
 
+		const load = this.loadSelectableSnapshot(nowMs, hasFreshSnapshot);
+		this.pendingSnapshotLoad = load;
+		try {
+			return await load;
+		} finally {
+			if (this.pendingSnapshotLoad === load) this.pendingSnapshotLoad = null;
+		}
+	}
+
+	private async loadSelectableSnapshot(
+		nowMs: number,
+		hasFreshSnapshot: boolean,
+	): Promise<GeminiAccountSnapshotRow[]> {
 		const version = await this.store.getPoolVersion();
 		this.nextVersionProbeAtMs = nowMs + this.versionProbeTtlMs;
 		if (hasFreshSnapshot && version === this.snapshotVersion)
@@ -205,7 +221,9 @@ export class AccountPoolService {
 		accountId: string,
 		nowMs: number = this.nowMs(),
 	): Promise<void> {
-		await this.store.writeAccountOutcome(accountId, { kind: "success", nowMs });
+		const outcome: GeminiAccountOutcome = { kind: "success", nowMs };
+		this.applyOutcomeToSnapshot(accountId, outcome);
+		await this.store.writeAccountOutcome(accountId, outcome);
 	}
 
 	async markFailure(
@@ -213,10 +231,31 @@ export class AccountPoolService {
 		error: unknown,
 		nowMs: number = this.nowMs(),
 	): Promise<void> {
-		await this.store.writeAccountOutcome(
-			accountId,
-			classifyGeminiAccountOutcome(error, nowMs),
-		);
+		const outcome = classifyGeminiAccountOutcome(error, nowMs);
+		this.applyOutcomeToSnapshot(accountId, outcome);
+		await this.store.writeAccountOutcome(accountId, outcome);
+	}
+
+	private applyOutcomeToSnapshot(
+		accountId: string,
+		outcome: GeminiAccountOutcome,
+	): void {
+		this.snapshotRows = this.snapshotRows.map((row) => {
+			if (row.id !== accountId) return row;
+			return {
+				...row,
+				status: outcome.status ?? row.status,
+				cooldown_until_ms:
+					outcome.cooldownUntilMs === undefined
+						? row.cooldown_until_ms
+						: outcome.cooldownUntilMs,
+				last_used_at_ms: outcome.nowMs,
+				last_success_at_ms:
+					outcome.kind === "success" ? outcome.nowMs : row.last_success_at_ms,
+				last_failure_at_ms:
+					outcome.kind === "failure" ? outcome.nowMs : row.last_failure_at_ms,
+			};
+		});
 	}
 
 	private async refreshAccountOnce(

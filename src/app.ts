@@ -34,8 +34,8 @@ import {
 } from "./http/admin/gemini-account-webui";
 import { createGeminiCompletionProvider } from "./gemini/completion-provider";
 import {
-	createGeminiAccountRuntimeFromEnv,
 	d1BindingFromEnv,
+	getGeminiAccountRuntimeFromEnv,
 } from "./gemini/accounts/runtime";
 import { errorLogSummary, log } from "./shared/runtime";
 import type { RuntimeConfig, WorkerEnv } from "./config";
@@ -271,7 +271,7 @@ function withAccountPoolAvailability(
 function requiredGeminiAccountRuntimeFromEnv(
 	env: WorkerEnv,
 ): GeminiAccountRuntime | null {
-	return createGeminiAccountRuntimeFromEnv(env);
+	return getGeminiAccountRuntimeFromEnv(env);
 }
 
 function accountPoolRequiredOpenAIResponse(): Response {
