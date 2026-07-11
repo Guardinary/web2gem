@@ -10,8 +10,8 @@
 	"scripts": {
 		"build": "node scripts/build.mjs",
 		"check:static": "biome check --assist-enabled=false --diagnostic-level=error",
-		"worker:types": "wrangler types worker-configuration.d.ts --env-interface WorkerBindings --include-runtime false --strict-vars false --env-file .dev.vars.example",
-		"check:worker-types": "wrangler types worker-configuration.d.ts --env-interface WorkerBindings --include-runtime false --strict-vars false --env-file .dev.vars.example --check",
+		"worker:types": "pnpm build && wrangler types worker-configuration.d.ts --env-interface WorkerBindings --include-runtime false --strict-vars false --env-file .dev.vars.example",
+		"check:worker-types": "pnpm build && wrangler types worker-configuration.d.ts --env-interface WorkerBindings --include-runtime false --strict-vars false --env-file .dev.vars.example --check",
 		"format": "biome format --write",
 		"typecheck": "tsc --noEmit",
 		"check:arch": "node scripts/check-architecture.mjs",

@@ -258,6 +258,7 @@ Use this contract when adding, removing, or renaming Wrangler vars, secrets, or 
 ### 3. Contracts
 
 - `wrangler.jsonc` and `.dev.vars.example` are the generation inputs. The example secret file contributes secret names only; it must not contain real credentials.
+- Both type commands build `dist/worker.js` before invoking Wrangler. Wrangler conditionally emits `Cloudflare.GlobalProps.mainModule` based on main-module existence, so this prerequisite makes clean-clone and post-build generation byte-for-byte deterministic.
 - Generation uses `--include-runtime false` because runtime types continue to come from the pinned `@cloudflare/workers-types` dependency.
 - Generation uses `--strict-vars false` so runtime-config parsers may validate deployment-provided values rather than accepting only current literal defaults.
 - `WorkerBindings` types the Cloudflare entrypoint and known binding names.
@@ -268,6 +269,7 @@ Use this contract when adding, removing, or renaming Wrangler vars, secrets, or 
 ### 4. Validation & Error Matrix
 
 - Wrangler config or secret-template key changes without regeneration -> `pnpm check:worker-types` fails.
+- Type generation runs with no `dist/worker.js` prerequisite -> output hash and `Cloudflare.GlobalProps` can drift based on command order; restore the build-first script contract.
 - `CONFIG_ENV_KEYS` contains a key absent from generated bindings -> unit test failure naming the key.
 - `GEMINI_DB` binding disappears or changes type -> generated-type/unit/typecheck failure.
 - Invalid runtime value has a generated binding name -> `getConfig` still throws `RuntimeConfigError`; generated types do not replace runtime validation.
@@ -276,6 +278,7 @@ Use this contract when adding, removing, or renaming Wrangler vars, secrets, or 
 ### 5. Good/Base/Bad Cases
 
 - Good: update `wrangler.jsonc` or `.dev.vars.example`, run `pnpm worker:types`, and commit the generated diff with the config change.
+- Good: invoke the package scripts instead of calling `wrangler types` directly so the main-module prerequisite is stable.
 - Base: the Worker entrypoint is statically checked while Docker continues passing values through the unknown-valued application boundary.
 - Bad: replace runtime parsing with casts from `WorkerBindings`, or broaden the application environment back to `Record<string, unknown>`.
 - Bad: generate full runtime types and remove the existing Workers types dependency as an unrelated change.
@@ -284,6 +287,7 @@ Use this contract when adding, removing, or renaming Wrangler vars, secrets, or 
 
 - `pnpm check:worker-types` in the required Ubuntu quality job.
 - Unit test generated declarations contain `WorkerBindings`, `GEMINI_DB: D1Database`, and every `CONFIG_ENV_KEYS` key.
+- Unit test both package scripts retain the build-first prerequisite.
 - `pnpm typecheck` to verify the Worker entrypoint and application boundary remain compatible.
 - `pnpm unit`, `pnpm coverage:ci`, and `pnpm smoke` after binding-type changes.
 

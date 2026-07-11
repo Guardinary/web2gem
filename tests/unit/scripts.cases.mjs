@@ -432,9 +432,18 @@ export const cases = [
 	[
 		"keeps generated Worker binding types aligned with runtime config",
 		async () => {
+			const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 			const generatedTypes = await readFile(
 				"worker-configuration.d.ts",
 				"utf8",
+			);
+			assert.match(
+				packageJson.scripts["worker:types"],
+				/^pnpm build && wrangler types/,
+			);
+			assert.match(
+				packageJson.scripts["check:worker-types"],
+				/^pnpm build && wrangler types/,
 			);
 			assert.match(generatedTypes, /interface WorkerBindings/);
 			assert.match(generatedTypes, /GEMINI_DB:\s*D1Database/);
