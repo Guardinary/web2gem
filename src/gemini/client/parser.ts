@@ -604,12 +604,14 @@ export function createStreamTextExtractor() {
 	let prevVisibleHead = "";
 	let prevVisibleTail = "";
 	let prevRaw = "";
+	let prevRawLength = 0;
 	let prevRawHead = "";
 	let prevRawTail = "";
 	let prevRawHasArtifacts = false;
 	let started = false;
 	const rememberRaw = (raw: string) => {
-		prevRaw = raw;
+		prevRawLength = raw.length;
+		prevRaw = raw.length <= STREAM_APPEND_PROBE_CHARS * 2 ? raw : "";
 		prevRawHead = raw.slice(0, STREAM_APPEND_PROBE_CHARS);
 		prevRawTail = raw.slice(-STREAM_APPEND_PROBE_CHARS);
 		prevRawHasArtifacts = hasArtifactMarkers(raw);
@@ -645,18 +647,18 @@ export function createStreamTextExtractor() {
 		);
 	};
 	const rawAppendDelta = (raw: string): string | null => {
-		if (!prevRaw || raw.length <= prevRaw.length || prevRawHasArtifacts)
+		if (!prevRawLength || raw.length <= prevRawLength || prevRawHasArtifacts)
 			return null;
-		if (prevRaw.length <= STREAM_APPEND_PROBE_CHARS * 2) {
+		if (prevRawLength <= STREAM_APPEND_PROBE_CHARS * 2) {
 			if (!raw.startsWith(prevRaw)) return null;
 		} else if (
 			raw.slice(0, prevRawHead.length) !== prevRawHead ||
-			raw.slice(prevRaw.length - prevRawTail.length, prevRaw.length) !==
+			raw.slice(prevRawLength - prevRawTail.length, prevRawLength) !==
 				prevRawTail
 		) {
 			return null;
 		}
-		const delta = raw.slice(prevRaw.length);
+		const delta = raw.slice(prevRawLength);
 		if (hasArtifactMarkers(prevRawTail + delta)) return null;
 		return delta;
 	};

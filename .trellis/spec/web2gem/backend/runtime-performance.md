@@ -94,6 +94,7 @@ Use this contract when adding benchmark cases, changing hot-path algorithms, cha
 - Thresholds are absolute CI regression ceilings with hardware headroom, not claims about a specific workstation baseline.
 - Intentional delay cases such as `sse_slow_consumer` remain observational and must not enter the CPU gate.
 - Optimize only after repeated baseline runs. If an attempted fast path is slower, remove it instead of weakening the benchmark.
+- `createStreamTextExtractor` may retain the complete previous raw value only while it is small enough for exact append comparison. For larger cumulative values, retain length plus bounded head/tail probes so prior large responses can be collected while append detection stays bounded.
 
 ### 4. Validation & Error Matrix
 
@@ -501,6 +502,7 @@ Use this contract when changing `src/toolstream/index.ts`, DSML/XML tool-call pa
 
 - A held candidate is confirmed by a complete tool opening tag prefix, not by `isPartialToolMarkupPrefix` on the whole buffer. `isPartialToolMarkupPrefix` intentionally remains broad and can return true for complete strings that start with `<tool_calls`.
 - Once a candidate is confirmed, `processToolSieveChunk` must not rescan the entire growing buffer for partial-prefix detection on every provider chunk.
+- `heldTail` is bounded to 128 characters. When an incoming held chunk is already at least 128 characters, derive the tail directly from that chunk instead of concatenating the previous tail only to slice it away.
 - Canonical DSML fast parsing may only accept plain canonical `<tool_calls>...<invoke ...>...</invoke></tool_calls>` XML. Confusable, alias, fenced, missing-wrapper, markdown-protected, or backtick-bearing inputs must fall back to the tolerant parser.
 - Malformed but real-looking tool syntax should not leak mid-stream; keep it buffered until flush unless it is proven to be ordinary stale/plain text.
 - Markdown-protected examples such as fenced `<tool_calls>` snippets must be released as plain text, not held as real tool calls.

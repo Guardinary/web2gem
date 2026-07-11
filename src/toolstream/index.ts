@@ -256,7 +256,10 @@ function appendHeldChunk(state: ToolSieveState, text: string): void {
 	if (!Array.isArray(state.heldChunks)) state.heldChunks = [];
 	state.heldChunks.push(text);
 	state.heldLength = (state.heldLength || 0) + text.length;
-	state.heldTail = `${state.heldTail || ""}${text}`.slice(-128);
+	state.heldTail =
+		text.length >= 128
+			? text.slice(-128)
+			: `${state.heldTail || ""}${text}`.slice(-128);
 }
 
 function heldLength(state: ToolSieveState): number {
