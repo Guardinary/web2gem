@@ -23,6 +23,7 @@ TypeScript 代码位于 `src/`，本地质量检查脚本位于 `scripts/`，`di
   - [快速开始](#快速开始)
     - [方式一：通过 Release 单文件 Worker 产物部署](#方式一通过-release-单文件-worker-产物部署)
     - [方式二：通过 Docker 部署](#方式二通过-docker-部署)
+  - [从 v1 迁移到 v2](#从-v1-迁移到-v2)
   - [配置](#配置)
   - [认证](#认证)
   - [开发](#开发)
@@ -180,9 +181,9 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem)
 
-该按钮会 fork 仓库，创建 Worker，根据 `wrangler.jsonc` 自动创建 `GEMINI_DB` D1 数据库，先构建 Worker，再通过 deploy 脚本执行 `wrangler d1 migrations apply GEMINI_DB --remote`，然后部署 Worker。部署向导中需要填写 `ADMIN_KEYS`；`API_KEYS` 可选。部署完成后，打开管理页面导入你自己的 Gemini 账号值。
+该按钮会 fork 仓库，创建 Worker，根据 `wrangler.jsonc` 自动创建 `GEMINI_DB` D1 数据库，先构建 Worker，再通过 deploy 脚本执行 `wrangler d1 migrations apply GEMINI_DB --remote`，然后部署 Worker。部署向导中需要填写 `ADMIN_KEY`；`API_KEYS` 可选。部署完成后，打开管理页面导入你自己的 Gemini 账号值。
 
-部署表单会把 `wrangler.jsonc` `vars` 中的非隐私 Worker 配置以明文展示。只有 [`.env.example`](.env.example) 和 [`.dev.vars.example`](.dev.vars.example) 中的 secrets 会隐藏；当前只有 `API_KEYS` 和 `ADMIN_KEYS`。
+部署表单会把 `wrangler.jsonc` `vars` 中的非隐私 Worker 配置以明文展示。只有 [`.env.example`](.env.example) 和 [`.dev.vars.example`](.dev.vars.example) 中的 secrets 会隐藏；当前只有 `API_KEYS` 和 `ADMIN_KEY`。
 
 从项目 [Releases](https://github.com/Guardinary/web2gem/releases) 页面下载构建产物 `worker.js`，在 Cloudflare Worker 控制台打开你的 Worker，将 Worker 源码替换为该文件内容。然后在 Worker 控制台设置中添加 `nodejs_compat` 兼容性标记。
 
@@ -197,7 +198,7 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 | `web2gem_<tag>_docker_linux_arm64.tar.gz` | `linux/arm64` Docker 镜像归档。 |
 | `sha256sums.txt` | 发布文件校验和。 |
 
-在 Worker 控制台中打开该 Worker 的设置页，配置公开 API 鉴权、admin 鉴权和必需的 `GEMINI_DB` D1 binding。需要保护共享访问时设置 `API_KEYS`；使用账号池管理接口前设置 `ADMIN_KEYS`。
+在 Worker 控制台中打开该 Worker 的设置页，配置公开 API 鉴权、admin 鉴权和必需的 `GEMINI_DB` D1 binding。需要保护共享访问时设置 `API_KEYS`；使用账号池管理接口前设置 `ADMIN_KEY`。
 
 如果不使用 Release 产物、而是从源码构建，`pnpm deploy` 会先构建 `dist/worker.js`，再对 `GEMINI_DB` binding 执行 D1 migrations，并通过仓库内的 `wrangler.jsonc` 部署。
 
@@ -236,6 +237,45 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 
 如果上游 Gemini Web 路径开始返回空输出，先检查 `GEMINI_BL` 是否需要从当前 Gemini Web 前端刷新。如果 Cloudflare 出口请求被限流，可以把 `GEMINI_ORIGIN` 设置成你自己的转发服务或代理地址。
 
+## 从 v1 迁移到 v2
+
+v2 是有意设计的破坏性版本。OpenAI 兼容和 Google 兼容的生成路由继续保持原有请求/响应契约，但运行时配置、bundle helper 和账号管理接口会执行更严格的规则。
+
+### 运行时配置
+
+| v1 行为 | v2 替代方式 |
+| --- | --- |
+| 通过 `ADMIN_KEYS` 配置多个管理员密钥 | 已删除。非空 `ADMIN_KEYS` 会导致配置校验失败。使用 `ADMIN_KEY` 配置唯一管理员凭据；数组、其他非字符串值和占位值都会被拒绝。 |
+| JSON 数组或宽松解析的 `API_KEYS` | 使用一个逗号分隔字符串，例如 `key-a,key-b`。空成员、重复项、JSON 数组字符串和非字符串数组都会被拒绝。 |
+| truthy/falsy 布尔值转换 | 使用 boolean，或精确的小写字符串 `true` / `false`。 |
+| 宽松数值解析或自动截断 | 使用位于文档范围内的安全十进制整数。 |
+| 类 URL 的 `GEMINI_ORIGIN` | 使用不含凭据、路径、查询和 fragment 的绝对 HTTP(S) origin。 |
+| 带路径的上下文文件名 | 使用不含路径分隔符和控制字符的普通文件名。 |
+
+Docker 会在开始监听前使用生产 bundle 校验配置。Worker 配置无效时返回脱敏的 `invalid_runtime_config`，不会回显被拒绝的 secret 值。
+
+### Bundle helper
+
+生产 Worker bundle 不再导出内部 `getConfig` helper。启动校验请使用 `assertRuntimeConfig(env)`；`getConfig` 仅保留在本地测试 bundle 中。
+
+### 账号管理 API
+
+Admin 鉴权只接受通过 `Authorization: Bearer <key>` 或 `X-Admin-Key` 提交的唯一 `ADMIN_KEY`。公共 API 使用的 `x-api-key` 不再授权 admin 路由。
+
+| v1 路由 | v2 路由 |
+| --- | --- |
+| 在 body 中携带标识符的 `PATCH /admin/accounts` 或 `POST /admin/accounts/update` | `PATCH /admin/accounts/:id`，body 只包含更新字段 |
+| `POST /admin/accounts/enable` / `disable` | `PATCH /admin/accounts/:id`，body 使用 `{ "enabled": true }` 或 `{ "enabled": false }` |
+| 在 body 中携带标识符的 `DELETE /admin/accounts` | 无 body 的 `DELETE /admin/accounts/:id` |
+| 携带 identifiers 的 `POST /admin/accounts/refresh` | 无 body 的 `POST /admin/accounts/:id/refresh` |
+| 携带 identifiers 的 `POST /admin/accounts/check` | 无 body 的 `POST /admin/accounts/:id/check` |
+
+`GET /admin/accounts`、`POST /admin/accounts` 和 `GET /admin/accounts/stats` 保留。查询参数现在使用严格 allowlist：未知、重复、空、格式错误或越界的值会返回 400，不再被忽略或自动截断。意外的路由失败返回 `admin_request_failed`；意外的单账号诊断失败返回不含内部细节的 `admin_diagnostic_failed`。
+
+### 优化与回滚说明
+
+v2 增加四场景性能门禁，并优化累计流式 delta 处理和跨 chunk 行解析。使用 `pnpm check:bench` 复现门禁，使用 `pnpm bench` 运行完整基准。优化计划的每个方向都以独立提交落地，部署后如发现回归可以单独回退。
+
 ## 配置
 
 配置默认值位于 `src/config/index.ts`。Cloudflare Worker 环境变量 / secrets 和 Docker 环境变量都会在运行时覆盖这些默认值。
@@ -243,7 +283,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 | 变量                            | 默认值                      | 说明                                                                                                                                                                               |
 | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_KEYS`                      | empty                       | 逗号分隔的 API keys。为空时关闭认证；空成员、重复项和 JSON 数组字符串会被拒绝。                                                                                                    |
-| `ADMIN_KEYS`                    | empty                       | 账号池管理接口使用的逗号分隔 admin keys。占位值、空成员和重复项会被拒绝；公共 `API_KEYS` 不能管理账号池。                                                                           |
+| `ADMIN_KEY`                     | empty                       | 账号池管理接口使用的唯一 admin key。占位值会被拒绝；公共 `API_KEYS` 不能管理账号池。                                                                                              |
 | `D1_ACCOUNT_ID`                 | empty                       | 仅 Docker 使用的 Cloudflare account ID，用于 D1 HTTP binding。需与 `D1_DATABASE_ID`、`D1_API_TOKEN` 同时设置；只设置一部分会导致启动失败。                                             |
 | `D1_DATABASE_ID`                | empty                       | 仅 Docker 使用的 Cloudflare D1 database ID，用于注入 `GEMINI_DB` binding。                                                                                                          |
 | `D1_API_TOKEN`                  | empty                       | 仅 Docker 使用的 Cloudflare API token，需要具备查询该 D1 数据库的权限。Adapter 错误会脱敏该 token 和 SQL bind values。                                                              |
@@ -264,12 +304,12 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 使用 Wrangler CLI 管理 Worker 时，可通过以下命令设置可选 secrets：
 
 - 共享部署时设置 `API_KEYS`。为空时会关闭认证。
-- 使用账号池管理接口前设置 `ADMIN_KEYS`。缺失时 admin 接口不会公开放行。
+- 使用账号池管理接口前设置 `ADMIN_KEY`。缺失时 admin 接口不会公开放行。
 - 将 D1 数据库绑定为 `GEMINI_DB`，并在承载生成流量前通过 admin 接口导入 Gemini 账号。
 
 ```sh
 wrangler secret put API_KEYS
-wrangler secret put ADMIN_KEYS
+wrangler secret put ADMIN_KEY
 ```
 
 ### D1 账号存储
@@ -286,7 +326,7 @@ wrangler d1 execute <database-name> --file migrations/0001_gemini_accounts.sql -
 
 Docker 部署时，在 `.env` 中同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`。三者都存在时，`scripts/docker-server.mjs` 会注入一个基于 Cloudflare D1 HTTP API 的 D1 兼容 `GEMINI_DB` binding。只设置一部分时，启动会以配置错误失败。
 
-账号池可以通过内置 WebUI `/admin` 管理，也可以通过 `/admin/accounts` 下的管理 API 操作。管理 API 必须使用一个 `ADMIN_KEYS` 值鉴权，可通过 `Authorization: Bearer <key>` 或 `X-Admin-Key` 发送。公共 `API_KEYS` 和查询参数 `key` 不能调用这些管理接口。
+账号池可以通过内置 WebUI `/admin` 管理，也可以通过 `/admin/accounts` 下的管理 API 操作。管理 API 必须使用配置的唯一 `ADMIN_KEY` 鉴权，可通过 `Authorization: Bearer <key>` 或 `X-Admin-Key` 发送。公共 `API_KEYS` 和查询参数 `key` 不能调用这些管理接口。
 
 默认 Gemini 导入只接受裸 cookie 值：
 
@@ -311,10 +351,8 @@ curl "https://your-worker.example/admin/accounts/stats?status=active&enabled=tru
 显式诊断接口也只对 admin 开放：
 
 ```sh
-curl -X POST "https://your-worker.example/admin/accounts/refresh" \
-  -H "Authorization: Bearer $ADMIN_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"identifiers":[{"row_id":"<row_id>"}]}'
+curl -X POST "https://your-worker.example/admin/accounts/<account-id>/refresh" \
+  -H "Authorization: Bearer $ADMIN_KEY"
 ```
 
 Refresh/check 响应包含 `checked`、`skipped`、`refreshed`、`unchanged`、`failed`、`errors`、`results` 和脱敏后的 `items`。启动、健康检查和公开模型列表不会选择账号、调用 `/app`、刷新 cookie 或探测 Google。

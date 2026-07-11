@@ -46,25 +46,22 @@ try {
 	});
 	assert(models.status === 200, `authenticated models status ${models.status}`);
 
-	const invalidModel = await fetch(`${base}/v1/chat/completions`, {
+	const missingD1 = await fetch(`${base}/v1/chat/completions`, {
 		method: "POST",
 		headers: {
 			Authorization: "Bearer smoke-key",
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({
-			model: "not-a-model",
+			model: "gemini-3.5-flash",
 			messages: [{ role: "user", content: "hello" }],
 		}),
 	});
+	assert(missingD1.status === 503, `missing D1 status ${missingD1.status}`);
+	const missingD1Body = await missingD1.json();
 	assert(
-		invalidModel.status === 400,
-		`invalid model status ${invalidModel.status}`,
-	);
-	const invalidBody = await invalidModel.json();
-	assert(
-		invalidBody.error && invalidBody.error.code === "model_not_found",
-		"invalid model did not return model_not_found",
+		missingD1Body.error?.code === "gemini_account_pool_required",
+		"missing D1 did not return gemini_account_pool_required",
 	);
 
 	outputLine("Docker smoke check passed");

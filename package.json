@@ -1,6 +1,6 @@
 {
 	"name": "web2gem",
-	"version": "1.1.0",
+	"version": "2.0.0",
 	"private": true,
 	"type": "module",
 	"engines": {
@@ -44,8 +44,8 @@
 			"API_KEYS": {
 				"description": "Optional public API keys. Leave empty to disable shared API authentication."
 			},
-			"ADMIN_KEYS": {
-				"description": "Admin keys for the account-pool WebUI and `/admin/accounts` API. Set at least one non-placeholder value before importing Gemini accounts."
+			"ADMIN_KEY": {
+				"description": "Single admin key for the account-pool WebUI and `/admin/accounts` API. Set one non-placeholder value before importing Gemini accounts."
 			},
 			"GEMINI_BL": {
 				"description": "Gemini Web build label. Update only if upstream Gemini Web responses become empty after a frontend change."

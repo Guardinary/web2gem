@@ -252,7 +252,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 
 ### 2. Signatures
 
-- Env key: `ADMIN_KEYS` accepts comma-separated admin keys. `ADMIN_KEY` and JSON-array strings are rejected by runtime configuration v2.
+- Env key: `ADMIN_KEY` accepts one administrator credential. Non-string values, placeholder values, and values longer than 4096 characters are rejected by runtime configuration v2. Non-empty removed `ADMIN_KEYS` fails explicitly instead of being ignored.
 - Admin routes live under `/admin/accounts`.
 - Supported operations:
   - `GET /admin/accounts?limit=&cursor=&status=&enabled=&q=&category=&cooldown=&source=`
@@ -270,7 +270,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 ### 3. Contracts
 
 - Admin auth is separate from public caller auth. Public `API_KEYS`, `x-goog-api-key`, and query-string `key` must not authorize account-pool admin routes.
-- Admin routes accept admin credentials through `Authorization: Bearer <key>` or `X-Admin-Key`, matched only against `cfg.admin_keys`. `x-api-key` is public-API authentication only and must not authorize admin routes.
+- Admin routes accept admin credentials through `Authorization: Bearer <key>` or `X-Admin-Key`, matched only against `cfg.admin_key`. `x-api-key` is public-API authentication only and must not authorize admin routes.
 - Missing, empty, or placeholder-only admin config fails closed with `401 admin_auth_not_configured`. Placeholder values include `changeme`, `change-me`, `your-admin-key`, `admin`, `password`, `test`, `example`, and `sample`.
 - Service-layer admin methods return sanitized DTOs before the HTTP route serializes responses. Route handlers must not receive raw D1 account rows for list/create/update/delete/refresh/check results.
 - Default Gemini import must reject full Cookie headers, JSON-looking cookie blobs, `access_token`, `accessToken`, `cookie`, `cookies`, extra non-null payload keys, provider mismatches, missing PSID/PSIDTS, and dual-field values containing cookie names, `=`, or `;`.
@@ -284,7 +284,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 ### 4. Validation & Error Matrix
 
 - No valid admin key configured -> `401 { error: { code: "admin_auth_not_configured" } }`, no D1 read.
-- Public `API_KEYS` presented to an admin route -> `401 invalid_admin_key`, no D1 read unless it also equals a configured admin key.
+- Public `API_KEYS` presented to an admin route -> `401 invalid_admin_key`, with no D1 read.
 - Admin route with no `GEMINI_DB` binding -> `503 gemini_account_store_unavailable`.
 - Create with unsafe Gemini import shape -> `400` with a safe `gemini_import_*` code.
 - Constructing `GeminiAccountAdminService` without either a combined store or both explicit capabilities -> developer configuration error before request handling.
@@ -310,7 +310,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 
 ### 6. Tests Required
 
-- Unit test strict admin key parsing, placeholder rejection, removed `ADMIN_KEY` rejection, and config cache invalidation for `ADMIN_KEYS`.
+- Unit test strict single admin-key parsing, placeholder rejection, non-string rejection, and config cache invalidation for `ADMIN_KEY`.
 - Unit test public `API_KEYS` cannot authorize admin routes and unauthenticated admin failures perform zero D1 `prepare` calls.
 - Unit test safe dual-field Gemini import accepts and unsafe token/cookie/blob/provider/extra-key shapes reject.
 - Unit test admin-input projections directly, including identifier dedupe, filter bounds, update normalization, and combined-store compatibility.

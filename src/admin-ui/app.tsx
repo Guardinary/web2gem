@@ -77,7 +77,7 @@ export function App(): JSX.Element {
 						<input
 							type="password"
 							autocomplete="current-password"
-							placeholder="One ADMIN_KEYS value"
+							placeholder="ADMIN_KEY"
 							value={adminKey.value}
 							onInput={(event) => {
 								adminKey.value = (

@@ -514,7 +514,7 @@ export const cases = [
 			let prepareCalls = 0;
 			const env = {
 				API_KEYS: "public-key",
-				ADMIN_KEYS: "admin-secret",
+				ADMIN_KEY: "admin-secret",
 				GEMINI_DB: {
 					prepare(sql) {
 						prepareCalls++;
@@ -537,7 +537,7 @@ export const cases = [
 				new Request("https://worker.example/admin/accounts", {
 					headers: { Authorization: "Bearer admin-secret" },
 				}),
-				{ ADMIN_KEYS: "admin-secret" },
+				{ ADMIN_KEY: "admin-secret" },
 				{},
 			);
 			assert.equal(missingD1.status, 503);
@@ -600,7 +600,7 @@ export const cases = [
 		async () => {
 			const db = new FakeD1();
 			const env = {
-				ADMIN_KEYS: "admin-secret",
+				ADMIN_KEY: "admin-secret",
 				GEMINI_DB: db,
 			};
 			const adminHeaders = {
@@ -747,7 +747,7 @@ export const cases = [
 					headers: { Authorization: "Bearer admin-secret" },
 				}),
 				{
-					ADMIN_KEYS: "admin-secret",
+					ADMIN_KEY: "admin-secret",
 					GEMINI_DB: {
 						prepare() {
 							throw new Error("SQL secret-cookie-fragment");
@@ -794,7 +794,7 @@ export const cases = [
 			let prepareCalls = 0;
 			const env = {
 				API_KEYS: "public-key",
-				ADMIN_KEYS: "admin-secret",
+				ADMIN_KEY: "admin-secret",
 				GEMINI_DB: {
 					prepare(sql) {
 						prepareCalls++;

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { assert } from "./assertions.js";
 import { mod } from "./helpers.js";
 
-const DEPLOY_SECRET_TEMPLATE_KEYS = ["ADMIN_KEYS", "API_KEYS"];
+const DEPLOY_SECRET_TEMPLATE_KEYS = ["ADMIN_KEY", "API_KEYS"];
 const DEPLOY_SECRET_KEYS = new Set(DEPLOY_SECRET_TEMPLATE_KEYS);
 const DOCKER_ONLY_ENV_KEYS = [
 	"PORT",
@@ -329,6 +329,29 @@ export const cases = [
 			const compose = await readFile("compose.yaml", "utf8");
 			assert.match(compose, /\$\{PORT:-52389\}:\$\{PORT:-52389\}/);
 			assert.doesNotMatch(compose, /\$\{PORT:-52389\}:52389/);
+		},
+	],
+	[
+		"copies every local Docker server runtime import into the final image",
+		async () => {
+			const server = await readFile("scripts/docker-server.mjs", "utf8");
+			const dockerfile = await readFile("Dockerfile", "utf8");
+			const runtimeImports = Array.from(
+				server.matchAll(/from\s+["']\.\/(.+?\.mjs)["']/g),
+				(match) => match[1],
+			);
+			assert.deepEqual(runtimeImports.sort(), [
+				"d1-http-binding.mjs",
+				"io.mjs",
+			]);
+			for (const filename of runtimeImports) {
+				assert.match(
+					dockerfile,
+					new RegExp(
+						`COPY --from=build /app/scripts/${filename.replace(".", "\\.")}`,
+					),
+				);
+			}
 		},
 	],
 	[

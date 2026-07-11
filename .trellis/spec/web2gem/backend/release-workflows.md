@@ -8,7 +8,7 @@
 
 - `.github/workflows/quality-gates.yml` runs pull request, `dev`, and `main` quality checks.
 - `.github/workflows/release-artifacts.yml` builds GitHub Release assets and publishes the GHCR image for a release tag.
-- `.github/workflows/reusable-versioned-release.yml` owns shared version calculation, package version update, release gates, commit, tag push, and release revision output.
+- `.github/workflows/reusable-versioned-release.yml` owns shared version calculation, synchronized package/Worker version update, release gates, commit, tag push, and release revision output.
 - `.github/workflows/release-dockerhub.yml` calls the reusable versioned release workflow, then publishes Docker Hub images.
 - `.github/workflows/release.yml` calls the reusable versioned release workflow, then publishes Aliyun Container Registry images.
 
@@ -41,6 +41,8 @@ Docker images are named `web2gem` and are tagged with:
 
 Docker archive assets should load into a readable local image tag, at minimum `web2gem:<tag>`. Registry images should include OCI labels for the package version and the actual release commit revision.
 
+The final Docker runtime image must include every repository-local module imported by `scripts/docker-server.mjs`. At minimum this currently includes `d1-http-binding.mjs` and `io.mjs`; unit coverage compares the adapter's relative imports against explicit runtime-stage `COPY` entries so the container cannot pass build but exit before listening due to a missing module.
+
 ---
 
 ## Versioned Release Safety
@@ -56,6 +58,56 @@ Registry-specific release workflows should not duplicate the version bump / tag 
 - `revision_sha`
 
 Registry publish jobs should check out `revision_sha` before building Docker images so image labels and contents match the version commit.
+
+## Scenario: Package And Worker Version Synchronization
+
+### 1. Scope / Trigger
+
+Use this contract when preparing a major/minor/patch release or changing the version displayed by the health route or production bundle.
+
+### 2. Signatures
+
+- `package.json` `version` is the package/release version, for example `2.0.0`.
+- `src/config/index.ts` exports `VERSION` as `<package-version>-worker`, for example `2.0.0-worker`.
+- `GET /` returns the exported Worker `VERSION` in its JSON `version` field.
+
+### 3. Contracts
+
+- Package and Worker versions change in the same commit.
+- Release workflows continue using `package.json` as the version-bump source of truth.
+- `scripts/smoke.mjs` compares the built production export and health response against `package.json`; do not bypass this check with a second version file.
+
+### 4. Validation & Error Matrix
+
+- Package version changes without Worker `VERSION` -> smoke failure naming both values.
+- Worker `VERSION` changes without package version -> the same smoke failure.
+- Health response uses a stale constant -> smoke failure for stale health version.
+
+### 5. Good/Base/Bad Cases
+
+- Good: update `package.json` to `2.0.0` and `VERSION` to `2.0.0-worker` together.
+- Base: the reusable release workflow runs `pnpm version`, rewrites the Worker suffix from the new package version, then runs smoke before tagging.
+- Bad: add a standalone `VERSION` file that release workflows do not read.
+
+### 6. Tests Required
+
+- Run `pnpm smoke` after any version change.
+- Run `pnpm check:static` when the smoke script or release workflow metadata changes.
+- Confirm README migration/release examples match the active major line.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+export const VERSION = "1.1.0-worker"; // package.json is already 2.0.0
+```
+
+#### Correct
+
+```typescript
+export const VERSION = "2.0.0-worker";
+```
 
 ## Scenario: Cloudflare Deploy Button Environment Classification
 
@@ -74,7 +126,7 @@ Registry publish jobs should check out `revision_sha` before building Docker ima
 ### 3. Contracts
 
 - Public Worker runtime config belongs in `wrangler.jsonc` `vars`.
-- Worker secrets belong in `.env.example` and `.dev.vars.example`; keep these files limited to secret keys such as `API_KEYS` and `ADMIN_KEYS`.
+- Worker secrets belong in `.env.example` and `.dev.vars.example`; keep these files limited to secret keys such as `API_KEYS` and `ADMIN_KEY`.
 - Docker-only fields such as `PORT`, `WEB2GEM_IMAGE`, `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` belong in `.env.docker.example`, not `.env.example`.
 - `README.md` and `README.zh.md` Docker instructions must point to `.env.docker.example`.
 
@@ -120,7 +172,7 @@ API_KEYS=
 ```ini
 # .env.example
 API_KEYS=
-ADMIN_KEYS=
+ADMIN_KEY=
 ```
 
 ```ini

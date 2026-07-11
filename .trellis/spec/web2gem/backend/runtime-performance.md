@@ -159,8 +159,8 @@ Use this contract when changing environment config parsing, config cache keys, r
 ### 3. Contracts
 
 - Add every new environment variable consumed by `getConfig` to `CONFIG_ENV_KEYS`; otherwise cached configs can go stale.
-- `ADMIN_KEY` is a removed v1 alias. It is watched only so any non-empty use fails explicitly; it must not appear in `CONFIG_ENV_KEYS`, deployment examples, or Compose forwarding.
-- `API_KEYS` and `ADMIN_KEYS` string values use one comma-separated format. JSON-array strings, empty members, duplicates, non-string array entries, and placeholder admin keys are invalid.
+- `ADMIN_KEY` is the single administrator credential and appears once in `CONFIG_ENV_KEYS`, deployment secret templates, and Compose forwarding. It accepts only one string; placeholder and overlong values are invalid. Removed `ADMIN_KEYS` is watched only so non-empty stale configuration fails explicitly.
+- `API_KEYS` uses one comma-separated format. JSON-array strings, empty members, duplicates, and non-string array entries are invalid.
 - Boolean settings accept only booleans or exact `"true"` / `"false"` strings. Integer settings accept only safe base-10 integers inside their documented bounds.
 - `GEMINI_ORIGIN` must be an absolute HTTP(S) origin with no credentials, path, query, or fragment. Context filenames must be plain filenames without path separators or control characters.
 - `StaticRuntimeConfig` contains only environment/default-derived values. `RuntimeExecutionContext` contains request-local `execution_ctx` and authenticated-session availability; `GeminiAccountSessionContext` contains cookie/SAPISID/account identity/writeback state.
@@ -204,7 +204,7 @@ Use this contract when changing environment config parsing, config cache keys, r
 - Unit test that mutating and reusing one env object recomputes config.
 - Unit test each new config env key through `getConfig`.
 - Unit test strict boolean, integer, origin, filename, and key-list failures plus secret redaction.
-- Unit test `ADMIN_KEY` is rejected and removed from deployment examples/Compose.
+- Unit test `ADMIN_KEY` single-string parsing, placeholder rejection, and deployment example/Compose coverage.
 - Unit test that static config remains unchanged after runtime/session composition and that empty runtime sessions receive empty cookie/SAPISID compatibility fields.
 - Unit test Docker rejects invalid config before listening and Worker returns the sanitized error envelope.
 - Unit test `requestContentLength` for valid, absent, malformed, and unsafe values.

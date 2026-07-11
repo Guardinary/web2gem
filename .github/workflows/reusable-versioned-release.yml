@@ -111,8 +111,10 @@ jobs:
             exit 1
           fi
 
-      - name: Update package version
-        run: pnpm version ${{ steps.next_version.outputs.new_version }} --no-git-tag-version
+      - name: Update package and Worker versions
+        run: |
+          pnpm version ${{ steps.next_version.outputs.new_version }} --no-git-tag-version
+          node -e 'const fs=require("node:fs");const version=require("./package.json").version;const path="src/config/index.ts";const source=fs.readFileSync(path,"utf8");const next=source.replace(/export const VERSION = "[^"]+";/, `export const VERSION = "${version}-worker";`);if(next===source)throw new Error("Worker VERSION was not updated");fs.writeFileSync(path,next);'
 
       - name: Release Blocking Gates
         run: |
@@ -128,7 +130,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add package.json pnpm-lock.yaml
+          git add package.json pnpm-lock.yaml src/config/index.ts
           if ! git diff --cached --quiet; then
             git commit -m "chore: bump version to ${{ steps.next_version.outputs.new_tag }} [skip ci]"
           fi

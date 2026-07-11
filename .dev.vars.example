@@ -1,6 +1,6 @@
 # Required for the Gemini account admin UI and admin API.
-# Enter one or more admin keys as a comma-separated list.
-ADMIN_KEYS=
+# Enter one strong, non-placeholder admin key.
+ADMIN_KEY=
 
 # Optional public API auth. Leave empty to disable public API authentication.
 API_KEYS=

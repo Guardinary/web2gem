@@ -421,27 +421,31 @@ export const cases = [
 		},
 	],
 	[
-		"parses strict admin keys and rejects the removed ADMIN_KEY alias",
+		"parses one strict admin key",
 		async () => {
-			assert.deepEqual(
-				mod.getConfig({ ADMIN_KEYS: "admin-one, admin-two" }).admin_keys,
-				["admin-one", "admin-two"],
+			assert.equal(
+				mod.getConfig({ ADMIN_KEY: " admin-secret " }).admin_key,
+				"admin-secret",
 			);
 			assert.throws(
-				() => mod.getConfig({ ADMIN_KEYS: "admin,password,test" }),
-				/ADMIN_KEYS must not contain placeholder keys/,
+				() => mod.getConfig({ ADMIN_KEY: "password" }),
+				/ADMIN_KEY must not be a placeholder key/,
 			);
-			const env = { ADMIN_KEYS: "first" };
+			assert.throws(
+				() => mod.getConfig({ ADMIN_KEY: ["first", "second"] }),
+				/ADMIN_KEY must be a string/,
+			);
+			assert.throws(
+				() => mod.getConfig({ ADMIN_KEYS: "first,second" }),
+				/ADMIN_KEYS is no longer supported; use ADMIN_KEY/,
+			);
+			const env = { ADMIN_KEY: "first" };
 			const first = mod.getConfig(env);
-			env.ADMIN_KEYS = "second";
+			env.ADMIN_KEY = "second";
 			const second = mod.getConfig(env);
-			assert.deepEqual(second.admin_keys, ["second"]);
+			assert.equal(second.admin_key, "second");
 			assert.equal(first === second, false);
-			assert.deepEqual(mod.getConfig({ ADMIN_KEYS: "" }).admin_keys, []);
-			assert.throws(
-				() => mod.getConfig({ ADMIN_KEY: "legacy-secret" }),
-				/ADMIN_KEY is no longer supported; use ADMIN_KEYS/,
-			);
+			assert.equal(mod.getConfig({ ADMIN_KEY: "" }).admin_key, "");
 		},
 	],
 	[
@@ -477,7 +481,7 @@ export const cases = [
 			assert.equal(emptySession.sapisid, "");
 			assert.equal(Object.isFrozen(staticConfig), true);
 			assert.equal(Object.isFrozen(staticConfig.api_keys), true);
-			assert.equal(Object.isFrozen(staticConfig.admin_keys), true);
+			assert.equal(staticConfig.admin_key, "");
 		},
 	],
 	[

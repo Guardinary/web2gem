@@ -1,4 +1,4 @@
-export const VERSION = "1.1.0-worker";
+export const VERSION = "2.0.0-worker";
 
 export type WorkerEnv = Record<string, unknown>;
 
@@ -33,7 +33,7 @@ export type StaticRuntimeConfig = Readonly<{
 	current_tools_file_name: string;
 	generic_file_upload_max_bytes: number;
 	api_keys: readonly string[];
-	admin_keys: readonly string[];
+	admin_key: string;
 }>;
 
 export type RuntimeExecutionContext = {
@@ -83,7 +83,7 @@ const DEFAULT_CONFIG = Object.freeze({
 	CURRENT_TOOLS_FILE_NAME: "tools.txt",
 	GENERIC_FILE_UPLOAD_MAX_BYTES: 20 * 1024 * 1024,
 	API_KEYS: [] as string[],
-	ADMIN_KEYS: [] as string[],
+	ADMIN_KEY: "",
 });
 
 export class RuntimeConfigError extends Error {
@@ -98,7 +98,7 @@ export class RuntimeConfigError extends Error {
 	}
 }
 
-const PLACEHOLDER_ADMIN_KEYS = new Set([
+const PLACEHOLDER_ADMIN_KEY_VALUES = new Set([
 	"admin",
 	"changeme",
 	"change-me",
@@ -109,13 +109,28 @@ const PLACEHOLDER_ADMIN_KEYS = new Set([
 	"your-admin-key",
 ]);
 
-export function parseAdminKeys(primary: unknown, legacy?: unknown): string[] {
-	if (legacy !== undefined && legacy !== null && legacy !== "")
+export function parseAdminKey(value: unknown, removedPlural?: unknown): string {
+	if (
+		removedPlural !== undefined &&
+		removedPlural !== null &&
+		removedPlural !== ""
+	)
+		throw new RuntimeConfigError(
+			"ADMIN_KEYS",
+			"is no longer supported; use ADMIN_KEY",
+		);
+	if (typeof value !== "string")
+		throw new RuntimeConfigError("ADMIN_KEY", "must be a string");
+	const key = value.trim();
+	if (!key) return "";
+	if (key.length > 4096)
 		throw new RuntimeConfigError(
 			"ADMIN_KEY",
-			"is no longer supported; use ADMIN_KEYS",
+			"must not be longer than 4096 characters",
 		);
-	return parseKeyList("ADMIN_KEYS", primary, true);
+	if (PLACEHOLDER_ADMIN_KEY_VALUES.has(key.toLowerCase()))
+		throw new RuntimeConfigError("ADMIN_KEY", "must not be a placeholder key");
+	return key;
 }
 
 export const CONFIG_ENV_KEYS = [
@@ -133,9 +148,9 @@ export const CONFIG_ENV_KEYS = [
 	"CURRENT_TOOLS_FILE_NAME",
 	"GENERIC_FILE_UPLOAD_MAX_BYTES",
 	"API_KEYS",
-	"ADMIN_KEYS",
+	"ADMIN_KEY",
 ] as const;
-const CONFIG_CACHE_ENV_KEYS = [...CONFIG_ENV_KEYS, "ADMIN_KEY"] as const;
+const CONFIG_CACHE_ENV_KEYS = [...CONFIG_ENV_KEYS, "ADMIN_KEYS"] as const;
 let _configCacheKey: string | null = null;
 let _configCacheValue: StaticRuntimeConfig | null = null;
 let _configCacheEnv: WorkerEnv | null = null;
@@ -270,14 +285,11 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): StaticRuntimeConfig {
 			parseKeyList(
 				"API_KEYS",
 				configValue(activeEnv, "API_KEYS", DEFAULT_CONFIG.API_KEYS),
-				false,
 			),
 		),
-		admin_keys: Object.freeze(
-			parseAdminKeys(
-				configValue(activeEnv, "ADMIN_KEYS", DEFAULT_CONFIG.ADMIN_KEYS),
-				activeEnv.ADMIN_KEY,
-			),
+		admin_key: parseAdminKey(
+			configValue(activeEnv, "ADMIN_KEY", DEFAULT_CONFIG.ADMIN_KEY),
+			activeEnv.ADMIN_KEYS,
 		),
 	});
 	_configCacheKey = cacheKey;
@@ -380,11 +392,7 @@ function parseFilename(setting: string, value: unknown): string {
 	return parsed;
 }
 
-function parseKeyList(
-	setting: string,
-	value: unknown,
-	rejectPlaceholders: boolean,
-): string[] {
+function parseKeyList(setting: string, value: unknown): string[] {
 	let items: unknown[];
 	if (Array.isArray(value)) {
 		items = value;
@@ -409,11 +417,6 @@ function parseKeyList(
 			throw new RuntimeConfigError(
 				setting,
 				"contains an entry longer than 4096 characters",
-			);
-		if (rejectPlaceholders && PLACEHOLDER_ADMIN_KEYS.has(key.toLowerCase()))
-			throw new RuntimeConfigError(
-				setting,
-				"must not contain placeholder keys",
 			);
 		if (seen.has(key))
 			throw new RuntimeConfigError(

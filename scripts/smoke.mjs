@@ -1,6 +1,15 @@
 const prod = await import("../dist/worker.js");
 const testMod = await import("../dist/worker.test.js");
+const { readFile } = await import("node:fs/promises");
 const { errorLine, outputLine } = await import("./io.mjs");
+const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+
+if (prod.VERSION !== `${packageJson.version}-worker`) {
+	errorLine(
+		`Smoke check failed: package version ${packageJson.version} does not match Worker version ${prod.VERSION}`,
+	);
+	process.exit(1);
+}
 
 const expectedProductionExports = [
 	"MODELS",
@@ -68,6 +77,11 @@ const health = await prod.default.fetch(
 );
 if (health.status !== 200) {
 	errorLine(`Smoke check failed: health status ${health.status}`);
+	process.exit(1);
+}
+const healthBody = await health.json();
+if (healthBody.version !== prod.VERSION) {
+	errorLine("Smoke check failed: health response version is stale");
 	process.exit(1);
 }
 

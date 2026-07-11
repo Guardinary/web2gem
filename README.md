@@ -23,6 +23,7 @@ TypeScript lives under `src/`, local quality gates live under `scripts/`, `dist/
   - [Quick Start](#quick-start)
     - [Option 1: Deploy the release single-file Worker](#option-1-deploy-the-release-single-file-worker)
     - [Option 2: Deploy with Docker](#option-2-deploy-with-docker)
+  - [Migrating from v1 to v2](#migrating-from-v1-to-v2)
   - [Configuration](#configuration)
   - [Authentication](#authentication)
   - [Development](#development)
@@ -180,9 +181,9 @@ For source-based one-click deployment to Cloudflare Workers, use the deploy butt
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem)
 
-The button forks the repository, creates the Worker, provisions the `GEMINI_DB` D1 database from `wrangler.jsonc`, builds the Worker, runs `wrangler d1 migrations apply GEMINI_DB --remote` through the deploy script, then deploys the Worker. During setup, enter `ADMIN_KEYS`; `API_KEYS` is optional. After deployment, open the admin UI and import your own Gemini account values.
+The button forks the repository, creates the Worker, provisions the `GEMINI_DB` D1 database from `wrangler.jsonc`, builds the Worker, runs `wrangler d1 migrations apply GEMINI_DB --remote` through the deploy script, then deploys the Worker. During setup, enter `ADMIN_KEY`; `API_KEYS` is optional. After deployment, open the admin UI and import your own Gemini account values.
 
-The deploy form shows non-secret Worker settings from `wrangler.jsonc` `vars` in plain text. Only secrets from [`.env.example`](.env.example) and [`.dev.vars.example`](.dev.vars.example), currently `API_KEYS` and `ADMIN_KEYS`, are hidden.
+The deploy form shows non-secret Worker settings from `wrangler.jsonc` `vars` in plain text. Only secrets from [`.env.example`](.env.example) and [`.dev.vars.example`](.dev.vars.example), currently `API_KEYS` and `ADMIN_KEY`, are hidden.
 
 Download the release build artifact `worker.js` from the [Releases](https://github.com/Guardinary/web2gem/releases) page, open your Cloudflare Worker in the dashboard, and replace the Worker source with the contents of that file. In the Worker dashboard settings, add the `nodejs_compat` compatibility flag.
 
@@ -197,7 +198,7 @@ Each release publishes these assets:
 | `web2gem_<tag>_docker_linux_arm64.tar.gz` | Docker image archive for `linux/arm64`. |
 | `sha256sums.txt` | Checksums for the released files. |
 
-In the Worker dashboard, open the Worker settings and add variables/secrets for public API auth, admin auth, and the required `GEMINI_DB` D1 binding. Set `API_KEYS` when you want to protect shared access, and set `ADMIN_KEYS` before using account-pool admin endpoints.
+In the Worker dashboard, open the Worker settings and add variables/secrets for public API auth, admin auth, and the required `GEMINI_DB` D1 binding. Set `API_KEYS` when you want to protect shared access, and set `ADMIN_KEY` before using account-pool admin endpoints.
 
 If you build from source instead of using a release artifact, `pnpm deploy` builds `dist/worker.js`, applies D1 migrations to the `GEMINI_DB` binding, and deploys through the checked-in `wrangler.jsonc`.
 
@@ -236,6 +237,45 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 
 If the upstream Gemini Web path starts returning empty output, first check whether `GEMINI_BL` needs to be refreshed from the current Gemini Web frontend. If Cloudflare egress is rate-limited, set `GEMINI_ORIGIN` to your own forwarding service or proxy endpoint.
 
+## Migrating from v1 to v2
+
+v2 is an intentional breaking release. OpenAI-compatible and Google-compatible generation routes keep their existing request/response contracts, but runtime configuration, the bundled helper surface, and account administration are stricter.
+
+### Runtime configuration
+
+| v1 behavior | v2 replacement |
+| --- | --- |
+| Multiple admin keys through `ADMIN_KEYS` | Removed. A non-empty `ADMIN_KEYS` now fails validation. Configure exactly one administrator credential with `ADMIN_KEY`; arrays, other non-string values, and placeholder values are rejected. |
+| JSON-array or loosely parsed `API_KEYS` | Use one comma-separated string, for example `key-a,key-b`. Empty members, duplicates, JSON-array strings, and non-string arrays are rejected. |
+| Truthy/falsy boolean coercion | Use boolean values or exact lowercase strings `true` / `false`. |
+| Permissive numeric parsing or clamping | Use safe base-10 integers inside each setting's documented range. |
+| URL-like `GEMINI_ORIGIN` values | Use an absolute HTTP(S) origin with no credentials, path, query, or fragment. |
+| Path-like context filenames | Use plain filenames without path separators or control characters. |
+
+Docker validates the production bundle configuration before listening. Worker requests return a sanitized `invalid_runtime_config` response when configuration is invalid; rejected secret values are never echoed.
+
+### Bundled helper surface
+
+The production Worker bundle no longer exports the internal `getConfig` helper. Use `assertRuntimeConfig(env)` for startup validation. `getConfig` remains available only from the local test bundle.
+
+### Account administration API
+
+Admin authentication accepts the single `ADMIN_KEY` through `Authorization: Bearer <key>` or `X-Admin-Key`. The public `x-api-key` header no longer authorizes admin routes.
+
+| v1 route | v2 route |
+| --- | --- |
+| `PATCH /admin/accounts` or `POST /admin/accounts/update` with an identifier in the body | `PATCH /admin/accounts/:id` with update fields only |
+| `POST /admin/accounts/enable` / `disable` | `PATCH /admin/accounts/:id` with `{ "enabled": true }` or `{ "enabled": false }` |
+| `DELETE /admin/accounts` with an identifier body | `DELETE /admin/accounts/:id` with no body |
+| `POST /admin/accounts/refresh` with identifiers | `POST /admin/accounts/:id/refresh` with no body |
+| `POST /admin/accounts/check` with identifiers | `POST /admin/accounts/:id/check` with no body |
+
+`GET /admin/accounts`, `POST /admin/accounts`, and `GET /admin/accounts/stats` remain. Query parameters are now allowlisted and strict: unknown, duplicate, empty, malformed, or out-of-range values return a 400 response instead of being ignored or clamped. Unexpected route failures return `admin_request_failed`; unexpected per-account diagnostic failures return `admin_diagnostic_failed` without internal details.
+
+### Optimization and rollback notes
+
+The v2 runtime adds a four-scenario performance gate and optimizes cumulative stream delta processing plus split chunk-line parsing. Reproduce the gate with `pnpm check:bench` and the full suite with `pnpm bench`. Each optimization program track landed as a separate commit so it can be reverted independently if a deployment exposes a regression.
+
 ## Configuration
 
 Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environment variables / secrets and Docker environment variables override those defaults at runtime.
@@ -243,7 +283,7 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 | Variable                        | Default                     | Description                                                                                                                                                                                                      |
 | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_KEYS`                      | empty                       | Comma-separated API keys. Empty disables auth. Empty members, duplicates, and JSON-array strings are rejected.                                                                                                  |
-| `ADMIN_KEYS`                    | empty                       | Comma-separated admin keys for account-pool management. Placeholder, empty, and duplicate entries are rejected; public `API_KEYS` do not authorize admin account mutation.                                     |
+| `ADMIN_KEY`                     | empty                       | Single admin key for account-pool management. Placeholder values are rejected; public `API_KEYS` do not authorize admin account mutation.                                                                    |
 | `D1_ACCOUNT_ID`                 | empty                       | Docker-only Cloudflare account ID for the D1 HTTP binding. Set together with `D1_DATABASE_ID` and `D1_API_TOKEN`; partial D1 HTTP config fails startup.                                                          |
 | `D1_DATABASE_ID`                | empty                       | Docker-only Cloudflare D1 database ID for the injected `GEMINI_DB` binding.                                                                                                                                      |
 | `D1_API_TOKEN`                  | empty                       | Docker-only Cloudflare API token allowed to query the D1 database. Adapter errors redact this token and SQL bind values.                                                                                         |
@@ -264,12 +304,12 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 When managing a Worker through the Wrangler CLI, optional secrets can be set with:
 
 - Set `API_KEYS` for shared deployments. If it is empty, auth is disabled.
-- Set `ADMIN_KEYS` before using account-pool admin endpoints. Admin endpoints do not become public when this is missing.
+- Set `ADMIN_KEY` before using account-pool admin endpoints. Admin endpoints do not become public when this is missing.
 - Bind the D1 database as `GEMINI_DB` and import Gemini accounts through the admin endpoints before serving generation traffic.
 
 ```sh
 wrangler secret put API_KEYS
-wrangler secret put ADMIN_KEYS
+wrangler secret put ADMIN_KEY
 ```
 
 ### D1 account storage
@@ -286,7 +326,7 @@ wrangler d1 execute <database-name> --file migrations/0001_gemini_accounts.sql -
 
 For Docker, set all of `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` in `.env`. When all three are present, `scripts/docker-server.mjs` injects a D1-compatible `GEMINI_DB` binding backed by Cloudflare's D1 HTTP API. If only some are present, startup fails with a configuration error.
 
-Account-pool management is available through the built-in WebUI at `/admin` and through the admin API under `/admin/accounts`. Admin API requests require one `ADMIN_KEYS` value through `Authorization: Bearer <key>` or `X-Admin-Key`. Public `API_KEYS` and query-string `key` do not authorize these routes.
+Account-pool management is available through the built-in WebUI at `/admin` and through the admin API under `/admin/accounts`. Admin API requests require the configured `ADMIN_KEY` through `Authorization: Bearer <key>` or `X-Admin-Key`. Public `API_KEYS` and query-string `key` do not authorize these routes.
 
 Default Gemini import accepts only bare cookie values:
 
@@ -311,10 +351,8 @@ Stats responses include `total`, `available`, `needsAttention`, `disabled`, `ref
 Explicit diagnostics are admin-only:
 
 ```sh
-curl -X POST "https://your-worker.example/admin/accounts/refresh" \
-  -H "Authorization: Bearer $ADMIN_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"identifiers":[{"row_id":"<row_id>"}]}'
+curl -X POST "https://your-worker.example/admin/accounts/<account-id>/refresh" \
+  -H "Authorization: Bearer $ADMIN_KEY"
 ```
 
 Refresh/check responses include countable fields such as `checked`, `skipped`, `refreshed`, `unchanged`, `failed`, `errors`, `results`, and sanitized `items`. Startup, health, and public model-list routes do not select accounts, call `/app`, rotate cookies, or probe Google.

@@ -103,10 +103,10 @@ type AdminAuthResult =
 
 export function adminAuthorized(
 	request: Request,
-	cfg: Pick<RuntimeConfig, "admin_keys">,
+	cfg: Pick<RuntimeConfig, "admin_key">,
 ): AdminAuthResult {
-	const keys = cfg.admin_keys || [];
-	if (!keys.length) {
+	const configured = cfg.admin_key || "";
+	if (!configured) {
 		return {
 			ok: false,
 			code: "admin_auth_not_configured",
@@ -123,12 +123,7 @@ export function adminAuthorized(
 	for (const raw of candidates) {
 		const candidate = String(raw || "").trim();
 		if (!candidate) continue;
-		let matched = false;
-		for (const configured of keys) {
-			matched =
-				timingSafeStringEqual(candidate, String(configured || "")) || matched;
-		}
-		if (matched) return { ok: true };
+		if (timingSafeStringEqual(candidate, configured)) return { ok: true };
 	}
 	return { ok: false, code: "invalid_admin_key", message: "invalid admin key" };
 }

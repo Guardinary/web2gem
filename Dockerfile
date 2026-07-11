@@ -24,6 +24,8 @@ ENV NODE_ENV=production \
 
 COPY --from=build /app/dist/worker.js ./dist/worker.js
 COPY --from=build /app/scripts/docker-server.mjs ./scripts/docker-server.mjs
+COPY --from=build /app/scripts/d1-http-binding.mjs ./scripts/d1-http-binding.mjs
+COPY --from=build /app/scripts/io.mjs ./scripts/io.mjs
 
 EXPOSE 52389
 CMD ["node", "scripts/docker-server.mjs"]
