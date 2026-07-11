@@ -39,21 +39,52 @@ import type {
 
 const POOL_VERSION_KEY = "pool_version";
 const MAX_D1_BOUND_PARAMETERS = 100;
+const ACCOUNT_INSERT_COLUMNS = [
+	"id",
+	"label",
+	"enabled",
+	"status",
+	"state_reason",
+	"row_id",
+	"cookie_header",
+	"cookie_hash",
+	"sapisid",
+	"session_token",
+	"session_token_hash",
+	"session_id",
+	"language",
+	"push_id",
+	"last_token_bootstrap_at_ms",
+	"secure_1psid_hash",
+	"secure_1psidts_hash",
+	"account_category",
+	"account_status_code",
+	"account_status_description",
+	"user_agent",
+	"gemini_origin",
+	"source",
+	"source_id",
+	"source_name",
+	"imported_at_ms",
+	"cooldown_until_ms",
+	"last_used_at_ms",
+	"last_success_at_ms",
+	"last_failure_at_ms",
+	"last_refresh_at_ms",
+	"last_refresh_attempt_at_ms",
+	"last_error_code",
+	"last_error_message_redacted",
+	"last_upstream_status",
+	"last_capability_probe_at_ms",
+	"capability_summary_json",
+	"success_count",
+	"failure_count",
+	"created_at_ms",
+	"updated_at_ms",
+] as const satisfies readonly (keyof GeminiAccountRow)[];
 const ACCOUNT_INSERT_SQL = `
-      INSERT INTO gemini_accounts (
-        id, label, enabled, status, state_reason, row_id, cookie_header, cookie_hash,
-        sapisid, session_token, session_token_hash, session_id, language, push_id,
-        last_token_bootstrap_at_ms, secure_1psid_hash, secure_1psidts_hash,
-        account_category, account_status_code, account_status_description, user_agent,
-        gemini_origin, source, source_id, source_name, imported_at_ms, cooldown_until_ms,
-        last_used_at_ms, last_success_at_ms, last_failure_at_ms, last_refresh_at_ms,
-        last_refresh_attempt_at_ms, last_error_code, last_error_message_redacted,
-        last_upstream_status, last_capability_probe_at_ms, capability_summary_json,
-        success_count, failure_count, created_at_ms, updated_at_ms
-      ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-      )
+      INSERT INTO gemini_accounts (${ACCOUNT_INSERT_COLUMNS.join(", ")})
+      VALUES (${ACCOUNT_INSERT_COLUMNS.map(() => "?").join(", ")})
 `;
 const ACCOUNT_INSERT_IGNORE_COOKIE_CONFLICT_SQL = `${ACCOUNT_INSERT_SQL}
       ON CONFLICT(cookie_hash) DO NOTHING
@@ -596,49 +627,7 @@ async function buildAccountInsertRow(
 }
 
 function accountRowValues(row: GeminiAccountRow): unknown[] {
-	return [
-		row.id,
-		row.label,
-		row.enabled,
-		row.status,
-		row.state_reason,
-		row.row_id,
-		row.cookie_header,
-		row.cookie_hash,
-		row.sapisid,
-		row.session_token,
-		row.session_token_hash,
-		row.session_id,
-		row.language,
-		row.push_id,
-		row.last_token_bootstrap_at_ms,
-		row.secure_1psid_hash,
-		row.secure_1psidts_hash,
-		row.account_category,
-		row.account_status_code,
-		row.account_status_description,
-		row.user_agent,
-		row.gemini_origin,
-		row.source,
-		row.source_id,
-		row.source_name,
-		row.imported_at_ms,
-		row.cooldown_until_ms,
-		row.last_used_at_ms,
-		row.last_success_at_ms,
-		row.last_failure_at_ms,
-		row.last_refresh_at_ms,
-		row.last_refresh_attempt_at_ms,
-		row.last_error_code,
-		row.last_error_message_redacted,
-		row.last_upstream_status,
-		row.last_capability_probe_at_ms,
-		row.capability_summary_json,
-		row.success_count,
-		row.failure_count,
-		row.created_at_ms,
-		row.updated_at_ms,
-	];
+	return ACCOUNT_INSERT_COLUMNS.map((column) => row[column]);
 }
 
 async function cookieHashes(

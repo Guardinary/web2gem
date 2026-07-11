@@ -35,3 +35,54 @@ Good existing helpers:
 When reducing `any`, prefer small, behavior-preserving batches by module. Validate each batch with `pnpm typecheck` and `pnpm check:arch`.
 
 Avoid combining type tightening with protocol behavior changes unless the task explicitly requires both.
+
+## Scenario: Positional D1 Insert Codecs
+
+### 1. Scope / Trigger
+
+Use this contract when adding or reordering fields in a D1 insert with many bound
+parameters, especially `gemini_accounts`.
+
+### 2. Signatures
+
+- `ACCOUNT_INSERT_COLUMNS` is a typed ordered tuple of `keyof GeminiAccountRow`.
+- SQL columns, placeholders, and bound values derive from that tuple.
+
+### 3. Contracts
+
+- Never maintain SQL column order and row-value order independently.
+- Single and bulk inserts must use the same codec and conflict semantics.
+- This pattern changes no D1 schema or stored representation.
+
+### 4. Validation & Error Matrix
+
+- Missing/renamed row key -> TypeScript failure.
+- Column count mismatch -> structurally impossible when SQL is tuple-derived.
+- Cookie conflict in bulk import -> existing `DO NOTHING` behavior remains.
+
+### 5. Good/Base/Bad Cases
+
+- Good: append one typed column and populate the normalized row.
+- Base: map tuple keys to row values at bind time.
+- Bad: manually edit a placeholder list and a separate positional value array.
+
+### 6. Tests Required
+
+- Cover single creation and bulk import through the generated statement.
+- Run typecheck, account tests, architecture, and coverage gates.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+const sql = "INSERT INTO t (id, label) VALUES (?, ?)";
+statement.bind(row.label, row.id);
+```
+
+#### Correct
+
+```typescript
+const columns = ["id", "label"] as const satisfies readonly (keyof Row)[];
+statement.bind(...columns.map((column) => row[column]));
+```
