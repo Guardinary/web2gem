@@ -9,15 +9,8 @@ import {
 	prepareOpenAIImageGenerationFromUserInput,
 } from "../../completion/image-generation";
 import type { RuntimeConfig } from "../../config";
-import {
-	elapsedMs,
-	errorLogSummary,
-	log,
-	logStage,
-	nowMs,
-	nowSec,
-	upstreamErrorCode,
-} from "../../shared/runtime";
+import { elapsedMs, log, logStage, nowMs, nowSec } from "../../shared/logging";
+import { errorLogSummary, upstreamErrorCode } from "../../shared/errors";
 import type { UnknownRecord } from "../../shared/types";
 import { openAIErrorResponse, openAIUpstreamErrorResponse } from "./errors";
 import {

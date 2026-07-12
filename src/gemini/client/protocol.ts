@@ -1,5 +1,7 @@
 import { GEMINI_WEB_USER_AGENT } from "../constants";
-import { makeSapisidHash, nowSec, uuid } from "../../shared/runtime";
+import { makeSapisidHash } from "../auth";
+import { nowSec } from "../../shared/logging";
+import { uuid } from "../../shared/crypto";
 import type { RuntimeConfig } from "../../config";
 
 type PayloadFileRef =

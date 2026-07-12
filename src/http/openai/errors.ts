@@ -3,7 +3,7 @@ import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
 	upstreamErrorStatus,
-} from "../../shared/runtime";
+} from "../../shared/errors";
 
 export function openAIErrorType(status: number): string {
 	switch (status) {

@@ -5,26 +5,18 @@ import {
 	streamPlainCompletionEvents,
 	streamToolSieveCompletionEvents,
 } from "../../completion";
-import type {
-	CompletionProvider,
-	CompletionStreamEvent,
-} from "../../completion";
+import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
 import type { ResolvedModel } from "../../models";
 import type { FileRef } from "../../completion/types";
 import {
 	errorLogSummary,
-	log,
-	randHex,
 	upstreamErrorCode,
 	upstreamErrorMessage,
-} from "../../shared/runtime";
-import {
-	combinedTokenCount,
-	createTokenCounter,
-	emptyTokenCounts,
-} from "../../shared/tokens";
-import type { OpenAIToolCall } from "../../toolcall/openai-format";
+} from "../../shared/errors";
+import { log } from "../../shared/logging";
+import { randHex } from "../../shared/crypto";
+import { tokenCountFromCounts } from "../../shared/tokens";
 import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
 import type { SSEWrite } from "../core/sse";
 import {
@@ -41,10 +33,6 @@ type ResponseOutputItem = Record<string, unknown> & {
 	call_id?: string;
 	name?: string;
 };
-type StreamIssue = Extract<
-	CompletionStreamEvent,
-	{ type: "warning" } | { type: "stream_error" }
->;
 type StreamResponsesParams = {
 	provider: CompletionProvider;
 	rid: string;
@@ -87,9 +75,6 @@ export async function streamResponsesWithToolSieve(
 	const output: ResponseOutputItem[] = [];
 	const mid = `msg_${randHex(12)}`;
 	const textParts: string[] = [];
-	let textLength = 0;
-	const extraOutputTokenCounter = createTokenCounter();
-	let completionCounts = emptyTokenCounts();
 	let messageStarted = false;
 	let contentStarted = false;
 	let outputIndex = 0;
@@ -146,13 +131,11 @@ export async function streamResponsesWithToolSieve(
 			});
 		}
 	};
-	const emitText = async (piece: unknown, countTokens = true) => {
+	const emitText = async (piece: unknown) => {
 		if (!piece) return;
 		const textPiece = String(piece);
 		await startMessage();
 		textParts.push(textPiece);
-		textLength += textPiece.length;
-		if (countTokens) extraOutputTokenCounter.append(textPiece);
 		const appended = textDeltaCoalescer.append("output_text", textPiece);
 		if (appended) await appended;
 	};
@@ -206,15 +189,7 @@ export async function streamResponsesWithToolSieve(
 			output: [],
 		},
 	});
-	let toolCalls: OpenAIToolCall[] | null = null;
-	let issue: StreamIssue | null = null;
 	const lifecycle = createCompletionStreamLifecycle();
-	let violation:
-		| Extract<
-				CompletionStreamEvent,
-				{ type: "tool_policy_violation" }
-		  >["violation"]
-		| null = null;
 	if (tools) {
 		for await (const event of streamToolSieveCompletionEvents(
 			provider,
@@ -223,42 +198,36 @@ export async function streamResponsesWithToolSieve(
 		)) {
 			recordCompletionStreamEvent(lifecycle, event);
 			if (event.type === "text_delta") {
-				await emitText(event.text, false);
-			} else if (event.type === "tool_calls") {
-				toolCalls = event.toolCalls;
-			} else if (event.type === "tool_policy_violation") {
-				violation = event.violation;
+				await emitText(event.text);
 			}
 		}
-		issue = lifecycle.issue;
-		completionCounts = lifecycle.completionCounts;
-		if (issue) {
-			if (!textLength && !toolCalls) {
+		if (lifecycle.issue) {
+			if (!lifecycle.emittedText && !lifecycle.toolCalls) {
 				log(
 					cfg,
-					`openai responses stream failed before output model=${rm.name} code=${upstreamErrorCode(issue.error) || "upstream_error"} error=${errorLogSummary(issue.error)}`,
+					`openai responses stream failed before output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "upstream_error"} error=${errorLogSummary(lifecycle.issue.error)}`,
 				);
 				await fail(
-					`upstream error: ${upstreamErrorMessage(issue.error)}`,
-					upstreamErrorCode(issue.error) || "upstream_error",
+					`upstream error: ${upstreamErrorMessage(lifecycle.issue.error)}`,
+					upstreamErrorCode(lifecycle.issue.error) || "upstream_error",
 				);
 				return;
 			}
-			const warning = `\n\n${streamInterruptedWarningText(issue.error)}`;
+			const warning = `\n\n${streamInterruptedWarningText(lifecycle.issue.error)}`;
 			log(
 				cfg,
-				`openai responses stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(issue.error) || "stream_interrupted"} error=${errorLogSummary(issue.error)}`,
+				`openai responses stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "stream_interrupted"} error=${errorLogSummary(lifecycle.issue.error)}`,
 			);
 			await writeResponsesEvent(write, "response.warning", {
-				warning: streamWarningObject(issue.error, warning.trim()),
+				warning: streamWarningObject(lifecycle.issue.error, warning.trim()),
 			});
 		}
-		if (violation) {
+		if (lifecycle.violation) {
 			log(
 				cfg,
-				`openai responses stream tool policy violation model=${rm.name} code=${violation.code}`,
+				`openai responses stream tool policy violation model=${rm.name} code=${lifecycle.violation.code}`,
 			);
-			await fail(violation.message, violation.code);
+			await fail(lifecycle.violation.message, lifecycle.violation.code);
 			return;
 		}
 	} else {
@@ -269,42 +238,40 @@ export async function streamResponsesWithToolSieve(
 		)) {
 			recordCompletionStreamEvent(lifecycle, event);
 			if (event.type === "text_delta") {
-				await emitText(event.text, false);
+				await emitText(event.text);
 			}
 		}
-		issue = lifecycle.issue;
-		completionCounts = lifecycle.completionCounts;
-		if (issue) {
-			if (!textLength) {
+		if (lifecycle.issue) {
+			if (!lifecycle.emittedText) {
 				log(
 					cfg,
-					`openai responses stream failed before output model=${rm.name} code=${upstreamErrorCode(issue.error) || "upstream_error"} error=${errorLogSummary(issue.error)}`,
+					`openai responses stream failed before output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "upstream_error"} error=${errorLogSummary(lifecycle.issue.error)}`,
 				);
 				await fail(
-					`upstream error: ${upstreamErrorMessage(issue.error)}`,
-					upstreamErrorCode(issue.error) || "upstream_error",
+					`upstream error: ${upstreamErrorMessage(lifecycle.issue.error)}`,
+					upstreamErrorCode(lifecycle.issue.error) || "upstream_error",
 				);
 				return;
 			}
-			const warning = `\n\n${streamInterruptedWarningText(issue.error)}`;
+			const warning = `\n\n${streamInterruptedWarningText(lifecycle.issue.error)}`;
 			log(
 				cfg,
-				`openai responses stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(issue.error) || "stream_interrupted"} error=${errorLogSummary(issue.error)}`,
+				`openai responses stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "stream_interrupted"} error=${errorLogSummary(lifecycle.issue.error)}`,
 			);
 			await writeResponsesEvent(write, "response.warning", {
-				warning: streamWarningObject(issue.error, warning.trim()),
+				warning: streamWarningObject(lifecycle.issue.error, warning.trim()),
 			});
 		}
 	}
-	if (!textLength && !toolCalls) {
+	if (!lifecycle.emittedText && !lifecycle.toolCalls) {
 		log(cfg, `openai responses stream produced no content model=${rm.name}`);
 		await fail(EMPTY_UPSTREAM_MSG, "upstream_empty");
 		return;
 	}
 	await finishMessage();
 
-	if (toolCalls?.length) {
-		for (const tc of toolCalls) {
+	if (lifecycle.toolCalls?.length) {
+		for (const tc of lifecycle.toolCalls) {
 			const args = tc.function.arguments || "";
 			const id = tc.id || "";
 			const item: ResponseOutputItem = {
@@ -352,10 +319,7 @@ export async function streamResponsesWithToolSieve(
 	}
 
 	const inputTokens = Math.max(0, Number(promptTokens) || 0);
-	const outputTokens = combinedTokenCount(
-		completionCounts,
-		extraOutputTokenCounter,
-	);
+	const outputTokens = tokenCountFromCounts(lifecycle.completionCounts);
 	const usage = {
 		input_tokens: inputTokens,
 		output_tokens: outputTokens,

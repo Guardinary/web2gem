@@ -1,10 +1,6 @@
-import {
-	TEXT_ENCODER,
-	isAbortError,
-	sleep,
-	upstreamErrorCode,
-	upstreamErrorMessage,
-} from "../../shared/runtime";
+import { TEXT_ENCODER } from "../../shared/encoding";
+import { isAbortError, sleep } from "../../shared/abort";
+import { upstreamErrorCode, upstreamErrorMessage } from "../../shared/errors";
 
 export type SSEWrite = (chunk: string) => void | Promise<void>;
 export type SSEProducer = (

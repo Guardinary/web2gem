@@ -1,7 +1,8 @@
-import { parseMutation, parsePage, parseStats } from "./schemas";
+import { parseMutation, parseOverview, parsePage, parseStats } from "./schemas";
 import { accountResourcePath, mergeMutationResults } from "./logic";
 import type {
 	AccountIdentifier,
+	AccountOverview,
 	AccountPage,
 	AccountStats,
 	MutationResult,
@@ -10,6 +11,8 @@ import type {
 const API_PATH = "/admin/accounts";
 const WORKER_ACCOUNT_IMPORT_BATCH_SIZE = 40;
 const WORKER_ACCOUNT_IMPORT_LIMIT_CODE = "gemini_import_account_limit_exceeded";
+const BULK_ACTION_BATCH_SIZE = 100;
+const BULK_ACTION_LIMIT_CODE = "admin_bulk_action_limit_exceeded";
 
 export class AdminApiError extends Error {
 	readonly status: number;
@@ -110,6 +113,23 @@ function responseError(body: unknown): {
 }
 
 export async function listAccounts(options: ListOptions): Promise<AccountPage> {
+	const params = listParams(options);
+	return parsePage(
+		await request(options.adminKey, `${API_PATH}?${params.toString()}`),
+	);
+}
+
+export async function getAccountOverview(
+	options: ListOptions,
+): Promise<AccountOverview> {
+	const params = listParams(options);
+	params.set("include_stats", "true");
+	return parseOverview(
+		await request(options.adminKey, `${API_PATH}?${params.toString()}`),
+	);
+}
+
+function listParams(options: ListOptions): URLSearchParams {
 	const params = new URLSearchParams({ limit: "200" });
 	if (options.cursor) params.set("cursor", options.cursor);
 	if (options.status) params.set("status", options.status);
@@ -118,9 +138,7 @@ export async function listAccounts(options: ListOptions): Promise<AccountPage> {
 	if (options.category) params.set("category", options.category);
 	if (options.cooldown) params.set("cooldown", options.cooldown);
 	if (options.source) params.set("source", options.source);
-	return parsePage(
-		await request(options.adminKey, `${API_PATH}?${params.toString()}`),
-	);
+	return params;
 }
 
 export async function getAccountStats(
@@ -230,34 +248,42 @@ export async function runAccountAction(
 	identifiers: AccountIdentifier[],
 ): Promise<MutationResult> {
 	if (!identifiers.length) return {};
-	const results: MutationResult[] = [];
-	for (const { id } of identifiers) {
-		results.push(await runSingleAccountAction(adminKey, action, id));
+	try {
+		return await requestBulkAccountAction(adminKey, action, identifiers);
+	} catch (error) {
+		if (
+			!(error instanceof AdminApiError) ||
+			error.status !== 413 ||
+			error.code !== BULK_ACTION_LIMIT_CODE ||
+			identifiers.length <= BULK_ACTION_BATCH_SIZE
+		)
+			throw error;
 	}
+	const results: MutationResult[] = [];
+	for (
+		let offset = 0;
+		offset < identifiers.length;
+		offset += BULK_ACTION_BATCH_SIZE
+	)
+		results.push(
+			await requestBulkAccountAction(
+				adminKey,
+				action,
+				identifiers.slice(offset, offset + BULK_ACTION_BATCH_SIZE),
+			),
+		);
 	return mergeMutationResults(results);
 }
 
-async function runSingleAccountAction(
+async function requestBulkAccountAction(
 	adminKey: string,
 	action: string,
-	id: string,
+	identifiers: AccountIdentifier[],
 ): Promise<MutationResult> {
-	if (action === "enable" || action === "disable")
-		return parseMutation(
-			await request(adminKey, accountResourcePath(id), {
-				method: "PATCH",
-				body: { enabled: action === "enable" },
-			}),
-		);
-	if (action === "delete")
-		return parseMutation(
-			await request(adminKey, accountResourcePath(id), { method: "DELETE" }),
-		);
-	if (action === "refresh" || action === "check")
-		return parseMutation(
-			await request(adminKey, accountResourcePath(id, action), {
-				method: "POST",
-			}),
-		);
-	throw new Error(`Unsupported account action: ${action}`);
+	return parseMutation(
+		await request(adminKey, `${API_PATH}/actions`, {
+			method: "POST",
+			body: { action, ids: identifiers.map(({ id }) => id) },
+		}),
+	);
 }

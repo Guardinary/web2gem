@@ -1,4 +1,4 @@
-import { firstNonEmptyString } from "../attachments/media";
+import { firstNonEmptyString } from "../attachments/mime";
 import { isRecord } from "../shared/types";
 import type { UnknownRecord } from "../shared/types";
 

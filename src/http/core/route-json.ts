@@ -1,5 +1,5 @@
 import { contextFileThreshold } from "../../completion/context-files";
-import { elapsedMs, logStage, nowMs } from "../../shared/runtime";
+import { elapsedMs, logStage, nowMs } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
 import { readJsonRequest, requestContentLength } from "./json";
 import type { ReadJsonRequestOptions } from "./json";

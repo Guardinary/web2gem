@@ -1,8 +1,7 @@
 import {
 	createAccount,
 	createAccountsWithLimitFallback,
-	getAccountStats,
-	listAccounts,
+	getAccountOverview,
 	runAccountAction,
 	updateAccount,
 } from "./api";
@@ -151,19 +150,16 @@ export async function loadAccounts(
 			cooldown: cooldownFilter.value,
 			source: sourceFilter.value.trim(),
 		};
-		const [page, stats] = await Promise.all([
-			listAccounts(options),
-			getAccountStats(options),
-		]);
-		accounts.value = page.items;
-		accountStats.value = stats;
-		nextCursor.value = page.nextCursor;
+		const overview = await getAccountOverview(options);
+		accounts.value = overview.items;
+		accountStats.value = overview.stats;
+		nextCursor.value = overview.nextCursor;
 		selected.value = new Set(
 			[...selected.value].filter((key) =>
-				page.items.some((account) => identifierKey(account) === key),
+				overview.items.some((account) => identifierKey(account) === key),
 			),
 		);
-		showToast(`Loaded ${page.items.length} accounts`);
+		showToast(`Loaded ${overview.items.length} accounts`);
 	} catch (error) {
 		showToast(
 			error instanceof Error ? error.message : "Failed to load accounts",

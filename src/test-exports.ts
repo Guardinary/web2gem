@@ -128,9 +128,7 @@ export {
 	errorLogSummary,
 	isAbortError,
 	log,
-	logInfo,
 	logStage,
-	makeSapisidHash,
 	randomBytes,
 	randHex,
 	sleep,
@@ -140,8 +138,8 @@ export {
 	upstreamErrorMessage,
 	upstreamErrorStatus,
 	uuid,
-	_sapisidHashCache,
 } from "./shared/runtime";
+export { _sapisidHashCache, makeSapisidHash } from "./gemini/auth";
 export {
 	buildTextWithTokens,
 	codePointLength,
@@ -218,9 +216,6 @@ export { prepareOpenAIImageGenerationCompletion } from "./completion/image-gener
 export { ensureInlineToolPrompt } from "./completion/tool-prompt-guard";
 export {
 	EMPTY_UPSTREAM_MSG,
-	consumeBufferedToolTextDeltas,
-	consumePlainTextDeltas,
-	consumeToolSieveTextDeltas,
 	createCompletionStreamLifecycle,
 	finalizeOpenAICompletionResult,
 	recordCompletionStreamEvent,

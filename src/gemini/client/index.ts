@@ -1,12 +1,8 @@
 import { getPageTokens } from "../uploads/index";
 import { httpFetch } from "../transport";
-import {
-	abortError,
-	isAbortError,
-	log,
-	throwIfAborted,
-	uuid,
-} from "../../shared/runtime";
+import { abortError, isAbortError, throwIfAborted } from "../../shared/abort";
+import { log } from "../../shared/logging";
+import { uuid } from "../../shared/crypto";
 import {
 	dataAnalysisEmptyResponseError,
 	invalidGeminiCookieError,

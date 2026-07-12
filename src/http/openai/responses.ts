@@ -1,6 +1,6 @@
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
-import { EMPTY_UPSTREAM_MSG, runCompletionText } from "../../completion";
+import { EMPTY_UPSTREAM_MSG } from "../../completion";
 import type {
 	CompletionProvider,
 	CompletionRichOutput,
@@ -8,17 +8,13 @@ import type {
 import { prepareOpenAIImageGenerationCompletion } from "../../completion/image-generation";
 import { prepareOpenAICompletion } from "../../completion/openai";
 import { normalizeResponsesInputAsMessagesStrict } from "../../promptcompat/responses-input";
+import { elapsedMs, log, logStage, nowMs, nowSec } from "../../shared/logging";
 import {
-	elapsedMs,
 	errorLogSummary,
-	log,
-	logStage,
-	nowMs,
-	nowSec,
-	randHex,
 	upstreamErrorCode,
 	upstreamErrorMessage,
-} from "../../shared/runtime";
+} from "../../shared/errors";
+import { randHex } from "../../shared/crypto";
 import { openAIErrorResponse, openAIUpstreamErrorResponse } from "./errors";
 import {
 	buildImageResponsesOutput,
@@ -163,7 +159,7 @@ export async function handleResponses(
 	let text: string;
 	const generationStart = logRequests ? nowMs() : 0;
 	try {
-		text = await runCompletionText(provider, { prompt, rm, fileRefs });
+		text = await provider.generateText({ prompt, rm, fileRefs });
 	} catch (e) {
 		if (logRequests)
 			logStage(cfg, "openai_responses_generate", {

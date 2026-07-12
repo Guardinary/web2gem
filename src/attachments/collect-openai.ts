@@ -5,7 +5,7 @@ import {
 	parseImageUrl,
 	uploadMimeFromObject,
 	type UploadFileInput,
-} from "./media";
+} from "./input";
 import { createAttachmentPlan } from "./plan";
 import { collectOpenAIRefFileIDs } from "./refs";
 import type { AttachmentPlan } from "./types";

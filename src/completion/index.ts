@@ -16,10 +16,6 @@ export type {
 } from "./runtime";
 export {
 	createCompletionStreamLifecycle,
-	consumeBufferedToolTextDeltas,
-	consumePlainTextDeltas,
-	consumeToolSieveTextDeltas,
-	runCompletionText,
 	recordCompletionStreamEvent,
 	streamBufferedToolTextCompletionEvents,
 	streamPlainCompletionEvents,

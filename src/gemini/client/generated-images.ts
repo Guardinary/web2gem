@@ -1,9 +1,8 @@
-import {
-	bytesToBase64,
-	detectUploadMimeFromBytes,
-} from "../../attachments/media";
+import { bytesToBase64 } from "../../attachments/base64";
+import { detectUploadMimeFromBytes } from "../../attachments/mime";
 import type { RuntimeConfig } from "../../config";
-import { errorLogSummary, log } from "../../shared/runtime";
+import { errorLogSummary } from "../../shared/errors";
+import { log } from "../../shared/logging";
 import { GEMINI_WEB_USER_AGENT } from "../constants";
 import { httpFetch } from "../transport";
 import { upstreamImageFetchFailedError } from "./errors";

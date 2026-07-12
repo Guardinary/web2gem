@@ -1,4 +1,4 @@
-import { imageFilenameFromObject } from "../attachments/media";
+import { imageFilenameFromObject } from "../attachments/input";
 import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
 import { messageContentToPrompt, openAIToolDefs } from "../toolcall/content";
 import {

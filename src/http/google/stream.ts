@@ -8,8 +8,9 @@ import type { RuntimeConfig } from "../../config";
 import type { ResolvedModel } from "../../models";
 import type { FileRef, LooseRequest } from "../../completion/types";
 import { streamGoogleToolCompletionEvents } from "../../completion/google";
-import { combinedTokenCount, createTokenCounter } from "../../shared/tokens";
-import { errorLogSummary, log, upstreamErrorCode } from "../../shared/runtime";
+import { tokenCountFromCounts } from "../../shared/tokens";
+import { errorLogSummary, upstreamErrorCode } from "../../shared/errors";
+import { log } from "../../shared/logging";
 import type { SSEWrite } from "../core/sse";
 import {
 	streamInterruptedWarningText,
@@ -43,7 +44,6 @@ export async function streamGooglePlain(
 	params: GooglePlainStreamParams,
 ) {
 	const { provider, prompt, rm, fileRefs, promptTokens, signal } = params;
-	const extraTokenCounter = createTokenCounter();
 	const lifecycle = createCompletionStreamLifecycle();
 	const textCoalescer = createDeltaCoalescer(
 		(delta) => {
@@ -85,10 +85,7 @@ export async function streamGooglePlain(
 		);
 		await writeStreamWarningEvent(write, lifecycle.issue.error, warning.trim());
 	}
-	const candidateTokens = combinedTokenCount(
-		lifecycle.completionCounts,
-		extraTokenCounter,
-	);
+	const candidateTokens = tokenCountFromCounts(lifecycle.completionCounts);
 	await write(
 		`data: ${JSON.stringify(googleStreamDonePayload(rm.name, promptTokens, candidateTokens, lifecycle.issue ? lifecycle.issue.error : null))}\n\n`,
 	);

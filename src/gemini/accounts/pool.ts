@@ -1,5 +1,5 @@
 import type { RuntimeConfig } from "../../config";
-import { uuid } from "../../shared/runtime";
+import { uuid } from "../../shared/crypto";
 import {
 	COOKIE_ROTATE_MIN_INTERVAL_MS,
 	mergeSetCookieHeaders,

@@ -1,12 +1,7 @@
 import { currentInputFilePrompt } from "../toolcall/content";
 import { toolsContextTranscriptFor } from "../toolcall/tool-bundle";
-import {
-	elapsedMs,
-	errorLogSummary,
-	log,
-	logStage,
-	nowMs,
-} from "../shared/runtime";
+import { elapsedMs, log, logStage, nowMs } from "../shared/logging";
+import { errorLogSummary } from "../shared/errors";
 import {
 	buildTextWithTokens,
 	promptByteLength,

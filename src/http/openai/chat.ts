@@ -1,6 +1,6 @@
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
-import { EMPTY_UPSTREAM_MSG, runCompletionText } from "../../completion";
+import { EMPTY_UPSTREAM_MSG } from "../../completion";
 import type {
 	CompletionProvider,
 	CompletionRichOutput,
@@ -8,16 +8,9 @@ import type {
 import type { RuntimeConfig } from "../../config";
 import { prepareOpenAIImageGenerationCompletion } from "../../completion/image-generation";
 import { prepareOpenAICompletion } from "../../completion/openai";
-import {
-	elapsedMs,
-	errorLogSummary,
-	log,
-	logStage,
-	nowMs,
-	nowSec,
-	randHex,
-	upstreamErrorCode,
-} from "../../shared/runtime";
+import { elapsedMs, log, logStage, nowMs, nowSec } from "../../shared/logging";
+import { errorLogSummary, upstreamErrorCode } from "../../shared/errors";
+import { randHex } from "../../shared/crypto";
 import { tokenEst } from "../../shared/tokens";
 import { isRecord, type UnknownRecord } from "../../shared/types";
 import { openAIErrorResponse, openAIUpstreamErrorResponse } from "./errors";
@@ -184,7 +177,7 @@ export async function handleChat(
 	let text: string;
 	const generationStart = logRequests ? nowMs() : 0;
 	try {
-		text = await runCompletionText(provider, { prompt, rm, fileRefs });
+		text = await provider.generateText({ prompt, rm, fileRefs });
 	} catch (e) {
 		if (logRequests)
 			logStage(cfg, "openai_chat_generate", {

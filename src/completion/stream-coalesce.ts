@@ -1,5 +1,5 @@
 import { codePointLengthAtLeast } from "../shared/tokens";
-import { isAbortError } from "../shared/runtime";
+import { isAbortError } from "../shared/abort";
 import type {
 	CompletionProvider,
 	CompletionProviderOptions,

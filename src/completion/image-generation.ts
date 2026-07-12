@@ -1,16 +1,18 @@
+import { base64ToBytes } from "../attachments/base64";
 import {
-	base64ToBytes,
 	detectUploadMimeFromBytes,
 	firstNonEmptyString,
 	imageFilenameFromMime,
-	imageFilenameFromObject,
 	normalizeMimeType,
+	sanitizeUploadFilename,
+} from "../attachments/mime";
+import {
+	imageFilenameFromObject,
 	normalizeUploadFileInput,
 	parseImageUrl,
-	sanitizeUploadFilename,
 	uploadFilenameFromObject,
 	uploadMimeFromObject,
-} from "../attachments/media";
+} from "../attachments/input";
 import { MAX_ATTACHMENTS_PER_REQUEST } from "../attachments/plan";
 import type {
 	AttachmentCandidate,
@@ -19,12 +21,12 @@ import type {
 } from "../attachments/types";
 import type { RuntimeConfig } from "../config";
 import { resolveModel, type ResolvedModel } from "../models";
+import { log } from "../shared/logging";
 import {
-	log,
 	upstreamErrorCode,
 	upstreamErrorMessage,
 	upstreamErrorStatus,
-} from "../shared/runtime";
+} from "../shared/errors";
 import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
 import { promptByteLength, tokenEst } from "../shared/tokens";
 import { contextFileThreshold } from "./context-files";

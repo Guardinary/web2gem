@@ -1,6 +1,7 @@
 import * as v from "valibot";
 import type {
 	AccountPage,
+	AccountOverview,
 	AccountStats,
 	GeminiAccount,
 	MutationResult,
@@ -75,6 +76,19 @@ const mutationErrorSchema = v.object({
 	row_id: v.optional(v.string()),
 });
 
+const diagnosticResultSchema = v.object({
+	id: v.optional(v.string()),
+	row_id: v.optional(v.string()),
+	status: v.union([
+		v.literal("refreshed"),
+		v.literal("unchanged"),
+		v.literal("failed"),
+		v.literal("skipped"),
+	]),
+	reason: v.optional(v.string()),
+	upstreamStatus: v.optional(v.number()),
+});
+
 export const pageSchema = v.object({
 	items: v.array(accountSchema),
 	nextCursor: v.nullable(v.string()),
@@ -93,6 +107,13 @@ export const statsSchema = v.object({
 	failureCount: v.number(),
 });
 
+export const overviewSchema = v.object({
+	items: v.array(accountSchema),
+	nextCursor: v.nullable(v.string()),
+	limit: v.number(),
+	stats: statsSchema,
+});
+
 export const mutationSchema = v.object({
 	items: v.optional(v.array(accountSchema)),
 	added: v.optional(v.number()),
@@ -105,6 +126,7 @@ export const mutationSchema = v.object({
 	unchanged: v.optional(v.number()),
 	failed: v.optional(v.number()),
 	errors: v.optional(v.array(mutationErrorSchema)),
+	results: v.optional(v.array(diagnosticResultSchema)),
 });
 
 export function parsePage(value: unknown): AccountPage {
@@ -118,6 +140,13 @@ export function parseMutation(value: unknown): MutationResult {
 	const parsed = v.safeParse(mutationSchema, value);
 	if (!parsed.success) throw new Error("admin mutation response is invalid");
 	return parsed.output as MutationResult;
+}
+
+export function parseOverview(value: unknown): AccountOverview {
+	const parsed = v.safeParse(overviewSchema, value);
+	if (!parsed.success)
+		throw new Error("admin account overview response is invalid");
+	return parsed.output as AccountOverview;
 }
 
 export function parseStats(value: unknown): AccountStats {

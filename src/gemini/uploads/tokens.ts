@@ -8,12 +8,10 @@ import { httpFetch } from "../transport";
 import { createOriginScopedStringCache } from "../cache";
 import type { RuntimeConfig } from "../../config";
 import { configWithFreshGeminiCookie } from "../cookies";
-import {
-	TEXT_ENCODER,
-	bytesToHex,
-	errorLogSummary,
-	log,
-} from "../../shared/runtime";
+import { TEXT_ENCODER } from "../../shared/encoding";
+import { bytesToHex } from "../../shared/crypto";
+import { errorLogSummary } from "../../shared/errors";
+import { log } from "../../shared/logging";
 import { contentPushUploadError } from "./errors";
 
 type PageTokens = GeminiAppPageTokens;

@@ -1,4 +1,4 @@
-import { uuid } from "../../shared/runtime";
+import { uuid } from "../../shared/crypto";
 import { parseCookieHeader } from "../cookies";
 import {
 	accountRowId,
@@ -26,6 +26,7 @@ import type {
 	GeminiAccountCategory,
 	GeminiAccountAdminStats,
 	GeminiAccountAdminFilter,
+	GeminiAccountAdminOverview,
 	GeminiAccountPublic,
 	GeminiAccountPublicPage,
 	GeminiAccountRow,
@@ -146,37 +147,77 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		filter: GeminiAccountAdminFilter,
 		nowMs: number,
 	): Promise<GeminiAccountPublicPage> {
-		const limit = boundedPageLimit(filter.limit);
-		const { where, args } = adminWhere(filter, nowMs);
-		args.push(limit + 1);
-		const sql = `
-      SELECT ${ADMIN_ACCOUNT_SELECT}
-      FROM gemini_accounts
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY id ASC
-      LIMIT ?
-    `;
-		const result = await this.db
-			.prepare(sql)
-			.bind(...args)
-			.all<GeminiAccountPublicSqlRow>();
-		const rows = result.results || [];
-		const pageRows = rows.slice(0, limit);
-		const nextCursor =
-			rows.length > limit ? pageRows[pageRows.length - 1]?.id || null : null;
-		return {
-			items: pageRows.map(publicRowFromSql),
-			nextCursor,
-			limit,
-		};
+		const result = await this.adminPageStatement(
+			filter,
+			nowMs,
+		).all<GeminiAccountPublicSqlRow>();
+		return adminPageFromRows(result.results || [], filter.limit);
 	}
 
 	async getAdminStats(
 		filter: Omit<GeminiAccountAdminFilter, "cursor" | "limit">,
 		nowMs: number,
 	): Promise<GeminiAccountAdminStats> {
+		const row = await this.adminStatsStatement(filter, nowMs).first<
+			Partial<GeminiAccountAdminStats>
+		>();
+		return adminStatsFromRow(row);
+	}
+
+	async getAdminOverview(
+		filter: GeminiAccountAdminFilter,
+		nowMs: number,
+	): Promise<GeminiAccountAdminOverview> {
+		const statsFilter = statsFilterFromAdminFilter(filter);
+		if (!this.db.batch) {
+			const [page, stats] = await Promise.all([
+				this.listAdminAccounts(filter, nowMs),
+				this.getAdminStats(statsFilter, nowMs),
+			]);
+			return { ...page, stats };
+		}
+		const [pageResult, statsResult] = await this.db.batch([
+			this.adminPageStatement(filter, nowMs),
+			this.adminStatsStatement(statsFilter, nowMs),
+		]);
+		if (!pageResult || !statsResult)
+			throw new Error("D1 account overview batch returned incomplete results");
+		return {
+			...adminPageFromRows(
+				(pageResult.results || []) as GeminiAccountPublicSqlRow[],
+				filter.limit,
+			),
+			stats: adminStatsFromRow(
+				(statsResult.results?.[0] ||
+					null) as Partial<GeminiAccountAdminStats> | null,
+			),
+		};
+	}
+
+	private adminPageStatement(
+		filter: GeminiAccountAdminFilter,
+		nowMs: number,
+	): D1PreparedStatementLike {
+		const limit = boundedPageLimit(filter.limit);
 		const { where, args } = adminWhere(filter, nowMs);
-		const sql = `
+		return this.db
+			.prepare(`
+      SELECT ${ADMIN_ACCOUNT_SELECT}
+      FROM gemini_accounts
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY id ASC
+      LIMIT ?
+    `)
+			.bind(...args, limit + 1);
+	}
+
+	private adminStatsStatement(
+		filter: Omit<GeminiAccountAdminFilter, "cursor" | "limit">,
+		nowMs: number,
+	): D1PreparedStatementLike {
+		const { where, args } = adminWhere(filter, nowMs);
+		return this.db
+			.prepare(`
       SELECT
         COUNT(*) AS total,
         SUM(CASE WHEN enabled = 1 AND status = 'active' THEN 1 ELSE 0 END) AS available,
@@ -189,22 +230,8 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
         SUM(failure_count) AS failureCount
       FROM gemini_accounts
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-    `;
-		const row = await this.db
-			.prepare(sql)
-			.bind(...NEEDS_ATTENTION_STATUSES, nowMs, ...args)
-			.first<Partial<GeminiAccountAdminStats>>();
-		return {
-			total: numberOrZero(row?.total),
-			available: numberOrZero(row?.available),
-			needsAttention: numberOrZero(row?.needsAttention),
-			disabled: numberOrZero(row?.disabled),
-			refreshable: numberOrZero(row?.refreshable),
-			cooling: numberOrZero(row?.cooling),
-			psidOnly: numberOrZero(row?.psidOnly),
-			successCount: numberOrZero(row?.successCount),
-			failureCount: numberOrZero(row?.failureCount),
-		};
+		`)
+			.bind(...NEEDS_ATTENTION_STATUSES, nowMs, ...args);
 	}
 
 	async findAccountByCookieHash(
@@ -393,6 +420,49 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		);
 		const removed = resultChanged(result) !== 0;
 		return removed;
+	}
+
+	async setAccountsEnabledBulk(
+		accountIds: readonly string[],
+		enabled: boolean,
+		nowMs: number,
+	): Promise<GeminiAccountPublic[]> {
+		if (!accountIds.length) return [];
+		const placeholders = accountIds.map(() => "?").join(", ");
+		await this.runMutationWithPoolVersion(
+			this.db
+				.prepare(`
+        UPDATE gemini_accounts
+        SET enabled = ?, status = CASE WHEN ? = 1 AND status = 'disabled' THEN 'active' WHEN ? = 0 THEN 'disabled' ELSE status END,
+            updated_at_ms = ?
+        WHERE id IN (${placeholders})
+      `)
+				.bind(
+					enabled ? 1 : 0,
+					enabled ? 1 : 0,
+					enabled ? 1 : 0,
+					nowMs,
+					...accountIds,
+				),
+			nowMs,
+		);
+		return this.findAccountsByIds(accountIds);
+	}
+
+	async deleteAccountsBulk(
+		accountIds: readonly string[],
+		nowMs: number,
+	): Promise<string[]> {
+		if (!accountIds.length) return [];
+		const existing = await this.findAccountsByIds(accountIds);
+		const placeholders = accountIds.map(() => "?").join(", ");
+		await this.runMutationWithPoolVersion(
+			this.db
+				.prepare(`DELETE FROM gemini_accounts WHERE id IN (${placeholders})`)
+				.bind(...accountIds),
+			nowMs,
+		);
+		return existing.map((item) => item.id);
 	}
 
 	async tryAcquireRefreshLock(
@@ -635,6 +705,67 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		}
 		return items;
 	}
+
+	private async findAccountsByIds(
+		accountIds: readonly string[],
+	): Promise<GeminiAccountPublic[]> {
+		const placeholders = accountIds.map(() => "?").join(", ");
+		const result = await this.db
+			.prepare(`
+      SELECT ${ADMIN_ACCOUNT_SELECT}
+      FROM gemini_accounts
+      WHERE id IN (${placeholders})
+    `)
+			.bind(...accountIds)
+			.all<GeminiAccountPublicSqlRow>();
+		const byId = new Map(
+			(result.results || []).map((row) => {
+				const item = publicRowFromSql(row);
+				return [item.id, item] as const;
+			}),
+		);
+		return accountIds.flatMap((id) => {
+			const item = byId.get(id);
+			return item ? [item] : [];
+		});
+	}
+}
+
+function adminPageFromRows(
+	rows: GeminiAccountPublicSqlRow[],
+	requestedLimit: number,
+): GeminiAccountPublicPage {
+	const limit = boundedPageLimit(requestedLimit);
+	const pageRows = rows.slice(0, limit);
+	return {
+		items: pageRows.map(publicRowFromSql),
+		nextCursor:
+			rows.length > limit ? pageRows[pageRows.length - 1]?.id || null : null,
+		limit,
+	};
+}
+
+function adminStatsFromRow(
+	row: Partial<GeminiAccountAdminStats> | null | undefined,
+): GeminiAccountAdminStats {
+	return {
+		total: numberOrZero(row?.total),
+		available: numberOrZero(row?.available),
+		needsAttention: numberOrZero(row?.needsAttention),
+		disabled: numberOrZero(row?.disabled),
+		refreshable: numberOrZero(row?.refreshable),
+		cooling: numberOrZero(row?.cooling),
+		psidOnly: numberOrZero(row?.psidOnly),
+		successCount: numberOrZero(row?.successCount),
+		failureCount: numberOrZero(row?.failureCount),
+	};
+}
+
+function statsFilterFromAdminFilter(
+	filter: GeminiAccountAdminFilter,
+): Omit<GeminiAccountAdminFilter, "cursor" | "limit"> {
+	const { cursor: _cursor, limit: _limit, ...statsFilter } = filter;
+	return statsFilter;
 }
 
 async function buildAccountInsertRow(

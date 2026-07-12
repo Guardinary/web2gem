@@ -13,7 +13,7 @@ import {
 	genericFilenameFromMime,
 	imageFilenameFromMime,
 	normalizeMimeType,
-} from "../../attachments/media";
+} from "../../attachments/mime";
 import type {
 	AttachmentCandidate,
 	AttachmentDrop,
@@ -22,14 +22,10 @@ import type {
 	AttachmentUploadResult,
 	AttachmentUsage,
 } from "../../attachments/types";
-import {
-	TEXT_ENCODER,
-	UTF8_FATAL_DECODER,
-	errorLogSummary,
-	log,
-	logStage,
-	bytesToHex,
-} from "../../shared/runtime";
+import { TEXT_ENCODER, UTF8_FATAL_DECODER } from "../../shared/encoding";
+import { errorLogSummary } from "../../shared/errors";
+import { log, logStage } from "../../shared/logging";
+import { bytesToHex } from "../../shared/crypto";
 import { configWithFreshGeminiCookie } from "../cookies";
 import { uploadMultipartFile, type UploadBytesInput } from "./multipart";
 

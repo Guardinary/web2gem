@@ -208,6 +208,55 @@ const smallDeltaProvider = {
 		return { ref: `/uploaded/${filename}`, name: filename };
 	},
 };
+const accountAdminIds = Array.from(
+	{ length: 100 },
+	(_value, index) => `bench-account-${index}`,
+);
+const accountAdminItems = accountAdminIds.map((id) => ({
+	id,
+	row_id: `row-${id}`,
+	enabled: 1,
+	status: "active",
+}));
+const accountAdminStats = {
+	total: accountAdminItems.length,
+	available: accountAdminItems.length,
+	needsAttention: 0,
+	disabled: 0,
+	refreshable: accountAdminItems.length,
+	cooling: 0,
+	psidOnly: 0,
+	successCount: 0,
+	failureCount: 0,
+};
+const accountAdminStore = {
+	async getAdminOverview(_filter, _nowMs) {
+		return {
+			items: accountAdminItems,
+			nextCursor: null,
+			limit: 100,
+			stats: accountAdminStats,
+		};
+	},
+	async setAccountsEnabledBulk(ids, enabled) {
+		return ids.map((id) => ({
+			...accountAdminItems[Number(id.slice(id.lastIndexOf("-") + 1))],
+			enabled: enabled ? 1 : 0,
+		}));
+	},
+	async getPoolVersion() {
+		return "1";
+	},
+	async listSelectableAccounts() {
+		return [];
+	},
+};
+const accountAdminService = new mod.GeminiAccountAdminService({
+	adminStore: accountAdminStore,
+	runtimeStore: accountAdminStore,
+	cfg: { ...CFG, runtime_profile: "worker" },
+	nowMs: () => 1,
+});
 
 function emptyAttachmentResult() {
 	return {
@@ -391,6 +440,18 @@ const cases = [
 		fn: () => runUniqueItemsValidation(),
 		iterations: Math.min(ITERATIONS, 200),
 		warmup: Math.min(WARMUP, 50),
+	},
+	{
+		name: "account_admin_overview",
+		fn: () => accountAdminService.overview({ limit: 100 }),
+	},
+	{
+		name: "account_admin_bulk_action",
+		fn: () =>
+			accountAdminService.runBulkAction({
+				action: "disable",
+				ids: accountAdminIds,
+			}),
 	},
 	{
 		name: "structured_pattern_schema",

@@ -1,4 +1,4 @@
-import { TEXT_ENCODER } from "../../shared/runtime";
+import { TEXT_ENCODER } from "../../shared/encoding";
 import type { ByteChunk, ByteQueue } from "./socket-types";
 
 export function _joinByteChunks(

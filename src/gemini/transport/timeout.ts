@@ -1,4 +1,4 @@
-import { throwIfAborted } from "../../shared/runtime";
+import { throwIfAborted } from "../../shared/abort";
 import type { ErrorWithMetadata } from "../../shared/types";
 import type { SocketTimeoutScope } from "./socket-types";
 

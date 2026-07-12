@@ -62,6 +62,10 @@ export type AccountPage = {
 	limit: number;
 };
 
+export type AccountOverview = AccountPage & {
+	stats: AccountStats;
+};
+
 export type AccountStats = {
 	total: number;
 	available: number;
@@ -94,5 +98,12 @@ export type MutationResult = {
 		message?: string;
 		id?: string;
 		row_id?: string;
+	}>;
+	results?: Array<{
+		id?: string;
+		row_id?: string;
+		status: "refreshed" | "unchanged" | "failed" | "skipped";
+		reason?: string;
+		upstreamStatus?: number;
 	}>;
 };

@@ -8,7 +8,7 @@ OpenAI-compatible routes convert parse failures with `openAIErrorResponse`. Goog
 
 ## Upstream Errors
 
-Use `upstreamErrorMessage` and `upstreamErrorCode` from `src/shared/runtime.ts` when converting unknown errors. OpenAI upstream failures should use OpenAI-style error envelopes when possible.
+Use `upstreamErrorMessage` and `upstreamErrorCode` from `src/shared/errors.ts` when converting known upstream errors. Unexpected application-boundary failures must return the stable `internal_server_error` envelope; raw exception messages remain log-only.
 
 ## Scenario: Completion Error Presentation
 
@@ -321,8 +321,10 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 - Admin routes live under `/admin/accounts`.
 - Supported operations:
   - `GET /admin/accounts?limit=&cursor=&status=&enabled=&q=&category=&cooldown=&source=`
+  - `GET /admin/accounts?...&include_stats=true`
   - `GET /admin/accounts/stats?status=&enabled=&q=&category=&cooldown=&source=`
   - `POST /admin/accounts`
+  - `POST /admin/accounts/actions` with `{ action, ids }`
   - `PATCH /admin/accounts/:id`
   - `DELETE /admin/accounts/:id`
   - `POST /admin/accounts/:id/refresh`
@@ -340,7 +342,8 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 - Service-layer admin methods return sanitized DTOs before the HTTP route serializes responses. Route handlers must not receive raw D1 account rows for list/create/update/delete/refresh/check results.
 - Default Gemini import must reject full Cookie headers, JSON-looking cookie blobs, `access_token`, `accessToken`, `cookie`, `cookies`, extra non-null payload keys, provider mismatches, missing PSID/PSIDTS, and dual-field values containing cookie names, `=`, or `;`.
 - List pagination is bounded: default `limit` is 50 and maximum `limit` is 200.
-- PATCH/DELETE/refresh/check operate on exactly one stable path `id`. WebUI batch actions call the single-resource endpoints sequentially and aggregate only sanitized result counts/errors.
+- PATCH/DELETE/refresh/check continue to operate on one stable path `id`. Bulk UI actions use the bounded `/admin/accounts/actions` contract; D1 enable/disable/delete implementations use set-based mutations and publish pool-version changes atomically.
+- `include_stats=true` returns the normal page fields plus `stats`; D1 adapters should use one native batch read when available. Mutation responses contain affected sanitized items only and must not query or embed an unrelated replacement page.
 - Query parameters are allowlisted per route. Unknown, duplicate, empty, malformed, or out-of-range values return explicit 400 errors instead of being ignored or clamped at the HTTP boundary.
 - PATCH accepts only documented mutable fields with strict boolean/string/null/non-negative-safe-integer types. DELETE/refresh/check accept no request body or query parameters.
 - HTTP and service orchestration must consume normalized values from `admin-input.ts`; do not re-parse the same untyped payload fields in route or persistence code.
@@ -418,7 +421,7 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - API route used by the UI: `/admin/accounts`.
 - Admin auth header: `Authorization: Bearer <admin-key>`.
 - Gemini import payload: `{ provider: "gemini", "__Secure-1PSID": string, "__Secure-1PSIDTS": string, label?: string }`.
-- Mutation routes use `/admin/accounts/:id`; PATCH sends only mutable fields, while DELETE/refresh/check send no body.
+- Single mutation routes use `/admin/accounts/:id`; bulk actions use `POST /admin/accounts/actions` with stable IDs and a bounded count.
 - `src/admin-ui/state.ts` owns shared Preact signals and UI draft types, including separate page-loading, import, edit, batch, row-action, and destructive-confirmation state.
 - `src/admin-ui/logic.ts` owns browser-independent identifiers, validation, parsing, formatting, summaries, and sanitized CSV construction.
 - `src/admin-ui/actions.ts` owns browser storage, API calls, pagination transitions, destructive confirmation, downloads, and toast side effects.
@@ -438,7 +441,7 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Import fallback must not retry authentication, validation, network, or generic
   server failures. A later chunk failure propagates normally even though earlier
   chunks may already be committed and can be retried safely as duplicates.
-- Row and batch actions must reuse the resource API: PATCH `enabled` for enable/disable, DELETE for delete, and POST `/:id/refresh` or `/:id/check`. Batch actions issue sequential single-account requests; do not add UI-only mutation routes.
+- Row and batch actions use the shared bulk action API. The browser retries bounded chunks only after the stable `admin_bulk_action_limit_exceeded` response; existing single-resource routes remain compatibility contracts.
 - Editing account labels/status/enabled/source metadata must use `PATCH /admin/accounts/:id` with safe update fields only.
 - Cursor pagination must use the admin API's `nextCursor` without requesting or caching raw D1 rows. The server `nextCursor` is the last returned row id, matching the route's `id > cursor` query semantics.
 - Client-side metadata export may include sanitized account IDs, status/category, timestamps, counters, redacted errors, and source metadata. It must not export raw cookies, SAPISID values, session tokens, SQL bind values, or D1 API tokens.

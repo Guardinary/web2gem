@@ -89,7 +89,7 @@ Use this contract when adding benchmark cases, changing hot-path algorithms, cha
 ### 3. Contracts
 
 - Human-readable benchmark output remains the default for local investigation; the performance gate consumes machine-readable output.
-- The default gate must cover more than one subsystem. It currently includes held tool sieving, cumulative stream extraction, split socket chunk-line parsing, and structured-output uniqueness.
+- The default gate must cover more than one subsystem. It currently includes held tool sieving, cumulative stream extraction, split socket chunk-line parsing, structured-output uniqueness, account overview reads, and bulk account mutation orchestration.
 - Every gated result must contain a finite numeric `medianMs`; missing, `null`, string, or non-finite values fail closed.
 - Thresholds are absolute CI regression ceilings with hardware headroom, not claims about a specific workstation baseline.
 - Intentional delay cases such as `sse_slow_consumer` remain observational and must not enter the CPU gate.

@@ -1,4 +1,5 @@
-import { TEXT_ENCODER, throwIfAborted } from "../../shared/runtime";
+import { TEXT_ENCODER } from "../../shared/encoding";
+import { throwIfAborted } from "../../shared/abort";
 import { bytesFromBody } from "./byte-queue";
 import { createSocketBodyStream } from "./body-stream";
 import {

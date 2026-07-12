@@ -1,12 +1,14 @@
 import {
 	abortError,
-	canFallbackAfterSocketError,
-	errorLogSummary,
 	isAbortError,
-	log,
 	throwIfAborted,
 	timeoutSignal,
-} from "../../shared/runtime";
+} from "../../shared/abort";
+import {
+	canFallbackAfterSocketError,
+	errorLogSummary,
+} from "../../shared/errors";
+import { log } from "../../shared/logging";
 import { getDefaultSocketPool, resolveConnect, socketHttp } from "./socket";
 import type { SocketHttpResponse } from "./socket";
 

@@ -1,11 +1,11 @@
+import { firstNonEmptyString } from "../attachments/mime";
 import {
-	firstNonEmptyString,
 	imageFilenameFromObject,
 	normalizeUploadFileInput,
 	parseImageUrl,
 	uploadFilenameFromObject,
 	uploadMimeFromObject,
-} from "../attachments/media";
+} from "../attachments/input";
 import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
 import { toolDefsFromTools } from "./tool-meta";
 import { isToolBundle } from "./tool-bundle";

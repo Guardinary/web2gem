@@ -13,12 +13,9 @@ import type {
 	CompletionTextInput,
 } from "../completion/ports";
 import type { AttachmentPlan } from "../attachments/types";
-import {
-	errorLogSummary,
-	isAbortError,
-	log,
-	logStage,
-} from "../shared/runtime";
+import { errorLogSummary } from "../shared/errors";
+import { isAbortError } from "../shared/abort";
+import { log, logStage } from "../shared/logging";
 import type { ErrorWithMetadata } from "../shared/types";
 import type { GeminiAccountLease } from "./accounts/types";
 import type { GeminiAccountRuntime } from "./accounts/runtime";

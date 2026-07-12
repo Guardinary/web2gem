@@ -15,12 +15,12 @@ import {
 	createToolBundle,
 	filterToolBundleByPolicy,
 } from "../toolcall/tool-bundle";
+import { log } from "../shared/logging";
 import {
-	log,
 	upstreamErrorCode,
 	upstreamErrorMessage,
 	upstreamErrorStatus,
-} from "../shared/runtime";
+} from "../shared/errors";
 import { prepareOpenAIGeminiContext } from "./context";
 import { ensureInlineToolPrompt } from "./tool-prompt-guard";
 import type { ContextFileResult, FileRef, LooseRequest } from "./types";

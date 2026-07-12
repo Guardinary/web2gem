@@ -1,6 +1,6 @@
 import { streamWarningObject } from "../core/stream-errors";
 import type { SSEWrite } from "../core/sse";
-import { upstreamErrorCode, upstreamErrorMessage } from "../../shared/runtime";
+import { upstreamErrorCode, upstreamErrorMessage } from "../../shared/errors";
 import type { GoogleResponsePart } from "../../completion/google-turn";
 
 export function googleErrorResponseBody(

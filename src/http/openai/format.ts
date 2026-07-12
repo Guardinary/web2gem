@@ -1,9 +1,6 @@
 import type { SSEWrite } from "../core/sse";
-import {
-	nowSec,
-	upstreamErrorCode,
-	upstreamErrorMessage,
-} from "../../shared/runtime";
+import { nowSec } from "../../shared/logging";
+import { upstreamErrorCode, upstreamErrorMessage } from "../../shared/errors";
 import { tokenEst } from "../../shared/tokens";
 import { isRecord } from "../../shared/types";
 import type { GeneratedImage } from "../../completion/ports";

@@ -168,6 +168,17 @@ export type GeminiAccountAdminStats = {
 	failureCount: number;
 };
 
+export type GeminiAccountAdminOverview = GeminiAccountPublicPage & {
+	stats: GeminiAccountAdminStats;
+};
+
+export type GeminiAccountBulkAction =
+	| "enable"
+	| "disable"
+	| "delete"
+	| "refresh"
+	| "check";
+
 export type GeminiAccountCreateInput = {
 	id?: string;
 	label?: string;
@@ -277,6 +288,10 @@ export type GeminiAccountAdminStore = {
 		filter: Omit<GeminiAccountAdminFilter, "cursor" | "limit">,
 		nowMs: number,
 	): Promise<GeminiAccountAdminStats>;
+	getAdminOverview?(
+		filter: GeminiAccountAdminFilter,
+		nowMs: number,
+	): Promise<GeminiAccountAdminOverview>;
 	findAccountByCookieHash(
 		cookieHash: string,
 	): Promise<GeminiAccountPublic | null>;
@@ -293,6 +308,15 @@ export type GeminiAccountAdminStore = {
 		update: GeminiAccountUpdate,
 	): Promise<GeminiAccountPublic | null>;
 	deleteAccount(accountId: string): Promise<boolean>;
+	setAccountsEnabledBulk?(
+		accountIds: readonly string[],
+		enabled: boolean,
+		nowMs: number,
+	): Promise<GeminiAccountPublic[]>;
+	deleteAccountsBulk?(
+		accountIds: readonly string[],
+		nowMs: number,
+	): Promise<string[]>;
 };
 
 export type GeminiAccountStore = GeminiAccountRuntimeStore &

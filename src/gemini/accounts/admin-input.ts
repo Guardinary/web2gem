@@ -1,6 +1,7 @@
 import { isRecord, type UnknownRecord } from "../../shared/types";
 import type {
 	GeminiAccountAdminFilter,
+	GeminiAccountBulkAction,
 	GeminiAccountCategory,
 	GeminiAccountCreateInput,
 	GeminiAccountStatus,
@@ -49,6 +50,7 @@ const LIST_QUERY_KEYS = new Set([
 	"category",
 	"cooldown",
 	"source",
+	"include_stats",
 ]);
 const STATS_QUERY_KEYS = new Set([
 	"status",
@@ -127,6 +129,68 @@ export function listFilterFromSearchParams(
 		filter.cooldown = normalizeCooldown(requiredQueryValue(params, "cooldown"));
 	if (params.has("source")) filter.source = boundedQueryText(params, "source");
 	return filter;
+}
+
+export function includeStatsFromSearchParams(params: URLSearchParams): boolean {
+	if (!params.has("include_stats")) return false;
+	return parseQueryBoolean(requiredQueryValue(params, "include_stats"));
+}
+
+export const ADMIN_BULK_ACTION_MAX_IDS = 100;
+
+export function normalizeBulkAction(body: UnknownRecord): {
+	action: GeminiAccountBulkAction;
+	ids: string[];
+} {
+	for (const key of Object.keys(body)) {
+		if (key !== "action" && key !== "ids")
+			throw new GeminiAccountAdminError(
+				400,
+				"unknown_bulk_action_field",
+				`unsupported bulk action field: ${key}`,
+			);
+	}
+	const action = body.action;
+	if (
+		action !== "enable" &&
+		action !== "disable" &&
+		action !== "delete" &&
+		action !== "refresh" &&
+		action !== "check"
+	)
+		throw new GeminiAccountAdminError(
+			400,
+			"invalid_bulk_action",
+			"action must be enable, disable, delete, refresh, or check",
+		);
+	if (!Array.isArray(body.ids) || body.ids.length === 0)
+		throw new GeminiAccountAdminError(
+			400,
+			"bulk_action_ids_required",
+			"ids must be a non-empty array",
+		);
+	if (body.ids.length > ADMIN_BULK_ACTION_MAX_IDS)
+		throw new GeminiAccountAdminError(
+			413,
+			"admin_bulk_action_limit_exceeded",
+			`bulk action exceeds the limit of ${ADMIN_BULK_ACTION_MAX_IDS} accounts`,
+		);
+	const ids = body.ids.map((id) => {
+		if (typeof id !== "string")
+			throw new GeminiAccountAdminError(
+				400,
+				"invalid_account_id",
+				"each account id must be a string",
+			);
+		return accountIdFromPathSegment(id);
+	});
+	if (new Set(ids).size !== ids.length)
+		throw new GeminiAccountAdminError(
+			400,
+			"duplicate_bulk_action_id",
+			"bulk action ids must be unique",
+		);
+	return { action, ids };
 }
 
 export function assertNoAdminQueryParams(params: URLSearchParams): void {

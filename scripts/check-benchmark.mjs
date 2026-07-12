@@ -11,6 +11,8 @@ const DEFAULT_BUDGETS = Object.freeze({
 	stream_text_cumulative_deltas: 12,
 	socket_chunked_long_split_line: 8,
 	structured_unique_items: 4,
+	account_admin_overview: 4,
+	account_admin_bulk_action: 6,
 });
 
 const outputPath = process.argv[2] || "";

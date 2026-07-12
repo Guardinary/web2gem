@@ -1,20 +1,17 @@
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
-import { EMPTY_UPSTREAM_MSG, runCompletionText } from "../../completion";
+import { EMPTY_UPSTREAM_MSG } from "../../completion";
 import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
 import { prepareGoogleCompletion } from "../../completion/google-request";
 import { finalizeGoogleCompletionResult } from "../../completion/google-turn";
+import { elapsedMs, log, logStage, nowMs } from "../../shared/logging";
 import {
-	elapsedMs,
 	errorLogSummary,
-	log,
-	logStage,
-	nowMs,
 	upstreamErrorCode,
 	upstreamErrorMessage,
 	upstreamErrorStatus,
-} from "../../shared/runtime";
+} from "../../shared/errors";
 import { tokenEst } from "../../shared/tokens";
 import type { UnknownRecord } from "../../shared/types";
 import {
@@ -127,7 +124,7 @@ export async function handleGoogleGenerate(
 	let text: string;
 	const generationStart = logRequests ? nowMs() : 0;
 	try {
-		text = await runCompletionText(provider, { prompt, rm, fileRefs });
+		text = await provider.generateText({ prompt, rm, fileRefs });
 	} catch (e) {
 		if (logRequests)
 			logStage(cfg, "google_generate", {

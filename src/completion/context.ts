@@ -30,7 +30,7 @@ import {
 } from "../attachments/plan";
 import { messagesToPrompt } from "../promptcompat/messages";
 import type { RuntimeConfig } from "../config";
-import { logStage } from "../shared/runtime";
+import { logStage } from "../shared/logging";
 
 import {
 	prepareContextFiles,

@@ -37,7 +37,9 @@ import {
 	d1BindingFromEnv,
 	getGeminiAccountRuntimeFromEnv,
 } from "./gemini/accounts/runtime";
-import { errorLogSummary, log } from "./shared/runtime";
+import { elapsedMs, log, logStage, nowMs } from "./shared/logging";
+import { errorLogSummary } from "./shared/errors";
+import { uuid } from "./shared/crypto";
 import type { RuntimeConfig, WorkerEnv } from "./config";
 import type { GeminiAccountRuntime } from "./gemini/accounts/runtime";
 import type { RouteJsonPostResult } from "./http/core/route-json";
@@ -70,7 +72,27 @@ export async function handleApplicationRequest(
 	const method = request.method.toUpperCase();
 	const url = new URL(request.url);
 	const path = url.pathname;
-	const respond = (response: Response) => withCORS(response, request);
+	const requestId = uuid();
+	let activeConfig: RuntimeConfig | undefined;
+	let requestStartMs = 0;
+	const respond = (response: Response) => {
+		const corsResponse = withCORS(response, request);
+		const completed = withResponseHeader(
+			corsResponse,
+			"x-request-id",
+			requestId,
+		);
+		if (activeConfig?.log_requests) {
+			logStage(activeConfig, "request_complete", {
+				requestId,
+				method,
+				path,
+				status: completed.status,
+				ms: elapsedMs(requestStartMs),
+			});
+		}
+		return completed;
+	};
 
 	if (method === "OPTIONS") {
 		return new Response(null, {
@@ -89,6 +111,8 @@ export async function handleApplicationRequest(
 			}),
 			env,
 		);
+		activeConfig = cfg;
+		if (cfg.log_requests) requestStartMs = nowMs();
 	} catch (error) {
 		return respond(invalidRuntimeConfigResponse(error));
 	}
@@ -118,14 +142,37 @@ export async function handleApplicationRequest(
 		const response = await dispatchApplicationRoute(method, context);
 		return respond(response);
 	} catch (error) {
-		const err = error as
-			| { stack?: unknown; message?: unknown }
-			| null
-			| undefined;
 		log(cfg, `error: ${errorLogSummary(error)}`);
 		return respond(
-			jsonResponse({ error: { message: String(err?.message || error) } }, 500),
+			jsonResponse(
+				{
+					error: {
+						message: "internal server error",
+						code: "internal_server_error",
+					},
+				},
+				500,
+			),
 		);
+	}
+}
+
+function withResponseHeader(
+	response: Response,
+	name: string,
+	value: string,
+): Response {
+	try {
+		response.headers.set(name, value);
+		return response;
+	} catch (_) {
+		const headers = new Headers(response.headers);
+		headers.set(name, value);
+		return new Response(response.body, {
+			status: response.status,
+			statusText: response.statusText,
+			headers,
+		});
 	}
 }
 

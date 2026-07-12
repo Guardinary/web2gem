@@ -3,12 +3,14 @@ import {
 	firstNonEmptyString,
 	genericFilenameFromMime,
 	imageFilenameFromMime,
-	imageFilenameFromObject,
 	mimeFromFilename,
-	normalizeUploadFileInput,
 	sanitizeUploadFilename,
+} from "./mime";
+import {
+	imageFilenameFromObject,
+	normalizeUploadFileInput,
 	type UploadFileInput,
-} from "./media";
+} from "./input";
 import { attachmentDrop } from "./notes";
 import { appendExistingFileRefs } from "./refs";
 import type {

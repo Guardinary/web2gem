@@ -2,7 +2,7 @@
 
 ## Runtime Logging
 
-Use `log` and `logInfo` from `src/shared/runtime.ts` instead of raw `console` calls in feature code. Both respect `cfg.log_requests`.
+Use `log` and `logStage` from `src/shared/logging.ts` instead of raw `console` calls in feature code. Both respect `cfg.log_requests`; do not add duplicate logging aliases.
 
 Existing low-level transport code may log socket fallback details directly, but new logs should prefer the shared helpers unless there is a runtime-bootstrap reason not to.
 
@@ -17,6 +17,8 @@ High-frequency success paths should stay out of runtime logs unless they are agg
 ## Stage Telemetry
 
 Use `logStage(cfg, stage, fields)` for opt-in performance telemetry under `LOG_REQUESTS`. Stage logs may include elapsed milliseconds, route path, model id, status/code, body byte counts, prompt character/token counts, context-file booleans, and file-reference counts.
+
+`handleApplicationRequest` owns one opaque `x-request-id` per request and emits exactly one `request_complete` stage record when logging is enabled. The record includes request ID, method, path, response status, and elapsed milliseconds.
 
 Do not include request content, prompt text, latest user input text, uploaded file text, cookies, API keys, SAPISID values, or authorization headers in stage fields.
 

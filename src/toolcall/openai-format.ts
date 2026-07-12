@@ -1,4 +1,4 @@
-import { randHex } from "../shared/runtime";
+import { randHex } from "../shared/crypto";
 import { normalizeParsedToolCallsForSchemas } from "./schema-normalize";
 
 type NormalizedToolCall = {

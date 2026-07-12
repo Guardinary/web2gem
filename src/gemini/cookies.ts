@@ -1,5 +1,6 @@
 import type { RuntimeConfig } from "../config";
-import { errorLogSummary, log } from "../shared/runtime";
+import { errorLogSummary } from "../shared/errors";
+import { log } from "../shared/logging";
 import { GEMINI_WEB_USER_AGENT } from "./constants";
 import { httpFetch } from "./transport";
 

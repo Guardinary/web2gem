@@ -19,11 +19,12 @@ import type {
 import type { RuntimeConfig } from "../../config";
 import type { ResolvedModel } from "../../models";
 import type { FileRef } from "../../completion/types";
-import { errorLogSummary, log, upstreamErrorCode } from "../../shared/runtime";
+import { errorLogSummary, upstreamErrorCode } from "../../shared/errors";
+import { log } from "../../shared/logging";
 import {
 	combinedTokenCount,
 	createTokenCounter,
-	emptyTokenCounts,
+	tokenCountFromCounts,
 } from "../../shared/tokens";
 import { formatOpenAIStreamToolCalls } from "../../toolcall/openai-format";
 import type { OpenAIToolCall } from "../../toolcall/openai-format";
@@ -73,7 +74,6 @@ export async function streamOpenAIChatPlain(
 		promptTokens,
 		signal,
 	} = params;
-	const extraTokenCounter = createTokenCounter();
 	const lifecycle = createCompletionStreamLifecycle();
 	const writeChunk = (delta: Record<string, unknown>, finish: string | null) =>
 		write(
@@ -127,7 +127,6 @@ export async function streamOpenAIChatPlain(
 		includeUsage,
 		promptTokens,
 		lifecycle.completionCounts,
-		extraTokenCounter,
 	);
 }
 
@@ -150,7 +149,6 @@ export async function streamOpenAIChatWithToolSieve(
 		signal,
 	} = params;
 	const extraTokenCounter = createTokenCounter();
-	let completionCounts = emptyTokenCounts();
 	const writeChunk = (delta: Record<string, unknown>, finish: string | null) =>
 		write(
 			`data: ${JSON.stringify(openAIChatChunk(id, model, delta, finish))}\n\n`,
@@ -161,16 +159,6 @@ export async function streamOpenAIChatWithToolSieve(
 		undefined,
 		{ emitFirstImmediately: true },
 	);
-	let emittedText = false;
-	let issue: StreamIssue | null = null;
-	let violation:
-		| Extract<
-				CompletionStreamEvent,
-				{ type: "tool_policy_violation" }
-		  >["violation"]
-		| null = null;
-	let toolCalls: OpenAIToolCall[] | null = null;
-	let empty = false;
 	const toolLifecycle = createCompletionStreamLifecycle();
 	await writeChunk({ role: "assistant" }, null);
 
@@ -181,61 +169,53 @@ export async function streamOpenAIChatWithToolSieve(
 	)) {
 		recordCompletionStreamEvent(toolLifecycle, event);
 		if (event.type === "text_delta") {
-			emittedText = true;
 			const appended = deltaCoalescer.append("content", event.text);
 			if (appended) await appended;
-		} else if (event.type === "tool_policy_violation") {
-			violation = event.violation;
-		} else if (event.type === "tool_calls") {
-			toolCalls = event.toolCalls;
 		}
 	}
-	issue = toolLifecycle.issue;
-	empty = toolLifecycle.empty;
-	completionCounts = toolLifecycle.completionCounts;
 	await flushOpenAIChatDeltas(deltaCoalescer);
 
-	if (violation) {
+	if (toolLifecycle.violation) {
 		await flushOpenAIChatDeltas(deltaCoalescer);
 		log(
 			_cfg,
-			`openai chat stream tool policy violation model=${rm.name} code=${violation.code}`,
+			`openai chat stream tool policy violation model=${rm.name} code=${toolLifecycle.violation.code}`,
 		);
-		await writeOpenAIChatStreamError(write, id, model, violation);
+		await writeOpenAIChatStreamError(write, id, model, toolLifecycle.violation);
 		return;
 	}
-	if (toolCalls?.length) {
+	if (toolLifecycle.toolCalls?.length) {
 		await flushOpenAIChatDeltas(deltaCoalescer);
-		if (issue) {
+		if (toolLifecycle.issue) {
 			log(
 				_cfg,
-				`openai chat stream interrupted after tool calls model=${rm.name} code=${upstreamErrorCode(issue.error) || "stream_interrupted"} error=${errorLogSummary(issue.error)}`,
+				`openai chat stream interrupted after tool calls model=${rm.name} code=${upstreamErrorCode(toolLifecycle.issue.error) || "stream_interrupted"} error=${errorLogSummary(toolLifecycle.issue.error)}`,
 			);
-			await writeStreamWarningEvent(write, issue.error);
+			await writeStreamWarningEvent(write, toolLifecycle.issue.error);
 		}
 		const toolCallDeltas = formatOpenAIStreamToolCalls(
-			toolCalls.map(openAIStreamToolCallInput),
+			toolLifecycle.toolCalls.map(openAIStreamToolCallInput),
 			new Map(),
 			tools,
 		);
 		await writeChunk({ tool_calls: toolCallDeltas }, "tool_calls");
-		extraTokenCounter.append(JSON.stringify(toolCalls));
+		extraTokenCounter.append(JSON.stringify(toolLifecycle.toolCalls));
 	} else {
-		if (!emittedText || empty) {
-			const error = issue?.error || {
+		if (!toolLifecycle.emittedText || toolLifecycle.empty) {
+			const error = toolLifecycle.issue?.error || {
 				message: EMPTY_UPSTREAM_MSG,
 				code: "upstream_empty",
 			};
 			log(
 				_cfg,
-				issue
+				toolLifecycle.issue
 					? `openai chat stream failed before output model=${rm.name} code=${upstreamErrorCode(error) || "upstream_error"} error=${errorLogSummary(error)}`
 					: `openai chat stream produced no content model=${rm.name}`,
 			);
 			await writeOpenAIChatStreamError(write, id, model, error);
 			return;
-		} else if (issue) {
-			await writeOpenAIChatInterrupted(write, _cfg, rm, issue);
+		} else if (toolLifecycle.issue) {
+			await writeOpenAIChatInterrupted(write, _cfg, rm, toolLifecycle.issue);
 		}
 		await writeChunk({}, "stop");
 	}
@@ -245,7 +225,7 @@ export async function streamOpenAIChatWithToolSieve(
 			id,
 			model,
 			promptTokens,
-			combinedTokenCount(completionCounts, extraTokenCounter),
+			combinedTokenCount(toolLifecycle.completionCounts, extraTokenCounter),
 		);
 	await write("data: [DONE]\n\n");
 }
@@ -264,8 +244,7 @@ async function finishOpenAIChatStream(
 	model: string,
 	includeUsage: boolean,
 	promptTokens: number,
-	completionCounts: ReturnType<typeof emptyTokenCounts>,
-	extraTokenCounter: ReturnType<typeof createTokenCounter>,
+	completionCounts: Parameters<typeof tokenCountFromCounts>[0],
 ): Promise<void> {
 	await writeChunk({}, "stop");
 	if (includeUsage)
@@ -274,7 +253,7 @@ async function finishOpenAIChatStream(
 			id,
 			model,
 			promptTokens,
-			combinedTokenCount(completionCounts, extraTokenCounter),
+			tokenCountFromCounts(completionCounts),
 		);
 	await write("data: [DONE]\n\n");
 }

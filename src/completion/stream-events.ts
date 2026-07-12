@@ -1,6 +1,6 @@
 import { createTokenCounter, emptyTokenCounts } from "../shared/tokens";
 import type { TokenCharCounts } from "../shared/tokens";
-import { isAbortError } from "../shared/runtime";
+import { isAbortError } from "../shared/abort";
 import {
 	createToolSieveState,
 	flushToolSieve,
@@ -18,22 +18,6 @@ import { completionTextDeltas } from "./stream-coalesce";
 import type { StreamConsumeInternalOptions } from "./stream-coalesce";
 
 export type GeminiCompletionInput = CompletionTextInput;
-
-export type PlainStreamSummary = {
-	emittedText: boolean;
-	streamErr: unknown;
-	errMsg: string;
-	completionTokens: number;
-};
-
-export type ToolSieveStreamSummary = PlainStreamSummary & {
-	toolCalls: OpenAIToolCall[] | null;
-	violation: ToolPolicyViolation | null;
-};
-
-export type BufferedToolTextStreamSummary = PlainStreamSummary & {
-	bufferedText: string;
-};
 
 export type CompletionStreamEvent =
 	| { type: "text_delta"; text: string }
@@ -101,38 +85,6 @@ export function recordCompletionStreamEvent(
 	}
 }
 
-export async function consumePlainTextDeltas(
-	deltas: AsyncIterable<unknown>,
-	onText: (text: string) => void,
-): Promise<PlainStreamSummary> {
-	let emittedText = false;
-	let errMsg = "";
-	let streamErr: unknown = null;
-	const completionTokenCounter = createTokenCounter();
-
-	try {
-		for await (const delta of deltas) {
-			if (!delta) continue;
-			const text = String(delta);
-			if (!text) continue;
-			emittedText = true;
-			completionTokenCounter.append(text);
-			onText(text);
-		}
-	} catch (e) {
-		if (isAbortError(e)) throw e;
-		streamErr = e;
-		errMsg = errorMessage(e);
-	}
-
-	return {
-		emittedText,
-		streamErr,
-		errMsg,
-		completionTokens: completionTokenCounter.tokens(),
-	};
-}
-
 export async function* streamPlainCompletionEvents(
 	provider: CompletionProvider,
 	input: GeminiCompletionInput,
@@ -166,53 +118,6 @@ export async function* streamPlainCompletionEvents(
 		emittedText,
 		completionTokens: completionTokenCounter.tokens(),
 		completionCounts: completionTokenCounter.counts(),
-	};
-}
-
-export async function consumeToolSieveTextDeltas(
-	deltas: AsyncIterable<unknown>,
-	input: {
-		tools: unknown;
-		toolPolicy?: ToolChoicePolicy | null | undefined;
-	},
-	onText: (text: string) => void,
-): Promise<ToolSieveStreamSummary> {
-	const state = createToolSieveState();
-	let emittedText = false;
-	let errMsg = "";
-	let streamErr: unknown = null;
-	const completionTokenCounter = createTokenCounter();
-
-	try {
-		for await (const deltaText of deltas) {
-			for (const text of processToolSieveChunk(state, deltaText)) {
-				if (!text) continue;
-				emittedText = true;
-				completionTokenCounter.append(text);
-				onText(text);
-			}
-		}
-	} catch (e) {
-		if (isAbortError(e)) throw e;
-		streamErr = e;
-		errMsg = errorMessage(e);
-	}
-
-	const flushed = flushToolSieve(state, input.tools);
-	if (flushed.text) {
-		emittedText = true;
-		completionTokenCounter.append(flushed.text);
-		onText(flushed.text);
-	}
-	const toolCalls = flushed.toolCalls;
-	const violation = validateRequiredToolCalls(input.toolPolicy, toolCalls);
-	return {
-		emittedText,
-		streamErr,
-		errMsg,
-		completionTokens: completionTokenCounter.tokens(),
-		toolCalls,
-		violation,
 	};
 }
 
@@ -266,41 +171,6 @@ export async function* streamToolSieveCompletionEvents(
 		emittedText,
 		completionTokens: completionTokenCounter.tokens(),
 		completionCounts: completionTokenCounter.counts(),
-	};
-}
-
-export async function consumeBufferedToolTextDeltas(
-	deltas: AsyncIterable<unknown>,
-	onText: (text: string) => void,
-): Promise<BufferedToolTextStreamSummary> {
-	const state = createToolSieveState();
-	let emittedText = false;
-	let errMsg = "";
-	let streamErr: unknown = null;
-	const completionTokenCounter = createTokenCounter();
-
-	try {
-		for await (const deltaText of deltas) {
-			for (const text of processToolSieveChunk(state, deltaText)) {
-				if (!text) continue;
-				emittedText = true;
-				completionTokenCounter.append(text);
-				onText(text);
-			}
-		}
-	} catch (e) {
-		if (isAbortError(e)) throw e;
-		streamErr = e;
-		errMsg = errorMessage(e);
-	}
-
-	const bufferedText = toolSieveBufferedText(state);
-	return {
-		emittedText,
-		streamErr,
-		errMsg,
-		completionTokens: completionTokenCounter.tokens(),
-		bufferedText,
 	};
 }
 

@@ -1,4 +1,4 @@
-import { randHex } from "../shared/runtime";
+import { randHex } from "../shared/crypto";
 import { isRecord, type UnknownRecord } from "../shared/types";
 import {
 	normalizeHistoryRole,

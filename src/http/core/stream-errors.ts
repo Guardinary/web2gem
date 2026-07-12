@@ -1,4 +1,4 @@
-import { upstreamErrorCode, upstreamErrorMessage } from "../../shared/runtime";
+import { upstreamErrorCode, upstreamErrorMessage } from "../../shared/errors";
 import type { SSEWrite } from "./sse";
 
 export function streamErrorText(e: unknown, prefix = "upstream error"): string {

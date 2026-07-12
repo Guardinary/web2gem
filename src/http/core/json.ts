@@ -1,4 +1,4 @@
-import { UTF8_FATAL_DECODER } from "../../shared/runtime";
+import { UTF8_FATAL_DECODER } from "../../shared/encoding";
 import { tryParseJson } from "../../shared/json";
 import type { UnknownRecord } from "../../shared/types";
 

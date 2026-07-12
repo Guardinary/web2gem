@@ -1,4 +1,4 @@
-import { sanitizeUploadFilename } from "./media";
+import { sanitizeUploadFilename } from "./mime";
 import type { AttachmentDrop, AttachmentKind } from "./types";
 
 export function droppedAttachmentNote(

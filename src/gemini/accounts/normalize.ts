@@ -1,5 +1,6 @@
 import { parseCookieHeader, serializeCookieMap } from "../cookies";
-import { bytesToHex, TEXT_ENCODER } from "../../shared/runtime";
+import { bytesToHex } from "../../shared/crypto";
+import { TEXT_ENCODER } from "../../shared/encoding";
 import type {
 	GeminiAccountCategory,
 	GeminiAccountPublic,

@@ -1,9 +1,6 @@
 import { isRecord } from "../shared/types";
-import {
-	imageFilenameFromObject,
-	normalizeUploadFileInput,
-	sanitizeUploadFilename,
-} from "./media";
+import { imageFilenameFromObject, normalizeUploadFileInput } from "./input";
+import { sanitizeUploadFilename } from "./mime";
 import type { AttachmentFileRef } from "./types";
 
 type ExistingRefState = {

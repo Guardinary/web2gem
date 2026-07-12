@@ -1,11 +1,13 @@
 import type { RuntimeConfig, WorkerEnv } from "../../config";
-import { errorLogSummary, log } from "../../shared/runtime";
+import { errorLogSummary } from "../../shared/errors";
+import { log } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
 import {
 	createInputFromAccount,
 	GeminiAccountAdminError,
 	hasAccountUpdate,
 	normalizeCreateAccounts,
+	normalizeBulkAction,
 	normalizeListFilter,
 	updateFromBody,
 	WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS,
@@ -20,6 +22,7 @@ import type {
 	GeminiAccountBulkCreateEntry,
 	GeminiAccountBulkCreateResult,
 	GeminiAccountAdminFilter,
+	GeminiAccountAdminOverview,
 	GeminiAccountAdminStats,
 	GeminiAccountAdminStore,
 	GeminiAccountCookieRotator,
@@ -37,6 +40,15 @@ export type GeminiAccountMutationResult = {
 	updated?: number;
 	removed?: number;
 	skipped?: number;
+};
+
+export type GeminiAccountBulkActionResult = GeminiAccountMutationResult & {
+	checked?: number;
+	refreshed?: number;
+	unchanged?: number;
+	failed?: number;
+	errors: GeminiAccountDiagnosticError[];
+	results: GeminiAccountDiagnosticItem[];
 };
 
 export type GeminiAccountCreateResult = {
@@ -130,6 +142,19 @@ export class GeminiAccountAdminService {
 		);
 	}
 
+	overview(
+		filter: GeminiAccountAdminFilterInput,
+	): Promise<GeminiAccountAdminOverview> {
+		const normalized = normalizeListFilter(filter);
+		const nowMs = this.nowMs();
+		if (this.adminStore.getAdminOverview)
+			return this.adminStore.getAdminOverview(normalized, nowMs);
+		return Promise.all([
+			this.adminStore.listAdminAccounts(normalized, nowMs),
+			this.stats(normalized),
+		]).then(([page, stats]) => ({ ...page, stats }));
+	}
+
 	stats(
 		filter: GeminiAccountAdminFilterInput,
 	): Promise<GeminiAccountAdminStats> {
@@ -204,8 +229,57 @@ export class GeminiAccountAdminService {
 
 	async delete(id: string): Promise<GeminiAccountMutationResult> {
 		if (!(await this.adminStore.deleteAccount(id))) throw accountNotFound();
-		const page = await this.list({ limit: 50 });
-		return { removed: 1, skipped: 0, items: page.items };
+		return { removed: 1, skipped: 0, items: [] };
+	}
+
+	async runBulkAction(
+		body: UnknownRecord,
+	): Promise<GeminiAccountBulkActionResult> {
+		const { action, ids } = normalizeBulkAction(body);
+		if (action === "refresh" || action === "check") {
+			const outcomes = await mapWithConcurrency(ids, 4, (id) =>
+				this.refreshOrCheckOne(id, action),
+			);
+			return diagnosticResult(
+				outcomes.map((outcome) => outcome.item),
+				outcomes.flatMap((outcome) => (outcome.error ? [outcome.error] : [])),
+				[],
+			);
+		}
+		if (action === "delete") {
+			let removedIds: string[];
+			if (this.adminStore.deleteAccountsBulk) {
+				removedIds = await this.adminStore.deleteAccountsBulk(
+					ids,
+					this.nowMs(),
+				);
+			} else {
+				const deleted = await Promise.all(
+					ids.map((id) => this.adminStore.deleteAccount(id)),
+				);
+				removedIds = ids.filter((_id, index) => deleted[index]);
+			}
+			return bulkMutationResult(action, ids, removedIds, []);
+		}
+		const enabled = action === "enable";
+		const items = this.adminStore.setAccountsEnabledBulk
+			? await this.adminStore.setAccountsEnabledBulk(ids, enabled, this.nowMs())
+			: (
+					await Promise.all(
+						ids.map((id) =>
+							this.adminStore.updateAccount(id, {
+								enabled,
+								nowMs: this.nowMs(),
+							}),
+						),
+					)
+				).filter((item): item is GeminiAccountPublic => item !== null);
+		return bulkMutationResult(
+			action,
+			ids,
+			items.map((item) => item.id),
+			items,
+		);
 	}
 
 	async refresh(id: string): Promise<GeminiAccountDiagnosticResult> {
@@ -222,11 +296,10 @@ export class GeminiAccountAdminService {
 	): Promise<GeminiAccountDiagnosticResult> {
 		const result = await this.refreshOrCheckOne(id, mode);
 		if (result.item.reason === "account_missing") throw accountNotFound();
-		const page = await this.list({ limit: 50 });
 		return diagnosticResult(
 			[result.item],
 			result.error ? [result.error] : [],
-			page.items,
+			[],
 		);
 	}
 
@@ -375,6 +448,48 @@ function diagnosticResult(
 		),
 		items,
 	};
+}
+
+function bulkMutationResult(
+	action: "enable" | "disable" | "delete",
+	ids: readonly string[],
+	changedIdsInput: readonly string[],
+	items: GeminiAccountPublic[],
+): GeminiAccountBulkActionResult {
+	const changedIds = new Set(
+		action === "delete" ? changedIdsInput : items.map((item) => item.id),
+	);
+	const results: GeminiAccountDiagnosticItem[] = ids.map((id) => ({
+		id,
+		status: changedIds.has(id) ? "refreshed" : "skipped",
+		...(!changedIds.has(id) ? { reason: "account_missing" } : {}),
+	}));
+	const changed = changedIds.size;
+	return {
+		items,
+		...(action === "delete" ? { removed: changed } : { updated: changed }),
+		skipped: ids.length - changed,
+		errors: [],
+		results,
+	};
+}
+
+async function mapWithConcurrency<T, R>(
+	items: readonly T[],
+	concurrency: number,
+	worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const results = new Array<R>(items.length);
+	let nextIndex = 0;
+	await Promise.all(
+		Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+			while (nextIndex < items.length) {
+				const index = nextIndex++;
+				results[index] = await worker(items[index] as T);
+			}
+		}),
+	);
+	return results;
 }
 
 function safeAdminError(error: unknown): string {

@@ -1,4 +1,4 @@
-import { TEXT_DECODER } from "../../shared/runtime";
+import { TEXT_DECODER } from "../../shared/encoding";
 import { _joinByteChunks } from "./byte-queue";
 import type { ByteChunk, SocketTimeoutScope } from "./socket-types";
 

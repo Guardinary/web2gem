@@ -8,19 +8,19 @@
 - `src/http/` owns HTTP boundary concerns only. Generic CORS/auth/JSON/SSE helpers live under `http/core/`, stream framing helpers under `http/stream/`, and protocol adapters under `http/openai/` and `http/google/`.
 - `src/http/openai/images.ts` owns OpenAI image route orchestration and generation response flow. JSON and multipart image-edit input normalization, upload-size enforcement, and image-part coercion belong in `src/http/openai/images-input.ts`; keep provider calls and response formatting out of that input owner.
 - HTTP protocol adapters should import `http/core/*` and `http/stream/*` owner modules directly. `src/http/index.ts` is a public/top-level barrel for the Worker entrypoint and compatibility exports, not an internal dependency for protocol adapters.
-- `src/completion/` owns provider-neutral completion contracts and shared business behavior: prompt/context preparation, provider text-generation ports, empty-output handling, stream/tool-sieve event consumption, and completion turn finalization. It must not import `src/gemini/**` directly.
+- `src/completion/` owns provider-neutral completion contracts and shared business behavior: prompt/context preparation, provider text-generation ports, empty-output handling, stream/tool-sieve event generation, one `CompletionStreamLifecycle` reducer, and completion turn finalization. Protocol adapters must not mirror reducer-owned issue/empty/tool-call/policy/count state, and callback-style stream consumption APIs are not part of the contract.
 - `src/promptcompat/` converts OpenAI Responses, OpenAI chat, and Google content shapes into prompt text and file references.
 - `src/toolcall/` owns tool-call prompt formatting, parsing, policy validation, and schema normalization.
 - `src/toolcall/index.ts` is a compatibility barrel only. Implementation modules outside `src/toolcall/` should import concrete owner modules such as `toolcall/content`, `toolcall/tool-bundle`, `toolcall/policy-openai`, `toolcall/policy-google`, `toolcall/google`, `toolcall/dsml`, `toolcall/openai-format`, `toolcall/prompt-format`, or `toolcall/structured` instead of the broad barrel.
 - `src/toolstream/` owns streamed tool-call sieve state.
 - `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. `gemini/client/index.ts` should stay an orchestration layer; payload/header construction, response parsing, retry helpers, and domain error classification live in sibling client modules.
-- `src/gemini/client/generated-images.ts` owns generated-image URL candidates, browser/cookie download headers, byte hydration, supported output-format mapping, and URL fallback. It must reuse MIME detection and base64 encoding from `src/attachments/media.ts`.
+- `src/gemini/client/generated-images.ts` owns generated-image URL candidates, browser/cookie download headers, byte hydration, supported output-format mapping, and URL fallback. It must reuse MIME detection from `src/attachments/mime.ts` and encoding from `src/attachments/base64.ts`.
 - `src/gemini/accounts/admin-input.ts` owns admin request normalization and validation. `admin.ts` owns account-admin use-case orchestration and depends on capability-specific admin/runtime store contracts.
 - `src/gemini/accounts/store-d1.ts` owns D1 account persistence operations. Admin list projection, filter-to-SQL construction, and public-row mapping belong in `src/gemini/accounts/store-d1-admin.ts`; keep database execution and mutations in the main store.
 - `src/gemini/transport/http.ts` owns the unified upstream HTTP entry. It may choose `cloudflare:sockets` first and fall back to `fetch` only when request semantics are preserved.
 - `src/gemini/transport/socket.ts` is the public socket transport facade. If the socket implementation is decomposed, keep public exports compatible from this module and move internals into owner modules under `src/gemini/transport/`.
 - `src/gemini/completion-provider.ts` is the Gemini adapter for `src/completion/ports.ts`. It may import completion port types; other Gemini implementation modules should not depend on completion business modules.
-- `src/shared/` must stay leaf-level and provider-neutral.
+- `src/shared/` must stay leaf-level and provider-neutral. Production code imports concrete owners: `encoding.ts`, `logging.ts`, `abort.ts`, `errors.ts`, and `crypto.ts`; `runtime.ts` is compatibility-only. Gemini SAPISID hashing belongs to `src/gemini/auth.ts`.
 - Media and attachment helpers live under `src/attachments/**`; do not add compatibility shims under `src/shared/`.
 - `scripts/docker-server.mjs` adapts Node HTTP requests to the Worker `fetch` entrypoint. It owns Node header/body/response-stream translation and propagates client disconnects into the Web `Request.signal`; it must not duplicate route, auth, completion, or provider logic.
 
@@ -161,7 +161,7 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 ### 3. Contracts
 
 - `src/attachments/**` is provider-neutral and may depend on `src/shared/**`, but must not import `src/gemini/**`, HTTP adapters, or completion modules.
-- Implementation modules must import attachment media helpers from `src/attachments/media`.
+- Implementation modules import Base64 helpers from `src/attachments/base64.ts`, MIME/filename helpers from `src/attachments/mime.ts`, and upload-input normalization from `src/attachments/input.ts`. `src/attachments/media.ts` is a compatibility facade only.
 - `src/completion/**` must call provider ports for upload and must not import Gemini upload modules.
 - `src/gemini/uploads/**` owns Gemini Web upload protocol details. Preferred content-push upload is multipart and must not include Gemini cookie or SAPISID authorization headers.
 - Request-local candidate dedupe is scoped to one request and keyed by MIME/content type, filename, and bytes.
@@ -180,7 +180,7 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 
 - Good: prompt conversion emits markers, attachment planning owns candidates/refs, completion calls `resolveAttachments(plan)`, and Gemini adapter executes the plan.
 - Bad: `src/completion/context.ts` imports `src/gemini/uploads`.
-- Bad: implementation modules import media helpers from any `src/shared` compatibility shim instead of the `src/attachments/media` owner.
+- Bad: implementation modules import attachment helpers through the broad `src/attachments/media.ts` compatibility facade instead of the concrete owner.
 - Bad: adding a second resolver path for images or files outside `AttachmentPlan`.
 - Bad: sending `Cookie` or `Authorization` to `https://content-push.googleapis.com/upload` on the preferred multipart path.
 

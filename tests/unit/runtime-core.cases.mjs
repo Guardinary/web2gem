@@ -131,7 +131,7 @@ export const cases = [
 					mod.log({ log_requests: true }, { ok: true });
 					const cyclic = {};
 					cyclic.self = cyclic;
-					mod.logInfo({ log_requests: true }, cyclic);
+					mod.log({ log_requests: true }, cyclic);
 					mod.logStage({ log_requests: true }, "upload", {
 						empty: "",
 						skip: null,
@@ -1062,10 +1062,17 @@ export const cases = [
 				"https://app.example",
 			);
 			const caughtBody = await caught.json();
-			assert.match(caughtBody.error.message, /URI malformed/);
-			assert.equal(logs.length, 1);
+			assert.deepEqual(caughtBody.error, {
+				message: "internal server error",
+				code: "internal_server_error",
+			});
+			assert.equal(logs.length, 2);
 			assert.match(logs[0], /^\[web2gem\] error: type=URIError$/);
 			assert.doesNotMatch(logs[0], /URI malformed|at /);
+			assert.match(
+				logs[1],
+				/^\[web2gem\] stage=request_complete requestId=.+ method=GET path=\/v1\/models\/%E0%A4%A status=500 ms=/,
+			);
 
 			const emptyChat = await mod.default.fetch(
 				new Request("https://worker.example/v1/chat/completions", {

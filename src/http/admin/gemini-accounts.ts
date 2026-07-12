@@ -6,9 +6,11 @@ import {
 import {
 	accountIdFromPathSegment,
 	assertNoAdminQueryParams,
+	includeStatsFromSearchParams,
 	listFilterFromSearchParams,
 } from "../../gemini/accounts/admin-input";
-import { errorLogSummary, log } from "../../shared/runtime";
+import { errorLogSummary } from "../../shared/errors";
+import { log } from "../../shared/logging";
 import { isRecord } from "../../shared/types";
 import { jsonResponse, readJsonRequest } from "../core/json";
 
@@ -37,7 +39,11 @@ export async function handleGeminiAccountAdminRequest(
 		if (method === "GET" && path === ADMIN_PATH_PREFIX) {
 			const filter = listFilterFromSearchParams(url.searchParams);
 			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
-			return jsonResponse(await service.list(filter));
+			return jsonResponse(
+				includeStatsFromSearchParams(url.searchParams)
+					? await service.overview(filter)
+					: await service.list(filter),
+			);
 		}
 
 		if (method === "GET" && path === `${ADMIN_PATH_PREFIX}/stats`) {
@@ -53,6 +59,13 @@ export async function handleGeminiAccountAdminRequest(
 			const body = await readAdminJson(request);
 			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
 			return jsonResponse(await service.create(body));
+		}
+
+		if (method === "POST" && path === `${ADMIN_PATH_PREFIX}/actions`) {
+			assertNoAdminQueryParams(url.searchParams);
+			const body = await readAdminJson(request);
+			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
+			return jsonResponse(await service.runBulkAction(body));
 		}
 
 		const resource = accountResourceFromPath(path);

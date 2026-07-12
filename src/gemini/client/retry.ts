@@ -2,7 +2,9 @@ import { GEMINI_WEB_USER_AGENT } from "../constants";
 import { httpFetch } from "../transport";
 import { extractGeminiBuildLabel } from "../app-page";
 import { createOriginScopedStringCache } from "../cache";
-import { errorLogSummary, log, sleep } from "../../shared/runtime";
+import { errorLogSummary } from "../../shared/errors";
+import { log } from "../../shared/logging";
+import { sleep } from "../../shared/abort";
 import type { RuntimeConfig } from "../../config";
 
 export const GEMINI_BL_CACHE_TTL_SEC = 12 * 60 * 60;
