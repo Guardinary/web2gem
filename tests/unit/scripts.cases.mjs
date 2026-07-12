@@ -176,6 +176,28 @@ export const cases = [
 		},
 	],
 	[
+		"classifies documentation-only and runtime-impacting CI changes",
+		async () => {
+			for (const [files, expected] of [
+				[["README.md", "docs/images/example.png"], "docs"],
+				[["src/index.ts"], "runtime"],
+				[[".github/workflows/quality-gates.yml"], "runtime"],
+				[[".trellis/spec/web2gem/backend/index.md"], "runtime"],
+				[["migrations/0001_gemini_accounts.sql"], "runtime"],
+				[["src/admin-ui/app.tsx"], "runtime"],
+				[[], "runtime"],
+			]) {
+				const result = await runNodeScript(
+					"scripts/classify-ci-changes.mjs",
+					null,
+					{ CI_CHANGED_FILES_JSON: JSON.stringify(files) },
+				);
+				assert.equal(result.code, 0);
+				assert.equal(result.stdout.trim(), expected);
+			}
+		},
+	],
+	[
 		"rejects bundle size over the configured budget",
 		async () => {
 			await withTempFile("worker.js", "x".repeat(257), async (bundlePath) => {
@@ -591,6 +613,23 @@ export const cases = [
 			assert.match(
 				workflow,
 				/github\.ref == 'refs\/heads\/gemini-account-pool'/,
+			);
+			assert.match(workflow, /name: Classify Change Risk/);
+			assert.match(
+				workflow,
+				/git diff --name-only -z[\s\S]*node scripts\/classify-ci-changes\.mjs/,
+			);
+			assert.match(
+				workflow,
+				/name: Required Gates - Ubuntu[\s\S]*needs: classify/,
+			);
+			assert.match(
+				workflow,
+				/name: Required - Documentation Validation[\s\S]*git diff --check/,
+			);
+			assert.match(
+				workflow,
+				/name: Required Gates - Node Unit[\s\S]*if: \$\{\{ needs\.classify\.outputs\.runtime == 'true' \}\}/,
 			);
 		},
 	],

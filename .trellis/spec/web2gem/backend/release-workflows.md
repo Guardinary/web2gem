@@ -438,6 +438,59 @@ tests
 docs
 ```
 
+## Scenario: Risk-Routed Pull Request Gates
+
+### 1. Scope / Trigger
+
+Use this contract when changing the quality workflow or changed-file classifier.
+
+### 2. Signatures
+
+- `classifyChangedFiles(files)` returns `docs` or `runtime`.
+- `Required Gates - Ubuntu` remains the stable aggregate required-check name.
+
+### 3. Contracts
+
+- Every PR runs the classifier. Only root README files, `LICENSE`, and `docs/` paths are documentation-only.
+- Empty, unknown, workflow, Trellis spec, migration, admin UI, source, test, script, config, and Docker sets fail closed to runtime.
+- Pushes to `dev`, `main`, and `gemini-account-pool`, plus manual runs, always execute full gates.
+- Documentation-only PRs retain the Ubuntu required job while skipping dependency installation, coverage, benchmarks, bundle checks, and the Node matrix.
+
+### 4. Validation & Error Matrix
+
+- README plus docs image -> docs.
+- Account migration or admin UI source -> runtime.
+- Non-PR event -> runtime without diff classification.
+
+### 5. Good/Base/Bad Cases
+
+- Good: repository-owned Node classifier fed by NUL-separated Git paths.
+- Base: preserve account-pool push and Docker smoke conditions.
+- Bad: skip the entire workflow with `paths-ignore`.
+
+### 6. Tests Required
+
+- Unit-test representative documentation and account-pool runtime paths.
+- Contract-test stable job names and conditional heavy jobs.
+- Run `actionlint` across all workflows.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```yaml
+pull_request:
+  paths-ignore: ["**/*.md"]
+```
+
+#### Correct
+
+```yaml
+ubuntu-quality:
+  name: Required Gates - Ubuntu
+  needs: classify
+```
+
 ## Validation
 
 For workflow changes, run:

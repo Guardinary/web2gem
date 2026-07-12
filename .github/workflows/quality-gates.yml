@@ -21,49 +21,83 @@ env:
   PNPM_VERSION: "11.10.0"
 
 jobs:
+  classify:
+    name: Classify Change Risk
+    runs-on: ubuntu-latest
+    outputs:
+      runtime: ${{ steps.risk.outputs.runtime }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: risk
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            printf 'risk=runtime\nruntime=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only -z "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" \
+            | node scripts/classify-ci-changes.mjs
+
   ubuntu-quality:
     name: Required Gates - Ubuntu
+    needs: classify
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup pnpm
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
       - name: Install dependencies
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm install --frozen-lockfile
 
       - name: Required - Static Analysis
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm check:static
 
       - name: Required - Worker Binding Types
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm check:worker-types
 
       - name: Required - TypeScript
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm typecheck
 
       - name: Required - Architecture
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm check:arch
 
       - name: Required - Coverage
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm coverage:ci
 
       - name: Required - Smoke
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm smoke
 
       - name: Required - Performance Regression
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm check:bench
 
       - name: Observation - Tool Sieve Benchmark Snapshot
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         continue-on-error: true
         env:
           BENCH_CASES: stream_sieve_held_tool
@@ -72,10 +106,19 @@ jobs:
         run: node scripts/bench.mjs
 
       - name: Required - Bundle Size
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm check:size
+
+      - name: Required - Documentation Validation
+        if: ${{ needs.classify.outputs.runtime != 'true' }}
+        run: |
+          test "$(CI_CHANGED_FILES_JSON='[\"README.md\",\"docs/example.png\"]' node scripts/classify-ci-changes.mjs)" = "docs"
+          git diff --check "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
 
   node-unit:
     name: Required Gates - Node Unit (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    needs: classify
+    if: ${{ needs.classify.outputs.runtime == 'true' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
