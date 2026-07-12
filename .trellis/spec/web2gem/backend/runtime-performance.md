@@ -85,6 +85,9 @@ Use this contract when adding benchmark cases, changing hot-path algorithms, cha
 - `pnpm check:bench` gates a representative default case matrix.
 - `BENCH_GATE_BUDGETS` may override the matrix with a JSON object mapping benchmark names to positive maximum median milliseconds.
 - `BENCH_GATE_CASE` plus `BENCH_MAX_MEDIAN_MS` remains the explicit single-case compatibility mode.
+- `BENCH_ACCOUNT_ADMIN_COUNT` controls the account-admin fixture population and
+  defaults to 1000; the default overview case projects 200 rows and the bulk
+  action case mutates 100 IDs.
 
 ### 3. Contracts
 
@@ -92,6 +95,8 @@ Use this contract when adding benchmark cases, changing hot-path algorithms, cha
 - The default gate must cover more than one subsystem. It currently includes held tool sieving, cumulative stream extraction, split socket chunk-line parsing, structured-output uniqueness, account overview reads, and bulk account mutation orchestration.
 - Every gated result must contain a finite numeric `medianMs`; missing, `null`, string, or non-finite values fail closed.
 - Thresholds are absolute CI regression ceilings with hardware headroom, not claims about a specific workstation baseline.
+- Default account-admin median ceilings are 0.1 ms for overview projection and
+  0.5 ms for 100-ID bulk mutation orchestration.
 - Intentional delay cases such as `sse_slow_consumer` remain observational and must not enter the CPU gate.
 - Optimize only after repeated baseline runs. If an attempted fast path is slower, remove it instead of weakening the benchmark.
 - `createStreamTextExtractor` may retain the complete previous raw value only while it is small enough for exact append comparison. For larger cumulative values, retain length plus bounded head/tail probes so prior large responses can be collected while append detection stays bounded.
@@ -116,6 +121,9 @@ Use this contract when adding benchmark cases, changing hot-path algorithms, cha
 
 - Unit test machine-readable benchmark output with a fast filtered case.
 - Unit test multi-case JSON gate success.
+- Unit test benchmark fixture and default-budget changes through the scripts
+  contract; keep the account-admin workload sizes aligned with production
+  pagination and bulk-action bounds.
 - Unit test a missing gated result and an over-budget result fail with the case name.
 - Run `pnpm check:bench` after benchmark or hot-path changes.
 - Run `pnpm unit` because script behavior is covered by `tests/unit/scripts.cases.mjs`.

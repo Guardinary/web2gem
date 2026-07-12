@@ -332,6 +332,9 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 - Default create payload accepts only `provider`, `accounts[]`, `__Secure-1PSID`, `__Secure-1PSIDTS`, and safe metadata such as `label`, `user_agent`, `gemini_origin`, `source`, `source_id`, and `source_name`.
 - Mutation and diagnostic routes take the stable account `id` from the URL path. Request bodies must not contain `id`, `account_id`, `row_id`, or `identifiers`.
 - `admin-input.ts` exports `accountIdFromPathSegment`, `listFilterFromSearchParams`, `assertNoAdminQueryParams`, `normalizeCreateAccounts`, `createInputFromAccount`, `updateFromBody`, and `normalizeListFilter` as the single validation/normalization owner.
+- `domain.ts` exports `GEMINI_ACCOUNT_CATEGORIES`,
+  `isGeminiAccountCategory`, and `boundedGeminiAccountPageLimit` as the shared
+  account-domain owner used by both admin input and D1 persistence.
 - `GeminiAccountAdminService` accepts explicit `adminStore` and `runtimeStore` capabilities; the legacy combined `store` option remains a compatibility construction path.
 
 ### 3. Contracts
@@ -342,6 +345,8 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 - Service-layer admin methods return sanitized DTOs before the HTTP route serializes responses. Route handlers must not receive raw D1 account rows for list/create/update/delete/refresh/check results.
 - Default Gemini import must reject full Cookie headers, JSON-looking cookie blobs, `access_token`, `accessToken`, `cookie`, `cookies`, extra non-null payload keys, provider mismatches, missing PSID/PSIDTS, and dual-field values containing cookie names, `=`, or `;`.
 - List pagination is bounded: default `limit` is 50 and maximum `limit` is 200.
+- Category validation and defensive D1 pagination must reuse `domain.ts`; do not
+  duplicate category lists or page-limit clamps across boundary modules.
 - PATCH/DELETE/refresh/check continue to operate on one stable path `id`. Bulk UI actions use the bounded `/admin/accounts/actions` contract; D1 enable/disable/delete implementations use set-based mutations and publish pool-version changes atomically.
 - `include_stats=true` returns the normal page fields plus `stats`; D1 adapters should use one native batch read when available. Mutation responses contain affected sanitized items only and must not query or embed an unrelated replacement page.
 - Query parameters are allowlisted per route. Unknown, duplicate, empty, malformed, or out-of-range values return explicit 400 errors instead of being ignored or clamped at the HTTP boundary.

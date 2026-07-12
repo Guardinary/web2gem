@@ -26,13 +26,19 @@ The root package is a Cloudflare Worker that adapts Gemini Web behavior to OpenA
 Run these from `/workspace`:
 
 ```sh
+pnpm check:static
 pnpm typecheck
 pnpm check:arch
 pnpm unit
+pnpm coverage:ci
 pnpm smoke
 ```
 
 `pnpm smoke` builds `dist/worker.js`, imports the bundle, checks public exports, and verifies the health route plus a DSML tool-call parse.
+
+Run `pnpm check:worker-types` after Wrangler, binding, or Workers types changes;
+run `pnpm check:bench` and `pnpm check:size` after runtime/build dependency or
+hot-path changes.
 
 ---
 

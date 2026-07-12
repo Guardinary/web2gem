@@ -16,6 +16,10 @@
 - `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. `gemini/client/index.ts` should stay an orchestration layer; payload/header construction, response parsing, retry helpers, and domain error classification live in sibling client modules.
 - `src/gemini/client/generated-images.ts` owns generated-image URL candidates, browser/cookie download headers, byte hydration, supported output-format mapping, and URL fallback. It must reuse MIME detection from `src/attachments/mime.ts` and encoding from `src/attachments/base64.ts`.
 - `src/gemini/accounts/admin-input.ts` owns admin request normalization and validation. `admin.ts` owns account-admin use-case orchestration and depends on capability-specific admin/runtime store contracts.
+- `src/gemini/accounts/domain.ts` is the single owner for account categories,
+  category guards, and the shared default/minimum/maximum account page limit.
+  Admin input and D1 query/page projection code must reuse this owner instead of
+  maintaining parallel category arrays or limit clamps.
 - `src/gemini/accounts/store-d1.ts` owns D1 account persistence operations. Admin list projection, filter-to-SQL construction, and public-row mapping belong in `src/gemini/accounts/store-d1-admin.ts`; keep database execution and mutations in the main store.
 - `src/gemini/transport/http.ts` owns the unified upstream HTTP entry. It may choose `cloudflare:sockets` first and fall back to `fetch` only when request semantics are preserved.
 - `src/gemini/transport/socket.ts` is the public socket transport facade. If the socket implementation is decomposed, keep public exports compatible from this module and move internals into owner modules under `src/gemini/transport/`.
@@ -366,6 +370,9 @@ Use this contract when changing build outputs, public exports, smoke tests, or l
 - `scripts/build.mjs` emits:
   - `dist/worker.js` from `src/index.ts`
   - `dist/worker.test.js` from `src/test-index.ts`
+- `pnpm check:size` builds `dist/worker.js` and gates its level-9 gzip size
+  through `scripts/check-bundle-size.mjs`; the default gzip ceiling is 3 MiB and
+  `BUNDLE_GZIP_SIZE_LIMIT_BYTES` may override it.
 - `wrangler.jsonc` deploys `dist/worker.js`.
 - `tests/unit/*.test.mjs` are Vitest-discovered wrapper files; unit modules import `dist/worker.test.js` by default.
 - `tests/unit/*.cases.mjs` own reusable case lists imported by the Vitest wrapper files.
@@ -377,6 +384,9 @@ Use this contract when changing build outputs, public exports, smoke tests, or l
 - Do not add `export * from "./test-exports"` to `src/index.ts`.
 - Smoke tests should import the production bundle for public exports and health checks.
 - Smoke tests may import the test bundle for internal compatibility checks, but must also assert that representative internal helpers are absent from the production bundle.
+- Bundle-size output reports raw bytes, gzip bytes, the configured gzip ceiling,
+  and remaining headroom. Raw bundle bytes are observational and are not the
+  release gate.
 
 ### 4. Validation & Error Matrix
 
@@ -384,6 +394,9 @@ Use this contract when changing build outputs, public exports, smoke tests, or l
 - `dist/worker.test.js` misses a helper required by `tests/unit/*` -> fail unit tests.
 - `wrangler.jsonc` points to `dist/worker.test.js` -> invalid deployment config.
 - `scripts/build.mjs` only emits one bundle -> unit or smoke should fail before deploy.
+- Missing/empty production bundle -> `pnpm check:size` fails.
+- Level-9 gzip bytes exceed `BUNDLE_GZIP_SIZE_LIMIT_BYTES` (or the 3 MiB
+  default) -> `pnpm check:size` fails even when raw size is otherwise readable.
 
 ### 5. Good/Base/Bad Cases
 
@@ -391,6 +404,8 @@ Use this contract when changing build outputs, public exports, smoke tests, or l
 - Base: add a stable user-facing helper to `src/public-exports.ts` only when it is intentionally part of the package surface.
 - Bad: import `src/test-exports.ts` from `src/index.ts` to make a unit test pass.
 - Bad: make smoke validate only `dist/worker.test.js`; that misses production export leaks and route wiring regressions.
+- Bad: gate raw bundle bytes with the legacy `BUNDLE_SIZE_LIMIT_BYTES`; release
+  size is the compressed artifact budget.
 
 ### 6. Tests Required
 
@@ -398,6 +413,7 @@ Use this contract when changing build outputs, public exports, smoke tests, or l
 - Run `pnpm unit` after changing `src/test-exports.ts`, `src/test-index.ts`, or `tests/unit/*`.
 - Run `pnpm smoke` after changing `src/index.ts`, `src/public-exports.ts`, `scripts/build.mjs`, or `scripts/smoke.mjs`.
 - Run `pnpm check:arch` after adding imports between source layers.
+- Run `pnpm check:size` after changing build inputs or runtime dependencies.
 
 ### 7. Wrong vs Correct
 
@@ -432,8 +448,11 @@ Use this contract when changing test coverage commands, build sourcemap behavior
 - `pnpm coverage:ci` uses the same Vitest V8 coverage execution path, then runs `node scripts/check-coverage.mjs`.
 - `scripts/build.mjs` reads `process.env.COVERAGE`; truthy values are `1`, `true`, `yes`, and `on`.
 - Coverage builds default to `dist-coverage/`; normal builds default to `dist/`.
-- `vitest.config.mjs` owns the V8 coverage provider, report formats, include/exclude paths, and global percentage thresholds.
-- `scripts/check-coverage.mjs` owns directory-level source coverage gates using `coverage/coverage-summary.json`.
+- `vitest.config.mjs` owns the V8 coverage provider, report formats, and
+  include/exclude paths; percentage thresholds belong to
+  `scripts/check-coverage.mjs`.
+- `scripts/check-coverage.mjs` owns aggregate source thresholds plus directory-
+  and file-level source gates using `coverage/coverage-summary.json`.
 
 ### 3. Contracts
 
@@ -441,7 +460,10 @@ Use this contract when changing test coverage commands, build sourcemap behavior
 - Coverage builds emit linked sourcemaps with `sourcesContent` into `dist-coverage/` so Vitest V8 coverage can remap `dist-coverage/worker.test.js` coverage back to `src/`.
 - Coverage includes the isolated test bundle entry (`dist-coverage/worker.test.js`) because unit tests import the bundle rather than raw TypeScript.
 - Unit helpers read `process.env.TEST_BUNDLE` when set and default to `../../dist/worker.test.js` for the normal workflow.
-- Vitest V8 coverage is the coverage collector. Its sourcemapped bundle percentages are the baseline for global thresholds and `scripts/check-coverage.mjs` directory gates.
+- Vitest V8 coverage is the collector and remapper; it does not own regression
+  thresholds. `scripts/check-coverage.mjs` aggregates only remapped `src/`
+  entries, excluding bundled third-party rows, and applies source-wide,
+  directory, and file gates.
 - Coverage thresholds are regression floors, not aspirational 100% targets. No directory or aggregate threshold should be 100%; stable areas should normally retain 3–5 percentage points of measured headroom so one defensive branch does not block unrelated work.
 - Global thresholds must remain representative of the repository baseline, and newer high-risk owners such as `src/admin-ui`, `src/attachments`, `src/gemini/accounts`, and `src/http/admin` require explicit line and branch gates instead of relying only on broad parent-directory aggregation. Browser UI coverage is sourced from browser-independent logic exported through the test bundle; generated embedded HTML is validated separately by route/smoke assertions.
 - Generated coverage output belongs under `coverage/` and coverage build output belongs under `dist-coverage/`; both must stay git-ignored.
@@ -452,7 +474,12 @@ Use this contract when changing test coverage commands, build sourcemap behavior
 - `pnpm coverage` reports test wrappers or generated bundle paths only -> Vitest coverage include/exclude paths or sourcemap output are wrong; fix `vitest.config.mjs` and the coverage build sourcemaps.
 - `pnpm coverage:ci` reports zero files -> coverage filtering is invalid; do not rely on a passing exit code until the report includes `src/` rows.
 - Normal `pnpm build` leaves sourcemaps after a prior coverage run -> clean stale map files in the non-coverage build path.
-- `pnpm coverage:ci` passes global Vitest thresholds but `scripts/check-coverage.mjs` fails -> a protected source directory regressed; add focused tests or intentionally ratchet the directory gate with evidence.
+- `pnpm coverage:ci` collects a report but `scripts/check-coverage.mjs` fails ->
+  an aggregate source, protected directory, or protected file gate regressed;
+  add focused tests or intentionally ratchet the gate with evidence.
+- A zero-coverage `node_modules` row changes aggregate source percentages -> the
+  gate is aggregating third-party coverage incorrectly; restrict source gates
+  to normalized `src/` paths.
 - A new authored source owner has no explicit gate -> add one when the owner handles external input, credentials, persistence, protocol adaptation, or other high-risk behavior; use the measured baseline with maintenance headroom.
 - Coverage commands import `dist/worker.test.js` instead of `dist-coverage/worker.test.js` -> normal builds can overwrite coverage sourcemaps and produce stale or misleading reports.
 - Production bundle exports test helpers -> smoke must fail; restore the production/test entrypoint split.
@@ -471,7 +498,7 @@ Use this contract when changing test coverage commands, build sourcemap behavior
 ### 6. Tests Required
 
 - Run `pnpm coverage` after changing Vitest coverage config, build sourcemaps, or the unit runner.
-- Run `pnpm coverage:ci` after changing global or directory thresholds.
+- Run `pnpm coverage:ci` after changing aggregate, directory, or file thresholds.
 - Architecture/coverage script fixture summaries must include every required target so missing-data failures remain tested.
 - Run `pnpm unit` to confirm the non-coverage test workflow still passes.
 - Run `pnpm smoke` after changing `scripts/build.mjs` because production/test bundle separation is part of smoke coverage.

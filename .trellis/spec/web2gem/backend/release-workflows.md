@@ -125,19 +125,25 @@ jobs:
 
 ### 1. Scope / Trigger
 
-Use this contract when changing Biome severity, `check:static`, quality workflow
-push branches, or release-required Docker smoke conditions.
+Use this contract when changing Biome severity, scan boundaries, `check:static`,
+quality workflow push branches, or release-required Docker smoke conditions.
 
 ### 2. Signatures
 
 - `pnpm check:static` runs Biome with warning diagnostics visible and
   `--error-on-warnings` enabled.
+- `biome.json` enables Git VCS integration with `useIgnoreFile: true`.
 - `.github/workflows/quality-gates.yml` owns pull-request, push, matrix unit, and
   Docker smoke gates.
 
 ### 3. Contracts
 
 - Authored source and tests must have zero warning-or-higher Biome diagnostics.
+- Biome must honor `.gitignore`, `.ignore`, and Git's local exclude file so
+  ignored nested repositories, virtual environments, generated output, and
+  machine-local files cannot contaminate this package's static gate.
+- Keep machine-specific workspace paths in Git ignore sources rather than
+  hard-coding personal directory names into the shared Biome configuration.
 - Framework-inapplicable rules may be disabled only through the narrowest path
   override; Preact admin UI source disables Solid-specific destructured-props
   diagnostics without weakening other correctness rules.
@@ -149,6 +155,10 @@ push branches, or release-required Docker smoke conditions.
 ### 4. Validation & Error Matrix
 
 - New Biome warning -> `pnpm check:static` exits non-zero.
+- Broken symlink or unsupported file below a Git-ignored path -> Biome does not
+  scan it and `pnpm check:static` remains scoped to this package.
+- `vcs.enabled=false` or `useIgnoreFile=false` -> local excluded repositories may
+  be traversed and can fail the gate for unrelated filesystem diagnostics.
 - Solid-specific props info in `src/admin-ui/**` -> suppressed by the Preact-only
   override; the same override must not apply to all source.
 - Push to `gemini-account-pool` -> required Ubuntu quality, Node matrix, and Docker
@@ -158,9 +168,13 @@ push branches, or release-required Docker smoke conditions.
 ### 5. Good/Base/Bad Cases
 
 - Good: fix an actionable warning before enabling `--error-on-warnings`.
+- Good: enable Biome's Git integration and keep local repository exclusions in
+  `.git/info/exclude`.
 - Good: add a branch to both the push trigger and Docker smoke condition.
 - Base: info-level fixture security diagnostics remain reviewable but non-blocking.
 - Bad: set all security rules off to make static output quiet.
+- Bad: add every developer's sibling repository or virtual environment to
+  `files.includes` exceptions.
 - Bad: document a branch as independently released while excluding its pushes
   from required quality gates.
 
@@ -168,6 +182,9 @@ push branches, or release-required Docker smoke conditions.
 
 - Script test asserts `check:static` contains warning visibility and
   `--error-on-warnings`.
+- Run `pnpm check:static` with an ignored nested directory present and verify
+  Biome reports no files or filesystem diagnostics from that directory.
+- `pnpm exec biome rage` reports `VCS enabled: true`.
 - Script test asserts all three push branches and the account-pool Docker smoke
   condition are present.
 - Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`,
@@ -185,6 +202,96 @@ push branches, or release-required Docker smoke conditions.
 
 ```json
 "check:static": "biome check --diagnostic-level=warn --error-on-warnings"
+```
+
+```json
+{
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  }
+}
+```
+
+## Scenario: Dependency Upgrade And Supply-Chain Policy
+
+### 1. Scope / Trigger
+
+Use this contract when upgrading direct dependencies, changing
+`pnpm-workspace.yaml` supply-chain policy, or regenerating `pnpm-lock.yaml`.
+
+### 2. Signatures
+
+- Upgrade command: `pnpm update --latest`.
+- Explicit policy-approved version command: `pnpm add --save-dev <package>@<version>`.
+- Freshness check: `pnpm outdated`.
+- Lockfile reproducibility check: `pnpm install --frozen-lockfile`.
+- Supply-chain exceptions: exact package versions in
+  `pnpm-workspace.yaml` `minimumReleaseAgeExclude`.
+
+### 3. Contracts
+
+- `package.json` and `pnpm-lock.yaml` change together for every direct dependency
+  upgrade; do not hand-edit resolved lockfile entries.
+- `minimumReleaseAgeExclude` entries are exact, intentional exceptions for
+  versions that the project accepts before the normal release-age policy allows
+  them. Replace the previous exact exception when upgrading the same package;
+  do not accumulate stale versions.
+- Do not add a pnpm override merely to bypass release-age policy. Use an override
+  only for a documented resolver or compatibility requirement.
+- A Wrangler or `@cloudflare/workers-types` upgrade must preserve generated
+  Worker bindings and runtime compatibility.
+
+### 4. Validation & Error Matrix
+
+- Manifest changed with stale lockfile -> `pnpm install --frozen-lockfile` fails.
+- Upgrade output reports a newer version but selects an older policy-approved
+  version -> inspect the exact `minimumReleaseAgeExclude` entry, update it only
+  when intentionally accepting the newer release, and install that version
+  explicitly.
+- `pnpm outdated` has output after the intended upgrade -> review every remaining
+  direct dependency before completion.
+- Workers types or Wrangler incompatibility -> `pnpm check:worker-types` or
+  `pnpm typecheck` fails.
+- Vulnerable resolved dependency -> `pnpm audit --audit-level moderate` fails.
+
+### 5. Good/Base/Bad Cases
+
+- Good: run `pnpm update --latest`, review the manifest and lockfile diff, then
+  run the frozen-lockfile and project quality gates.
+- Good: replace an old exact Workers types release-age exception with the newly
+  reviewed exact version.
+- Base: packages already at latest remain unchanged.
+- Bad: claim all dependencies are current based only on a successful install
+  when the updater reported a newer policy-blocked version.
+- Bad: disable supply-chain policy globally to install one fresh package.
+
+### 6. Tests Required
+
+- Run `pnpm install --frozen-lockfile`, `pnpm outdated`, and
+  `pnpm audit --audit-level moderate`.
+- Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`,
+  `pnpm coverage:ci`, and `pnpm smoke` after dependency upgrades.
+- Run `pnpm check:worker-types` when Wrangler or Workers types change.
+- Run `pnpm check:bench` and `pnpm check:size` when build/runtime dependencies
+  change.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```yaml
+minimumReleaseAgeExclude:
+  - '@cloudflare/workers-types@<old-version>'
+  - '@cloudflare/workers-types@<new-version>'
+```
+
+#### Correct
+
+```yaml
+minimumReleaseAgeExclude:
+  - '@cloudflare/workers-types@<reviewed-version>'
 ```
 
 ## Scenario: Package And Worker Version Synchronization
