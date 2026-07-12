@@ -1,5 +1,6 @@
 import { uuid } from "../../shared/crypto";
 import { parseCookieHeader } from "../cookies";
+import { boundedGeminiAccountPageLimit } from "./domain";
 import {
 	accountRowId,
 	changedRows,
@@ -23,7 +24,6 @@ import type {
 	GeminiAccountBulkCreateEntry,
 	GeminiAccountBulkCreateResult,
 	GeminiAccountCreateInput,
-	GeminiAccountCategory,
 	GeminiAccountAdminStats,
 	GeminiAccountAdminFilter,
 	GeminiAccountAdminOverview,
@@ -124,7 +124,7 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		nowMs: number,
 		limit: number,
 	): Promise<GeminiAccountSnapshotRow[]> {
-		const boundedLimit = boundedPageLimit(limit);
+		const boundedLimit = boundedGeminiAccountPageLimit(limit);
 		const result = await this.db
 			.prepare(`
       SELECT
@@ -198,7 +198,7 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		filter: GeminiAccountAdminFilter,
 		nowMs: number,
 	): D1PreparedStatementLike {
-		const limit = boundedPageLimit(filter.limit);
+		const limit = boundedGeminiAccountPageLimit(filter.limit);
 		const { where, args } = adminWhere(filter, nowMs);
 		return this.db
 			.prepare(`
@@ -735,7 +735,7 @@ function adminPageFromRows(
 	rows: GeminiAccountPublicSqlRow[],
 	requestedLimit: number,
 ): GeminiAccountPublicPage {
-	const limit = boundedPageLimit(requestedLimit);
+	const limit = boundedGeminiAccountPageLimit(requestedLimit);
 	const pageRows = rows.slice(0, limit);
 	return {
 		items: pageRows.map(publicRowFromSql),
@@ -838,11 +838,6 @@ async function cookieHashes(
 	};
 }
 
-function boundedPageLimit(limit: number): number {
-	const n = Number.isInteger(limit) ? limit : 50;
-	return Math.min(Math.max(n, 1), 200);
-}
-
 function resultChanged(result: D1Result): number {
 	const rows = changedRows(result.meta);
 	return rows == null ? 1 : rows;
@@ -856,17 +851,7 @@ function valueChanged(next: unknown, current: unknown): boolean {
 	return next !== undefined && next !== current;
 }
 
-export function isGeminiAccountCategory(
-	value: string,
-): value is GeminiAccountCategory {
-	return [
-		"full_session",
-		"psid_psidts",
-		"psid_only",
-		"session_token_only",
-		"missing_session",
-	].includes(value);
-}
+export { isGeminiAccountCategory } from "./domain";
 
 export function isD1UniqueConstraintError(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error ?? "");

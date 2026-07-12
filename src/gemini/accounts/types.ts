@@ -56,12 +56,8 @@ export type GeminiAccountFailureKind =
 	| "capability_mismatch"
 	| "unknown";
 
-export type GeminiAccountCategory =
-	| "full_session"
-	| "psid_psidts"
-	| "psid_only"
-	| "session_token_only"
-	| "missing_session";
+export type { GeminiAccountCategory } from "./domain";
+import type { GeminiAccountCategory } from "./domain";
 
 export type GeminiAccountRow = {
 	id: string;

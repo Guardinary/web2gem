@@ -1,4 +1,8 @@
 import { isRecord, type UnknownRecord } from "../../shared/types";
+import {
+	boundedGeminiAccountPageLimit,
+	isGeminiAccountCategory,
+} from "./domain";
 import type {
 	GeminiAccountAdminFilter,
 	GeminiAccountBulkAction,
@@ -382,7 +386,7 @@ export function normalizeListFilter(
 	filter: GeminiAccountAdminFilterInput,
 ): GeminiAccountAdminFilter {
 	const normalized: GeminiAccountAdminFilter = {
-		limit: boundedPageLimit(filter.limit),
+		limit: boundedGeminiAccountPageLimit(filter.limit),
 	};
 	const cursor = cleanOptionalString(filter.cursor);
 	if (cursor) normalized.cursor = cursor;
@@ -562,18 +566,6 @@ function normalizeCategory(value: unknown): GeminiAccountCategory | undefined {
 	return text;
 }
 
-function isGeminiAccountCategory(
-	value: string,
-): value is GeminiAccountCategory {
-	return [
-		"full_session",
-		"psid_psidts",
-		"psid_only",
-		"session_token_only",
-		"missing_session",
-	].includes(value);
-}
-
 function normalizeCooldown(value: unknown): "active" | "cooling" | undefined {
 	const text = cleanOptionalString(value);
 	if (!text) return undefined;
@@ -583,12 +575,6 @@ function normalizeCooldown(value: unknown): "active" | "cooling" | undefined {
 		"invalid_cooldown_filter",
 		"invalid cooldown filter",
 	);
-}
-
-function boundedPageLimit(limit: unknown): number {
-	const n = Number(limit);
-	if (!Number.isInteger(n)) return 50;
-	return Math.min(Math.max(n, 1), 200);
 }
 
 function requiredQueryValue(params: URLSearchParams, name: string): string {

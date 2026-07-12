@@ -4,6 +4,13 @@ import { errorLine, outputLine } from "./io.mjs";
 
 const summaryPath = process.argv[2] || "coverage/coverage-summary.json";
 
+const sourceGates = [
+	["statements", 88],
+	["branches", 75],
+	["functions", 90],
+	["lines", 90],
+];
+
 const lineGates = [
 	["src/admin-ui", 90],
 	["src/attachments", 88],
@@ -100,6 +107,10 @@ function statsForTarget(target, metric) {
 }
 
 const failures = [];
+
+for (const [metric, threshold] of sourceGates) {
+	checkGate("src", threshold, metric);
+}
 
 for (const [target, threshold] of lineGates) {
 	checkGate(target, threshold, "lines");

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -111,6 +112,21 @@ export const cases = [
 		},
 	],
 	[
+		"ignores third-party coverage when evaluating source gates",
+		async () => {
+			const summary = fullCoverageSummary();
+			summary["node_modules/example/index.mjs"] = coverageEntry(0, 0);
+			await withCoverageSummary(summary, async (summaryPath) => {
+				const result = await runNodeScript(
+					"scripts/check-coverage.mjs",
+					summaryPath,
+				);
+				assert.equal(result.code, 0);
+				assert.match(result.stdout, /src: 100\.00% lines/);
+			});
+		},
+	],
+	[
 		"rejects coverage summaries below branch gates",
 		async () => {
 			const summary = fullCoverageSummary();
@@ -167,11 +183,13 @@ export const cases = [
 					"scripts/check-bundle-size.mjs",
 					bundlePath,
 					{
-						BUNDLE_SIZE_LIMIT_BYTES: "256",
+						BUNDLE_GZIP_SIZE_LIMIT_BYTES: "256",
 					},
 				);
 				assert.equal(result.code, 0);
 				assert.match(result.stdout, /bundle size ok/);
+				assert.match(result.stdout, /raw 128 bytes, gzip \d+ bytes/);
+				assert.match(result.stdout, /headroom \d+ bytes/);
 			});
 		},
 	],
@@ -200,12 +218,12 @@ export const cases = [
 	[
 		"rejects bundle size over the configured budget",
 		async () => {
-			await withTempFile("worker.js", "x".repeat(257), async (bundlePath) => {
+			await withTempFile("worker.js", randomBytes(512), async (bundlePath) => {
 				const result = await runNodeScript(
 					"scripts/check-bundle-size.mjs",
 					bundlePath,
 					{
-						BUNDLE_SIZE_LIMIT_BYTES: "256",
+						BUNDLE_GZIP_SIZE_LIMIT_BYTES: "256",
 					},
 				);
 				assert.equal(result.code, 1);

@@ -235,8 +235,12 @@ const smallDeltaProvider = {
 		return { ref: `/uploaded/${filename}`, name: filename };
 	},
 };
+const ACCOUNT_ADMIN_BENCH_COUNT = positiveInt(
+	process.env.BENCH_ACCOUNT_ADMIN_COUNT,
+	1000,
+);
 const accountAdminIds = Array.from(
-	{ length: 100 },
+	{ length: ACCOUNT_ADMIN_BENCH_COUNT },
 	(_value, index) => `bench-account-${index}`,
 );
 const accountAdminItems = accountAdminIds.map((id) => ({
@@ -245,6 +249,7 @@ const accountAdminItems = accountAdminIds.map((id) => ({
 	enabled: 1,
 	status: "active",
 }));
+const accountAdminBulkIds = accountAdminIds.slice(0, 100);
 const accountAdminStats = {
 	total: accountAdminItems.length,
 	available: accountAdminItems.length,
@@ -259,9 +264,9 @@ const accountAdminStats = {
 const accountAdminStore = {
 	async getAdminOverview(_filter, _nowMs) {
 		return {
-			items: accountAdminItems,
+			items: accountAdminItems.slice(0, 200).map((item) => ({ ...item })),
 			nextCursor: null,
-			limit: 100,
+			limit: 200,
 			stats: accountAdminStats,
 		};
 	},
@@ -496,14 +501,14 @@ const cases = [
 	},
 	{
 		name: "account_admin_overview",
-		fn: () => accountAdminService.overview({ limit: 100 }),
+		fn: () => accountAdminService.overview({ limit: 200 }),
 	},
 	{
 		name: "account_admin_bulk_action",
 		fn: () =>
 			accountAdminService.runBulkAction({
 				action: "disable",
-				ids: accountAdminIds,
+				ids: accountAdminBulkIds,
 			}),
 	},
 	{
