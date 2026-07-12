@@ -35,3 +35,13 @@ Good existing helpers:
 When reducing `any`, prefer small, behavior-preserving batches by module. Validate each batch with `pnpm typecheck` and `pnpm check:arch`.
 
 Avoid combining type tightening with protocol behavior changes unless the task explicitly requires both.
+
+## Provider Adapter Coverage
+
+Treat provider adapters as argument-order and metadata boundaries, even when the underlying client already has integration coverage.
+
+- `src/gemini/completion-provider.ts` must maintain at least 95% line coverage and 85% branch coverage in `scripts/check-coverage.mjs`.
+- Tests must assert the exact client argument order for text, rich, and streaming calls, including model IDs, thinking mode, extras, file refs, model headers, options, and abort signals.
+- Cover unresolved-model errors, request-routing metadata, empty stream delta filtering, attachment resolution, and text-file upload delegation.
+- Keep dependency injection test-only: expose the injected factory through `src/test-exports.ts`; do not add it to the public Worker exports or production bundle.
+- When the adapter gains a new delegated field or method, update its direct contract test and file-level coverage gate in the same change.

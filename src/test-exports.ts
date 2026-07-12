@@ -27,7 +27,10 @@ export {
 	generatedImagePreviewFetchUrls,
 	hydrateGeneratedImages,
 } from "./gemini/client/generated-images";
-export { createGeminiCompletionProvider } from "./gemini/completion-provider";
+export {
+	createGeminiCompletionProvider,
+	createGeminiCompletionProviderWithDependenciesForTest,
+} from "./gemini/completion-provider";
 export {
 	createStreamTextExtractor,
 	stripArtifacts,
