@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { assert } from "./assertions.js";
 import { mod } from "./helpers.js";
 
@@ -325,6 +325,59 @@ export const cases = [
 						`COPY --from=build /app/scripts/${filename.replace(".", "\\.")}`,
 					),
 				);
+			}
+		},
+	],
+	[
+		"keeps Docker build contexts minimal without excluding build inputs",
+		async () => {
+			const dockerignore = await readFile(".dockerignore", "utf8");
+			const patterns = dockerignore
+				.split(/\r?\n/)
+				.map((line) => line.trim())
+				.filter((line) => line && !line.startsWith("#"));
+			const excluded = new Set(
+				patterns.filter((line) => !line.startsWith("!")),
+			);
+
+			for (const pattern of [
+				".env",
+				".env.*",
+				".dev.vars",
+				".dev.vars.*",
+				"tests",
+				"docs",
+				"release-assets",
+				"reports",
+			]) {
+				assert.equal(excluded.has(pattern), true, `missing ${pattern}`);
+			}
+			for (const example of ["!.env.example", "!.dev.vars.example"]) {
+				assert.equal(patterns.includes(example), true, `missing ${example}`);
+			}
+			assert.equal(
+				patterns.indexOf("!.env.example") > patterns.indexOf(".env.*"),
+				true,
+				".env.example must be re-included after the wildcard exclusion",
+			);
+			assert.equal(
+				patterns.indexOf("!.dev.vars.example") >
+					patterns.indexOf(".dev.vars.*"),
+				true,
+				".dev.vars.example must be re-included after the wildcard exclusion",
+			);
+
+			for (const dockerInput of [
+				"package.json",
+				"pnpm-lock.yaml",
+				"pnpm-workspace.yaml",
+				"tsconfig.json",
+				"vitest.config.mjs",
+				"wrangler.jsonc",
+				"scripts",
+				"src",
+			]) {
+				assert.equal(excluded.has(dockerInput), false, dockerInput);
 			}
 		},
 	],

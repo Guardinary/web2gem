@@ -203,6 +203,68 @@ Use this contract for any `workflow_dispatch` workflow that can update package v
 
 Run benchmark, bundle-size, Worker-type freshness, coverage, and smoke gates after changing generated sources, performance-sensitive code, or release scripts.
 
+## Scenario: Isolated Docker Build Context
+
+### 1. Scope / Trigger
+
+Use this contract when changing `Dockerfile`, `.dockerignore`, Docker smoke behavior, or files copied into container build stages.
+
+### 2. Signatures
+
+- `Dockerfile` build inputs: `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `tsconfig.json`, `vitest.config.mjs`, `wrangler.jsonc`, `scripts/`, and `src/`.
+- Safe environment templates: `.env.example` and `.dev.vars.example`.
+
+### 3. Contracts
+
+- Exclude `.env`, `.env.*`, `.dev.vars`, and `.dev.vars.*` from every Docker build context.
+- Re-include the two committed example files after their matching wildcard exclusions.
+- Exclude repository-only content such as tests, docs, reports, coverage, and release assets when it is not copied by `Dockerfile`.
+- Every path copied from the repository by `Dockerfile` must remain available in the build context.
+
+### 4. Validation & Error Matrix
+
+- Sensitive environment file matches an exclusion -> it must not enter the context.
+- Committed example matches a wildcard exclusion -> a later negation rule must re-include it.
+- `Dockerfile` adds a new repository `COPY` input -> update `.dockerignore` and the context contract test together.
+- Required build input becomes excluded -> the contract test must fail before a release build.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `.env.*` is followed by `!.env.example`, and `.dev.vars.*` is followed by `!.dev.vars.example`.
+- Base: source, build scripts, manifests, and TypeScript configuration remain available.
+- Bad: send `.env.production`, tests, coverage, or local reports to the Docker daemon.
+- Bad: exclude `scripts/` or `src/` while `Dockerfile` still copies them.
+
+### 6. Tests Required
+
+- Assert all sensitive environment patterns and repository-only paths are excluded.
+- Assert example-file negations exist after their wildcard exclusions.
+- Assert every declared `Dockerfile` build input is absent from the exclusion set.
+- Run `pnpm unit -- tests/unit/scripts.test.mjs`; run `pnpm docker:smoke` when container startup is authorized.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```dockerignore
+.env.*
+scripts
+src
+```
+
+#### Correct
+
+```dockerignore
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+tests
+docs
+```
+
 ---
 
 ## Validation
