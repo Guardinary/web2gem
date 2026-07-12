@@ -29,6 +29,7 @@ import {
 	batchBusy,
 	categories,
 	categoryFilter,
+	connectionVerified,
 	cooldownFilter,
 	diagnosticsExpanded,
 	enabledFilter,
@@ -57,11 +58,11 @@ const batchActions = ["check", "refresh", "enable"] as const;
 export function App(): JSX.Element {
 	useEffect(() => {
 		restoreAdminKey();
-		if (adminKey.value) void loadAccounts("reset");
+		if (adminKey.value) void loadAccounts("reset", true);
 	}, []);
 
 	const rows = accounts.value;
-	const connected = Boolean(adminKey.value.trim());
+	const connected = connectionVerified.value;
 	const advancedFilterCount = [
 		categoryFilter.value,
 		cooldownFilter.value,
@@ -205,7 +206,7 @@ export function App(): JSX.Element {
 							onSubmit={(event) => {
 								event.preventDefault();
 								saveAdminKey();
-								void loadAccounts("reset");
+								void loadAccounts("reset", true);
 							}}
 						>
 							<label>
@@ -219,6 +220,7 @@ export function App(): JSX.Element {
 										adminKey.value = (
 											event.currentTarget as HTMLInputElement
 										).value;
+										connectionVerified.value = false;
 									}}
 								/>
 							</label>
@@ -617,7 +619,7 @@ export function App(): JSX.Element {
 					</div>
 
 					<div class="table-wrap">
-						<table>
+						<table aria-busy={loading.value}>
 							<caption class="sr-only">{tr("Account workspace")}</caption>
 							<thead>
 								<tr>

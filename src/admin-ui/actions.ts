@@ -23,6 +23,7 @@ import {
 	batchBusy,
 	categoryFilter,
 	confirmationDraft,
+	connectionVerified,
 	cooldownFilter,
 	cursorStack,
 	editBusy,
@@ -77,7 +78,8 @@ export function restoreAdminKey(): void {
 		window.sessionStorage.getItem(KEY_STORAGE) ||
 		window.localStorage.getItem(KEY_STORAGE) ||
 		"";
-	authExpanded.value = !adminKey.value;
+	connectionVerified.value = false;
+	authExpanded.value = true;
 }
 
 export function saveAdminKey(): void {
@@ -89,7 +91,8 @@ export function saveAdminKey(): void {
 			? window.localStorage
 			: window.sessionStorage;
 	storage.setItem(KEY_STORAGE, adminKey.value.trim());
-	authExpanded.value = false;
+	connectionVerified.value = false;
+	authExpanded.value = true;
 	showToast(tr("Admin key saved"));
 }
 
@@ -97,6 +100,7 @@ export function clearAdminKey(): void {
 	window.sessionStorage.removeItem(KEY_STORAGE);
 	window.localStorage.removeItem(KEY_STORAGE);
 	adminKey.value = "";
+	connectionVerified.value = false;
 	accounts.value = [];
 	accountStats.value = null;
 	selected.value = new Set();
@@ -127,8 +131,13 @@ export function exportMetadata(): void {
 
 export async function loadAccounts(
 	direction: "current" | "reset" | "next" | "prev" = "current",
+	verifyConnection = false,
 ): Promise<void> {
 	if (!adminKey.value.trim()) {
+		if (verifyConnection) {
+			connectionVerified.value = false;
+			authExpanded.value = true;
+		}
 		showToast(tr("Admin key is required"), "error");
 		return;
 	}
@@ -137,6 +146,10 @@ export async function loadAccounts(
 		pageIndex.value = 0;
 		nextCursor.value = null;
 		selected.value = new Set();
+		if (verifyConnection) {
+			accounts.value = [];
+			accountStats.value = null;
+		}
 	} else if (direction === "next") {
 		if (!nextCursor.value) return;
 		const nextStack = [...cursorStack.value];
@@ -168,12 +181,20 @@ export async function loadAccounts(
 				overview.items.some((account) => identifierKey(account) === key),
 			),
 		);
+		if (verifyConnection) {
+			connectionVerified.value = true;
+			authExpanded.value = false;
+		}
 		showToast(
 			language.value === "zh-CN"
 				? `已加载 ${overview.items.length} 个账号`
 				: `Loaded ${overview.items.length} accounts`,
 		);
 	} catch (error) {
+		if (verifyConnection) {
+			connectionVerified.value = false;
+			authExpanded.value = true;
+		}
 		showToast(
 			error instanceof Error ? error.message : tr("Failed to load accounts"),
 			"error",

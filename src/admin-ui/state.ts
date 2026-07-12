@@ -43,6 +43,7 @@ export type EditDraft = {
 };
 
 export const adminKey = signal("");
+export const connectionVerified = signal(false);
 export const accounts = signal<GeminiAccount[]>([]);
 export const selected = signal<Set<string>>(new Set());
 export const loading = signal(false);

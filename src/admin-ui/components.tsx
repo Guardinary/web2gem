@@ -232,11 +232,16 @@ export function AccountRows(): JSX.Element {
 	if (loading.value)
 		return (
 			<>
+				<tr class="sr-only">
+					<td colSpan={15} role="status">
+						{tr("Loading accounts")}…
+					</td>
+				</tr>
 				{skeletonRows.map((rowName) => (
-					<tr class="skeleton-row" key={`skeleton-${rowName}`}>
+					<tr class="skeleton-row" inert={true} key={`skeleton-${rowName}`}>
 						{skeletonCells.map((cellName) => (
 							<td key={`skeleton-${rowName}-${cellName}`}>
-								<span class="skeleton-line" />
+								<span aria-hidden="true" class="skeleton-line" />
 							</td>
 						))}
 					</tr>

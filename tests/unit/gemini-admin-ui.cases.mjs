@@ -137,6 +137,63 @@ export const cases = [
 		},
 	],
 	[
+		"admin UI marks a connection verified only after account loading succeeds",
+		async () => {
+			const originalFetch = globalThis.fetch;
+			const originalWindow = globalThis.window;
+			try {
+				globalThis.window = { setTimeout: () => 0 };
+				mod.adminKey.value = "admin-secret";
+				mod.connectionVerified.value = false;
+				mod.authExpanded.value = true;
+				globalThis.fetch = async () =>
+					Response.json({
+						items: [],
+						nextCursor: null,
+						limit: 200,
+						stats: {
+							total: 0,
+							available: 0,
+							needsAttention: 0,
+							disabled: 0,
+							refreshable: 0,
+							cooling: 0,
+							psidOnly: 0,
+							successCount: 0,
+							failureCount: 0,
+						},
+					});
+
+				await mod.loadAccounts("reset", true);
+				assert.equal(mod.connectionVerified.value, true);
+				assert.equal(mod.authExpanded.value, false);
+
+				mod.accounts.value = [{ id: "stale-account" }];
+				mod.accountStats.value = { total: 1 };
+				globalThis.fetch = async () =>
+					Response.json(
+						{ error: { message: "invalid admin key" } },
+						{ status: 401 },
+					);
+
+				await mod.loadAccounts("reset", true);
+				assert.equal(mod.connectionVerified.value, false);
+				assert.equal(mod.authExpanded.value, true);
+				assert.deepEqual(mod.accounts.value, []);
+				assert.equal(mod.accountStats.value, null);
+			} finally {
+				globalThis.fetch = originalFetch;
+				if (originalWindow === undefined) delete globalThis.window;
+				else globalThis.window = originalWindow;
+				mod.adminKey.value = "";
+				mod.connectionVerified.value = false;
+				mod.authExpanded.value = false;
+				mod.accounts.value = [];
+				mod.accountStats.value = null;
+			}
+		},
+	],
+	[
 		"worker serves Gemini account admin WebUI without D1 reads or legacy cookie fallback text",
 		async () => {
 			let prepareCalls = 0;
@@ -175,6 +232,8 @@ export const cases = [
 			assert.match(html, /More filters/);
 			assert.match(html, /secondary-metrics/);
 			assert.match(html, /skeleton-row/);
+			assert.match(html, /aria-busy/);
+			assert.match(html, /inert/);
 			assert.doesNotMatch(
 				html,
 				/GEMINI_COOKIE|SAPISID=|SNlM0e=|psid-secret|ts-secret|Cookie:\s*__Secure/i,
