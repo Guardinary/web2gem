@@ -194,6 +194,29 @@ export const cases = [
 		},
 	],
 	[
+		"admin UI rejects connection verification without an admin key",
+		async () => {
+			const originalWindow = globalThis.window;
+			try {
+				globalThis.window = { setTimeout: () => 0 };
+				mod.adminKey.value = "";
+				mod.connectionVerified.value = true;
+				mod.authExpanded.value = false;
+
+				await mod.loadAccounts("reset", true);
+
+				assert.equal(mod.connectionVerified.value, false);
+				assert.equal(mod.authExpanded.value, true);
+			} finally {
+				if (originalWindow === undefined) delete globalThis.window;
+				else globalThis.window = originalWindow;
+				mod.adminKey.value = "";
+				mod.connectionVerified.value = false;
+				mod.authExpanded.value = false;
+			}
+		},
+	],
+	[
 		"worker serves Gemini account admin WebUI without D1 reads or legacy cookie fallback text",
 		async () => {
 			let prepareCalls = 0;
