@@ -1,6 +1,10 @@
 import type { SSEWrite } from "../core/sse";
 import { nowSec } from "../../shared/logging";
-import { upstreamErrorCode, upstreamErrorMessage } from "../../shared/errors";
+import {
+	upstreamErrorCode,
+	upstreamErrorMessage,
+	upstreamErrorReason,
+} from "../../shared/errors";
 import { tokenEst } from "../../shared/tokens";
 import { isRecord } from "../../shared/types";
 import type { GeneratedImage } from "../../completion/ports";
@@ -78,8 +82,16 @@ export async function writeOpenAIChatStreamError(
 	model: unknown,
 	e: unknown,
 ): Promise<void> {
+	const error: Record<string, unknown> = {
+		message: upstreamErrorMessage(e),
+		type: "api_error",
+		code: upstreamErrorCode(e) || "upstream_error",
+		param: null,
+	};
+	const reason = upstreamErrorReason(e);
+	if (reason) error.reason = reason;
 	let result = write(
-		`event: error\ndata: ${JSON.stringify({ error: { message: upstreamErrorMessage(e), type: "api_error", code: upstreamErrorCode(e) || "upstream_error", param: null }, id, model: String(model || "") })}\n\n`,
+		`event: error\ndata: ${JSON.stringify({ error, id, model: String(model || "") })}\n\n`,
 	);
 	if (isPromiseLike(result)) await result;
 	result = write("data: [DONE]\n\n");

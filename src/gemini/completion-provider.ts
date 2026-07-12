@@ -12,6 +12,10 @@ import type {
 	CompletionRichOptions,
 	CompletionTextInput,
 } from "../completion/ports";
+import {
+	geminiAuthenticatedSessionRequiredError,
+	type GeminiAuthenticatedSessionReason,
+} from "../shared/errors";
 import type { AttachmentPlan } from "../attachments/types";
 import { errorLogSummary } from "../shared/errors";
 import { isAbortError } from "../shared/abort";
@@ -61,8 +65,10 @@ export function createGeminiCompletionProvider(
 	let lease: GeminiAccountLease | null = null;
 	let terminal = false;
 
-	const acquireAccountConfig = async (): Promise<RuntimeConfig> => {
-		if (!runtime) throw accountPoolRequiredError();
+	const acquireAccountConfig = async (
+		reason: GeminiAuthenticatedSessionReason,
+	): Promise<RuntimeConfig> => {
+		if (!runtime) throw geminiAuthenticatedSessionRequiredError(reason);
 		if (!leasePromise) {
 			leasePromise = runtime.acquireLease(cfg).then((acquiredLease) => {
 				if (!acquiredLease) throw noAvailableAccountError();
@@ -118,8 +124,9 @@ export function createGeminiCompletionProvider(
 
 	const withGenerationLease = async <T>(
 		fn: (activeCfg: RuntimeConfig) => Promise<T>,
+		reason: GeminiAuthenticatedSessionReason,
 	): Promise<T> => {
-		const activeCfg = await acquireAccountConfig();
+		const activeCfg = await acquireAccountConfig(reason);
 		try {
 			const result = await fn(activeCfg);
 			await finalizeOutcome("success");
@@ -132,8 +139,9 @@ export function createGeminiCompletionProvider(
 
 	const withUploadLease = async <T>(
 		fn: (activeCfg: RuntimeConfig) => Promise<T>,
+		reason: GeminiAuthenticatedSessionReason,
 	): Promise<T> => {
-		const activeCfg = await acquireAccountConfig();
+		const activeCfg = await acquireAccountConfig(reason);
 		try {
 			return await fn(activeCfg);
 		} catch (error) {
@@ -161,7 +169,7 @@ export function createGeminiCompletionProvider(
 
 		let activeCfg: RuntimeConfig;
 		try {
-			activeCfg = await acquireAccountConfig();
+			activeCfg = await acquireAccountConfig("attachment");
 		} catch (_) {
 			releaseLease();
 			terminal = true;
@@ -197,8 +205,13 @@ export function createGeminiCompletionProvider(
 				if (!text) throw upstreamEmptyResponseError(502, 0, "provider");
 				return text;
 			};
-			if (accountRequired(cfg, model, input, leasePromise !== null))
-				return withGenerationLease(call);
+			const requiredReason = accountRequiredReason(
+				cfg,
+				model,
+				input,
+				leasePromise !== null,
+			);
+			if (requiredReason) return withGenerationLease(call, requiredReason);
 			return withAnonymousFallback(call, call);
 		},
 		generateRich(
@@ -207,17 +220,19 @@ export function createGeminiCompletionProvider(
 		) {
 			const model = requireResolvedModel(input.rm);
 			if (cfg.log_requests) logGeminiRoute(cfg, model, false);
-			return withGenerationLease((activeCfg) =>
-				client.generateRich(
-					activeCfg,
-					input.prompt,
-					model.modeId,
-					model.thinkMode,
-					model.extra,
-					input.fileRefs,
-					model.modelHeaders,
-					richOptions,
-				),
+			return withGenerationLease(
+				(activeCfg) =>
+					client.generateRich(
+						activeCfg,
+						input.prompt,
+						model.modeId,
+						model.thinkMode,
+						model.extra,
+						input.fileRefs,
+						model.modelHeaders,
+						richOptions,
+					),
+				"image",
 			);
 		},
 		async *streamText(
@@ -237,8 +252,14 @@ export function createGeminiCompletionProvider(
 					streamOptions,
 					model.modelHeaders,
 				);
-			if (accountRequired(cfg, model, input, leasePromise !== null)) {
-				const activeCfg = await acquireAccountConfig();
+			const requiredReason = accountRequiredReason(
+				cfg,
+				model,
+				input,
+				leasePromise !== null,
+			);
+			if (requiredReason) {
+				const activeCfg = await acquireAccountConfig(requiredReason);
 				try {
 					for await (const delta of stream(activeCfg)) {
 						const text = String(delta || "");
@@ -275,7 +296,7 @@ export function createGeminiCompletionProvider(
 
 			let activeCfg: RuntimeConfig;
 			try {
-				activeCfg = await acquireAccountConfig();
+				activeCfg = await acquireAccountConfig("attachment");
 			} catch (_) {
 				releaseLease();
 				terminal = true;
@@ -299,13 +320,16 @@ export function createGeminiCompletionProvider(
 				!plan.existingFileRefs?.length
 			)
 				return uploadDelegates.resolveAttachments(anonymousCfg, plan);
-			return withUploadLease((activeCfg) =>
-				uploadDelegates.resolveAttachments(activeCfg, plan),
+			return withUploadLease(
+				(activeCfg) => uploadDelegates.resolveAttachments(activeCfg, plan),
+				"attachment",
 			);
 		},
 		uploadTextFile(text: string, filename: string) {
-			return withUploadLease((activeCfg) =>
-				uploadDelegates.uploadTextFile(activeCfg, text, filename),
+			return withUploadLease(
+				(activeCfg) =>
+					uploadDelegates.uploadTextFile(activeCfg, text, filename),
+				"large_context",
 			);
 		},
 		dispose() {
@@ -314,15 +338,6 @@ export function createGeminiCompletionProvider(
 			terminal = true;
 		},
 	};
-}
-
-function accountPoolRequiredError(): ErrorWithMetadata {
-	const err: ErrorWithMetadata = new Error(
-		"Gemini account pool requires a configured GEMINI_DB binding",
-	);
-	err.code = "gemini_account_pool_required";
-	err.status = 503;
-	return err;
 }
 
 function noAvailableAccountError(): ErrorWithMetadata {
@@ -338,18 +353,19 @@ function requireResolvedModel(rm: ResolvedModel): ResolvedModelOK {
 	return rm;
 }
 
-function accountRequired(
+function accountRequiredReason(
 	cfg: RuntimeConfig,
 	model: ResolvedModelOK,
 	input: CompletionTextInput,
 	hasLease: boolean,
-): boolean {
-	return (
-		hasLease ||
-		model.modeId === 3 ||
-		!!input.fileRefs?.length ||
+): GeminiAuthenticatedSessionReason | null {
+	if (hasLease || input.fileRefs?.length) return "attachment";
+	if (model.modeId === 3) return "pro_model";
+	if (
 		promptByteLengthGreaterThan(input.prompt, cfg.current_input_file_min_bytes)
-	);
+	)
+		return "large_context";
+	return null;
 }
 
 function logGeminiRoute(

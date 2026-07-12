@@ -113,8 +113,9 @@ export const cases = [
 				"x".repeat(40),
 				check,
 			);
-			assert.equal(err.code, "large_context_inline_unsupported");
-			assert.equal(err.status, 413);
+			assert.equal(err.code, "gemini_authenticated_session_required");
+			assert.equal(err.status, 422);
+			assert.equal(err.reason, "large_context");
 			assert.equal(err.promptBytes, 11);
 			assert.equal(err.promptBytesExact, false);
 			assert.match(err.message, /at least 11 UTF-8 bytes > 10/);
@@ -571,10 +572,11 @@ export const cases = [
 				},
 				{},
 			);
-			assert.equal(resp.status, 413);
+			assert.equal(resp.status, 422);
 			const body = await resp.json();
-			assert.equal(body.error.code, "large_context_inline_unsupported");
-			assert.match(body.error.message, /40 bytes > 10/);
+			assert.equal(body.error.code, "gemini_authenticated_session_required");
+			assert.equal(body.error.reason, "large_context");
+			assert.match(body.error.message, /40 bytes > inline read limit 10/);
 		},
 	],
 	[
@@ -606,10 +608,10 @@ export const cases = [
 				},
 				{},
 			);
-			assert.equal(resp.status, 413);
+			assert.equal(resp.status, 422);
 			const body = await resp.json();
-			assert.equal(body.error.code, "large_context_inline_unsupported");
-			assert.match(body.error.message, /at least 11 UTF-8 bytes > 10/);
+			assert.equal(body.error.code, "gemini_authenticated_session_required");
+			assert.match(body.error.message, /exceeds inline read limit 10/);
 		},
 	],
 	[
@@ -678,7 +680,7 @@ export const cases = [
 				},
 				{},
 			);
-			assert.equal(resp.status, 413);
+			assert.equal(resp.status, 422);
 			const body = await resp.json();
 			assert.equal(body.error.code, "large_context_inline_unsupported");
 			assert.match(body.error.message, /at least 40 UTF-8 bytes > 10/);

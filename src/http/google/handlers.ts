@@ -10,6 +10,7 @@ import {
 	errorLogSummary,
 	upstreamErrorCode,
 	upstreamErrorMessage,
+	upstreamErrorReason,
 	upstreamErrorStatus,
 } from "../../shared/errors";
 import { tokenEst } from "../../shared/tokens";
@@ -40,7 +41,11 @@ export async function handleGoogleGenerate(
 				code: prepared.error.code,
 			});
 		return jsonResponse(
-			googleErrorResponseBody(prepared.error.message, prepared.error.code),
+			googleErrorResponseBody(
+				prepared.error.message,
+				prepared.error.code,
+				prepared.error.reason,
+			),
 			prepared.error.status,
 		);
 	}
@@ -138,12 +143,11 @@ export async function handleGoogleGenerate(
 			`google generate failed model=${rm.name} code=${upstreamErrorCode(e) || "upstream_error"} error=${errorLogSummary(e)}`,
 		);
 		return jsonResponse(
-			{
-				error: {
-					message: `upstream error: ${upstreamErrorMessage(e)}`,
-					code: upstreamErrorCode(e) || "upstream_error",
-				},
-			},
+			googleErrorResponseBody(
+				`upstream error: ${upstreamErrorMessage(e)}`,
+				upstreamErrorCode(e) || "upstream_error",
+				upstreamErrorReason(e),
+			),
 			upstreamErrorStatus(e) || 502,
 		);
 	}

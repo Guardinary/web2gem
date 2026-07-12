@@ -340,7 +340,7 @@ wrangler secret put ADMIN_KEY
 
 建议使用新的或专门的 Gemini 浏览器会话。不要粘贴完整 Cookie header、浏览器 Cookie 导出、Cookie 名称、等号、分号或无关的 access token。管理响应和账号列表均已脱敏，不会返回保存的会话凭据。
 
-当前分支使用混合上游路由。符合条件的短文本请求会先走 Gemini Web 上游无鉴权模式，并且不会读取 D1；如果匿名生成在输出前失败，Provider 会通过现有的最少在途请求与轮询账号池选择一个账号并重试一次。Pro、长上下文、附件、生图和图片编辑直接走账号池。只有需要账号的请求缺少 D1 时才返回 `gemini_account_pool_required`；直接走账号的请求在账号池为空时返回 `no_available_gemini_account`，而匿名请求失败且没有回退账号时保留原始匿名上游错误。
+当前分支使用混合上游路由。符合条件的短文本请求会先走 Gemini Web 上游无鉴权模式，并且不会读取 D1；如果匿名生成在输出前失败，Provider 会通过现有的最少在途请求与轮询账号池选择一个账号并重试一次。Pro、长上下文、附件、生图和图片编辑直接走账号池。部署缺少认证会话能力时返回 HTTP 422、错误码 `gemini_authenticated_session_required` 和机器可读的 `reason`；已配置账号池但暂时没有可用账号时返回 HTTP 503 与 `no_available_gemini_account`，而匿名请求失败且没有回退账号时保留原始匿名上游错误。
 
 Worker 部署时，创建 D1 数据库，执行 [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql)，并在 `wrangler.jsonc` 或 Cloudflare 控制台配置中把它绑定为 `GEMINI_DB`。该 schema 会创建结构化的 `gemini_accounts`、`gemini_pool_meta` 和 `gemini_account_locks` 表，不会把账号状态作为单个 JSON blob 存储。
 
@@ -405,7 +405,7 @@ Refresh/check 响应包含 `checked`、`skipped`、`refreshed`、`unchanged`、`
 
 | 现象 | 检查方式 |
 | --- | --- |
-| 返回 `gemini_account_pool_required` | Pro、长上下文、附件或图片等需要账号的请求缺少 `GEMINI_DB`。为 Worker 添加 D1 binding，或为 Docker 同时填写三个 D1 凭据。 |
+| 返回 `gemini_authenticated_session_required` | Pro、长上下文、附件或图片请求需要当前部署尚未配置的认证 Gemini 会话。查看 `reason`，再为 Worker 添加 D1 binding，或为 Docker 同时填写三个 D1 凭据。 |
 | 返回 `no_available_gemini_account` | 直接走账号池的请求没有可选账号。打开 `/admin`，导入并启用账号，检查账号是否处于冷却状态或需要更新凭据。 |
 | 返回 `invalid_runtime_config` | 检查环境变量：boolean 只能是 `true`/`false`，整数必须在范围内，`ADMIN_KEY` 必须是单个非占位字符串。 |
 | 管理页面返回 401 | 确认 WebUI 输入值与 `ADMIN_KEY` 一致；公共 `API_KEYS` 不能授权管理操作。 |

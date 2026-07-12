@@ -71,11 +71,13 @@ export const cases = [
 					},
 				}),
 			);
-			assert.equal(noCookie.status, 401);
+			assert.equal(noCookie.status, 422);
+			const noCookieBody = await noCookie.json();
 			assert.equal(
-				(await noCookie.json()).error.code,
-				"image_generation_requires_cookie",
+				noCookieBody.error.code,
+				"gemini_authenticated_session_required",
 			);
+			assert.equal(noCookieBody.error.reason, "image");
 			assert.equal(generated, false);
 
 			const noCookieEndpoint = await mod.handleImageGenerations(
@@ -92,11 +94,13 @@ export const cases = [
 					},
 				}),
 			);
-			assert.equal(noCookieEndpoint.status, 401);
+			assert.equal(noCookieEndpoint.status, 422);
+			const noCookieEndpointBody = await noCookieEndpoint.json();
 			assert.equal(
-				(await noCookieEndpoint.json()).error.code,
-				"image_generation_requires_cookie",
+				noCookieEndpointBody.error.code,
+				"gemini_authenticated_session_required",
 			);
+			assert.equal(noCookieEndpointBody.error.reason, "image");
 			assert.equal(generated, false);
 
 			const stream = await mod.handleChat(
@@ -2132,9 +2136,10 @@ export const cases = [
 					},
 				}),
 			);
-			assert.equal(resp.status, 413);
+			assert.equal(resp.status, 422);
 			const body = await resp.json();
-			assert.equal(body.error.code, "large_context_inline_unsupported");
+			assert.equal(body.error.code, "gemini_authenticated_session_required");
+			assert.equal(body.error.reason, "large_context");
 			assert.equal(generated, false);
 		},
 	],

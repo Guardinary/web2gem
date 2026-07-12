@@ -53,15 +53,16 @@ try {
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({
-			model: "gemini-3.5-flash",
+			model: "gemini-3.1-pro",
 			messages: [{ role: "user", content: "hello" }],
 		}),
 	});
-	assert(missingD1.status === 503, `missing D1 status ${missingD1.status}`);
+	assert(missingD1.status === 422, `missing D1 status ${missingD1.status}`);
 	const missingD1Body = await missingD1.json();
 	assert(
-		missingD1Body.error?.code === "gemini_account_pool_required",
-		"missing D1 did not return gemini_account_pool_required",
+		missingD1Body.error?.code === "gemini_authenticated_session_required" &&
+			missingD1Body.error?.reason === "pro_model",
+		"missing D1 did not return the authenticated-session error",
 	);
 
 	outputLine("Docker smoke check passed");

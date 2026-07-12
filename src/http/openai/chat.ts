@@ -58,6 +58,7 @@ export async function handleChat(
 			prepared.error.message,
 			prepared.error.status,
 			prepared.error.code,
+			prepared.error.reason,
 		);
 	}
 	const {
@@ -286,6 +287,7 @@ async function handleImageGenerationChat(
 			prepared.error.message,
 			prepared.error.status,
 			prepared.error.code,
+			prepared.error.reason,
 		);
 	}
 	const { rm, prompt, fileRefs, promptTokens } = prepared;

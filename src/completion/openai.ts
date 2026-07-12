@@ -19,6 +19,7 @@ import { log } from "../shared/logging";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
+	upstreamErrorReason,
 	upstreamErrorStatus,
 } from "../shared/errors";
 import { prepareOpenAIGeminiContext } from "./context";
@@ -30,6 +31,7 @@ export type OpenAICompletionPrepareError = {
 	message: string;
 	status: number;
 	code?: string;
+	reason?: string;
 };
 
 export type PreparedOpenAICompletion = {
@@ -116,11 +118,13 @@ export async function prepareOpenAICompletion(
 	);
 	if (hasCompletionError(ctx)) {
 		const code = upstreamErrorCode(ctx.error);
+		const reason = upstreamErrorReason(ctx.error);
 		const error: OpenAICompletionPrepareError = {
 			message: upstreamErrorMessage(ctx.error),
 			status: upstreamErrorStatus(ctx.error) || 502,
 		};
 		if (code) error.code = code;
+		if (reason) error.reason = reason;
 		return {
 			error,
 		};

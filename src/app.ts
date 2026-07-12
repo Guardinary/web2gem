@@ -34,6 +34,12 @@ import {
 } from "./http/admin/gemini-account-webui";
 import { createGeminiCompletionProvider } from "./gemini/completion-provider";
 import {
+	GEMINI_AUTHENTICATED_SESSION_REQUIRED_CODE,
+	GEMINI_AUTHENTICATED_SESSION_REQUIRED_STATUS,
+	geminiAuthenticatedSessionRequiredMessage,
+	type GeminiAuthenticatedSessionReason,
+} from "./shared/errors";
+import {
 	d1BindingFromEnv,
 	getGeminiAccountRuntimeFromEnv,
 } from "./gemini/accounts/runtime";
@@ -251,13 +257,14 @@ async function handlePostRoute(
 			path,
 			(body, accountRuntime) =>
 				handleImageGenerations(body, cfg, createProvider(cfg, accountRuntime)),
-			true,
+			"image",
 		);
 	}
 	if (path === "/v1/images/edits") {
 		if (isMultipartFormRequest(request)) {
 			const accountRuntime = requiredGeminiAccountRuntimeFromEnv(env);
-			if (!accountRuntime) return accountPoolRequiredOpenAIResponse();
+			if (!accountRuntime)
+				return authenticatedSessionRequiredOpenAIResponse("image");
 			return handleImageEditsMultipart(
 				request,
 				cfg,
@@ -271,7 +278,7 @@ async function handlePostRoute(
 			path,
 			(body, accountRuntime) =>
 				handleImageEdits(body, cfg, createProvider(cfg, accountRuntime)),
-			true,
+			"image",
 		);
 	}
 	if (GOOGLE_GENERATE_PATH_RE.test(path)) {
@@ -330,11 +337,14 @@ function requiredGeminiAccountRuntimeFromEnv(
 	return getGeminiAccountRuntimeFromEnv(env);
 }
 
-function accountPoolRequiredOpenAIResponse(): Response {
+function authenticatedSessionRequiredOpenAIResponse(
+	reason: GeminiAuthenticatedSessionReason,
+): Response {
 	return openAIErrorResponse(
-		"Gemini account pool requires a configured GEMINI_DB binding",
-		503,
-		"gemini_account_pool_required",
+		geminiAuthenticatedSessionRequiredMessage(reason),
+		GEMINI_AUTHENTICATED_SESSION_REQUIRED_STATUS,
+		GEMINI_AUTHENTICATED_SESSION_REQUIRED_CODE,
+		reason,
 	);
 }
 
@@ -347,14 +357,19 @@ async function handleOpenAIGenerationJsonPost(
 		body: NonNullable<RouteJsonPostResult["value"]>,
 		accountRuntime: GeminiAccountRuntime | null,
 	) => Promise<Response>,
-	requireAccount = false,
+	requiredReason: GeminiAuthenticatedSessionReason | null = null,
 ): Promise<Response> {
 	const parsed = await readRouteJsonPost(request, cfg, path);
 	if (parsed.error !== undefined)
-		return openAIErrorResponse(parsed.error, parsed.status || 400, parsed.code);
+		return openAIErrorResponse(
+			parsed.error,
+			parsed.status || 400,
+			parsed.code,
+			parsed.reason,
+		);
 	const accountRuntime = requiredGeminiAccountRuntimeFromEnv(env);
-	if (requireAccount && !accountRuntime)
-		return accountPoolRequiredOpenAIResponse();
+	if (requiredReason && !accountRuntime)
+		return authenticatedSessionRequiredOpenAIResponse(requiredReason);
 	return handler(parsed.value, accountRuntime);
 }
 
@@ -371,7 +386,7 @@ async function handleGoogleGenerationJsonPost(
 	const parsed = await readRouteJsonPost(request, cfg, path);
 	if (parsed.error !== undefined)
 		return jsonResponse(
-			googleJsonError(parsed.error, parsed.code),
+			googleJsonError(parsed.error, parsed.code, parsed.reason),
 			parsed.status || 400,
 		);
 	const accountRuntime = requiredGeminiAccountRuntimeFromEnv(env);

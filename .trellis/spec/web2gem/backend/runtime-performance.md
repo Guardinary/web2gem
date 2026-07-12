@@ -303,8 +303,9 @@ defaults that affect Worker memory and CPU pressure.
   multipart form overhead.
 - When the generic JSON limit is lower than the large-context inline limit,
   return `request_body_too_large`. When the large-context limit is lower or
-  equal and text attachments are unavailable, preserve the more specific
-  `large_context_inline_unsupported` error.
+  equal and text attachments are unavailable, return the more specific 422
+  capability error: `gemini_authenticated_session_required` when authentication
+  is missing, otherwise `large_context_inline_unsupported`.
 - Declared oversized JSON must be rejected before reading the body. Streamed
   oversized JSON and generated-image responses must cancel their active reader.
 - Compact Base64 should use native `Uint8Array.fromBase64` as the validation and
@@ -404,7 +405,7 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 - Refresh lock owners and cache keys must be based on account IDs and hashes, never raw cookies or session tokens.
 - `cookie_hash` is mutable during rotation and may have a unique D1 index. Check for an existing owner before writeback and also classify a concurrent unique-constraint failure after the update attempt; both paths must return the same duplicate no-op result.
 - A duplicate-cookie no-op must not update the selected lease or its in-memory account state. Account refresh returns `rotation_duplicate` instead of throwing or reporting `rotation_updated`.
-- `createGeminiAccountRuntimeFromEnv` may return `null` for helper/admin composition and anonymous-eligible public text generation. Account-required work must translate missing `GEMINI_DB` into a sanitized `gemini_account_pool_required` response instead of attempting the authenticated operation anonymously.
+- `createGeminiAccountRuntimeFromEnv` may return `null` for helper/admin composition and anonymous-eligible public text generation. Account-required work must translate missing authenticated-session capability into a sanitized 422 `gemini_authenticated_session_required` response with a bounded `reason` instead of attempting the authenticated operation anonymously.
 
 ### 4. Validation & Error Matrix
 
@@ -774,8 +775,9 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - Invalid JSON with `GEMINI_DB` configured -> 400 and zero D1 `prepare` calls.
 - Missing `GEMINI_DB` plus eligible short text -> anonymous upstream generation,
   zero D1 reads.
-- Missing `GEMINI_DB` plus Pro, attachment, oversized, or image work -> 503
-  `gemini_account_pool_required`, zero anonymous upstream calls.
+- Missing `GEMINI_DB` plus Pro, attachment, oversized, or image work -> 422
+  `gemini_authenticated_session_required` with the matching `reason`, zero
+  anonymous upstream calls.
 - D1 configured with no selectable account plus eligible short text -> anonymous
   success when upstream succeeds; after anonymous failure, preserve that error.
 - D1 configured with no selectable account plus direct account-required work ->
@@ -804,7 +806,7 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
   `AccountPoolService.acquireLease`; a pre-output failure then uses the normal
   least-in-flight/round-robin selector once.
 - Base: no-D1 eligible text remains usable anonymously, while account-required
-  work fails closed with `gemini_account_pool_required`; static health/model
+  work fails closed with `gemini_authenticated_session_required`; static health/model
   routes still do not read D1.
 - Bad: acquire an account before the final prompt, model, and file references are
   known, because that defeats anonymous preference and consumes pool capacity.

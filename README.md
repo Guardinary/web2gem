@@ -340,7 +340,7 @@ The easiest way to get started is the built-in WebUI:
 
 Use a fresh or dedicated Gemini browser session when possible. Do not paste a full Cookie header, a browser cookie export, cookie names, equals signs, semicolons, or unrelated access tokens. The admin responses and account list are redacted and never return the stored session credentials.
 
-This branch uses hybrid upstream routing. Eligible short text requests try anonymous Gemini Web first without reading D1. If anonymous generation fails before output, the provider selects one account through the existing least-in-flight and round-robin pool and retries once. Pro, long-context, attachment, image-generation, and image-edit requests go directly to the account pool. Missing D1 returns `gemini_account_pool_required` only for account-required work; an empty pool returns `no_available_gemini_account` for direct account work, while a failed anonymous request keeps its original error when no fallback account exists.
+This branch uses hybrid upstream routing. Eligible short text requests try anonymous Gemini Web first without reading D1. If anonymous generation fails before output, the provider selects one account through the existing least-in-flight and round-robin pool and retries once. Pro, long-context, attachment, image-generation, and image-edit requests go directly to the account pool. Missing authenticated-session capability returns HTTP 422 with `gemini_authenticated_session_required` and a machine-readable `reason`; an empty configured pool returns HTTP 503 with `no_available_gemini_account`, while a failed anonymous request keeps its original error when no fallback account exists.
 
 For Workers, create a D1 database, apply [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql), and bind it as `GEMINI_DB` in `wrangler.jsonc` or through your Cloudflare dashboard configuration. The schema creates structured `gemini_accounts`, `gemini_pool_meta`, and `gemini_account_locks` tables rather than storing account state as one JSON blob.
 
@@ -405,7 +405,7 @@ The health route `GET /` remains unauthenticated so deployment probes can work w
 
 | Symptom | What to check |
 | --- | --- |
-| `gemini_account_pool_required` | An account-required Pro, long-context, attachment, or image request has no `GEMINI_DB`. Add the Worker D1 binding or all three Docker D1 credentials. |
+| `gemini_authenticated_session_required` | A Pro, long-context, attachment, or image request needs an authenticated Gemini session that this deployment has not configured. Inspect `reason`, then add the Worker D1 binding or all three Docker D1 credentials. |
 | `no_available_gemini_account` | Direct account-required work found no selectable account. Open `/admin`; import an account, enable it, and check whether it is cooling down or needs refreshed credentials. |
 | `invalid_runtime_config` | Review environment values. Booleans must be `true`/`false`, integers must be in range, and `ADMIN_KEY` must be one non-placeholder string. |
 | Admin page returns 401 | Confirm the value sent by the WebUI matches `ADMIN_KEY`; public `API_KEYS` cannot authorize admin operations. |

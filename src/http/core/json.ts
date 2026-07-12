@@ -11,11 +11,13 @@ export type ReadJsonRequestResult =
 			error?: undefined;
 			status?: undefined;
 			code?: undefined;
+			reason?: undefined;
 	  }
 	| {
 			error: string;
 			status: number;
 			code?: string;
+			reason?: string;
 			value?: undefined;
 			text?: undefined;
 			bytes?: undefined;
@@ -43,6 +45,7 @@ export type ReadJsonRequestOptions = {
 		message: string;
 		status: number;
 		code?: string;
+		reason?: string;
 	};
 };
 
@@ -216,6 +219,7 @@ function readJsonRequestError(
 		status: result?.status || 400,
 	};
 	if (result?.code) responseError.code = result.code;
+	if (result?.reason) responseError.reason = result.reason;
 	err.result = responseError;
 	return err;
 }

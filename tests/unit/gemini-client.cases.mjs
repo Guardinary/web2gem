@@ -3162,6 +3162,28 @@ export const cases = [
 		},
 	],
 	[
+		"returns typed authenticated-session errors when no pool is configured",
+		async () => {
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+			);
+			await assert.rejects(async () => {
+				try {
+					await provider.generateText({
+						prompt: "prompt",
+						rm: providerProModel(),
+						fileRefs: null,
+					});
+				} catch (error) {
+					assert.equal(error.status, 422);
+					assert.equal(error.code, "gemini_authenticated_session_required");
+					assert.equal(error.reason, "pro_model");
+					throw error;
+				}
+			}, /authenticated Gemini session/);
+		},
+	],
+	[
 		"returns sanitized no-account errors for account-required models",
 		async () => {
 			let generated = false;

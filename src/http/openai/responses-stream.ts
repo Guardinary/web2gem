@@ -13,6 +13,7 @@ import {
 	errorLogSummary,
 	upstreamErrorCode,
 	upstreamErrorMessage,
+	upstreamErrorReason,
 } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import { randHex } from "../../shared/crypto";
@@ -93,7 +94,16 @@ export async function streamResponsesWithToolSieve(
 		{ emitFirstImmediately: true },
 	);
 
-	const fail = async (message: unknown, code: unknown) => {
+	const fail = async (
+		message: unknown,
+		code: unknown,
+		reason: unknown = undefined,
+	) => {
+		const error: Record<string, unknown> = {
+			message,
+			code: code || "upstream_error",
+		};
+		if (reason) error.reason = reason;
 		await writeResponsesEvent(write, "response.failed", {
 			response: {
 				id: rid,
@@ -101,7 +111,7 @@ export async function streamResponsesWithToolSieve(
 				status: "failed",
 				model: rm.name,
 				output,
-				error: { message, code: code || "upstream_error" },
+				error,
 			},
 		});
 	};
@@ -210,6 +220,7 @@ export async function streamResponsesWithToolSieve(
 				await fail(
 					`upstream error: ${upstreamErrorMessage(lifecycle.issue.error)}`,
 					upstreamErrorCode(lifecycle.issue.error) || "upstream_error",
+					upstreamErrorReason(lifecycle.issue.error),
 				);
 				return;
 			}
@@ -250,6 +261,7 @@ export async function streamResponsesWithToolSieve(
 				await fail(
 					`upstream error: ${upstreamErrorMessage(lifecycle.issue.error)}`,
 					upstreamErrorCode(lifecycle.issue.error) || "upstream_error",
+					upstreamErrorReason(lifecycle.issue.error),
 				);
 				return;
 			}

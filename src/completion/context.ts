@@ -43,6 +43,7 @@ import {
 	oversizedInlineContextFailure,
 } from "./context-files";
 import type {
+	AttachmentResolutionResult,
 	ContextFileFailure,
 	ContextFileResult,
 	FileRef,
@@ -257,9 +258,16 @@ async function preparePromptWithAttachments(
 		contextFiles = prepared;
 	}
 
-	const attachmentResult = await params.provider.resolveAttachments(
-		params.attachmentPlan,
-	);
+	let attachmentResult: AttachmentResolutionResult;
+	try {
+		attachmentResult = await params.provider.resolveAttachments(
+			params.attachmentPlan,
+		);
+	} catch (error) {
+		return {
+			error: error instanceof Error ? error : new Error(String(error)),
+		};
+	}
 	const attachmentPromptText =
 		(attachmentResult.promptText || "") + (attachmentResult.droppedNote || "");
 	let basePromptWithAttachmentTextPrepared: PromptWithTokens | null = null;

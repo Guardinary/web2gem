@@ -25,11 +25,13 @@ import { log } from "../shared/logging";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
+	upstreamErrorReason,
 	upstreamErrorStatus,
 } from "../shared/errors";
 import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
 import { promptByteLength, tokenEst } from "../shared/tokens";
 import { contextFileThreshold } from "./context-files";
+import { geminiAuthenticatedSessionRequiredError } from "../shared/errors";
 import type { CompletionProvider } from "./ports";
 import type {
 	AttachmentResolutionResult,
@@ -41,6 +43,7 @@ export type ImageGenerationPrepareError = {
 	message: string;
 	status: number;
 	code: string;
+	reason?: string;
 };
 
 export type PreparedImageGenerationCompletion = {
@@ -160,12 +163,15 @@ async function prepareImageGenerationFromState(
 	PreparedImageGenerationCompletion | { error: ImageGenerationPrepareError }
 > {
 	if (!provider.supportsAuthenticatedSession) {
+		const error = geminiAuthenticatedSessionRequiredError("image");
+		const preparedError: ImageGenerationPrepareError = {
+			message: error.message,
+			status: error.status || 422,
+			code: error.code || "gemini_authenticated_session_required",
+		};
+		if (error.reason) preparedError.reason = error.reason;
 		return {
-			error: {
-				message: "image generation requires a configured Gemini account pool",
-				status: 401,
-				code: "image_generation_requires_cookie",
-			},
+			error: preparedError,
 		};
 	}
 
@@ -576,12 +582,15 @@ async function resolveImageGenerationFileRefs(
 	try {
 		result = await provider.resolveAttachments(plan);
 	} catch (e) {
+		const error: ImageGenerationPrepareError = {
+			message: `failed to upload image generation input: ${upstreamErrorMessage(e)}`,
+			status: upstreamErrorStatus(e) || 502,
+			code: upstreamErrorCode(e) || "image_input_upload_failed",
+		};
+		const reason = upstreamErrorReason(e);
+		if (reason) error.reason = reason;
 		return {
-			error: {
-				message: `failed to upload image generation input: ${upstreamErrorMessage(e)}`,
-				status: upstreamErrorStatus(e) || 502,
-				code: upstreamErrorCode(e) || "image_input_upload_failed",
-			},
+			error,
 		};
 	}
 	const uploaded = result.fileRefs || [];

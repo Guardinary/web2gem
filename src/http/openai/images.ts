@@ -254,6 +254,7 @@ async function handlePreparedForcedImageEndpoint(
 			prepared.error.message,
 			prepared.error.status,
 			prepared.error.code,
+			prepared.error.reason,
 		);
 	}
 

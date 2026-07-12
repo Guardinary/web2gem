@@ -10,6 +10,7 @@ import {
 } from "../shared/tokens";
 import type { PromptByteLengthBounded } from "../shared/tokens";
 import type { ErrorWithMetadata } from "../shared/types";
+import { geminiAuthenticatedSessionRequiredError } from "../shared/errors";
 import type {
 	ContextFileFailure,
 	ContextFileResult,
@@ -110,6 +111,16 @@ export function oversizedInlineContextFailure(
 	reason?: unknown,
 ): ErrorWithMetadata {
 	const check = promptByteCheck || contextFilePromptByteCheck(cfg, promptText);
+	if (cfg.current_input_file_enabled && !cfg.supports_authenticated_session) {
+		const error = geminiAuthenticatedSessionRequiredError(
+			"large_context",
+			`This request requires an authenticated Gemini session because the rendered context exceeds the inline limit (${formatPromptByteComparison(check)})`,
+		);
+		error.promptBytes = check.bytes;
+		error.promptBytesExact = check.exact;
+		error.thresholdBytes = check.thresholdBytes;
+		return error;
+	}
 	const unavailable = String(
 		reason ||
 			contextFileConfigUnavailableReason(cfg) ||
@@ -119,7 +130,7 @@ export function oversizedInlineContextFailure(
 		`context is too long to send inline (${formatPromptByteComparison(check)}) and ${unavailable}; configure the Gemini account pool with CURRENT_INPUT_FILE_ENABLED=true so this worker can use text attachments, or reduce the request size`,
 	);
 	err.code = "large_context_inline_unsupported";
-	err.status = 413;
+	err.status = 422;
 	err.promptBytes = check.bytes;
 	err.promptBytesExact = check.exact;
 	err.thresholdBytes = check.thresholdBytes;

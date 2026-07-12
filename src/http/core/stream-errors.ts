@@ -1,4 +1,8 @@
-import { upstreamErrorCode, upstreamErrorMessage } from "../../shared/errors";
+import {
+	upstreamErrorCode,
+	upstreamErrorMessage,
+	upstreamErrorReason,
+} from "../../shared/errors";
 import type { SSEWrite } from "./sse";
 
 export function streamErrorText(e: unknown, prefix = "upstream error"): string {
@@ -13,11 +17,14 @@ export function streamInterruptedWarningText(e: unknown): string {
 export function streamWarningObject(
 	e: unknown,
 	message: unknown = undefined,
-): { code: string; message: unknown } {
-	return {
+): { code: string; message: unknown; reason?: string } {
+	const warning: { code: string; message: unknown; reason?: string } = {
 		code: upstreamErrorCode(e) || "stream_interrupted",
 		message: message || streamInterruptedWarningText(e),
 	};
+	const reason = upstreamErrorReason(e);
+	if (reason) warning.reason = reason;
+	return warning;
 }
 
 export async function writeStreamWarningEvent(

@@ -275,7 +275,7 @@ Use this contract when adding D1-backed storage, Docker-side D1 HTTP bindings, a
 
 - Good: `createD1HttpBinding(...).prepare(sql).bind(secret).all()` sends bind values to Cloudflare, but any thrown error message omits `secret`.
 - Good: `sanitizeGeminiAccount(row)` returns `has_cookie`, `has_sapisid`, `has_session_token`, hashes, and `cookie_preview: "present"` rather than raw cookie material.
-- Base: Docker leaves `GEMINI_DB` absent when all three D1 HTTP env vars are blank, and public Gemini generation routes fail closed with `gemini_account_pool_required`.
+- Base: Docker leaves `GEMINI_DB` absent when all three D1 HTTP env vars are blank, and account-required Gemini generation routes fail closed with 422 `gemini_authenticated_session_required` plus a bounded `reason`.
 - Bad: returning `token.slice(0, 8) + "..."` for Gemini cookies in admin/public account lists.
 - Bad: `catch (err) { throw err; }` around D1 HTTP calls, because custom fetch implementations or runtime errors can include request bodies.
 
@@ -561,7 +561,8 @@ Use this contract when a request may be too large to send inline to Gemini Web a
 - HTTP boundary: JSON route helpers may reject POST routes before `readJsonRequest` when `Content-Length` exceeds the attachment-aware body read limit for inline-context-unavailable requests.
 - JSON boundary: `readJsonRequest(request, { maxBodyBytes, oversizedError })` may stop reading `request.body` as soon as streamed bytes exceed the configured limit.
 - Completion boundary: `preparePromptWithAttachments` may return `ContextFileFailure` with `ErrorWithMetadata`.
-- Error code: `large_context_inline_unsupported`.
+- Missing authenticated-session error: 422 `gemini_authenticated_session_required` with `reason: "large_context"`.
+- Disabled context-file capability error: 422 `large_context_inline_unsupported`.
 
 ### 3. Contracts
 
@@ -572,9 +573,10 @@ Use this contract when a request may be too large to send inline to Gemini Web a
   - A configured Gemini account pool must be available for text attachment upload.
   - `LOG_REQUESTS` is opt-in and should not be required for normal operation.
 - `Content-Length` is not an inline prompt size. It includes base64 image/file bytes that prompt conversion later replaces with markers and attachment candidates.
-- If `Content-Length` is present and exceeds the attachment-aware body read limit while context-file attachments are unavailable, return 413 before parsing JSON. The client-facing message should include `<contentLength> bytes > <bodyLimit>` and the inline prompt threshold.
-- If `Content-Length` is absent or inaccurate and streamed body bytes exceed the attachment-aware body read limit while context-file attachments are unavailable, `readJsonRequest` returns 413 before decoding/parsing the full body. The client-facing message should include `at least <bodyLimit + 1> UTF-8 bytes > <bodyLimit>` and the inline prompt threshold.
-- If a parsed prompt exceeds the threshold after prompt conversion has removed request-local attachment payloads from the live prompt, return 413 before provider generation when context-file attachments are unavailable. The client-facing message should include `<promptBytes> UTF-8 bytes > <threshold>`; bounded checks may say `at least <bytes>`.
+- If `Content-Length` is present and exceeds the attachment-aware body read limit while context-file attachments are unavailable, return 422 before parsing JSON. The client-facing message should include `<contentLength> bytes > <bodyLimit>` and the inline prompt threshold.
+- If `Content-Length` is absent or inaccurate and streamed body bytes exceed the attachment-aware body read limit while context-file attachments are unavailable, `readJsonRequest` returns 422 before decoding/parsing the full body.
+- If a parsed prompt exceeds the threshold after prompt conversion has removed request-local attachment payloads from the live prompt, return 422 before provider generation when context-file attachments are unavailable. The client-facing message should include `<promptBytes> UTF-8 bytes > <threshold>`; bounded checks may say `at least <bytes>`.
+- HTTP 413 is reserved for the configured JSON request-body limit and uses `request_body_too_large`.
 - If conversion-time checks show the base prompt or estimated final inline prompt exceeds the threshold while text attachments are available, choose the context-file path before constructing the full hidden-tools/structured inline prompt string.
 - In the context-file path, upload `CURRENT_TOOLS_FILE_NAME` (default `tools.txt`) as the home for tool-use context. It must contain visible tool descriptions/schemas when present, DSML tool-call format instructions, the tool-choice policy text when present, and `GEMINI_NATIVE_HIDDEN_TOOLS_PROMPT`. The live prompt should only reference the attached tools file and must not duplicate DSML call-format instructions or the hidden native tool payload text.
 - If no client-visible tools are declared, still attach `tools.txt` for the hidden native tool prompt when the request uses context files. Token accounting for context-file prompts must include history text, `tools.txt`, and the short live prompt exactly once.
@@ -583,10 +585,10 @@ Use this contract when a request may be too large to send inline to Gemini Web a
 
 ### 4. Validation & Error Matrix
 
-- `Content-Length > attachment-aware body read limit` and no authenticated account-pool session is available -> 413 `large_context_inline_unsupported`.
-- Streamed request body exceeds attachment-aware body read limit and no authenticated account-pool session is available -> 413 `large_context_inline_unsupported`.
-- Prompt bytes exceed threshold and no authenticated account-pool session is available -> 413 `large_context_inline_unsupported`.
-- Prompt bytes exceed threshold and `CURRENT_INPUT_FILE_ENABLED=false` -> 413 `large_context_inline_unsupported`.
+- `Content-Length > attachment-aware body read limit` and no authenticated session is available -> 422 `gemini_authenticated_session_required`, reason `large_context`.
+- Streamed request body exceeds attachment-aware body read limit and no authenticated session is available -> 422 `gemini_authenticated_session_required`, reason `large_context` when the envelope can preserve metadata.
+- Prompt bytes exceed threshold and no authenticated session is available -> 422 `gemini_authenticated_session_required`, reason `large_context`.
+- Prompt bytes exceed threshold and `CURRENT_INPUT_FILE_ENABLED=false` with an authenticated session available -> 422 `large_context_inline_unsupported`.
 - Prompt bytes exceed threshold and text upload fails -> 502 `large_context_file_upload_failed`.
 - Context-file path with visible tools -> upload `message.txt` and `tools.txt`; provider prompt references `tools.txt` but does not contain `Available tools`, `<|DSML|tool_calls>`, or `Gemini native hidden tool calls`.
 - Context-file path without visible tools -> upload `message.txt` and `tools.txt`; `tools.txt` contains `Gemini native hidden tool calls`.
@@ -604,10 +606,10 @@ Use this contract when a request may be too large to send inline to Gemini Web a
 
 ### 6. Tests Required
 
-- Unit test that oversized invalid JSON with `Content-Length` returns 413 when the body read limit is exceeded, proving the HTTP guard runs before parsing.
-- Unit test that oversized invalid JSON without `Content-Length` returns 413 from bounded stream reading when the body read limit is exceeded, proving the body reader stops before JSON parsing.
+- Unit test that oversized invalid JSON with `Content-Length` returns the appropriate 422 capability error when the attachment-aware body read limit is exceeded, proving the HTTP guard runs before parsing.
+- Unit test that oversized invalid JSON without `Content-Length` returns the appropriate 422 capability error from bounded stream reading when the attachment-aware body read limit is exceeded, proving the body reader stops before JSON parsing.
 - Unit test that a request with inline image data and small text prompt can exceed `CURRENT_INPUT_FILE_MIN_BYTES` as `Content-Length` and still reach JSON parsing / prompt conversion.
-- Unit test that parsed oversized prompts without attachment support return `large_context_inline_unsupported`.
+- Unit test that parsed oversized prompts without an authenticated session return `gemini_authenticated_session_required`, while deployments that explicitly disable context files return `large_context_inline_unsupported`.
 - Unit test that context-file requests with visible tools put `Available tool descriptions`, `<|DSML|tool_calls>`, tool-choice policy, and hidden native tool text in `tools.txt`, while the provider live prompt only references the file.
 - Unit test that context-file requests without visible tools still upload `tools.txt` containing the hidden native tool prompt.
 - Unit test or smoke coverage that existing small-prompt and context-file helper behavior still works.

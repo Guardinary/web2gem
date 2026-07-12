@@ -13,6 +13,7 @@ import {
 	errorLogSummary,
 	upstreamErrorCode,
 	upstreamErrorMessage,
+	upstreamErrorReason,
 } from "../../shared/errors";
 import { randHex } from "../../shared/crypto";
 import { openAIErrorResponse, openAIUpstreamErrorResponse } from "./errors";
@@ -71,6 +72,7 @@ export async function handleResponses(
 			prepared.error.message,
 			prepared.error.status,
 			prepared.error.code,
+			prepared.error.reason,
 		);
 	}
 	const {
@@ -149,6 +151,9 @@ export async function handleResponses(
 							error: {
 								message: upstreamErrorMessage(e),
 								code: upstreamErrorCode(e) || "stream_error",
+								...(upstreamErrorReason(e)
+									? { reason: upstreamErrorReason(e) }
+									: {}),
 							},
 						},
 					}),
@@ -262,6 +267,7 @@ async function handleImageGenerationResponses(
 			prepared.error.message,
 			prepared.error.status,
 			prepared.error.code,
+			prepared.error.reason,
 		);
 	}
 	const { rm, prompt, fileRefs, promptTokens } = prepared;

@@ -1,6 +1,10 @@
 import { TEXT_ENCODER } from "../../shared/encoding";
 import { isAbortError, sleep } from "../../shared/abort";
-import { upstreamErrorCode, upstreamErrorMessage } from "../../shared/errors";
+import {
+	upstreamErrorCode,
+	upstreamErrorMessage,
+	upstreamErrorReason,
+} from "../../shared/errors";
 
 export type SSEWrite = (chunk: string) => void | Promise<void>;
 export type SSEProducer = (
@@ -78,7 +82,7 @@ export function sseResponse(
 				} catch (_) {}
 			} else {
 				await write(
-					`event: error\ndata: ${JSON.stringify({ error: { message: upstreamErrorMessage(e), code: upstreamErrorCode(e) || "stream_error" } })}\n\n`,
+					`event: error\ndata: ${JSON.stringify({ error: { message: upstreamErrorMessage(e), code: upstreamErrorCode(e) || "stream_error", ...(upstreamErrorReason(e) ? { reason: upstreamErrorReason(e) } : {}) } })}\n\n`,
 				);
 			}
 		} finally {

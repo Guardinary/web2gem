@@ -167,16 +167,19 @@ const missingD1ForPro = await prod.default.fetch(
 	},
 	{},
 );
-if (missingD1ForPro.status !== 503) {
+if (missingD1ForPro.status !== 422) {
 	errorLine(
 		`Smoke check failed: missing D1 Pro status ${missingD1ForPro.status}`,
 	);
 	process.exit(1);
 }
 const missingD1Body = await missingD1ForPro.json();
-if (missingD1Body.error?.code !== "gemini_account_pool_required") {
+if (
+	missingD1Body.error?.code !== "gemini_authenticated_session_required" ||
+	missingD1Body.error?.reason !== "pro_model"
+) {
 	errorLine(
-		"Smoke check failed: missing D1 Pro did not return gemini_account_pool_required",
+		"Smoke check failed: missing D1 Pro did not return the authenticated-session error",
 	);
 	process.exit(1);
 }

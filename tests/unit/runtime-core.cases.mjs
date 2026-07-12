@@ -1080,12 +1080,110 @@ export const cases = [
 						{},
 					),
 			);
-			assert.equal(pro.status, 503);
-			assert.equal(
-				(await pro.json()).error.code,
-				"gemini_account_pool_required",
-			);
+			assert.equal(pro.status, 422);
+			const proBody = await pro.json();
+			assert.equal(proBody.error.code, "gemini_authenticated_session_required");
+			assert.equal(proBody.error.reason, "pro_model");
 			assert.equal(fetchCalls, 1);
+		},
+	],
+	[
+		"returns authenticated-session errors for oversized context without D1",
+		async () => {
+			const resp = await mod.default.fetch(
+				new Request("https://worker.example/v1/chat/completions", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						model: "gemini-3.5-flash",
+						messages: [{ role: "user", content: "x".repeat(40) }],
+					}),
+				}),
+				{
+					CURRENT_INPUT_FILE_ENABLED: "true",
+					CURRENT_INPUT_FILE_MIN_BYTES: "10",
+				},
+				{},
+			);
+			assert.equal(resp.status, 422);
+			const body = await resp.json();
+			assert.equal(body.error.code, "gemini_authenticated_session_required");
+			assert.equal(body.error.reason, "large_context");
+
+			const google = await mod.default.fetch(
+				new Request(
+					"https://worker.example/v1beta/models/gemini-3.5-flash:generateContent",
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							contents: [{ parts: [{ text: "x".repeat(40) }] }],
+						}),
+					},
+				),
+				{
+					CURRENT_INPUT_FILE_ENABLED: "true",
+					CURRENT_INPUT_FILE_MIN_BYTES: "10",
+				},
+				{},
+			);
+			assert.equal(google.status, 422);
+			const googleBody = await google.json();
+			assert.equal(
+				googleBody.error.code,
+				"gemini_authenticated_session_required",
+			);
+			assert.equal(googleBody.error.reason, "large_context");
+
+			const image = await mod.default.fetch(
+				new Request("https://worker.example/v1/images/generations", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ prompt: "draw a square" }),
+				}),
+				{},
+				{},
+			);
+			assert.equal(image.status, 422);
+			const imageBody = await image.json();
+			assert.equal(
+				imageBody.error.code,
+				"gemini_authenticated_session_required",
+			);
+			assert.equal(imageBody.error.reason, "image");
+
+			const attachment = await mod.default.fetch(
+				new Request("https://worker.example/v1/chat/completions", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						model: "gemini-3.5-flash",
+						messages: [
+							{
+								role: "user",
+								content: [
+									{ type: "text", text: "describe this image" },
+									{
+										type: "image_url",
+										image_url: {
+											url: "data:image/png;base64,iVBORw0KGgo=",
+										},
+									},
+								],
+							},
+						],
+					}),
+				}),
+				{},
+				{},
+			);
+			assert.equal(attachment.status, 422);
+			const attachmentBody = await attachment.json();
+			assert.equal(
+				attachmentBody.error.code,
+				"gemini_authenticated_session_required",
+			);
+			assert.equal(attachmentBody.error.reason, "attachment");
 		},
 	],
 	[
@@ -1216,13 +1314,11 @@ export const cases = [
 				},
 				{},
 			);
-			assert.equal(resp.status, 413);
+			assert.equal(resp.status, 422);
 			const body = await resp.json();
-			assert.equal(body.error.code, "large_context_inline_unsupported");
-			assert.match(
-				body.error.message,
-				/CURRENT_INPUT_FILE_ENABLED is disabled/,
-			);
+			assert.equal(body.error.code, "gemini_authenticated_session_required");
+			assert.equal(body.error.reason, "large_context");
+			assert.match(body.error.message, /authenticated Gemini session/);
 		},
 	],
 	[

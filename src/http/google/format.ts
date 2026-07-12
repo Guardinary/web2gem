@@ -1,14 +1,20 @@
 import { streamWarningObject } from "../core/stream-errors";
 import type { SSEWrite } from "../core/sse";
-import { upstreamErrorCode, upstreamErrorMessage } from "../../shared/errors";
+import {
+	upstreamErrorCode,
+	upstreamErrorMessage,
+	upstreamErrorReason,
+} from "../../shared/errors";
 import type { GoogleResponsePart } from "../../completion/google-turn";
 
 export function googleErrorResponseBody(
 	message: unknown,
 	code: unknown = undefined,
+	reason: unknown = undefined,
 ) {
 	const error: Record<string, unknown> = { message };
 	if (code) error.code = code;
+	if (reason) error.reason = reason;
 	return { error };
 }
 
@@ -17,12 +23,15 @@ export async function writeGoogleStreamError(
 	model: unknown,
 	e: unknown,
 ): Promise<void> {
+	const error: Record<string, unknown> = {
+		message: upstreamErrorMessage(e),
+		code: upstreamErrorCode(e) || "upstream_error",
+	};
+	const reason = upstreamErrorReason(e);
+	if (reason) error.reason = reason;
 	const result = write(
 		`data: ${JSON.stringify({
-			error: {
-				message: upstreamErrorMessage(e),
-				code: upstreamErrorCode(e) || "upstream_error",
-			},
+			error,
 			modelVersion: model,
 		})}\n\n`,
 	);

@@ -16,6 +16,7 @@ import { log } from "../shared/logging";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
+	upstreamErrorReason,
 	upstreamErrorStatus,
 } from "../shared/errors";
 import { prepareGoogleGeminiContext } from "./context";
@@ -27,6 +28,7 @@ export type GoogleCompletionPrepareError = {
 	message: string;
 	status: number;
 	code?: string;
+	reason?: string;
 };
 
 export type PreparedGoogleCompletion = {
@@ -94,11 +96,16 @@ export async function prepareGoogleCompletion(
 	);
 	if (hasCompletionError(ctx)) {
 		const code = upstreamErrorCode(ctx.error) || "context_file_upload_failed";
+		const error: GoogleCompletionPrepareError = {
+			message: upstreamErrorMessage(ctx.error),
+			status: upstreamErrorStatus(ctx.error) || 502,
+			code,
+		};
+		const reason = upstreamErrorReason(ctx.error);
+		if (reason) error.reason = reason;
 		return {
 			error: {
-				message: upstreamErrorMessage(ctx.error),
-				status: upstreamErrorStatus(ctx.error) || 502,
-				code,
+				...error,
 			},
 		};
 	}

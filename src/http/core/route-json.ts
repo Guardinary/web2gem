@@ -1,3 +1,8 @@
+import {
+	GEMINI_AUTHENTICATED_SESSION_REQUIRED_CODE,
+	GEMINI_AUTHENTICATED_SESSION_REQUIRED_STATUS,
+	geminiAuthenticatedSessionRequiredMessage,
+} from "../../shared/errors";
 import { contextFileThreshold } from "../../completion/context-files";
 import { elapsedMs, logStage, nowMs } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
@@ -23,8 +28,15 @@ export type RouteJsonPostResult =
 			error?: undefined;
 			status?: undefined;
 			code?: undefined;
+			reason?: undefined;
 	  }
-	| { error: string; status: number; code?: string; value?: undefined };
+	| {
+			error: string;
+			status: number;
+			code?: string;
+			reason?: string;
+			value?: undefined;
+	  };
 
 export async function readRouteJsonPost(
 	request: Request,
@@ -48,9 +60,13 @@ export async function readRouteJsonPost(
 export function googleJsonError(
 	message: string,
 	code?: string,
-): { error: { message: string; code?: string } } {
-	const error: { message: string; code?: string } = { message };
+	reason?: string,
+): { error: { message: string; code?: string; reason?: string } } {
+	const error: { message: string; code?: string; reason?: string } = {
+		message,
+	};
 	if (code) error.code = code;
+	if (reason) error.reason = reason;
 	return { error };
 }
 
@@ -58,7 +74,13 @@ function oversizedInlineBodyRejection(
 	request: Request,
 	cfg: RouteJsonConfig,
 	path: string,
-): { message: string; error: string; status: number; code: string } | null {
+): {
+	message: string;
+	error: string;
+	status: number;
+	code: string;
+	reason?: string;
+} | null {
 	const unavailable = inlineContextUnavailableReason(cfg);
 	if (!unavailable) return null;
 	const contentLength = requestContentLength(request);
@@ -68,21 +90,38 @@ function oversizedInlineBodyRejection(
 	const requestBodyLimit = positiveIntegerOrNull(cfg.request_body_max_bytes);
 	if (requestBodyLimit != null && requestBodyLimit < bodyLimit) return null;
 	if (contentLength <= bodyLimit) return null;
+	const missingSession = !cfg.supports_authenticated_session;
+	const status = missingSession
+		? GEMINI_AUTHENTICATED_SESSION_REQUIRED_STATUS
+		: 422;
+	const code = missingSession
+		? GEMINI_AUTHENTICATED_SESSION_REQUIRED_CODE
+		: LARGE_CONTEXT_INLINE_UNSUPPORTED;
 	logStage(cfg, "request_json_reject", {
 		path,
-		status: 413,
-		code: LARGE_CONTEXT_INLINE_UNSUPPORTED,
+		status,
+		code,
 		bodyBytes: contentLength,
 		threshold,
 		bodyLimit,
 	});
-	const message = `request body is too large to parse without Gemini text attachments (${contentLength} bytes > ${bodyLimit}; inline prompt threshold ${threshold}) and ${unavailable}; configure the Gemini account pool with CURRENT_INPUT_FILE_ENABLED=true so this worker can use text attachments, or reduce the request size`;
-	return {
-		status: 413,
-		code: LARGE_CONTEXT_INLINE_UNSUPPORTED,
+	const message = missingSession
+		? `${geminiAuthenticatedSessionRequiredMessage("large_context")} (request body ${contentLength} bytes > inline read limit ${bodyLimit}; inline prompt threshold ${threshold})`
+		: `request body is too large to parse without Gemini text attachments (${contentLength} bytes > ${bodyLimit}; inline prompt threshold ${threshold}) and ${unavailable}; enable Gemini text attachments or reduce the request size`;
+	const rejection: {
+		status: number;
+		code: string;
+		message: string;
+		error: string;
+		reason?: string;
+	} = {
+		status,
+		code,
 		message,
 		error: message,
 	};
+	if (missingSession) rejection.reason = "large_context";
+	return rejection;
 }
 
 async function readJsonForRoute(
@@ -116,12 +155,20 @@ function oversizedInlineBodyReadOptions(
 	const bodyLimit = inlineContextBodyReadLimit(cfg, threshold);
 	if (requestBodyLimit != null && requestBodyLimit < bodyLimit)
 		return requestBodyReadOptions(requestBodyLimit);
+	const missingSession = !cfg.supports_authenticated_session;
 	return {
 		maxBodyBytes: bodyLimit,
 		oversizedError: {
-			status: 413,
-			code: LARGE_CONTEXT_INLINE_UNSUPPORTED,
-			message: `request body is too large to parse without Gemini text attachments (at least ${bodyLimit + 1} UTF-8 bytes > ${bodyLimit}; inline prompt threshold ${threshold}) and ${unavailable}; configure the Gemini account pool with CURRENT_INPUT_FILE_ENABLED=true so this worker can use text attachments, or reduce the request size`,
+			status: missingSession
+				? GEMINI_AUTHENTICATED_SESSION_REQUIRED_STATUS
+				: 422,
+			code: missingSession
+				? GEMINI_AUTHENTICATED_SESSION_REQUIRED_CODE
+				: LARGE_CONTEXT_INLINE_UNSUPPORTED,
+			message: missingSession
+				? `${geminiAuthenticatedSessionRequiredMessage("large_context")} (request body exceeds inline read limit ${bodyLimit}; inline prompt threshold ${threshold})`
+				: `request body is too large to parse without Gemini text attachments (at least ${bodyLimit + 1} UTF-8 bytes > ${bodyLimit}; inline prompt threshold ${threshold}) and ${unavailable}; enable Gemini text attachments or reduce the request size`,
+			...(missingSession ? { reason: "large_context" } : {}),
 		},
 	};
 }

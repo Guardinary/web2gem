@@ -2,6 +2,7 @@ import { jsonResponse } from "../core/json";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
+	upstreamErrorReason,
 	upstreamErrorStatus,
 } from "../../shared/errors";
 
@@ -26,18 +27,16 @@ export function openAIErrorResponse(
 	message: unknown,
 	status = 400,
 	code: unknown = null,
+	reason: unknown = undefined,
 ): Response {
-	return jsonResponse(
-		{
-			error: {
-				message,
-				type: openAIErrorType(status),
-				code: code || null,
-				param: null,
-			},
-		},
-		status,
-	);
+	const error: Record<string, unknown> = {
+		message,
+		type: openAIErrorType(status),
+		code: code || null,
+		param: null,
+	};
+	if (reason) error.reason = reason;
+	return jsonResponse({ error }, status);
 }
 
 export function openAIUpstreamErrorResponse(e: unknown): Response {
@@ -45,5 +44,6 @@ export function openAIUpstreamErrorResponse(e: unknown): Response {
 		`upstream error: ${upstreamErrorMessage(e)}`,
 		upstreamErrorStatus(e) || 502,
 		upstreamErrorCode(e),
+		upstreamErrorReason(e),
 	);
 }
