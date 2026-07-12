@@ -36,6 +36,13 @@ When reducing `any`, prefer small, behavior-preserving batches by module. Valida
 
 Avoid combining type tightening with protocol behavior changes unless the task explicitly requires both.
 
+## Provider Adapter Coverage
+
+- `src/gemini/completion-provider.ts` maintains at least 95% line and 85% branch coverage.
+- Direct delegate tests assert exact text, rich, stream, attachment, and upload argument order, including account-selected config, model metadata, options, and abort signals.
+- Cover empty delta filtering, unresolved models, routing logs, lease success/failure, and no-account behavior.
+- Reuse the provider's existing `client` and `uploads` injection surface; do not introduce a second test-only dependency mechanism.
+
 ## Scenario: Positional D1 Insert Codecs
 
 ### 1. Scope / Trigger

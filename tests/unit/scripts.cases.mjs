@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { assert } from "./assertions.js";
 import { mod } from "./helpers.js";
 
@@ -139,6 +139,23 @@ export const cases = [
 				assert.equal(result.code, 1);
 				assert.match(result.stderr, /missing lines coverage data/);
 				assert.match(result.stderr, /src\/http\/admin/);
+			});
+		},
+	],
+	[
+		"rejects completion provider coverage below its file gates",
+		async () => {
+			const summary = fullCoverageSummary();
+			summary["src/gemini/completion-provider.ts"] = coverageEntry(94, 84);
+			await withCoverageSummary(summary, async (summaryPath) => {
+				const result = await runNodeScript(
+					"scripts/check-coverage.mjs",
+					summaryPath,
+				);
+				assert.equal(result.code, 1);
+				assert.match(result.stderr, /src\/gemini\/completion-provider\.ts/);
+				assert.match(result.stderr, /94\.00% lines/);
+				assert.match(result.stderr, /84\.00% branches/);
 			});
 		},
 	],
@@ -614,6 +631,7 @@ function fullCoverageSummary() {
 		"src/config/index.ts": coverageEntry(),
 		"src/gemini/accounts/pool.ts": coverageEntry(),
 		"src/gemini/app-page.ts": coverageEntry(),
+		"src/gemini/completion-provider.ts": coverageEntry(),
 		"src/gemini/index.ts": coverageEntry(),
 		"src/gemini/client/index.ts": coverageEntry(),
 		"src/gemini/client/parser.ts": coverageEntry(),

@@ -2654,6 +2654,115 @@ export const cases = [
 		},
 	],
 	[
+		"delegates exact provider arguments and filters empty stream deltas",
+		async () => {
+			const calls = [];
+			const logs = [];
+			const cfg = baseGeminiClientConfig({
+				log_requests: true,
+				supports_authenticated_session: false,
+			});
+			const provider = mod.createGeminiCompletionProvider(cfg, {
+				client: {
+					async generate(...args) {
+						calls.push({ kind: "text", args });
+						return "text result";
+					},
+					async generateRich(...args) {
+						calls.push({ kind: "rich", args });
+						return { text: "rich result", images: [] };
+					},
+					async *generateStream(...args) {
+						calls.push({ kind: "stream", args });
+						yield "";
+						yield undefined;
+						yield "visible";
+						yield 7;
+					},
+				},
+				uploads: {
+					async resolveAttachments(...args) {
+						calls.push({ kind: "attachments", args });
+						return { fileRefs: null };
+					},
+					async uploadTextFile(...args) {
+						calls.push({ kind: "upload", args });
+						return { ref: "uploaded", name: args[2] };
+					},
+				},
+			});
+			const extra = { 31: 2, 80: 3 };
+			const modelHeaders = { "x-model-route": "pro" };
+			const rm = {
+				name: "gemini-3.1-pro-enhanced",
+				modeId: 3,
+				thinkMode: 4,
+				extra,
+				modelHeaders,
+			};
+			const fileRefs = [{ ref: "file-ref", name: "doc.txt" }];
+			const input = { prompt: "provider prompt", rm, fileRefs };
+
+			await withConsoleLog(
+				(line) => logs.push(String(line)),
+				async () => {
+					assert.equal(provider.supportsAuthenticatedSession, false);
+					assert.equal(await provider.generateText(input), "text result");
+					assert.deepEqual(await provider.generateRich(input), {
+						text: "rich result",
+						images: [],
+					});
+					const richOptions = { hydrateGeneratedImageBytes: true };
+					await provider.generateRich(input, richOptions);
+					const signal = new AbortController().signal;
+					const deltas = [];
+					for await (const delta of provider.streamText(input, { signal }))
+						deltas.push(delta);
+					assert.deepEqual(deltas, ["visible", "7"]);
+					const plan = mod.createAttachmentPlan();
+					await provider.resolveAttachments(plan);
+					assert.deepEqual(
+						await provider.uploadTextFile("body", "context.txt"),
+						{ ref: "uploaded", name: "context.txt" },
+					);
+				},
+			);
+
+			assert.deepEqual(calls[0].args, [
+				cfg,
+				"provider prompt",
+				3,
+				4,
+				extra,
+				fileRefs,
+				modelHeaders,
+			]);
+			assert.deepEqual(calls[1].args[7], {});
+			assert.equal(calls[2].args[7].hydrateGeneratedImageBytes, true);
+			assert.equal(calls[3].args[6].signal instanceof AbortSignal, true);
+			assert.deepEqual(calls[4].args, [cfg, mod.createAttachmentPlan()]);
+			assert.deepEqual(calls[5].args, [cfg, "body", "context.txt"]);
+			const routeLogs = logs.filter((line) =>
+				line.includes("stage=gemini_route"),
+			);
+			assert.equal(routeLogs.length, 4);
+			assert.match(routeLogs[0], /enhancedMode=2/);
+			assert.match(routeLogs[3], /stream=true/);
+		},
+	],
+	[
+		"uses the default unresolved-model error",
+		async () => {
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+			);
+			await assert.rejects(
+				() => provider.generateRich({ prompt: "bad", rm: {}, fileRefs: null }),
+				/model is not resolved/,
+			);
+		},
+	],
+	[
 		"returns sanitized no-account provider errors before upstream calls",
 		async () => {
 			let generated = false;
