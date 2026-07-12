@@ -2355,7 +2355,11 @@ export const cases = [
 				upstream_socket: false,
 				log_requests: false,
 			};
-			const provider = mod.createGeminiCompletionProvider(cfg);
+			const provider = mod.createGeminiCompletionProvider(cfg, {
+				accountRuntime: fakeRuntime([
+					fakeLease(accountCfgFromBase(cfg, "provider-pro", "provider-hash")),
+				]),
+			});
 			const rm = mod.resolveModel("gemini-3.1-pro", "gemini-3.5-flash");
 			await withFetch(
 				async (url, init) => {
@@ -2403,7 +2407,11 @@ export const cases = [
 				upstream_socket: false,
 				log_requests: true,
 			};
-			const provider = mod.createGeminiCompletionProvider(cfg);
+			const provider = mod.createGeminiCompletionProvider(cfg, {
+				accountRuntime: fakeRuntime([
+					fakeLease(accountCfgFromBase(cfg, "logging-pro", "logging-hash")),
+				]),
+			});
 			const rm = mod.resolveModel(
 				"gemini-3.1-pro-enhanced",
 				"gemini-3.5-flash",
@@ -2454,7 +2462,11 @@ export const cases = [
 				upstream_socket: false,
 				log_requests: false,
 			};
-			const provider = mod.createGeminiCompletionProvider(cfg);
+			const provider = mod.createGeminiCompletionProvider(cfg, {
+				accountRuntime: fakeRuntime([
+					fakeLease(accountCfgFromBase(cfg, "upload", "upload-hash")),
+				]),
+			});
 			await withFetch(
 				async () =>
 					new Response(
@@ -2507,7 +2519,11 @@ export const cases = [
 				upstream_socket: false,
 				log_requests: false,
 			};
-			const provider = mod.createGeminiCompletionProvider(cfg);
+			const provider = mod.createGeminiCompletionProvider(cfg, {
+				accountRuntime: fakeRuntime([
+					fakeLease(accountCfgFromBase(cfg, "upload", "upload-hash")),
+				]),
+			});
 			assert.deepEqual(
 				await provider.resolveAttachments(mod.createAttachmentPlan()),
 				{
@@ -2654,6 +2670,35 @@ export const cases = [
 		},
 	],
 	[
+		"marks upload failures and releases the selected account lease",
+		async () => {
+			const uploadError = new Error("upload failed");
+			const lease = fakeLease(accountCfg("upload-fail", "upload-fail-hash"));
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: fakeRuntime([lease]),
+					uploads: {
+						async uploadTextFile() {
+							throw uploadError;
+						},
+					},
+				},
+			);
+
+			let seenError;
+			try {
+				await provider.uploadTextFile("body", "context.txt");
+			} catch (error) {
+				seenError = error;
+			}
+			assert.equal(seenError, uploadError);
+			assert.equal(lease.successCalls, 0);
+			assert.equal(lease.failureCalls, 1);
+			assert.equal(lease.releaseCalls, 1);
+		},
+	],
+	[
 		"delegates exact provider arguments and filters empty stream deltas",
 		async () => {
 			const calls = [];
@@ -2662,7 +2707,10 @@ export const cases = [
 				log_requests: true,
 				supports_authenticated_session: false,
 			});
+			const selectedCfg = accountCfgFromBase(cfg, "exact", "exact-hash");
+			const leases = Array.from({ length: 5 }, () => fakeLease(selectedCfg));
 			const provider = mod.createGeminiCompletionProvider(cfg, {
+				accountRuntime: fakeRuntime(leases),
 				client: {
 					async generate(...args) {
 						calls.push({ kind: "text", args });
@@ -2706,7 +2754,7 @@ export const cases = [
 			await withConsoleLog(
 				(line) => logs.push(String(line)),
 				async () => {
-					assert.equal(provider.supportsAuthenticatedSession, false);
+					assert.equal(provider.supportsAuthenticatedSession, true);
 					assert.equal(await provider.generateText(input), "text result");
 					assert.deepEqual(await provider.generateRich(input), {
 						text: "rich result",
@@ -2729,7 +2777,7 @@ export const cases = [
 			);
 
 			assert.deepEqual(calls[0].args, [
-				cfg,
+				selectedCfg,
 				"provider prompt",
 				3,
 				4,
@@ -2741,13 +2789,334 @@ export const cases = [
 			assert.equal(calls[2].args[7].hydrateGeneratedImageBytes, true);
 			assert.equal(calls[3].args[6].signal instanceof AbortSignal, true);
 			assert.deepEqual(calls[4].args, [cfg, mod.createAttachmentPlan()]);
-			assert.deepEqual(calls[5].args, [cfg, "body", "context.txt"]);
+			assert.deepEqual(calls[5].args, [selectedCfg, "body", "context.txt"]);
 			const routeLogs = logs.filter((line) =>
 				line.includes("stage=gemini_route"),
 			);
 			assert.equal(routeLogs.length, 4);
 			assert.match(routeLogs[0], /enhancedMode=2/);
 			assert.match(routeLogs[3], /stream=true/);
+		},
+	],
+	[
+		"routes prompt threshold edges between anonymous and account generation",
+		async () => {
+			const anonymousRuntime = fakeRuntime([null]);
+			const anonymousProvider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig({ current_input_file_min_bytes: 4 }),
+				{
+					accountRuntime: anonymousRuntime,
+					client: {
+						async generate(activeCfg) {
+							assert.equal(activeCfg.gemini_account, undefined);
+							return "anonymous edge";
+						},
+					},
+				},
+			);
+			assert.equal(
+				await anonymousProvider.generateText({
+					prompt: "abcd",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				}),
+				"anonymous edge",
+			);
+			assert.equal(anonymousRuntime.acquireCalls, 0);
+
+			const lease = fakeLease(accountCfg("threshold", "threshold-hash"));
+			const accountRuntime = fakeRuntime([lease]);
+			const accountProvider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig({ current_input_file_min_bytes: 4 }),
+				{
+					accountRuntime,
+					client: {
+						async generate(activeCfg) {
+							assert.equal(activeCfg.gemini_account.accountId, "threshold");
+							return "account edge";
+						},
+					},
+				},
+			);
+			assert.equal(
+				await accountProvider.generateText({
+					prompt: "abcde",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				}),
+				"account edge",
+			);
+			assert.equal(accountRuntime.acquireCalls, 1);
+			assert.equal(lease.successCalls, 1);
+		},
+	],
+	[
+		"falls back from anonymous errors to one account lease",
+		async () => {
+			const anonymousError = new Error("anonymous failed");
+			const lease = fakeLease(accountCfg("fallback", "fallback-hash"));
+			const runtime = fakeRuntime([lease]);
+			const seenAccounts = [];
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate(activeCfg) {
+							seenAccounts.push(activeCfg.gemini_account?.accountId || null);
+							if (!activeCfg.gemini_account) throw anonymousError;
+							return "fallback answer";
+						},
+					},
+				},
+			);
+
+			assert.equal(
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				}),
+				"fallback answer",
+			);
+			assert.deepEqual(seenAccounts, [null, "fallback"]);
+			assert.equal(runtime.acquireCalls, 1);
+			assert.equal(lease.successCalls, 1);
+			assert.equal(lease.failureCalls, 0);
+			assert.equal(lease.releaseCalls, 1);
+		},
+	],
+	[
+		"returns account errors when anonymous fallback generation also fails",
+		async () => {
+			const anonymousError = new Error("anonymous failed");
+			const accountError = new Error("account failed");
+			const lease = fakeLease(
+				accountCfg("fallback-fail", "fallback-fail-hash"),
+			);
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: fakeRuntime([lease]),
+					client: {
+						async generate(activeCfg) {
+							if (!activeCfg.gemini_account) throw anonymousError;
+							throw accountError;
+						},
+					},
+				},
+			);
+
+			let seenError;
+			try {
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				});
+			} catch (error) {
+				seenError = error;
+			}
+			assert.equal(seenError, accountError);
+			assert.equal(lease.successCalls, 0);
+			assert.equal(lease.failureCalls, 1);
+			assert.equal(lease.releaseCalls, 1);
+		},
+	],
+	[
+		"preserves anonymous errors when fallback has no account",
+		async () => {
+			const anonymousError = new Error("anonymous unavailable");
+			const runtime = fakeRuntime([null]);
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate() {
+							throw anonymousError;
+						},
+					},
+				},
+			);
+
+			let seenError;
+			try {
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				});
+			} catch (error) {
+				seenError = error;
+			}
+			assert.equal(seenError, anonymousError);
+			assert.equal(runtime.acquireCalls, 1);
+		},
+	],
+	[
+		"does not acquire fallback accounts for anonymous aborts",
+		async () => {
+			const abort = Object.assign(new Error("cancelled"), {
+				name: "AbortError",
+			});
+			const runtime = fakeRuntime([null]);
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate() {
+							throw abort;
+						},
+					},
+				},
+			);
+
+			await assert.rejects(
+				() =>
+					provider.generateText({
+						prompt: "prompt",
+						rm: providerResolvedModel(),
+						fileRefs: null,
+					}),
+				/cancelled/,
+			);
+			assert.equal(runtime.acquireCalls, 0);
+		},
+	],
+	[
+		"falls back account streams only before anonymous output",
+		async () => {
+			const lease = fakeLease(accountCfg("stream-fallback", "stream-hash"));
+			const runtime = fakeRuntime([lease]);
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async *generateStream(activeCfg) {
+							if (!activeCfg.gemini_account)
+								throw new Error("anonymous stream failed");
+							yield "account stream";
+						},
+					},
+				},
+			);
+			const output = [];
+			for await (const delta of provider.streamText({
+				prompt: "prompt",
+				rm: providerResolvedModel(),
+				fileRefs: null,
+			}))
+				output.push(delta);
+			assert.deepEqual(output, ["account stream"]);
+			assert.equal(runtime.acquireCalls, 1);
+			assert.equal(lease.successCalls, 1);
+			assert.equal(lease.releaseCalls, 1);
+		},
+	],
+	[
+		"preserves anonymous stream errors when fallback has no account",
+		async () => {
+			const anonymousError = new Error("anonymous stream unavailable");
+			const runtime = fakeRuntime([null]);
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async *generateStream() {
+							yield* [];
+							throw anonymousError;
+						},
+					},
+				},
+			);
+
+			let seenError;
+			try {
+				for await (const _ of provider.streamText({
+					prompt: "prompt",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				})) {
+					throw new Error("unexpected stream output");
+				}
+			} catch (error) {
+				seenError = error;
+			}
+			assert.equal(seenError, anonymousError);
+			assert.equal(runtime.acquireCalls, 1);
+		},
+	],
+	[
+		"marks account stream failures after anonymous fallback",
+		async () => {
+			const anonymousError = new Error("anonymous stream failed");
+			const accountError = new Error("account stream failed");
+			const lease = fakeLease(
+				accountCfg("stream-failover", "stream-failover-hash"),
+			);
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: fakeRuntime([lease]),
+					client: {
+						async *generateStream(activeCfg) {
+							yield* [];
+							if (!activeCfg.gemini_account) throw anonymousError;
+							throw accountError;
+						},
+					},
+				},
+			);
+
+			let seenError;
+			try {
+				for await (const _ of provider.streamText({
+					prompt: "prompt",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				})) {
+					throw new Error("unexpected stream output");
+				}
+			} catch (error) {
+				seenError = error;
+			}
+			assert.equal(seenError, accountError);
+			assert.equal(lease.successCalls, 0);
+			assert.equal(lease.failureCalls, 1);
+			assert.equal(lease.releaseCalls, 1);
+		},
+	],
+	[
+		"does not fall back after anonymous stream output",
+		async () => {
+			const runtime = fakeRuntime([null]);
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async *generateStream() {
+							yield "partial";
+							throw new Error("stream interrupted");
+						},
+					},
+				},
+			);
+			const output = [];
+			await assert.rejects(async () => {
+				for await (const delta of provider.streamText({
+					prompt: "prompt",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				}))
+					output.push(delta);
+			}, /stream interrupted/);
+			assert.deepEqual(output, ["partial"]);
+			assert.equal(runtime.acquireCalls, 0);
 		},
 	],
 	[
@@ -2763,7 +3132,37 @@ export const cases = [
 		},
 	],
 	[
-		"returns sanitized no-account provider errors before upstream calls",
+		"prefers anonymous generation without acquiring an available account",
+		async () => {
+			let generatedConfig;
+			const runtime = fakeRuntime([null]);
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate(activeCfg) {
+							generatedConfig = activeCfg;
+							return "anonymous";
+						},
+					},
+				},
+			);
+
+			assert.equal(
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				}),
+				"anonymous",
+			);
+			assert.equal(generatedConfig.cookie, "");
+			assert.equal(runtime.acquireCalls, 0);
+		},
+	],
+	[
+		"returns sanitized no-account errors for account-required models",
 		async () => {
 			let generated = false;
 			const runtime = fakeRuntime([null]);
@@ -2784,7 +3183,7 @@ export const cases = [
 				try {
 					await provider.generateText({
 						prompt: "prompt",
-						rm: providerResolvedModel(),
+						rm: providerProModel(),
 						fileRefs: null,
 					});
 				} catch (error) {
@@ -2822,7 +3221,7 @@ export const cases = [
 			const iterator = provider
 				.streamText({
 					prompt: "stream",
-					rm: providerResolvedModel(),
+					rm: providerProModel(),
 					fileRefs: null,
 				})
 				[Symbol.asyncIterator]();
@@ -2860,7 +3259,7 @@ export const cases = [
 			await assert.rejects(async () => {
 				for await (const delta of provider.streamText({
 					prompt: "stream",
-					rm: providerResolvedModel(),
+					rm: providerProModel(),
 					fileRefs: null,
 				})) {
 					seen.push(delta);
@@ -2903,7 +3302,7 @@ export const cases = [
 			assert.equal(
 				await provider.generateText({
 					prompt: "test",
-					rm: providerResolvedModel(),
+					rm: providerProModel(),
 					fileRefs: null,
 				}),
 				"ok",
@@ -2913,6 +3312,51 @@ export const cases = [
 			assert.equal(lease.releaseCalls, 1);
 			assert.equal(background.length, 1);
 			await Promise.all(background);
+		},
+	],
+	[
+		"keeps account results when waitUntil registration throws",
+		async () => {
+			const lease = fakeLease(accountCfg("wait-until-fail", "hash"));
+			const logs = [];
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig({
+					log_requests: true,
+					execution_ctx: {
+						waitUntil() {
+							throw new Error("waitUntil unavailable");
+						},
+					},
+				}),
+				{
+					accountRuntime: fakeRuntime([lease]),
+					client: {
+						async generate() {
+							return "ok";
+						},
+					},
+				},
+			);
+
+			await withConsoleLog(
+				(line) => logs.push(String(line)),
+				async () => {
+					assert.equal(
+						await provider.generateText({
+							prompt: "test",
+							rm: providerProModel(),
+							fileRefs: null,
+						}),
+						"ok",
+					);
+				},
+			);
+			assert.equal(lease.successCalls, 1);
+			assert.equal(lease.releaseCalls, 1);
+			assert.equal(
+				logs.some((line) => line.includes("waitUntil registration failed")),
+				true,
+			);
 		},
 	],
 	[
@@ -2941,7 +3385,7 @@ export const cases = [
 			try {
 				await provider.generateText({
 					prompt: "test",
-					rm: providerResolvedModel(),
+					rm: providerProModel(),
 					fileRefs: null,
 				});
 			} catch (error) {
@@ -2969,6 +3413,27 @@ function providerResolvedModel() {
 		thinkMode: 4,
 		extra: null,
 		modelHeaders: null,
+	};
+}
+
+function providerProModel() {
+	return {
+		name: "gemini-3.1-pro",
+		modeId: 3,
+		thinkMode: 4,
+		extra: null,
+		modelHeaders: null,
+	};
+}
+
+function accountCfgFromBase(base, accountId, cookieHash) {
+	return {
+		...base,
+		gemini_account: {
+			accountId,
+			rowId: `row-${accountId}`,
+			cookieHash,
+		},
 	};
 }
 

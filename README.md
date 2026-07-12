@@ -83,7 +83,7 @@ The main compatibility targets are:
 
 ## Before You Start
 
-You need:
+For the full account-backed feature set, you need:
 
 - one or more Gemini Web accounts that you are authorized to use;
 - a Cloudflare D1 database;
@@ -91,7 +91,7 @@ You need:
 - for Docker, a Cloudflare account ID, D1 database ID, and API token;
 - optionally, one or more `API_KEYS` if the public endpoint will be shared.
 
-The health route and public model list can respond before accounts are imported, but generation requests require both `GEMINI_DB` and at least one usable account. Gemini Web is an upstream web protocol and may change without notice; this project is best suited to personal, research, and internal use.
+Short text-only requests can use Gemini Web anonymously without `GEMINI_DB`. Requests use anonymous upstream first when they have no file references or image operation, the rendered prompt is at most `CURRENT_INPUT_FILE_MIN_BYTES` (95,000 UTF-8 bytes by default), and the model is not a Pro model. Pro, long-context, attachment, image-generation, and image-edit requests require `GEMINI_DB` and a usable account. Gemini Web is an upstream web protocol and may change without notice; this project is best suited to personal, research, and internal use.
 
 ## API Surface
 
@@ -199,7 +199,7 @@ You can override thinking depth per request by appending `@think=N` to a known m
 
 ## Quick Start
 
-Every generation deployment needs `GEMINI_DB` and at least one imported account. `ADMIN_KEY` is required to manage that pool; `API_KEYS` is optional but recommended for any shared endpoint.
+Anonymous-eligible text generation works without `GEMINI_DB`. Configure `GEMINI_DB`, import at least one account, and set `ADMIN_KEY` when you need Pro models, long context, attachments, image generation/editing, or account fallback. `API_KEYS` is optional but recommended for any shared endpoint.
 
 ### Option 1: Deploy to Cloudflare Workers
 
@@ -284,7 +284,7 @@ Maintainers publish this branch through the single `Versioned Release` workflow.
 | Gemini credentials | Reads a directly configured Gemini cookie for the current runtime. | Stores multiple Gemini accounts in D1 and selects an available account for each generation request. |
 | Persistence | Does not provide a persistent Gemini account store. | Persists account metadata, health state, cooldowns, refresh state, and coordination locks in `GEMINI_DB`. |
 | Administration | No persistent account-pool console is required. | Provides the `/admin` WebUI and resource-oriented `/admin/accounts` API, protected by one `ADMIN_KEY`. |
-| Deployment requirements | Can run without an account database. | Generation requires a configured D1 binding and at least one usable imported Gemini account. Health, preflight, and public model-list routes remain available without selecting an account. |
+| Deployment requirements | Can run without an account database. | Anonymous-eligible short text works without D1. Pro, long-context, attachment, image-generation, image-edit, and account-fallback paths require a configured D1 binding and a usable imported account. |
 | Docker integration | Uses the standard Docker adapter and runtime environment. | Adds the D1 HTTP binding through `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN`. |
 | Runtime validation | Uses the main-branch configuration contract. | Applies strict boolean, integer, origin, filename, and `API_KEYS` validation. `ADMIN_KEY` is read as one ordinary string setting. Invalid value types fail with sanitized diagnostics. |
 | Admin API | Not applicable to a persistent pool. | Uses `PATCH` / `DELETE /admin/accounts/:id` and `POST /admin/accounts/:id/refresh` or `/check`; public `x-api-key` credentials never authorize admin operations. |
@@ -321,7 +321,7 @@ When managing a Worker through the Wrangler CLI, configure secrets with:
 
 - Set `API_KEYS` for shared deployments. If it is empty, auth is disabled.
 - Set `ADMIN_KEY` before using account-pool admin endpoints. Admin endpoints do not become public when this is missing.
-- Bind the D1 database as `GEMINI_DB` and import Gemini accounts through the admin endpoints before serving generation traffic.
+- Bind the D1 database as `GEMINI_DB` and import Gemini accounts before serving account-required traffic such as Pro, long-context, attachment, or image requests.
 
 ```sh
 wrangler secret put API_KEYS
@@ -340,7 +340,7 @@ The easiest way to get started is the built-in WebUI:
 
 Use a fresh or dedicated Gemini browser session when possible. Do not paste a full Cookie header, a browser cookie export, cookie names, equals signs, semicolons, or unrelated access tokens. The admin responses and account list are redacted and never return the stored session credentials.
 
-This branch requires a D1-backed Gemini account pool for Worker and Docker deployments. If `GEMINI_DB` is not configured, public Gemini generation routes fail closed with `gemini_account_pool_required`. If D1 is configured but no eligible account is selectable, Gemini generation fails with a sanitized `no_available_gemini_account` response.
+This branch uses hybrid upstream routing. Eligible short text requests try anonymous Gemini Web first without reading D1. If anonymous generation fails before output, the provider selects one account through the existing least-in-flight and round-robin pool and retries once. Pro, long-context, attachment, image-generation, and image-edit requests go directly to the account pool. Missing D1 returns `gemini_account_pool_required` only for account-required work; an empty pool returns `no_available_gemini_account` for direct account work, while a failed anonymous request keeps its original error when no fallback account exists.
 
 For Workers, create a D1 database, apply [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql), and bind it as `GEMINI_DB` in `wrangler.jsonc` or through your Cloudflare dashboard configuration. The schema creates structured `gemini_accounts`, `gemini_pool_meta`, and `gemini_account_locks` tables rather than storing account state as one JSON blob.
 
@@ -405,8 +405,8 @@ The health route `GET /` remains unauthenticated so deployment probes can work w
 
 | Symptom | What to check |
 | --- | --- |
-| `gemini_account_pool_required` | `GEMINI_DB` is missing. Add the Worker D1 binding or all three Docker D1 credentials. |
-| `no_available_gemini_account` | Open `/admin`; import an account, enable it, and check whether it is cooling down or needs refreshed credentials. |
+| `gemini_account_pool_required` | An account-required Pro, long-context, attachment, or image request has no `GEMINI_DB`. Add the Worker D1 binding or all three Docker D1 credentials. |
+| `no_available_gemini_account` | Direct account-required work found no selectable account. Open `/admin`; import an account, enable it, and check whether it is cooling down or needs refreshed credentials. |
 | `invalid_runtime_config` | Review environment values. Booleans must be `true`/`false`, integers must be in range, and `ADMIN_KEY` must be one non-placeholder string. |
 | Admin page returns 401 | Confirm the value sent by the WebUI matches `ADMIN_KEY`; public `API_KEYS` cannot authorize admin operations. |
 | Docker exits before listening | Set `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` together, then inspect the container logs for the sanitized startup error. |

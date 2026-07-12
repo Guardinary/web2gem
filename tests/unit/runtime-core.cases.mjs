@@ -1000,7 +1000,7 @@ export const cases = [
 		},
 	],
 	[
-		"requires D1 account pool for public generation routes without upstream work",
+		"uses anonymous upstream for eligible public generation without D1",
 		async () => {
 			let fetchCalls = 0;
 			const run = () =>
@@ -1021,13 +1021,71 @@ export const cases = [
 				);
 			const resp = await withFetch(async () => {
 				fetchCalls += 1;
-				throw new Error("upstream should not be called without GEMINI_DB");
+				return geminiTextResponse("anonymous answer");
 			}, run);
-			assert.equal(resp.status, 503);
+			assert.equal(resp.status, 200);
 			const body = await resp.json();
-			assert.equal(body.error.code, "gemini_account_pool_required");
-			assert.match(body.error.message, /Gemini account pool requires/);
-			assert.equal(fetchCalls, 0);
+			assert.equal(body.choices[0].message.content, "anonymous answer");
+			assert.equal(fetchCalls, 1);
+		},
+	],
+	[
+		"shares anonymous routing with Google and keeps Pro account-required",
+		async () => {
+			let fetchCalls = 0;
+			const google = await withFetch(
+				async () => {
+					fetchCalls += 1;
+					return geminiTextResponse("google anonymous");
+				},
+				() =>
+					mod.default.fetch(
+						new Request(
+							"https://worker.example/v1beta/models/gemini-3.5-flash:generateContent",
+							{
+								method: "POST",
+								headers: { "Content-Type": "application/json" },
+								body: JSON.stringify({
+									contents: [{ parts: [{ text: "hello" }] }],
+								}),
+							},
+						),
+						{},
+						{},
+					),
+			);
+			assert.equal(google.status, 200);
+			assert.equal(
+				(await google.json()).candidates[0].content.parts[0].text,
+				"google anonymous",
+			);
+			assert.equal(fetchCalls, 1);
+
+			const pro = await withFetch(
+				async () => {
+					fetchCalls += 1;
+					throw new Error("Pro must not call anonymous upstream");
+				},
+				() =>
+					mod.default.fetch(
+						new Request("https://worker.example/v1/chat/completions", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({
+								model: "gemini-3.1-pro",
+								messages: [{ role: "user", content: "hello" }],
+							}),
+						}),
+						{},
+						{},
+					),
+			);
+			assert.equal(pro.status, 503);
+			assert.equal(
+				(await pro.json()).error.code,
+				"gemini_account_pool_required",
+			);
+			assert.equal(fetchCalls, 1);
 		},
 	],
 	[
@@ -1111,11 +1169,8 @@ export const cases = [
 				{},
 				{},
 			);
-			assert.equal(emptyChat.status, 503);
-			assert.equal(
-				(await emptyChat.json()).error.code,
-				"gemini_account_pool_required",
-			);
+			assert.equal(emptyChat.status, 400);
+			assert.equal((await emptyChat.json()).error.message, "empty prompt");
 
 			const contextAvailableBody = JSON.stringify({
 				model: "gemini-3.5-flash",
@@ -1136,10 +1191,10 @@ export const cases = [
 				},
 				{},
 			);
-			assert.equal(contextAvailable.status, 503);
+			assert.equal(contextAvailable.status, 400);
 			assert.equal(
-				(await contextAvailable.json()).error.code,
-				"gemini_account_pool_required",
+				(await contextAvailable.json()).error.message,
+				"empty prompt",
 			);
 		},
 	],
@@ -2511,6 +2566,14 @@ export const cases = [
 		},
 	],
 ];
+
+function geminiTextResponse(text) {
+	const inner = [null, null, null, null, [[null, [text]]], "x".repeat(160)];
+	return new Response(
+		JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]),
+		{ status: 200 },
+	);
+}
 
 async function withoutTypedArrayHexMethod(run) {
 	const toHexDescriptor = Object.getOwnPropertyDescriptor(

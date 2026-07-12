@@ -404,7 +404,7 @@ Use this contract when adding or changing D1-backed Gemini account runtime code,
 - Refresh lock owners and cache keys must be based on account IDs and hashes, never raw cookies or session tokens.
 - `cookie_hash` is mutable during rotation and may have a unique D1 index. Check for an existing owner before writeback and also classify a concurrent unique-constraint failure after the update attempt; both paths must return the same duplicate no-op result.
 - A duplicate-cookie no-op must not update the selected lease or its in-memory account state. Account refresh returns `rotation_duplicate` instead of throwing or reporting `rotation_updated`.
-- `createGeminiAccountRuntimeFromEnv` may return `null` for helper/admin composition, but public generation routes on this branch must translate missing `GEMINI_DB` into a sanitized `gemini_account_pool_required` response instead of serving through a single-cookie fallback.
+- `createGeminiAccountRuntimeFromEnv` may return `null` for helper/admin composition and anonymous-eligible public text generation. Account-required work must translate missing `GEMINI_DB` into a sanitized `gemini_account_pool_required` response instead of attempting the authenticated operation anonymously.
 
 ### 4. Validation & Error Matrix
 
@@ -745,7 +745,23 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
   promise with `execution_ctx.waitUntil` when available; otherwise await the
   guarded promise for deterministic non-Worker callers. Release the local lease
   before waiting or returning.
-- No eligible account must throw a sanitized 503 error with code `no_available_gemini_account` and must not call upstream Gemini.
+- Anonymous eligibility is decided at the provider boundary from the resolved
+  model, rendered prompt bytes, file references, operation kind, and existing
+  lease state. Reuse `CURRENT_INPUT_FILE_MIN_BYTES` and the bounded UTF-8 prompt
+  helpers; do not inspect raw HTTP `Content-Length` for this decision.
+- Short text requests with no file references, no image operation, prompt bytes
+  at or below the configured threshold, and a non-Pro model call Gemini with an
+  empty Cookie/SAPISID config before acquiring an account.
+- Pro mode (`modeId === 3`), oversized prompts, uploaded or existing file refs,
+  image generation, and image editing are account-required and never attempt
+  anonymous generation.
+- An anonymous non-abort error or empty response may acquire one lease and retry
+  through the existing account selector. Streaming may do this only before its
+  first non-empty delta. If lease acquisition cannot start because the runtime
+  is absent or the pool is empty, preserve the original anonymous error.
+- No eligible account for direct account-required work must throw a sanitized
+  503 error with code `no_available_gemini_account` and must not call anonymous
+  upstream Gemini.
 - Account-marked configs must not use the process-global single-cookie rotation singleton. Cookie/session recovery goes through account runtime leases.
 - `/app` page tokens and content-push `push_id` caches must include account identity or cookie hash when `gemini_account` is present. Build-label cache remains origin-scoped.
 - Raw cookies, `SNlM0e`, `at`, `SAPISID`, session tokens, SQL bind values, and D1 API tokens must not appear in cache keys, log fields, or public error messages.
@@ -756,8 +772,17 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 
 - Auth failure with `GEMINI_DB` configured -> 401 and zero D1 `prepare` calls.
 - Invalid JSON with `GEMINI_DB` configured -> 400 and zero D1 `prepare` calls.
-- Missing `GEMINI_DB` on a public generation route after public auth and JSON parsing -> 503 `gemini_account_pool_required`, zero upstream Gemini calls.
-- D1 configured and no selectable account -> 503 `no_available_gemini_account`, zero upstream Gemini calls.
+- Missing `GEMINI_DB` plus eligible short text -> anonymous upstream generation,
+  zero D1 reads.
+- Missing `GEMINI_DB` plus Pro, attachment, oversized, or image work -> 503
+  `gemini_account_pool_required`, zero anonymous upstream calls.
+- D1 configured with no selectable account plus eligible short text -> anonymous
+  success when upstream succeeds; after anonymous failure, preserve that error.
+- D1 configured with no selectable account plus direct account-required work ->
+  503 `no_available_gemini_account`, zero upstream Gemini calls.
+- Anonymous error before output plus one selectable account -> retry once with
+  the selected account and record only that account attempt's outcome.
+- Anonymous abort or stream error after a non-empty delta -> no account lease.
 - Upload then generation -> one lease acquisition, same account config in both calls, one success, one release.
 - `/app` page token fetch for account A then account B -> distinct cache keys; tokens cannot cross accounts.
 - Account stream yields a first delta -> no success marked yet; stream completion -> success and release.
@@ -775,7 +800,16 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
   guarded promise to `waitUntil`.
 - Good: HTTP prepare-error branches call `provider.dispose?.()` before returning a validation error after possible upload work.
 - Good: generated-image byte hydration receives the same account-backed config as rich generation.
-- Base: no-D1 public generation fails closed with `gemini_account_pool_required`; static health/model routes still do not read D1.
+- Good: eligible text reaches anonymous upstream without calling
+  `AccountPoolService.acquireLease`; a pre-output failure then uses the normal
+  least-in-flight/round-robin selector once.
+- Base: no-D1 eligible text remains usable anonymously, while account-required
+  work fails closed with `gemini_account_pool_required`; static health/model
+  routes still do not read D1.
+- Bad: acquire an account before the final prompt, model, and file references are
+  known, because that defeats anonymous preference and consumes pool capacity.
+- Bad: retry through an account after a streamed delta, which duplicates visible
+  output.
 - Bad: calling `AccountPoolService.acquireLease` while parsing JSON, checking public API keys, listing models, or serving health checks.
 - Bad: keying page tokens or push IDs by raw cookie header.
 - Bad: releasing the lease immediately after successful upload and selecting another account for generation.
@@ -785,6 +819,13 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 ### 6. Tests Required
 
 - Provider unit tests for lease reuse across upload plus text/rich generation.
+- Provider tests for threshold equality vs threshold-plus-one, both Pro models,
+  uploaded/existing refs, and rich image operations.
+- Provider tests for anonymous preference with no D1/empty D1, anonymous error
+  and empty-response fallback, original-error preservation when acquisition
+  fails, and abort exclusion.
+- Stream tests for fallback before output, empty-stream fallback, and no fallback
+  after a delta or abort.
 - Provider stream tests for success only after iterator completion and release on stream failure.
 - Provider tests proving `waitUntil` registration, successful-result preservation,
   original-error preservation, and handled outcome-write rejection.
@@ -797,6 +838,22 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm check:static`, `pnpm unit`, and `pnpm smoke`.
 
 ### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+const activeCfg = await acquireAccountConfig();
+return generate(activeCfg, input);
+```
+
+#### Correct
+
+```typescript
+if (!accountRequired(cfg, model, input, hasLease)) {
+  return generateAnonymousThenAccountFallback(input);
+}
+return generateWithAccountLease(input);
+```
 
 #### Wrong
 

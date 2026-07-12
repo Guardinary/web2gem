@@ -83,7 +83,7 @@
 
 ## 开始前准备
 
-你需要准备：
+如需完整的账号能力，需要准备：
 
 - 一个或多个你有权使用的 Gemini Web 账号；
 - 一个 Cloudflare D1 数据库；
@@ -91,7 +91,7 @@
 - 如果使用 Docker，还需要 Cloudflare account ID、D1 database ID 和 API token；
 - 如果接口会公开或共享，可额外配置一个或多个 `API_KEYS`。
 
-导入账号前，健康检查和公开模型列表可以正常响应，但生成请求必须同时具备 `GEMINI_DB` 和至少一个可用账号。Gemini Web 属于可能随时变化的上游 Web 协议，本项目更适合个人、研究和内部使用场景。
+短文本请求可以在没有 `GEMINI_DB` 时使用 Gemini Web 上游无鉴权模式。请求没有文件引用或图片操作、拼装后的 prompt 不超过 `CURRENT_INPUT_FILE_MIN_BYTES`（默认 95,000 UTF-8 字节），且模型不是 Pro 时，会优先走上游无鉴权模式。Pro、长上下文、附件、生图和图片编辑仍需要 `GEMINI_DB` 与可用账号。Gemini Web 属于可能随时变化的上游 Web 协议，本项目更适合个人、研究和内部使用场景。
 
 ## API 接口
 
@@ -199,7 +199,7 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 ## 快速开始
 
-所有生成请求都需要 `GEMINI_DB` 和至少一个已导入账号。管理账号池必须配置 `ADMIN_KEY`；如果接口会共享给其他人，建议同时配置 `API_KEYS`。
+符合条件的短文本生成不需要 `GEMINI_DB`。如需 Pro、长上下文、附件、生图、图片编辑或匿名失败后的账号回退，请配置 `GEMINI_DB`、导入至少一个账号并设置 `ADMIN_KEY`。如果接口会共享给其他人，建议同时配置 `API_KEYS`。
 
 ### 方式一：部署到 Cloudflare Workers
 
@@ -284,7 +284,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 | Gemini 凭据 | 直接读取当前运行环境中配置的 Gemini cookie。 | 将多个 Gemini 账号保存到 D1，并在每次生成请求时选择可用账号。 |
 | 持久化 | 不提供持久化 Gemini 账号存储。 | 在 `GEMINI_DB` 中持久化账号元数据、健康状态、冷却时间、刷新状态和协调锁。 |
 | 管理方式 | 不需要持久化账号池控制台。 | 提供 `/admin` WebUI 和资源化的 `/admin/accounts` API，使用唯一 `ADMIN_KEY` 保护。 |
-| 部署要求 | 可以在没有账号数据库的情况下运行。 | 生成请求需要配置 D1 binding，并至少导入一个可用 Gemini 账号；健康检查、预检和公开模型列表不需要选择账号。 |
+| 部署要求 | 可以在没有账号数据库的情况下运行。 | 符合条件的短文本请求不需要 D1；Pro、长上下文、附件、生图、图片编辑和账号回退需要 D1 binding 与可用账号。 |
 | Docker 集成 | 使用标准 Docker 适配层和运行时环境变量。 | 通过 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN` 注入 D1 HTTP binding。 |
 | 运行时配置 | 使用 main 分支的配置契约。 | 对 boolean、整数、origin、文件名和 `API_KEYS` 执行严格校验；`ADMIN_KEY` 作为普通单字符串配置读取。无效值类型的错误诊断会脱敏。 |
 | Admin API | 不适用于持久化账号池。 | 使用 `PATCH` / `DELETE /admin/accounts/:id`，以及 `POST /admin/accounts/:id/refresh` 或 `/check`；公共 `x-api-key` 永远不能授权管理操作。 |
@@ -321,7 +321,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 
 - 共享部署时设置 `API_KEYS`。为空时会关闭认证。
 - 使用账号池管理接口前设置 `ADMIN_KEY`。缺失时 admin 接口不会公开放行。
-- 将 D1 数据库绑定为 `GEMINI_DB`，并在承载生成流量前通过 admin 接口导入 Gemini 账号。
+- 将 D1 数据库绑定为 `GEMINI_DB`，并在承载 Pro、长上下文、附件或图片等需要账号的流量前通过 admin 接口导入 Gemini 账号。
 
 ```sh
 wrangler secret put API_KEYS
@@ -340,7 +340,7 @@ wrangler secret put ADMIN_KEY
 
 建议使用新的或专门的 Gemini 浏览器会话。不要粘贴完整 Cookie header、浏览器 Cookie 导出、Cookie 名称、等号、分号或无关的 access token。管理响应和账号列表均已脱敏，不会返回保存的会话凭据。
 
-当前分支要求 Worker 和 Docker 部署使用 D1 后端的 Gemini 账号池。未配置 `GEMINI_DB` 时，公开 Gemini 生成路由会以 `gemini_account_pool_required` fail closed。已配置 D1 但没有可选账号时，Gemini 生成会返回脱敏的 `no_available_gemini_account`。
+当前分支使用混合上游路由。符合条件的短文本请求会先走 Gemini Web 上游无鉴权模式，并且不会读取 D1；如果匿名生成在输出前失败，Provider 会通过现有的最少在途请求与轮询账号池选择一个账号并重试一次。Pro、长上下文、附件、生图和图片编辑直接走账号池。只有需要账号的请求缺少 D1 时才返回 `gemini_account_pool_required`；直接走账号的请求在账号池为空时返回 `no_available_gemini_account`，而匿名请求失败且没有回退账号时保留原始匿名上游错误。
 
 Worker 部署时，创建 D1 数据库，执行 [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql)，并在 `wrangler.jsonc` 或 Cloudflare 控制台配置中把它绑定为 `GEMINI_DB`。该 schema 会创建结构化的 `gemini_accounts`、`gemini_pool_meta` 和 `gemini_account_locks` 表，不会把账号状态作为单个 JSON blob 存储。
 
@@ -405,8 +405,8 @@ Refresh/check 响应包含 `checked`、`skipped`、`refreshed`、`unchanged`、`
 
 | 现象 | 检查方式 |
 | --- | --- |
-| 返回 `gemini_account_pool_required` | 缺少 `GEMINI_DB`。为 Worker 添加 D1 binding，或为 Docker 同时填写三个 D1 凭据。 |
-| 返回 `no_available_gemini_account` | 打开 `/admin`，导入并启用账号，检查账号是否处于冷却状态或需要更新凭据。 |
+| 返回 `gemini_account_pool_required` | Pro、长上下文、附件或图片等需要账号的请求缺少 `GEMINI_DB`。为 Worker 添加 D1 binding，或为 Docker 同时填写三个 D1 凭据。 |
+| 返回 `no_available_gemini_account` | 直接走账号池的请求没有可选账号。打开 `/admin`，导入并启用账号，检查账号是否处于冷却状态或需要更新凭据。 |
 | 返回 `invalid_runtime_config` | 检查环境变量：boolean 只能是 `true`/`false`，整数必须在范围内，`ADMIN_KEY` 必须是单个非占位字符串。 |
 | 管理页面返回 401 | 确认 WebUI 输入值与 `ADMIN_KEY` 一致；公共 `API_KEYS` 不能授权管理操作。 |
 | Docker 在监听端口前退出 | 同时配置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`，再查看容器日志中的脱敏启动错误。 |

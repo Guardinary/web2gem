@@ -153,12 +153,12 @@ if (
 	process.exit(1);
 }
 
-const missingD1 = await prod.default.fetch(
+const missingD1ForPro = await prod.default.fetch(
 	new Request("https://worker.example/v1/chat/completions", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
-			model: "gemini-3.5-flash",
+			model: "gemini-3.1-pro",
 			messages: [{ role: "user", content: "hello" }],
 		}),
 	}),
@@ -167,14 +167,16 @@ const missingD1 = await prod.default.fetch(
 	},
 	{},
 );
-if (missingD1.status !== 503) {
-	errorLine(`Smoke check failed: missing D1 status ${missingD1.status}`);
+if (missingD1ForPro.status !== 503) {
+	errorLine(
+		`Smoke check failed: missing D1 Pro status ${missingD1ForPro.status}`,
+	);
 	process.exit(1);
 }
-const missingD1Body = await missingD1.json();
+const missingD1Body = await missingD1ForPro.json();
 if (missingD1Body.error?.code !== "gemini_account_pool_required") {
 	errorLine(
-		"Smoke check failed: missing D1 did not return gemini_account_pool_required",
+		"Smoke check failed: missing D1 Pro did not return gemini_account_pool_required",
 	);
 	process.exit(1);
 }

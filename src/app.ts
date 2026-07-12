@@ -224,7 +224,7 @@ async function handlePostRoute(
 ): Promise<Response> {
 	const { request, cfg, env, path } = context;
 	if (path === "/v1/chat/completions") {
-		return handleOpenAIAccountJsonPost(
+		return handleOpenAIGenerationJsonPost(
 			request,
 			cfg,
 			env,
@@ -234,7 +234,7 @@ async function handlePostRoute(
 		);
 	}
 	if (path === "/v1/responses") {
-		return handleOpenAIAccountJsonPost(
+		return handleOpenAIGenerationJsonPost(
 			request,
 			cfg,
 			env,
@@ -244,13 +244,14 @@ async function handlePostRoute(
 		);
 	}
 	if (path === "/v1/images/generations") {
-		return handleOpenAIAccountJsonPost(
+		return handleOpenAIGenerationJsonPost(
 			request,
 			cfg,
 			env,
 			path,
 			(body, accountRuntime) =>
 				handleImageGenerations(body, cfg, createProvider(cfg, accountRuntime)),
+			true,
 		);
 	}
 	if (path === "/v1/images/edits") {
@@ -263,17 +264,18 @@ async function handlePostRoute(
 				createProvider(cfg, accountRuntime),
 			);
 		}
-		return handleOpenAIAccountJsonPost(
+		return handleOpenAIGenerationJsonPost(
 			request,
 			cfg,
 			env,
 			path,
 			(body, accountRuntime) =>
 				handleImageEdits(body, cfg, createProvider(cfg, accountRuntime)),
+			true,
 		);
 	}
 	if (GOOGLE_GENERATE_PATH_RE.test(path)) {
-		return handleGoogleAccountJsonPost(
+		return handleGoogleGenerationJsonPost(
 			request,
 			cfg,
 			env,
@@ -289,7 +291,7 @@ async function handlePostRoute(
 		);
 	}
 	if (GOOGLE_STREAM_GENERATE_PATH_RE.test(path)) {
-		return handleGoogleAccountJsonPost(
+		return handleGoogleGenerationJsonPost(
 			request,
 			cfg,
 			env,
@@ -336,42 +338,34 @@ function accountPoolRequiredOpenAIResponse(): Response {
 	);
 }
 
-function accountPoolRequiredGoogleResponse(): Response {
-	return jsonResponse(
-		googleJsonError(
-			"Gemini account pool requires a configured GEMINI_DB binding",
-			"gemini_account_pool_required",
-		),
-		503,
-	);
-}
-
-async function handleOpenAIAccountJsonPost(
+async function handleOpenAIGenerationJsonPost(
 	request: Request,
 	cfg: RuntimeConfig,
 	env: WorkerEnv,
 	path: string,
 	handler: (
 		body: NonNullable<RouteJsonPostResult["value"]>,
-		accountRuntime: GeminiAccountRuntime,
+		accountRuntime: GeminiAccountRuntime | null,
 	) => Promise<Response>,
+	requireAccount = false,
 ): Promise<Response> {
 	const parsed = await readRouteJsonPost(request, cfg, path);
 	if (parsed.error !== undefined)
 		return openAIErrorResponse(parsed.error, parsed.status || 400, parsed.code);
 	const accountRuntime = requiredGeminiAccountRuntimeFromEnv(env);
-	if (!accountRuntime) return accountPoolRequiredOpenAIResponse();
+	if (requireAccount && !accountRuntime)
+		return accountPoolRequiredOpenAIResponse();
 	return handler(parsed.value, accountRuntime);
 }
 
-async function handleGoogleAccountJsonPost(
+async function handleGoogleGenerationJsonPost(
 	request: Request,
 	cfg: RuntimeConfig,
 	env: WorkerEnv,
 	path: string,
 	handler: (
 		body: NonNullable<RouteJsonPostResult["value"]>,
-		accountRuntime: GeminiAccountRuntime,
+		accountRuntime: GeminiAccountRuntime | null,
 	) => Promise<Response>,
 ): Promise<Response> {
 	const parsed = await readRouteJsonPost(request, cfg, path);
@@ -381,7 +375,6 @@ async function handleGoogleAccountJsonPost(
 			parsed.status || 400,
 		);
 	const accountRuntime = requiredGeminiAccountRuntimeFromEnv(env);
-	if (!accountRuntime) return accountPoolRequiredGoogleResponse();
 	return handler(parsed.value, accountRuntime);
 }
 
