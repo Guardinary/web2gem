@@ -8,6 +8,8 @@ import { mod } from "./helpers.js";
 
 const DEPLOY_SECRET_TEMPLATE_KEYS = ["ADMIN_KEY", "API_KEYS"];
 const DEPLOY_SECRET_KEYS = new Set(DEPLOY_SECRET_TEMPLATE_KEYS);
+const DEPLOY_BUTTON_REPOSITORY =
+	"https://github.com/Guardinary/web2gem/tree/gemini-account-pool";
 const DOCKER_ONLY_ENV_KEYS = [
 	"PORT",
 	"WEB2GEM_IMAGE",
@@ -532,6 +534,24 @@ export const cases = [
 				assert.deepEqual(
 					DOCKER_ONLY_ENV_KEYS.filter((key) => deploySecrets.has(key)),
 					[],
+					path,
+				);
+			}
+		},
+	],
+	[
+		"keeps Deploy Buttons pinned to the account-pool branch",
+		async () => {
+			for (const path of ["README.md", "README.zh.md"]) {
+				const readme = await readFile(path, "utf8");
+				const repositoryUrls = [
+					...readme.matchAll(
+						/https:\/\/deploy\.workers\.cloudflare\.com\/\?url=([^\s)]+)/g,
+					),
+				].map((match) => match[1]);
+				assert.deepEqual(
+					repositoryUrls,
+					[DEPLOY_BUTTON_REPOSITORY, DEPLOY_BUTTON_REPOSITORY],
 					path,
 				);
 			}

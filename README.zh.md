@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem/tree/gemini-account-pool)
 
 带持久化 Gemini Web 账号池的 API 网关，兼容 OpenAI 和 Google Gemini 接口。可以部署到 Cloudflare Workers，也可以使用 Docker 自托管，并通过一个管理页面维护多个 Gemini 账号。
 
@@ -207,7 +207,7 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 如果想从源码一键部署到 Cloudflare Workers，可以使用下面的部署按钮：
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem/tree/gemini-account-pool)
 
 该按钮会 fork 仓库，创建 Worker，根据 `wrangler.jsonc` 自动创建 `GEMINI_DB` D1 数据库，先构建 Worker，再通过 deploy 脚本执行 `wrangler d1 migrations apply GEMINI_DB --remote`，然后部署 Worker。部署向导中需要填写 `ADMIN_KEY`；`API_KEYS` 可选。部署完成后，打开管理页面导入你自己的 Gemini 账号值。
 

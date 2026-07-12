@@ -15,7 +15,7 @@
 		"enabled": true
 	},
 	"vars": {
-		"GEMINI_BL": "boq_assistant-bard-web-server_20260618.10_p0",
+		"GEMINI_BL": "boq_assistant-bard-web-server_20260709.09_p0",
 		"GEMINI_ORIGIN": "https://gemini.google.com",
 		"UPSTREAM_SOCKET": true,
 		"DEFAULT_MODEL": "gemini-3.5-flash",

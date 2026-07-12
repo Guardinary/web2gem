@@ -357,6 +357,7 @@ export const VERSION = "2.0.0-worker";
 - Cloudflare Deploy Button secret templates: `.env.example`, `.dev.vars.example`
 - Docker-only env template: `.env.docker.example`
 - Binding descriptions: `package.json` `cloudflare.bindings`
+- Account-pool Deploy Button repository: `https://github.com/Guardinary/web2gem/tree/gemini-account-pool`
 
 ### 3. Contracts
 
@@ -364,6 +365,7 @@ export const VERSION = "2.0.0-worker";
 - Worker secrets belong in `.env.example` and `.dev.vars.example`; keep these files limited to secret keys such as `API_KEYS` and `ADMIN_KEY`.
 - Docker-only fields such as `PORT`, `WEB2GEM_IMAGE`, `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` belong in `.env.docker.example`, not `.env.example`.
 - `README.md` and `README.zh.md` Docker instructions must point to `.env.docker.example`.
+- Every Deploy to Cloudflare link in `README.md` and `README.zh.md` must pin the `gemini-account-pool` branch so Cloudflare reads the account-pool secret templates rather than the legacy default branch.
 
 ### 4. Validation & Error Matrix
 
@@ -371,18 +373,21 @@ export const VERSION = "2.0.0-worker";
 - Docker-only key appears in `.env.example` or `.dev.vars.example` -> deploy form asks for irrelevant Worker secrets.
 - Secret key appears in `wrangler.jsonc` `vars` -> deploy form displays sensitive values in plain text.
 - Docker docs point to `.env.example` -> users copy the Worker secret template instead of the Docker runtime template.
+- Deploy Button omits `/tree/gemini-account-pool` -> Cloudflare clones the repository default branch and may request legacy `GEMINI_COOKIE` or `SAPISID` secrets.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: `GEMINI_ORIGIN` is in `wrangler.jsonc` `vars`; `API_KEYS` is in `.env.example`; `PORT` is in `.env.docker.example`.
 - Base: A new non-secret `CONFIG_ENV_KEYS` value is added to both `wrangler.jsonc` `vars` and `.env.docker.example`.
 - Bad: Adding `WEB2GEM_IMAGE` or `D1_API_TOKEN` to `.env.example` or `.dev.vars.example`.
+- Bad: Using the bare repository URL in an account-pool Deploy Button while the repository default branch still contains the legacy cookie deployment.
 
 ### 6. Tests Required
 
 - `tests/unit/scripts.cases.mjs` must assert Docker config keys stay covered by `.env.docker.example` and `compose.yaml`.
 - It must assert Deploy Button secrets from `.env.example` and `.dev.vars.example` stay separated from visible Worker vars in `wrangler.jsonc`.
 - It must assert Docker-only keys such as `PORT`, `WEB2GEM_IMAGE`, and `D1_API_TOKEN` are absent from both Deploy Button secret templates.
+- It must assert all English and Chinese README Deploy Buttons pin the canonical `gemini-account-pool` repository URL.
 
 ### 7. Wrong vs Correct
 

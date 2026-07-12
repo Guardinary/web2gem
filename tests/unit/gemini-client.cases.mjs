@@ -1021,7 +1021,7 @@ export const cases = [
 			);
 			assert.equal(await mod.extractGeminiPushId(textResponse(oversized)), "");
 
-			const buildLabel = "boq_assistant-bard-web-server_20260618.10_p0";
+			const buildLabel = "boq_assistant-bard-web-server_20260709.09_p0";
 			assert.equal(
 				await mod.extractGeminiBuildLabel(
 					textResponse(`${oversized}\n${buildLabel}`),

@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem/tree/gemini-account-pool)
 
 Persistent Gemini Web account-pool gateway with OpenAI-compatible and Google-compatible APIs. Deploy it on Cloudflare Workers or run it with Docker, then manage multiple Gemini accounts from one admin console.
 
@@ -207,7 +207,7 @@ Every generation deployment needs `GEMINI_DB` and at least one imported account.
 
 For source-based one-click deployment to Cloudflare Workers, use the deploy button:
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem/tree/gemini-account-pool)
 
 The button forks the repository, creates the Worker, provisions the `GEMINI_DB` D1 database from `wrangler.jsonc`, builds the Worker, runs `wrangler d1 migrations apply GEMINI_DB --remote` through the deploy script, then deploys the Worker. During setup, enter `ADMIN_KEY`; `API_KEYS` is optional. After deployment, open the admin UI and import your own Gemini account values.
 
