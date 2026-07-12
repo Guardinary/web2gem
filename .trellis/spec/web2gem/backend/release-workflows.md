@@ -382,6 +382,62 @@ export default {
 
 ---
 
+## Scenario: Isolated Docker Build Context
+
+### 1. Scope / Trigger
+
+Use this contract when changing `Dockerfile`, `.dockerignore`, Docker smoke behavior, or files copied into build stages.
+
+### 2. Signatures
+
+- Build inputs: package manifests, TypeScript/Vitest/Wrangler config, `scripts/`, and `src/`.
+- Safe templates: `.env.example`, `.env.docker.example`, and `.dev.vars.example`.
+
+### 3. Contracts
+
+- Exclude `.env`, `.env.*`, `.dev.vars`, and `.dev.vars.*`, then re-include only committed examples.
+- Exclude tests, docs, reports, coverage, and release assets when not copied by `Dockerfile`.
+- Preserve every repository path copied by `Dockerfile`, including account-pool runtime adapters under `scripts/`.
+
+### 4. Validation & Error Matrix
+
+- Real environment file -> excluded.
+- Safe example matching a wildcard -> later negation re-includes it.
+- New Docker `COPY` source -> update the context contract test.
+
+### 5. Good/Base/Bad Cases
+
+- Good: keep wildcard exclusions before example negations.
+- Base: `scripts/` and `src/` remain available.
+- Bad: send local secrets, tests, or coverage to the Docker daemon.
+
+### 6. Tests Required
+
+- Assert sensitive and repository-only patterns are excluded.
+- Assert safe example negations and every Docker build input.
+- Run the scripts unit suite and Docker smoke when container startup is authorized.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```dockerignore
+.env.*
+scripts
+```
+
+#### Correct
+
+```dockerignore
+.env.*
+!.env.example
+!.env.docker.example
+.dev.vars.*
+!.dev.vars.example
+tests
+docs
+```
+
 ## Validation
 
 For workflow changes, run:

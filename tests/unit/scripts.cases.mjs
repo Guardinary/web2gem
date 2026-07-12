@@ -374,6 +374,53 @@ export const cases = [
 		},
 	],
 	[
+		"keeps Docker build contexts minimal without excluding build inputs",
+		async () => {
+			const patterns = (await readFile(".dockerignore", "utf8"))
+				.split(/\r?\n/)
+				.map((line) => line.trim())
+				.filter((line) => line && !line.startsWith("#"));
+			const excluded = new Set(
+				patterns.filter((line) => !line.startsWith("!")),
+			);
+			for (const pattern of [
+				".env",
+				".env.*",
+				".dev.vars",
+				".dev.vars.*",
+				"tests",
+				"docs",
+				"release-assets",
+				"reports",
+			]) {
+				assert.equal(excluded.has(pattern), true, `missing ${pattern}`);
+			}
+			for (const example of [
+				"!.env.example",
+				"!.env.docker.example",
+				"!.dev.vars.example",
+			]) {
+				assert.equal(patterns.includes(example), true, `missing ${example}`);
+			}
+			assert.equal(
+				patterns.indexOf("!.env.docker.example") > patterns.indexOf(".env.*"),
+				true,
+			);
+			for (const dockerInput of [
+				"package.json",
+				"pnpm-lock.yaml",
+				"pnpm-workspace.yaml",
+				"tsconfig.json",
+				"vitest.config.mjs",
+				"wrangler.jsonc",
+				"scripts",
+				"src",
+			]) {
+				assert.equal(excluded.has(dockerInput), false, dockerInput);
+			}
+		},
+	],
+	[
 		"keeps runtime config env keys aligned with Docker docs and Compose",
 		async () => {
 			const dockerEnvExample = parseEnvExampleKeys(
