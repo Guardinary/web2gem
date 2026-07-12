@@ -642,6 +642,89 @@ export const cases = [
 		},
 	],
 	[
+		"keeps MIME and filename in attachment dedupe identity",
+		async () => {
+			const bytes = new TextEncoder().encode("same payload");
+			const base = {
+				candidate: {},
+				bytes,
+				mime: "text/plain",
+				filename: "a.txt",
+			};
+			const same = await mod.attachmentDedupeKeyForTest(base);
+			assert.equal(await mod.attachmentDedupeKeyForTest({ ...base }), same);
+			assert.equal(
+				(await mod.attachmentDedupeKeyForTest({
+					...base,
+					mime: "text/csv",
+				})) === same,
+				false,
+			);
+			assert.equal(
+				(await mod.attachmentDedupeKeyForTest({
+					...base,
+					filename: "b.txt",
+				})) === same,
+				false,
+			);
+		},
+	],
+	[
+		"bounds concurrent attachment weight and lets an oversized item progress alone",
+		async () => {
+			let active = 0;
+			let maxActive = 0;
+			const starts = [];
+			const results = await mod.mapWithConcurrencyAndWeight(
+				[6, 6, 12, 4],
+				4,
+				10,
+				(value) => value,
+				async (value, index) => {
+					starts.push(index);
+					active += value;
+					maxActive = Math.max(maxActive, active);
+					await new Promise((resolve) => setTimeout(resolve, 1));
+					active -= value;
+					return `result-${index}`;
+				},
+			);
+			assert.deepEqual(results, [
+				"result-0",
+				"result-1",
+				"result-2",
+				"result-3",
+			]);
+			assert.deepEqual(starts, [0, 1, 2, 3]);
+			assert.equal(maxActive, 12);
+		},
+	],
+	[
+		"releases attachment weight after mapper errors",
+		async () => {
+			const starts = [];
+			let completedSecond = false;
+			await assert.rejects(
+				() =>
+					mod.mapWithConcurrencyAndWeight(
+						[12, 4],
+						2,
+						10,
+						(value) => value,
+						async (_value, index) => {
+							starts.push(index);
+							if (index === 0) throw new Error("weighted mapper failed");
+							completedSecond = true;
+						},
+					),
+				/weighted mapper failed/,
+			);
+			await new Promise((resolve) => setTimeout(resolve, 1));
+			assert.deepEqual(starts, [0, 1]);
+			assert.equal(completedSecond, true);
+		},
+	],
+	[
 		"does not auth fallback when multipart is rejected by protocol",
 		async () => {
 			mod.resetActiveGeminiCookieForTest();

@@ -1,11 +1,8 @@
-import type { RuntimeConfig } from "../../config";
-import { attachmentDrop, droppedAttachmentNote } from "../../attachments/notes";
-import { createAttachmentPlan } from "../../attachments/plan";
 import {
-	DEFAULT_ATTACHMENT_MAX_BYTES,
-	materializeAttachment,
 	type AttachmentLimits,
+	DEFAULT_ATTACHMENT_MAX_BYTES,
 	type MaterializedAttachment,
+	materializeAttachment,
 } from "../../attachments/materialize";
 import {
 	chooseUploadMime,
@@ -14,6 +11,8 @@ import {
 	imageFilenameFromMime,
 	normalizeMimeType,
 } from "../../attachments/mime";
+import { attachmentDrop, droppedAttachmentNote } from "../../attachments/notes";
+import { createAttachmentPlan } from "../../attachments/plan";
 import type {
 	AttachmentCandidate,
 	AttachmentDrop,
@@ -22,14 +21,17 @@ import type {
 	AttachmentUploadResult,
 	AttachmentUsage,
 } from "../../attachments/types";
+import type { RuntimeConfig } from "../../config";
+import { bytesToHex } from "../../shared/crypto";
 import { TEXT_ENCODER, UTF8_FATAL_DECODER } from "../../shared/encoding";
 import { errorLogSummary } from "../../shared/errors";
 import { log, logStage } from "../../shared/logging";
-import { bytesToHex } from "../../shared/crypto";
+import { mapWithConcurrencyAndWeight } from "../concurrency";
 import { configWithFreshGeminiCookie } from "../cookies";
-import { uploadMultipartFile, type UploadBytesInput } from "./multipart";
+import { type UploadBytesInput, uploadMultipartFile } from "./multipart";
 
 const MAX_PARALLEL_UPLOADS = 4;
+const MAX_IN_FLIGHT_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 
 type UploadOneResult = {
 	candidate: AttachmentCandidate;
@@ -82,9 +84,11 @@ export async function resolveAttachments(
 		multipartUploads: 0,
 	};
 	const limits = attachmentLimitsFromConfig(activeCfg);
-	const uploadResults = await mapWithConcurrency(
+	const uploadResults = await mapWithConcurrencyAndWeight(
 		plan.candidates,
 		MAX_PARALLEL_UPLOADS,
+		MAX_IN_FLIGHT_ATTACHMENT_BYTES,
+		estimatedMaterializedBytes,
 		(candidate) =>
 			resolveOneRequestAttachment(
 				activeCfg,
@@ -459,16 +463,20 @@ async function uploadMaterializedAttachment(
 async function dedupeKey(
 	materialized: MaterializedAttachment,
 ): Promise<string> {
-	const prefix = TEXT_ENCODER.encode(
-		`${materialized.mime}\x00${materialized.filename}\x00`,
-	);
-	const bytes = new Uint8Array(
-		prefix.byteLength + materialized.bytes.byteLength,
-	);
-	bytes.set(prefix, 0);
-	bytes.set(materialized.bytes, prefix.byteLength);
-	const digest = await crypto.subtle.digest("SHA-256", bytes);
-	return bytesToHex(new Uint8Array(digest));
+	const digestInput =
+		materialized.bytes.buffer instanceof ArrayBuffer
+			? (materialized.bytes as Uint8Array<ArrayBuffer>)
+			: new Uint8Array(materialized.bytes);
+	const digest = await crypto.subtle.digest("SHA-256", digestInput);
+	return `${materialized.mime}\x00${materialized.filename}\x00${bytesToHex(new Uint8Array(digest))}`;
+}
+
+export const attachmentDedupeKeyForTest = dedupeKey;
+
+function estimatedMaterializedBytes(candidate: AttachmentCandidate): number {
+	if (candidate.source.type === "bytes")
+		return candidate.source.bytes.byteLength;
+	return Math.floor((String(candidate.source.data || "").length * 3) / 4);
 }
 
 function dropCodeFromError(
@@ -518,28 +526,4 @@ function dropMessageFromError(
 		case "upload_failed":
 			return "attachment upload failed";
 	}
-}
-
-async function mapWithConcurrency<T, R>(
-	items: readonly T[],
-	concurrency: number,
-	mapper: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-	const results = new Array<R>(items.length);
-	let nextIndex = 0;
-	const workerCount = Math.max(
-		1,
-		Math.min(Math.floor(concurrency) || 1, items.length),
-	);
-	const workers = Array.from({ length: workerCount }, async () => {
-		while (true) {
-			const index = nextIndex;
-			nextIndex += 1;
-			if (index >= items.length) return;
-			const item = items[index] as T;
-			results[index] = await mapper(item, index);
-		}
-	});
-	await Promise.all(workers);
-	return results;
 }

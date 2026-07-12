@@ -880,6 +880,62 @@ const flushResult = coalescer.flush();
 if (flushResult) await flushResult;
 ```
 
+## Scenario: Attachment Dedupe And In-Flight Memory
+
+### 1. Scope / Trigger
+
+Use this contract when changing request-local attachment materialization, deduplication, upload concurrency, or attachment memory limits.
+
+### 2. Signatures
+
+- `mapWithConcurrencyAndWeight(items, concurrency, maxWeight, weightOf, mapper)` preserves input ordering while limiting item count and aggregate active weight.
+- Attachment uploads use four workers and a 32 MiB normal in-flight materialized-byte budget.
+
+### 3. Contracts
+
+- Hash `materialized.bytes` directly; never prepend metadata into a payload-sized temporary buffer.
+- Include normalized MIME and filename alongside the payload digest.
+- Preserve pending-promise deduplication and result ordering.
+- Weight admission is FIFO. An attachment above the normal budget may run only when no other weighted item is active, so valid large files still make progress.
+
+### 4. Validation & Error Matrix
+
+- Same bytes, MIME, and filename -> one upload and repeated ordered references.
+- Same bytes with different MIME or filename -> distinct dedupe keys.
+- One valid item exceeds 32 MiB -> run alone; queued items resume after release.
+- Mapper throws -> release weight in `finally`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: digest the existing `Uint8Array`, then format a small metadata-plus-hex key.
+- Base: output arrays retain input order when completion order differs.
+- Bad: allocate `new Uint8Array(prefix.length + payload.length)` solely for hashing.
+- Bad: permanently queue a valid attachment because it exceeds the normal aggregate budget.
+
+### 6. Tests Required
+
+- Test dedupe equivalence and MIME/filename distinctions.
+- Test FIFO weighted concurrency, ordered results, error release, and oversized-item progress.
+- Preserve request-local pending-upload dedupe integration tests.
+- Benchmark a large attachment key against the former copy-based path.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+const copy = new Uint8Array(prefix.byteLength + materialized.bytes.byteLength);
+copy.set(prefix);
+copy.set(materialized.bytes, prefix.byteLength);
+```
+
+#### Correct
+
+```typescript
+const digest = await crypto.subtle.digest("SHA-256", materialized.bytes);
+return `${materialized.mime}\0${materialized.filename}\0${bytesToHex(new Uint8Array(digest))}`;
+```
+
 ## Scenario: Tool-Sieve Held Candidate Performance
 
 ### 1. Scope / Trigger

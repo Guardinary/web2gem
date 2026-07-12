@@ -96,6 +96,14 @@ const CONFIG_CACHE_BENCH_ENVS = {
 		ADMIN_KEY: "a".repeat(4096),
 	},
 };
+const ATTACHMENT_DEDUPE_BYTES = new Uint8Array(8 * 1024 * 1024);
+ATTACHMENT_DEDUPE_BYTES.fill(0x61);
+const ATTACHMENT_DEDUPE_INPUT = {
+	candidate: {},
+	bytes: ATTACHMENT_DEDUPE_BYTES,
+	mime: "application/octet-stream",
+	filename: "benchmark.bin",
+};
 const TOOL = {
 	type: "function",
 	function: {
@@ -312,6 +320,12 @@ const cases = [
 		fn: () => mod.getConfig(CONFIG_CACHE_BENCH_ENVS.maximum),
 		iterations: Math.min(ITERATIONS, 200),
 		warmup: Math.min(WARMUP, 20),
+	},
+	{
+		name: "attachment_dedupe_large",
+		fn: () => mod.attachmentDedupeKeyForTest(ATTACHMENT_DEDUPE_INPUT),
+		iterations: Math.min(ITERATIONS, 30),
+		warmup: Math.min(WARMUP, 5),
 	},
 	{
 		name: "route_options",
