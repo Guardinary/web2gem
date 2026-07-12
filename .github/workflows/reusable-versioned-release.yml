@@ -118,8 +118,8 @@ jobs:
 
       - name: Release Blocking Gates
         run: |
-		  pnpm check:release
-		  pnpm docker:smoke
+          pnpm check:release
+          pnpm docker:smoke
 
       - name: Commit package version and create tag
         run: |

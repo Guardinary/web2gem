@@ -461,6 +461,7 @@ export const cases = [
 			for (const workflow of workflows) {
 				assert.match(workflow, /pnpm check:release\s+pnpm docker:smoke/);
 				assert.doesNotMatch(workflow, /pnpm coverage:ci/);
+				assert.doesNotMatch(workflow, /\t/);
 			}
 		},
 	],

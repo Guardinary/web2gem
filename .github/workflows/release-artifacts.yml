@@ -50,8 +50,8 @@ jobs:
 
       - name: Release Blocking Gates
         run: |
-		  pnpm check:release
-		  pnpm docker:smoke
+          pnpm check:release
+          pnpm docker:smoke
 
       - name: Build Worker Artifact
         run: pnpm build
