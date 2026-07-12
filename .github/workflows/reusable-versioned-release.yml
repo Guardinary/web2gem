@@ -33,9 +33,20 @@ jobs:
       new_tag: ${{ steps.next_version.outputs.new_tag }}
       revision_sha: ${{ steps.revision.outputs.sha }}
     steps:
+      - name: Validate release source
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "${RELEASE_REF}" != "refs/heads/gemini-account-pool" ]; then
+            echo "Versioned account-pool releases must run from gemini-account-pool; got ${RELEASE_REF}." >&2
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v5
         with:
+          ref: gemini-account-pool
           fetch-depth: 0
           token: ${{ github.token }}
 
@@ -134,7 +145,7 @@ jobs:
 
           NEW_TAG="${{ steps.next_version.outputs.new_tag }}"
           git tag -a "${NEW_TAG}" -m "Release ${NEW_TAG}"
-          git push origin HEAD:main "${NEW_TAG}"
+          git push origin HEAD:gemini-account-pool "${NEW_TAG}"
 
       - name: Capture release revision
         id: revision

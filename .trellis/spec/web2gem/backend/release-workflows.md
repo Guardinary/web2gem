@@ -60,6 +60,8 @@ Registry-specific release workflows should not duplicate the version bump / tag 
 
 Registry publish jobs should check out `revision_sha` before building Docker images so image labels and contents match the version commit.
 
+Account-pool version releases are branch-bound: validate `github.ref` before checkout, explicitly checkout `gemini-account-pool`, and push the version commit back to `HEAD:gemini-account-pool`. Never reuse the main-edition `HEAD:main` target from this independently released branch.
+
 ## Scenario: Static And Independent Branch Quality Gates
 
 ### 1. Scope / Trigger

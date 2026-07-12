@@ -463,6 +463,26 @@ export const cases = [
 				assert.doesNotMatch(workflow, /pnpm coverage:ci/);
 				assert.doesNotMatch(workflow, /\t/);
 			}
+			const versionedRelease = workflows[1];
+			const sourceGuard = versionedRelease.indexOf(
+				"- name: Validate release source",
+			);
+			const checkout = versionedRelease.indexOf("- name: Checkout code");
+			const install = versionedRelease.indexOf("- name: Install dependencies");
+			assert.equal(sourceGuard >= 0 && sourceGuard < checkout, true);
+			assert.equal(checkout < install, true);
+			assert.match(
+				versionedRelease,
+				/RELEASE_REF: \$\{\{ github\.ref \}\}[\s\S]*refs\/heads\/gemini-account-pool/,
+			);
+			assert.match(
+				versionedRelease,
+				/uses: actions\/checkout@v5\s+with:\s+ref: gemini-account-pool\s+fetch-depth: 0/,
+			);
+			assert.match(
+				versionedRelease,
+				/git push origin HEAD:gemini-account-pool "\$\{NEW_TAG\}"/,
+			);
 		},
 	],
 	[
