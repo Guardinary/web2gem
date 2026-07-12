@@ -270,6 +270,8 @@ If the upstream Gemini Web path starts returning empty output, first check wheth
 
 `gemini-account-pool` is the persistent-storage edition of `web2gem`. It is released independently from `main`; the shared OpenAI-compatible and Google-compatible generation routes remain familiar, while account provisioning and operations use a different model.
 
+Maintainers publish this branch through the single `Versioned Release` workflow. Every release publishes GitHub assets and GHCR from the captured account-pool revision, with optional Docker Hub and Aliyun publication in the same multi-platform image build.
+
 | Area | `main` | `gemini-account-pool` |
 | --- | --- | --- |
 | Gemini credentials | Reads a directly configured Gemini cookie for the current runtime. | Stores multiple Gemini accounts in D1 and selects an available account for each generation request. |
@@ -277,7 +279,7 @@ If the upstream Gemini Web path starts returning empty output, first check wheth
 | Administration | No persistent account-pool console is required. | Provides the `/admin` WebUI and resource-oriented `/admin/accounts` API, protected by one `ADMIN_KEY`. |
 | Deployment requirements | Can run without an account database. | Generation requires a configured D1 binding and at least one usable imported Gemini account. Health, preflight, and public model-list routes remain available without selecting an account. |
 | Docker integration | Uses the standard Docker adapter and runtime environment. | Adds the D1 HTTP binding through `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN`. |
-| Runtime validation | Uses the main-branch configuration contract. | Applies strict boolean, integer, origin, filename, `API_KEYS`, and `ADMIN_KEY` validation. Invalid values fail with sanitized diagnostics. |
+| Runtime validation | Uses the main-branch configuration contract. | Applies strict boolean, integer, origin, filename, and `API_KEYS` validation. `ADMIN_KEY` is read as one ordinary string setting. Invalid value types fail with sanitized diagnostics. |
 | Admin API | Not applicable to a persistent pool. | Uses `PATCH` / `DELETE /admin/accounts/:id` and `POST /admin/accounts/:id/refresh` or `/check`; public `x-api-key` credentials never authorize admin operations. |
 
 The production bundle also keeps Worker and Docker routing behind one application boundary and includes representative performance gates for streaming, socket parsing, and structured-output paths. These are branch-specific implementation differences and do not imply equivalent changes to `main`.
@@ -289,7 +291,7 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 | Variable                        | Default                     | Description                                                                                                                                                                                                      |
 | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_KEYS`                      | empty                       | Comma-separated or JSON-array API keys. Empty disables auth. Empty members, non-string members, and duplicates are rejected.                                                                                   |
-| `ADMIN_KEY`                     | empty                       | Single admin key for account-pool management. Placeholder values are rejected; public `API_KEYS` do not authorize admin account mutation.                                                                    |
+| `ADMIN_KEY`                     | empty                       | Single admin key for account-pool management. Public `API_KEYS` do not authorize admin account mutation.                                                                                                    |
 | `D1_ACCOUNT_ID`                 | empty                       | Docker-only Cloudflare account ID for the D1 HTTP binding. Set together with `D1_DATABASE_ID` and `D1_API_TOKEN`; partial D1 HTTP config fails startup.                                                          |
 | `D1_DATABASE_ID`                | empty                       | Docker-only Cloudflare D1 database ID for the injected `GEMINI_DB` binding.                                                                                                                                      |
 | `D1_API_TOKEN`                  | empty                       | Docker-only Cloudflare API token allowed to query the D1 database. Adapter errors redact this token and SQL bind values.                                                                                         |

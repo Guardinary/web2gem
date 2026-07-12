@@ -524,10 +524,12 @@ export const cases = [
 		async () => {
 			const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 			const runner = await readFile("scripts/check-release.mjs", "utf8");
-			const workflows = await Promise.all([
-				readFile(".github/workflows/release-artifacts.yml", "utf8"),
-				readFile(".github/workflows/reusable-versioned-release.yml", "utf8"),
-			]);
+			const [releaseArtifacts, versionedRelease, releaseEntry] =
+				await Promise.all([
+					readFile(".github/workflows/release-artifacts.yml", "utf8"),
+					readFile(".github/workflows/reusable-versioned-release.yml", "utf8"),
+					readFile(".github/workflows/release.yml", "utf8"),
+				]);
 			assert.equal(
 				packageJson.scripts["check:release"],
 				"node scripts/check-release.mjs",
@@ -544,12 +546,11 @@ export const cases = [
 			]) {
 				assert.match(runner, new RegExp(`"${check.replace(":", "\\:")}"`));
 			}
-			for (const workflow of workflows) {
+			for (const workflow of [releaseArtifacts, versionedRelease]) {
 				assert.match(workflow, /pnpm check:release\s+pnpm docker:smoke/);
 				assert.doesNotMatch(workflow, /pnpm coverage:ci/);
 				assert.doesNotMatch(workflow, /\t/);
 			}
-			const versionedRelease = workflows[1];
 			const sourceGuard = versionedRelease.indexOf(
 				"- name: Validate release source",
 			);
@@ -568,6 +569,25 @@ export const cases = [
 			assert.match(
 				versionedRelease,
 				/git push origin HEAD:gemini-account-pool "\$\{NEW_TAG\}"/,
+			);
+			assert.match(
+				releaseEntry,
+				/uses: \.\/\.github\/workflows\/reusable-versioned-release\.yml[\s\S]*uses: \.\/\.github\/workflows\/release-artifacts\.yml/,
+			);
+			assert.doesNotMatch(releaseEntry, /docker\/build-push-action/);
+			assert.match(releaseArtifacts, /workflow_call:/);
+			assert.equal(
+				[...releaseArtifacts.matchAll(/uses: docker\/build-push-action@v6/g)]
+					.length,
+				1,
+			);
+			assert.match(
+				releaseArtifacts,
+				/cache-from: type=gha,scope=\$\{\{ env\.RELEASE_CACHE_SCOPE \}\}[\s\S]*cache-to: type=gha,mode=max,scope=\$\{\{ env\.RELEASE_CACHE_SCOPE \}\}/,
+			);
+			await assert.rejects(
+				readFile(".github/workflows/release-dockerhub.yml", "utf8"),
+				/ENOENT/,
 			);
 		},
 	],

@@ -317,7 +317,7 @@ Use this contract when adding or changing account-pool admin routes, admin auth 
 
 ### 2. Signatures
 
-- Env key: `ADMIN_KEY` accepts one administrator credential. Non-string values, placeholder values, and values longer than 4096 characters are rejected by runtime configuration v2. Non-empty removed `ADMIN_KEYS` fails explicitly instead of being ignored.
+- Env key: `ADMIN_KEY` accepts one administrator credential as an ordinary string setting. Unknown environment keys are outside the runtime configuration contract and receive no compatibility handling.
 - Admin routes live under `/admin/accounts`.
 - Supported operations:
   - `GET /admin/accounts?limit=&cursor=&status=&enabled=&q=&category=&cooldown=&source=`

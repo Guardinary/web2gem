@@ -8,10 +8,9 @@
 
 - `.github/workflows/quality-gates.yml` runs pull request plus `dev`, `main`, and
   `gemini-account-pool` push quality checks.
-- `.github/workflows/release-artifacts.yml` builds GitHub Release assets and publishes the GHCR image for a release tag.
+- `.github/workflows/release-artifacts.yml` is the reusable publication workflow for GitHub assets, GHCR, and optional Docker Hub/Aliyun tags.
 - `.github/workflows/reusable-versioned-release.yml` owns shared version calculation, synchronized package/Worker version update, release gates, commit, tag push, and release revision output.
-- `.github/workflows/release-dockerhub.yml` calls the reusable versioned release workflow, then publishes Docker Hub images.
-- `.github/workflows/release.yml` calls the reusable versioned release workflow, then publishes Aliyun Container Registry images.
+- `.github/workflows/release.yml` is the single manual account-pool versioned-release entrypoint.
 
 Keep workflow names stable unless the GitHub Actions UI and README are updated together.
 
@@ -61,6 +60,66 @@ Registry-specific release workflows should not duplicate the version bump / tag 
 Registry publish jobs should check out `revision_sha` before building Docker images so image labels and contents match the version commit.
 
 Account-pool version releases are branch-bound: validate `github.ref` before checkout, explicitly checkout `gemini-account-pool`, and push the version commit back to `HEAD:gemini-account-pool`. Never reuse the main-edition `HEAD:main` target from this independently released branch.
+
+## Scenario: Unified Account-Pool Release Publication
+
+### 1. Scope / Trigger
+
+Use this contract when changing registry publication, GitHub Release assets, release inputs, or Docker build reuse.
+
+### 2. Signatures
+
+- `release.yml`: `version_type`, `publish_dockerhub`, `publish_aliyun`.
+- `release-artifacts.yml`: `release_tag`, `revision_sha`, `prepared_revision`, and optional registry booleans.
+
+### 3. Contracts
+
+- A manual release calls the branch-bound version authority exactly once, then publishes its immutable revision.
+- Publication always targets GHCR and may add Docker Hub/Aliyun tags to the same multi-platform build.
+- Selected credentials are validated before login/build; account-pool Docker/D1 runtime contents remain part of the same Dockerfile build.
+- Existing tag publication still runs canonical release gates unless the prepared caller already ran them.
+
+### 4. Validation & Error Matrix
+
+- Prepared account-pool revision -> skip duplicate gates and publish captured SHA.
+- Missing selected registry credentials -> fail before image build.
+- Optional registry disabled -> do not use its secrets or tags.
+
+### 5. Good/Base/Bad Cases
+
+- Good: one version commit and one multi-registry publication build.
+- Base: GHCR plus Worker/archive/checksum assets.
+- Bad: independent Docker Hub/Aliyun workflows each bump and tag versions.
+
+### 6. Tests Required
+
+- Assert one version-authority call followed by reusable publication.
+- Assert exactly one registry `docker/build-push-action` publication step and a shared cache scope.
+- Assert the obsolete independent Docker Hub workflow is absent.
+- Run `actionlint` and the scripts unit suite.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```yaml
+jobs:
+  dockerhub:
+    uses: ./.github/workflows/reusable-versioned-release.yml
+  aliyun:
+    uses: ./.github/workflows/reusable-versioned-release.yml
+```
+
+#### Correct
+
+```yaml
+jobs:
+  prepare:
+    uses: ./.github/workflows/reusable-versioned-release.yml
+  publish:
+    needs: prepare
+    uses: ./.github/workflows/release-artifacts.yml
+```
 
 ## Scenario: Static And Independent Branch Quality Gates
 
@@ -322,7 +381,7 @@ Use this contract when adding, removing, or renaming Wrangler vars, secrets, or 
 - Generate command: `pnpm worker:types`.
 - CI check command: `pnpm check:worker-types`.
 - Worker entrypoint: `src/index.ts` satisfies `ExportedHandler<WorkerBindings>`.
-- Application boundary: `WorkerEnv = Partial<Record<keyof WorkerBindings | "ADMIN_KEYS", unknown>>`.
+- Application boundary: `WorkerEnv = Partial<Record<keyof WorkerBindings, unknown>>`.
 
 ### 3. Contracts
 
@@ -332,7 +391,7 @@ Use this contract when adding, removing, or renaming Wrangler vars, secrets, or 
 - Generation uses `--strict-vars false` so runtime-config parsers may validate deployment-provided values rather than accepting only current literal defaults.
 - `WorkerBindings` types the Cloudflare entrypoint and known binding names.
 - `WorkerEnv` intentionally keeps binding values as `unknown` because Docker, tests, and deployment adapters may supply string forms that `getConfig` must validate strictly.
-- Removed `ADMIN_KEYS` remains an explicit compatibility-error key even though Wrangler no longer generates it.
+- Unknown or removed environment keys are not added to `WorkerEnv` for compatibility handling.
 - Do not hand-edit the generated declaration; rerun `pnpm worker:types`.
 
 ### 4. Validation & Error Matrix
@@ -342,7 +401,7 @@ Use this contract when adding, removing, or renaming Wrangler vars, secrets, or 
 - `CONFIG_ENV_KEYS` contains a key absent from generated bindings -> unit test failure naming the key.
 - `GEMINI_DB` binding disappears or changes type -> generated-type/unit/typecheck failure.
 - Invalid runtime value has a generated binding name -> `getConfig` still throws `RuntimeConfigError`; generated types do not replace runtime validation.
-- Removed `ADMIN_KEYS` is non-empty -> explicit runtime configuration failure, not silent omission.
+- Unknown environment key is present -> it remains outside `CONFIG_ENV_KEYS` and does not alter parsed runtime configuration.
 
 ### 5. Good/Base/Bad Cases
 
@@ -372,8 +431,7 @@ export default { fetch: handleApplicationRequest };
 #### Correct
 
 ```typescript
-type WorkerEnvKey = keyof WorkerBindings | "ADMIN_KEYS";
-export type WorkerEnv = Partial<Record<WorkerEnvKey, unknown>>;
+export type WorkerEnv = Partial<Record<keyof WorkerBindings, unknown>>;
 
 export default {
   fetch: handleApplicationRequest,

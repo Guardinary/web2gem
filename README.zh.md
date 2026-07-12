@@ -270,6 +270,8 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 
 `gemini-account-pool` 是 `web2gem` 的持久化存储版本，与 `main` 独立发布。两者保留相近的 OpenAI 兼容和 Google 兼容生成接口，但账号配置与运行方式不同。
 
+维护者通过唯一的 `Versioned Release` 工作流发布此分支。每次发布都基于已捕获的账号池 revision 生成 GitHub 产物并推送 GHCR，也可以在同一次多平台镜像构建中选择发布到 Docker Hub 和阿里云容器镜像服务。
+
 | 方面 | `main` | `gemini-account-pool` |
 | --- | --- | --- |
 | Gemini 凭据 | 直接读取当前运行环境中配置的 Gemini cookie。 | 将多个 Gemini 账号保存到 D1，并在每次生成请求时选择可用账号。 |
@@ -277,7 +279,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 | 管理方式 | 不需要持久化账号池控制台。 | 提供 `/admin` WebUI 和资源化的 `/admin/accounts` API，使用唯一 `ADMIN_KEY` 保护。 |
 | 部署要求 | 可以在没有账号数据库的情况下运行。 | 生成请求需要配置 D1 binding，并至少导入一个可用 Gemini 账号；健康检查、预检和公开模型列表不需要选择账号。 |
 | Docker 集成 | 使用标准 Docker 适配层和运行时环境变量。 | 通过 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN` 注入 D1 HTTP binding。 |
-| 运行时配置 | 使用 main 分支的配置契约。 | 对 boolean、整数、origin、文件名、`API_KEYS` 和 `ADMIN_KEY` 执行严格校验，错误诊断会脱敏。 |
+| 运行时配置 | 使用 main 分支的配置契约。 | 对 boolean、整数、origin、文件名和 `API_KEYS` 执行严格校验；`ADMIN_KEY` 作为普通单字符串配置读取。无效值类型的错误诊断会脱敏。 |
 | Admin API | 不适用于持久化账号池。 | 使用 `PATCH` / `DELETE /admin/accounts/:id`，以及 `POST /admin/accounts/:id/refresh` 或 `/check`；公共 `x-api-key` 永远不能授权管理操作。 |
 
 生产 bundle 还让 Worker 与 Docker 共用同一个应用路由边界，并为流式处理、socket 解析和结构化输出路径提供代表性性能门禁。这些只是本分支的实现差异，不表示 `main` 会采用相同变更。
@@ -289,7 +291,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 | 变量                            | 默认值                      | 说明                                                                                                                                                                               |
 | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_KEYS`                      | empty                       | 逗号分隔或 JSON 数组形式的 API keys。为空时关闭认证；空成员、非字符串成员和重复项会被拒绝。                                                                                       |
-| `ADMIN_KEY`                     | empty                       | 账号池管理接口使用的唯一 admin key。占位值会被拒绝；公共 `API_KEYS` 不能管理账号池。                                                                                              |
+| `ADMIN_KEY`                     | empty                       | 账号池管理接口使用的唯一 admin key。公共 `API_KEYS` 不能管理账号池。                                                                                                            |
 | `D1_ACCOUNT_ID`                 | empty                       | 仅 Docker 使用的 Cloudflare account ID，用于 D1 HTTP binding。需与 `D1_DATABASE_ID`、`D1_API_TOKEN` 同时设置；只设置一部分会导致启动失败。                                             |
 | `D1_DATABASE_ID`                | empty                       | 仅 Docker 使用的 Cloudflare D1 database ID，用于注入 `GEMINI_DB` binding。                                                                                                          |
 | `D1_API_TOKEN`                  | empty                       | 仅 Docker 使用的 Cloudflare API token，需要具备查询该 D1 数据库的权限。Adapter 错误会脱敏该 token 和 SQL bind values。                                                              |

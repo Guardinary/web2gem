@@ -103,32 +103,6 @@ export class RuntimeConfigError extends Error {
 	}
 }
 
-const PLACEHOLDER_ADMIN_KEY_VALUES = new Set([
-	"admin",
-	"changeme",
-	"change-me",
-	"example",
-	"password",
-	"sample",
-	"test",
-	"your-admin-key",
-]);
-
-export function parseAdminKey(value: unknown): string {
-	if (typeof value !== "string")
-		throw new RuntimeConfigError("ADMIN_KEY", "must be a string");
-	const key = value.trim();
-	if (!key) return "";
-	if (key.length > 4096)
-		throw new RuntimeConfigError(
-			"ADMIN_KEY",
-			"must not be longer than 4096 characters",
-		);
-	if (PLACEHOLDER_ADMIN_KEY_VALUES.has(key.toLowerCase()))
-		throw new RuntimeConfigError("ADMIN_KEY", "must not be a placeholder key");
-	return key;
-}
-
 export const CONFIG_ENV_KEYS = [
 	"GEMINI_BL",
 	"GEMINI_ORIGIN",
@@ -292,7 +266,8 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): StaticRuntimeConfig {
 				configValue(activeEnv, "API_KEYS", DEFAULT_CONFIG.API_KEYS),
 			),
 		),
-		admin_key: parseAdminKey(
+		admin_key: parseString(
+			"ADMIN_KEY",
 			configValue(activeEnv, "ADMIN_KEY", DEFAULT_CONFIG.ADMIN_KEY),
 		),
 	});
@@ -324,6 +299,12 @@ function parseStrictBoolean(setting: string, value: unknown): boolean {
 	if (value === "true") return true;
 	if (value === "false") return false;
 	throw new RuntimeConfigError(setting, "must be true or false");
+}
+
+function parseString(setting: string, value: unknown): string {
+	if (typeof value !== "string")
+		throw new RuntimeConfigError(setting, "must be a string");
+	return value;
 }
 
 function parseStrictInteger(

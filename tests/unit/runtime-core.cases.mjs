@@ -452,16 +452,18 @@ export const cases = [
 		},
 	],
 	[
-		"parses one strict admin key",
+		"parses ADMIN_KEY as an ordinary string setting",
 		async () => {
 			assert.equal(
 				mod.getConfig({ ADMIN_KEY: " admin-secret " }).admin_key,
-				"admin-secret",
+				" admin-secret ",
 			);
-			assert.throws(
-				() => mod.getConfig({ ADMIN_KEY: "password" }),
-				/ADMIN_KEY must not be a placeholder key/,
+			assert.equal(
+				mod.getConfig({ ADMIN_KEY: "password" }).admin_key,
+				"password",
 			);
+			const longKey = "a".repeat(4097);
+			assert.equal(mod.getConfig({ ADMIN_KEY: longKey }).admin_key, longKey);
 			assert.throws(
 				() => mod.getConfig({ ADMIN_KEY: ["first", "second"] }),
 				/ADMIN_KEY must be a string/,
