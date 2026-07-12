@@ -17,6 +17,7 @@ import {
 } from "./logic";
 import {
 	accountStats,
+	authExpanded,
 	adminKey,
 	accounts,
 	batchBusy,
@@ -76,6 +77,7 @@ export function restoreAdminKey(): void {
 		window.sessionStorage.getItem(KEY_STORAGE) ||
 		window.localStorage.getItem(KEY_STORAGE) ||
 		"";
+	authExpanded.value = !adminKey.value;
 }
 
 export function saveAdminKey(): void {
@@ -87,6 +89,7 @@ export function saveAdminKey(): void {
 			? window.localStorage
 			: window.sessionStorage;
 	storage.setItem(KEY_STORAGE, adminKey.value.trim());
+	authExpanded.value = false;
 	showToast(tr("Admin key saved"));
 }
 
@@ -97,6 +100,7 @@ export function clearAdminKey(): void {
 	accounts.value = [];
 	accountStats.value = null;
 	selected.value = new Set();
+	authExpanded.value = true;
 	showToast(tr("Admin key cleared"));
 }
 

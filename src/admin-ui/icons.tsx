@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 
 export type IconName =
+	| "alert"
 	| "check"
 	| "chevron"
 	| "download"
@@ -16,6 +17,12 @@ export type IconName =
 	| "trash";
 
 const paths: Record<IconName, JSX.Element> = {
+	alert: (
+		<>
+			<path d="M12 3 2.8 20h18.4Z" />
+			<path d="M12 9v4M12 17h.01" />
+		</>
+	),
 	check: <path d="m5 12 4 4L19 6" />,
 	chevron: <path d="m8 10 4 4 4-4" />,
 	download: (

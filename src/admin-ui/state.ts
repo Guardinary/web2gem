@@ -71,3 +71,5 @@ export const confirmationDraft = signal<ConfirmationDraft | null>(null);
 export const lastDiagnostics = signal<MutationResult | null>(null);
 export const importExpanded = signal(false);
 export const diagnosticsExpanded = signal(false);
+export const authExpanded = signal(false);
+export const advancedFiltersExpanded = signal(false);

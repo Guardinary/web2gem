@@ -34,6 +34,25 @@ import {
 } from "./state";
 import type { GeminiAccount } from "./types";
 
+const skeletonRows = ["one", "two", "three", "four", "five", "six"] as const;
+const skeletonCells = [
+	"select",
+	"account",
+	"status",
+	"enabled",
+	"session",
+	"category",
+	"used",
+	"refresh",
+	"success",
+	"failure",
+	"outcome",
+	"cooldown",
+	"errors",
+	"source",
+	"actions",
+] as const;
+
 export function MetricCards(): JSX.Element {
 	const stats = accountStats.value;
 	const total = stats?.total ?? accounts.value.length;
@@ -83,25 +102,51 @@ export function MetricCards(): JSX.Element {
 			(sum, item) => sum + safeNumber(item.failure_count),
 			0,
 		);
-	const cards: [Parameters<typeof tr>[0], string | number][] = [
-		["Total", total],
-		["Available", active],
-		["Needs attention", attention],
-		["Disabled", disabled],
-		["Refreshable", refreshable],
-		["Cooling", cooling],
-		["PSID only", psidOnly],
-		["Success / fail", `${successes} / ${failures}`],
-		["Selected", selected.value.size],
+	const primaryCards: Array<{
+		label: Parameters<typeof tr>[0];
+		value: string | number;
+		tone: string;
+	}> = [
+		{ label: "Total", value: total, tone: "neutral" },
+		{ label: "Available", value: active, tone: "success" },
+		{ label: "Needs attention", value: attention, tone: "warning" },
+		{
+			label: "Success / fail",
+			value: `${successes} / ${failures}`,
+			tone: "info",
+		},
+	];
+	const secondaryCards: Array<{
+		label: Parameters<typeof tr>[0];
+		value: string | number;
+	}> = [
+		{ label: "Disabled", value: disabled },
+		{ label: "Refreshable", value: refreshable },
+		{ label: "Cooling", value: cooling },
+		{ label: "PSID only", value: psidOnly },
+		{ label: "Selected", value: selected.value.size },
 	];
 	return (
 		<div class="metrics">
-			{cards.map(([label, value]) => (
-				<div class="metric" key={label}>
-					<div class="label">{tr(label)}</div>
-					<div class="value">{value}</div>
-				</div>
-			))}
+			<section class="primary-metrics" aria-label={tr("Primary metrics")}>
+				{primaryCards.map((card) => (
+					<div
+						class={`metric metric-primary tone-${card.tone}`}
+						key={card.label}
+					>
+						<div class="label">{tr(card.label)}</div>
+						<div class="value">{card.value}</div>
+					</div>
+				))}
+			</section>
+			<section class="secondary-metrics" aria-label={tr("Operational metrics")}>
+				{secondaryCards.map((card) => (
+					<div class="metric metric-secondary" key={card.label}>
+						<div class="label">{tr(card.label)}</div>
+						<div class="value">{card.value}</div>
+					</div>
+				))}
+			</section>
 		</div>
 	);
 }
@@ -186,11 +231,17 @@ export function AccountRows(): JSX.Element {
 	const rows = accounts.value;
 	if (loading.value)
 		return (
-			<tr>
-				<td class="loading" colSpan={15}>
-					{tr("Loading accounts")}…
-				</td>
-			</tr>
+			<>
+				{skeletonRows.map((rowName) => (
+					<tr class="skeleton-row" key={`skeleton-${rowName}`}>
+						{skeletonCells.map((cellName) => (
+							<td key={`skeleton-${rowName}-${cellName}`}>
+								<span class="skeleton-line" />
+							</td>
+						))}
+					</tr>
+				))}
+			</>
 		);
 	if (!rows.length)
 		return (
@@ -345,11 +396,11 @@ export function AccountCards(): JSX.Element {
 								</dd>
 							</div>
 							<div>
-								<dt>Last used</dt>
+								<dt>{tr("Last used")}</dt>
 								<dd>{relativeTime(account.last_used_at_ms)}</dd>
 							</div>
 							<div>
-								<dt>Outcome</dt>
+								<dt>{tr("Outcome")}</dt>
 								<dd>
 									{safeNumber(account.success_count)} /{" "}
 									{safeNumber(account.failure_count)}
@@ -365,22 +416,22 @@ export function AccountCards(): JSX.Element {
 							</div>
 						</dl>
 						<details class="account-details">
-							<summary>More account details</summary>
+							<summary>{tr("More account details")}</summary>
 							<dl class="account-facts secondary">
 								<div>
-									<dt>Refresh</dt>
+									<dt>{tr("Refresh")}</dt>
 									<dd>{refreshSummary(account)}</dd>
 								</div>
 								<div>
-									<dt>Last success</dt>
+									<dt>{tr("Last success")}</dt>
 									<dd>{formatTime(account.last_success_at_ms)}</dd>
 								</div>
 								<div>
-									<dt>Last failure</dt>
+									<dt>{tr("Last failure")}</dt>
 									<dd>{formatTime(account.last_failure_at_ms)}</dd>
 								</div>
 								<div>
-									<dt>Source</dt>
+									<dt>{tr("Source")}</dt>
 									<dd>
 										{account.source_name ||
 											account.source_id ||
@@ -389,7 +440,7 @@ export function AccountCards(): JSX.Element {
 									</dd>
 								</div>
 								<div class="wide">
-									<dt>Last error</dt>
+									<dt>{tr("Last error")}</dt>
 									<dd>
 										{account.last_error_message_redacted ||
 											account.last_error_code ||

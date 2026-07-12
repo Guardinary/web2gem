@@ -26,6 +26,11 @@ const zh = {
 	Connect: "连接",
 	Connecting: "连接中",
 	Clear: "清除",
+	"Connection settings": "连接设置",
+	"Hide connection settings": "收起连接设置",
+	"Connected to account pool": "已连接账号池",
+	"Admin access is ready. Reopen settings only when credentials need to change.":
+		"管理访问已就绪；仅在需要更换凭据时重新打开设置。",
 	"Stored only in this browser. Public API keys cannot access admin routes.":
 		"仅保存在当前浏览器中；公共 API Key 无法访问管理接口。",
 	"Import accounts": "导入账号",
@@ -52,6 +57,8 @@ const zh = {
 	"PSID only": "仅 PSID",
 	"Success / fail": "成功 / 失败",
 	Selected: "已选择",
+	"Primary metrics": "核心指标",
+	"Operational metrics": "运维指标",
 	"Account workspace": "账号工作区",
 	"Search, filter, inspect, and operate on sanitized account metadata.":
 		"搜索、筛选、检查并操作脱敏后的账号元数据。",
@@ -66,6 +73,10 @@ const zh = {
 	Cooldown: "冷却",
 	"Not cooling": "未冷却",
 	Source: "来源",
+	"More filters": "更多筛选",
+	"Hide filters": "收起筛选",
+	"Clear filters": "清除筛选",
+	"Select accounts to unlock bulk actions.": "选择账号后可使用批量操作。",
 	Apply: "应用",
 	Refresh: "刷新",
 	"Select visible": "选择当前页",
@@ -98,6 +109,11 @@ const zh = {
 	"Connect with an admin key or adjust the current filters.":
 		"请连接管理密钥，或调整当前筛选条件。",
 	"Loading accounts": "正在加载账号",
+	Success: "操作成功",
+	Error: "操作失败",
+	"Last used": "最近使用",
+	"More account details": "更多账号详情",
+	"Last error": "最近错误",
 	Diagnostics: "诊断结果",
 	"Latest sanitized mutation summary": "最近一次脱敏操作摘要",
 	"Edit account": "编辑账号",

@@ -172,6 +172,9 @@ export const cases = [
 			assert.match(html, /\/admin\/accounts/);
 			assert.match(html, /__Secure-1PSID/);
 			assert.match(html, /__Secure-1PSIDTS/);
+			assert.match(html, /More filters/);
+			assert.match(html, /secondary-metrics/);
+			assert.match(html, /skeleton-row/);
 			assert.doesNotMatch(
 				html,
 				/GEMINI_COOKIE|SAPISID=|SNlM0e=|psid-secret|ts-secret|Cookie:\s*__Secure/i,

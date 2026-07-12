@@ -22,8 +22,10 @@ import { Icon } from "./icons";
 import { language, setLanguage, statusLabel, tr } from "./i18n";
 import { identifier, identifierKey, resultSummary } from "./logic";
 import {
+	advancedFiltersExpanded,
 	adminKey,
 	accounts,
+	authExpanded,
 	batchBusy,
 	categories,
 	categoryFilter,
@@ -50,7 +52,7 @@ import {
 } from "./state";
 import { setThemePreference, themePreference } from "./theme";
 
-const batchActions = ["check", "refresh", "enable", "disable"] as const;
+const batchActions = ["check", "refresh", "enable"] as const;
 
 export function App(): JSX.Element {
 	useEffect(() => {
@@ -60,6 +62,17 @@ export function App(): JSX.Element {
 
 	const rows = accounts.value;
 	const connected = Boolean(adminKey.value.trim());
+	const advancedFilterCount = [
+		categoryFilter.value,
+		cooldownFilter.value,
+		sourceFilter.value.trim(),
+	].filter(Boolean).length;
+	const hasFilters = Boolean(
+		query.value.trim() ||
+			statusFilter.value ||
+			enabledFilter.value ||
+			advancedFilterCount,
+	);
 	const selectVisible = (): void => {
 		selected.value = new Set([...selected.value, ...rows.map(identifierKey)]);
 	};
@@ -68,6 +81,16 @@ export function App(): JSX.Element {
 			scope: "batch",
 			targetLabel: "loaded account(s)",
 		});
+	};
+	const clearFilters = (): void => {
+		query.value = "";
+		statusFilter.value = "";
+		enabledFilter.value = "";
+		categoryFilter.value = "";
+		cooldownFilter.value = "";
+		sourceFilter.value = "";
+		advancedFiltersExpanded.value = false;
+		void loadAccounts("reset");
 	};
 
 	return (
@@ -137,71 +160,101 @@ export function App(): JSX.Element {
 
 			<main class="shell">
 				<section
-					class={`panel auth-panel ${connected ? "compact" : "hero-panel"}`}
+					class={`panel auth-panel ${connected ? "compact" : "hero-panel"}${authExpanded.value ? " expanded" : ""}`}
 				>
 					<div class="auth-copy">
 						<span class="eyebrow">
 							<Icon name="key" />
 							{tr("D1-backed session management")}
 						</span>
-						<h2>{tr("Connect to your account pool")}</h2>
+						<h2>
+							{tr(
+								connected
+									? "Connected to account pool"
+									: "Connect to your account pool",
+							)}
+						</h2>
 						<p>
 							{tr(
-								"Enter the configured ADMIN_KEY to manage sanitized account metadata.",
+								connected
+									? "Admin access is ready. Reopen settings only when credentials need to change."
+									: "Enter the configured ADMIN_KEY to manage sanitized account metadata.",
 							)}
 						</p>
 					</div>
-					<form
-						class="auth"
-						onSubmit={(event) => {
-							event.preventDefault();
-							saveAdminKey();
-							void loadAccounts("reset");
-						}}
-					>
-						<label>
-							{tr("Admin key")}
-							<input
-								type="password"
-								autocomplete="current-password"
-								placeholder="ADMIN_KEY"
-								value={adminKey.value}
-								onInput={(event) => {
-									adminKey.value = (
-										event.currentTarget as HTMLInputElement
-									).value;
-								}}
-							/>
-						</label>
-						<label>
-							{tr("Storage")}
-							<select
-								value={keyStorageMode.value}
-								onChange={(event) => {
-									keyStorageMode.value =
-										(event.currentTarget as HTMLSelectElement).value === "local"
-											? "local"
-											: "session";
-								}}
-							>
-								<option value="session">{tr("Session")}</option>
-								<option value="local">{tr("Local")}</option>
-							</select>
-						</label>
-						<button class="primary" type="submit" disabled={loading.value}>
-							<Icon name="key" />
-							{loading.value ? tr("Connecting") : tr("Connect")}
+					{connected ? (
+						<button
+							class="secondary auth-toggle"
+							type="button"
+							aria-expanded={authExpanded.value}
+							onClick={() => {
+								authExpanded.value = !authExpanded.value;
+							}}
+						>
+							{tr(
+								authExpanded.value
+									? "Hide connection settings"
+									: "Connection settings",
+							)}
+							<Icon name="chevron" />
 						</button>
-						<button type="button" onClick={clearAdminKey}>
-							{tr("Clear")}
-						</button>
-					</form>
-					<p class="security-note">
-						<Icon name="shield" />
-						{tr(
-							"Stored only in this browser. Public API keys cannot access admin routes.",
-						)}
-					</p>
+					) : null}
+					{!connected || authExpanded.value ? (
+						<form
+							class={`auth${connected ? " auth-wide" : ""}`}
+							onSubmit={(event) => {
+								event.preventDefault();
+								saveAdminKey();
+								void loadAccounts("reset");
+							}}
+						>
+							<label>
+								{tr("Admin key")}
+								<input
+									type="password"
+									autocomplete="current-password"
+									placeholder="ADMIN_KEY"
+									value={adminKey.value}
+									onInput={(event) => {
+										adminKey.value = (
+											event.currentTarget as HTMLInputElement
+										).value;
+									}}
+								/>
+							</label>
+							<label>
+								{tr("Storage")}
+								<select
+									value={keyStorageMode.value}
+									onChange={(event) => {
+										keyStorageMode.value =
+											(event.currentTarget as HTMLSelectElement).value ===
+											"local"
+												? "local"
+												: "session";
+									}}
+								>
+									<option value="session">{tr("Session")}</option>
+									<option value="local">{tr("Local")}</option>
+								</select>
+							</label>
+							<button class="primary" type="submit" disabled={loading.value}>
+								<Icon name="key" />
+								{loading.value ? tr("Connecting") : tr("Connect")}
+							</button>
+							<button type="button" onClick={clearAdminKey}>
+								{tr("Clear")}
+							</button>
+						</form>
+					) : null}
+					{!connected || authExpanded.value ? (
+						<p class="security-note">
+							<Icon name="shield" />
+							{tr(
+								"Stored only in this browser. Public API keys cannot access admin routes.",
+							)}
+						</p>
+					) : null}
 				</section>
 
 				<section class="section-block" aria-labelledby="overview-title">
@@ -398,50 +451,20 @@ export function App(): JSX.Element {
 								<option value="false">{tr("Disabled")}</option>
 							</select>
 						</label>
-						<label>
-							{tr("Category")}
-							<select
-								value={categoryFilter.value}
-								onChange={(event) => {
-									categoryFilter.value = (
-										event.currentTarget as HTMLSelectElement
-									).value;
-								}}
-							>
-								<option value="">{tr("All categories")}</option>
-								{categories.map((category) => (
-									<option key={category} value={category}>
-										{statusLabel(category)}
-									</option>
-								))}
-							</select>
-						</label>
-						<label>
-							{tr("Cooldown")}
-							<select
-								value={cooldownFilter.value}
-								onChange={(event) => {
-									cooldownFilter.value = (
-										event.currentTarget as HTMLSelectElement
-									).value;
-								}}
-							>
-								<option value="">{tr("All")}</option>
-								<option value="active">{tr("Not cooling")}</option>
-								<option value="cooling">{tr("Cooling")}</option>
-							</select>
-						</label>
-						<label>
-							{tr("Source")}
-							<input
-								value={sourceFilter.value}
-								onInput={(event) => {
-									sourceFilter.value = (
-										event.currentTarget as HTMLInputElement
-									).value;
-								}}
-							/>
-						</label>
+						<button
+							class="secondary filter-disclosure"
+							type="button"
+							aria-expanded={advancedFiltersExpanded.value}
+							onClick={() => {
+								advancedFiltersExpanded.value = !advancedFiltersExpanded.value;
+							}}
+						>
+							{tr(
+								advancedFiltersExpanded.value ? "Hide filters" : "More filters",
+							)}
+							{advancedFilterCount ? ` (${advancedFilterCount})` : ""}
+							<Icon name="chevron" />
+						</button>
 						<button
 							class="primary filter-submit"
 							type="button"
@@ -449,60 +472,147 @@ export function App(): JSX.Element {
 						>
 							{tr("Apply")}
 						</button>
+						<button
+							class="filter-reset"
+							type="button"
+							disabled={!hasFilters}
+							onClick={clearFilters}
+						>
+							{tr("Clear filters")}
+						</button>
+						{advancedFiltersExpanded.value ? (
+							<div class="advanced-filters">
+								<label>
+									{tr("Category")}
+									<select
+										value={categoryFilter.value}
+										onChange={(event) => {
+											categoryFilter.value = (
+												event.currentTarget as HTMLSelectElement
+											).value;
+										}}
+									>
+										<option value="">{tr("All categories")}</option>
+										{categories.map((category) => (
+											<option key={category} value={category}>
+												{statusLabel(category)}
+											</option>
+										))}
+									</select>
+								</label>
+								<label>
+									{tr("Cooldown")}
+									<select
+										value={cooldownFilter.value}
+										onChange={(event) => {
+											cooldownFilter.value = (
+												event.currentTarget as HTMLSelectElement
+											).value;
+										}}
+									>
+										<option value="">{tr("All")}</option>
+										<option value="active">{tr("Not cooling")}</option>
+										<option value="cooling">{tr("Cooling")}</option>
+									</select>
+								</label>
+								<label>
+									{tr("Source")}
+									<input
+										value={sourceFilter.value}
+										onInput={(event) => {
+											sourceFilter.value = (
+												event.currentTarget as HTMLInputElement
+											).value;
+										}}
+									/>
+								</label>
+							</div>
+						) : null}
 					</fieldset>
 
-					<div class="bulkbar" role="toolbar" aria-label={tr("Selected")}>
+					<div
+						class={`bulkbar ${selected.value.size ? "active" : "empty"}`}
+						role="toolbar"
+						aria-label={tr("Selected")}
+					>
 						<div>
 							<strong>{selected.value.size}</strong> {tr("Selected")}
+							{!selected.value.size ? (
+								<span class="bulk-hint">
+									{tr("Select accounts to unlock bulk actions.")}
+								</span>
+							) : null}
 						</div>
 						<div class="actions">
 							<button type="button" onClick={selectVisible}>
 								{tr("Select visible")}
 							</button>
-							<button
-								type="button"
-								onClick={() => {
-									selected.value = new Set();
-								}}
-							>
-								{tr("Clear selection")}
-							</button>
-							{batchActions.map((action) => (
+							{selected.value.size ? (
 								<button
 									type="button"
-									disabled={!!batchBusy.value}
-									key={action}
-									onClick={() =>
-										void runAction(action, selectedIdentifiers(), {
-											scope: "batch",
-										})
-									}
+									onClick={() => {
+										selected.value = new Set();
+									}}
 								>
-									{statusLabel(action)}
-									{batchBusy.value === action ? "…" : ""}
+									{tr("Clear selection")}
 								</button>
-							))}
-							<button
-								class="danger"
-								type="button"
-								disabled={!!batchBusy.value}
-								onClick={() =>
-									void runAction("delete", selectedIdentifiers(), {
-										scope: "batch",
-									})
-								}
-							>
-								<Icon name="trash" />
-								{tr("Delete selected")}
-							</button>
-							<button
-								class="danger subtle-danger"
-								type="button"
-								disabled={!!batchBusy.value}
-								onClick={deleteVisible}
-							>
-								{tr("Delete visible")}
-							</button>
+							) : null}
+							{selected.value.size
+								? batchActions.map((action) => (
+										<button
+											type="button"
+											disabled={!!batchBusy.value}
+											key={action}
+											onClick={() =>
+												void runAction(action, selectedIdentifiers(), {
+													scope: "batch",
+												})
+											}
+										>
+											{statusLabel(action)}
+											{batchBusy.value === action ? "…" : ""}
+										</button>
+									))
+								: null}
+							{selected.value.size ? (
+								<details class="action-menu bulk-menu">
+									<summary>{tr("More")}</summary>
+									<div class="action-menu-items">
+										<button
+											type="button"
+											disabled={!!batchBusy.value}
+											onClick={() =>
+												void runAction("disable", selectedIdentifiers(), {
+													scope: "batch",
+												})
+											}
+										>
+											{tr("Disable selected")}
+										</button>
+										<button
+											class="danger"
+											type="button"
+											disabled={!!batchBusy.value}
+											onClick={() =>
+												void runAction("delete", selectedIdentifiers(), {
+													scope: "batch",
+												})
+											}
+										>
+											<Icon name="trash" />
+											{tr("Delete selected")}
+										</button>
+										<button
+											class="danger subtle-danger"
+											type="button"
+											disabled={!!batchBusy.value}
+											onClick={deleteVisible}
+										>
+											{tr("Delete visible")}
+										</button>
+									</div>
+								</details>
+							) : null}
 						</div>
 					</div>
 
@@ -592,7 +702,13 @@ export function App(): JSX.Element {
 						role={item.kind === "error" ? "alert" : "status"}
 						class={`toast-item${item.kind === "error" ? " error" : ""}`}
 					>
-						{item.message}
+						<span class="toast-icon" aria-hidden="true">
+							<Icon name={item.kind === "error" ? "alert" : "check"} />
+						</span>
+						<span class="toast-copy">
+							<strong>{tr(item.kind === "error" ? "Error" : "Success")}</strong>
+							<span>{item.message}</span>
+						</span>
 					</div>
 				))}
 			</div>
