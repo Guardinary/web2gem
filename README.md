@@ -65,16 +65,21 @@ The main compatibility targets are:
 
 ## Core Features
 
-| Feature | What it gives you |
-| --- | --- |
-| Persistent account pool | Store multiple Gemini Web accounts in D1 instead of placing one cookie directly in the runtime environment. |
-| Built-in admin console | Import, inspect, enable, disable, refresh, check, and delete accounts from `/admin`. |
-| Account health tracking | Track availability, cooldowns, failure reasons, refresh state, and usage outcomes without exposing raw credentials. |
-| OpenAI-compatible API | Chat Completions, Responses, Images, models, streaming text, tool calls, and structured output. |
-| Google-compatible API | `generateContent`, `streamGenerateContent`, and model-list routes for Gemini-style clients. |
-| Worker and Docker support | Use Cloudflare Workers with a D1 binding or Docker with the D1 HTTP binding. |
-| Optional client authentication | Protect public API routes with comma-separated `API_KEYS`; admin routes always use the separate `ADMIN_KEY`. |
-| Fail-closed operation | Missing storage, missing accounts, invalid configuration, and admin failures return sanitized errors instead of falling back to embedded credentials. |
+| Feature                      | Description                                                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Persistent account pool      | Store multiple Gemini Web accounts and their operational state in D1 instead of placing one account cookie directly in the runtime environment.  |
+| Built-in admin console       | Import, inspect, filter, enable, disable, refresh, check, edit, and delete accounts from `/admin`.                                                 |
+| Automatic account selection  | Select an eligible account for each generation request while avoiding disabled, cooling-down, or otherwise unavailable accounts.                 |
+| Account health tracking      | Record availability, cooldowns, failure reasons, refresh state, and request outcomes without exposing stored session credentials.                |
+| Tool calling                 | Converts tool definitions into prompt instructions and parses DSML/XML-style tool-call output back into compatible API responses.                |
+| Structured output            | Validates and canonicalizes final JSON for non-streaming structured responses; streaming structured output is rejected by default.               |
+| Large context handling       | Large prompt context can be uploaded as Gemini text attachments through the account selected from the pool instead of remaining entirely inline. |
+| Image generation             | Supports explicit OpenAI `image_generation` metadata for non-streaming Chat/Responses requests, plus `/v1/images/generations` and `/v1/images/edits`, using the selected account. |
+| Image input handling         | Resolves user-provided inline/base64 images through the selected Gemini account. The Worker does not fetch remote image or file URLs.             |
+| Generic file attachments     | Request-local `input_file` and inline non-image data can use Gemini Web upload references with arbitrary filenames and MIME types; persistent `/v1/files` storage is not implemented. |
+| Worker and Docker deployment | Run on Cloudflare Workers with a native D1 binding or use Docker with the Cloudflare D1 HTTP binding.                                              |
+| Upstream socket transport    | Workers prefer `cloudflare:sockets` when available; Docker uses standard `fetch`.                                                                 |
+| Fail-closed operation        | Missing storage, unavailable accounts, invalid configuration, and admin failures return sanitized errors instead of falling back to embedded credentials. |
 
 ## Before You Start
 
@@ -228,6 +233,8 @@ For a manual deployment, also create and bind `GEMINI_DB`, apply the included sc
 If you build from source instead of using a release artifact, `pnpm deploy` builds `dist/worker.js`, applies D1 migrations to the `GEMINI_DB` binding, and deploys through the checked-in `wrangler.jsonc`.
 
 ### Option 2: Deploy with Docker
+
+> **Currently unavailable:** `gemini-account-pool` has not published its first Docker image or release archives yet. The default `ghcr.io/guardinary/web2gem:latest` image currently belongs to the `main` edition, so the Compose and prebuilt-image instructions below must not be used for this branch until an account-pool release is published. Use the Cloudflare Workers deployment for now.
 
 Use [`.env.docker.example`](.env.docker.example) as the environment template and [`compose.yaml`](compose.yaml) as the Compose service definition:
 

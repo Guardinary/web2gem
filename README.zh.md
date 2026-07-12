@@ -65,16 +65,21 @@
 
 ## 核心功能
 
-| 功能 | 用户能获得什么 |
-| --- | --- |
-| 持久化账号池 | 在 D1 中保存多个 Gemini Web 账号，不需要把单个 cookie 直接放进运行环境。 |
-| 内置管理页面 | 在 `/admin` 中导入、查看、启用、禁用、刷新、检查和删除账号。 |
-| 账号健康状态 | 记录可用性、冷却时间、失败原因、刷新状态和调用结果，同时不暴露原始凭据。 |
-| OpenAI 兼容 API | 支持 Chat Completions、Responses、Images、模型列表、流式文本、工具调用和结构化输出。 |
-| Google 兼容 API | 支持 `generateContent`、`streamGenerateContent` 和 Gemini 风格模型列表。 |
-| Worker 与 Docker | 可使用 Cloudflare Workers + D1，也可通过 Docker + D1 HTTP binding 运行。 |
-| 可选公共鉴权 | 使用逗号分隔的 `API_KEYS` 保护公共接口；管理接口始终使用独立的 `ADMIN_KEY`。 |
-| 默认安全失败 | 存储缺失、账号不可用、配置错误或管理操作失败时返回脱敏错误，不会回退到内置凭据。 |
+| 功能                       | 说明                                                                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 持久化账号池               | 在 D1 中保存多个 Gemini Web 账号及其运行状态，不需要把单个账号 cookie 直接放进运行环境。                                                          |
+| 内置管理页面               | 在 `/admin` 中导入、查看、筛选、启用、禁用、刷新、检查、编辑和删除账号。                                                                          |
+| 自动选择账号               | 为每个生成请求选择符合条件的账号，并避开已禁用、正在冷却或暂时不可用的账号。                                                                      |
+| 账号健康状态               | 记录可用性、冷却时间、失败原因、刷新状态和调用结果，同时不暴露已保存的会话凭据。                                                                  |
+| 工具调用                   | 将工具定义转换为提示词指令，并把 DSML/XML 风格的工具调用输出解析回兼容 API 响应。                                                                 |
+| 结构化输出                 | 对非流式结构化响应执行最终 JSON 校验和规范化；默认拒绝流式结构化输出。                                                                            |
+| 大上下文处理               | 可通过账号池选中的账号将大段提示上下文作为 Gemini 文本附件上传，而不是全部以内联文本发送。                                                        |
+| 生图                       | 支持非流式 Chat/Responses 请求中的显式 OpenAI `image_generation` 元数据，以及 `/v1/images/generations`、`/v1/images/edits`，并使用账号池选中的账号。 |
+| 图片输入处理               | 通过账号池选中的 Gemini 账号解析用户提供的内联/base64 图片；Worker 不抓取远程图片或文件 URL。                                                     |
+| 通用文件附件               | 请求内 `input_file` 和非图片内联数据可使用 Gemini Web 上传引用，支持任意文件名和 MIME；不实现持久化 `/v1/files` 服务。                            |
+| Worker 和 Docker 部署      | 可使用 Cloudflare Workers 的原生 D1 binding，也可通过 Docker 的 Cloudflare D1 HTTP binding 运行。                                                 |
+| 上游 socket 传输           | Workers 在可用时优先使用 `cloudflare:sockets`；Docker 默认使用标准 `fetch`。                                                                      |
+| 默认安全失败               | 存储缺失、账号不可用、配置错误或管理操作失败时返回脱敏错误，不会回退到内置凭据。                                                                  |
 
 ## 开始前准备
 
@@ -228,6 +233,8 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 如果不使用 Release 产物、而是从源码构建，`pnpm deploy` 会先构建 `dist/worker.js`，再对 `GEMINI_DB` binding 执行 D1 migrations，并通过仓库内的 `wrangler.jsonc` 部署。
 
 ### 方式二：通过 Docker 部署
+
+> **当前暂不可用：** `gemini-account-pool` 尚未发布首个 Docker 镜像和 Release 归档。默认的 `ghcr.io/guardinary/web2gem:latest` 目前属于 `main` 版本，因此在账号池版本正式发布前，不应使用下方 Compose 和预构建镜像部署方式；当前请先使用 Cloudflare Workers 部署。
 
 使用 [`.env.docker.example`](.env.docker.example) 作为环境变量模板，使用 [`compose.yaml`](compose.yaml) 作为 Compose 服务定义：
 
