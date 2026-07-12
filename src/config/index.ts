@@ -1,8 +1,6 @@
 export const VERSION = "2.0.0-worker";
 
-type WorkerEnvKey = keyof WorkerBindings | "ADMIN_KEYS";
-
-export type WorkerEnv = Partial<Record<WorkerEnvKey, unknown>>;
+export type WorkerEnv = Partial<Record<keyof WorkerBindings, unknown>>;
 
 export type RuntimeProfile = "worker" | "docker";
 
@@ -116,16 +114,7 @@ const PLACEHOLDER_ADMIN_KEY_VALUES = new Set([
 	"your-admin-key",
 ]);
 
-export function parseAdminKey(value: unknown, removedPlural?: unknown): string {
-	if (
-		removedPlural !== undefined &&
-		removedPlural !== null &&
-		removedPlural !== ""
-	)
-		throw new RuntimeConfigError(
-			"ADMIN_KEYS",
-			"is no longer supported; use ADMIN_KEY",
-		);
+export function parseAdminKey(value: unknown): string {
 	if (typeof value !== "string")
 		throw new RuntimeConfigError("ADMIN_KEY", "must be a string");
 	const key = value.trim();
@@ -158,44 +147,42 @@ export const CONFIG_ENV_KEYS = [
 	"API_KEYS",
 	"ADMIN_KEY",
 ] as const;
-const CONFIG_CACHE_ENV_KEYS = [...CONFIG_ENV_KEYS, "ADMIN_KEYS"] as const;
-let _configCacheKey: string | null = null;
+const CONFIG_CACHE_ENV_KEYS = CONFIG_ENV_KEYS;
+type ConfigCacheSnapshot = readonly unknown[];
+let _configCacheSnapshot: ConfigCacheSnapshot | null = null;
 let _configCacheValue: StaticRuntimeConfig | null = null;
 let _configCacheEnv: WorkerEnv | null = null;
 const DEFAULT_ENV: WorkerEnv = {};
-type ConfigCacheEntry = { key: string; value: StaticRuntimeConfig };
+type ConfigCacheEntry = {
+	snapshot: ConfigCacheSnapshot;
+	value: StaticRuntimeConfig;
+};
 const _configCacheByEnv = new WeakMap<WorkerEnv, ConfigCacheEntry>();
-
-export function configCacheKey(env: WorkerEnv = DEFAULT_ENV): string {
-	const activeEnv = env || DEFAULT_ENV;
-	let out = "";
-	for (const key of CONFIG_CACHE_ENV_KEYS) {
-		const value = activeEnv[key];
-		out += `${key}\x00${serializeConfigValue(value)}\x01`;
-	}
-	return out;
-}
 
 export function getConfig(env: WorkerEnv = DEFAULT_ENV): StaticRuntimeConfig {
 	const activeEnv = env || DEFAULT_ENV;
-	const cacheKey = configCacheKey(activeEnv);
 	if (
 		_configCacheValue &&
 		_configCacheEnv === activeEnv &&
-		_configCacheKey === cacheKey
+		_configCacheSnapshot &&
+		configSnapshotMatches(_configCacheSnapshot, activeEnv)
 	)
 		return _configCacheValue;
 	const cachedByEnv = _configCacheByEnv.get(activeEnv);
-	if (cachedByEnv && cachedByEnv.key === cacheKey) {
+	if (cachedByEnv && configSnapshotMatches(cachedByEnv.snapshot, activeEnv)) {
 		_configCacheEnv = activeEnv;
-		_configCacheKey = cacheKey;
+		_configCacheSnapshot = cachedByEnv.snapshot;
 		_configCacheValue = cachedByEnv.value;
 		return cachedByEnv.value;
 	}
-	if (_configCacheValue && _configCacheKey === cacheKey) {
+	if (
+		_configCacheValue &&
+		_configCacheSnapshot &&
+		configSnapshotMatches(_configCacheSnapshot, activeEnv)
+	) {
 		_configCacheEnv = activeEnv;
 		_configCacheByEnv.set(activeEnv, {
-			key: cacheKey,
+			snapshot: _configCacheSnapshot,
 			value: _configCacheValue,
 		});
 		return _configCacheValue;
@@ -307,13 +294,13 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): StaticRuntimeConfig {
 		),
 		admin_key: parseAdminKey(
 			configValue(activeEnv, "ADMIN_KEY", DEFAULT_CONFIG.ADMIN_KEY),
-			activeEnv.ADMIN_KEYS,
 		),
 	});
-	_configCacheKey = cacheKey;
+	const snapshot = captureConfigSnapshot(activeEnv);
+	_configCacheSnapshot = snapshot;
 	_configCacheValue = cfg;
 	_configCacheEnv = activeEnv;
-	_configCacheByEnv.set(activeEnv, { key: cacheKey, value: cfg });
+	_configCacheByEnv.set(activeEnv, { snapshot, value: cfg });
 	return cfg;
 }
 
@@ -323,7 +310,7 @@ export function assertRuntimeConfig(env: WorkerEnv = DEFAULT_ENV): void {
 
 function configValue(
 	env: WorkerEnv,
-	key: WorkerEnvKey,
+	key: keyof WorkerBindings,
 	fallback: unknown,
 ): unknown {
 	const value = env[key];
@@ -470,15 +457,33 @@ function parseKeyList(setting: string, value: unknown): string[] {
 	return out;
 }
 
-function serializeConfigValue(value: unknown): string {
-	if (value === undefined) return "undefined";
-	if (value === null) return "null";
-	if (typeof value === "string") return `string:${value}`;
-	if (typeof value === "number") return `number:${value}`;
-	if (typeof value === "boolean") return `boolean:${value}`;
-	try {
-		return `json:${JSON.stringify(value)}`;
-	} catch (_) {
-		return `other:${String(value)}`;
+function captureConfigSnapshot(env: WorkerEnv): ConfigCacheSnapshot {
+	return CONFIG_CACHE_ENV_KEYS.map((key) => {
+		const value = env[key];
+		return key === "API_KEYS" && Array.isArray(value)
+			? Object.freeze([...value])
+			: value;
+	});
+}
+
+function configSnapshotMatches(
+	snapshot: ConfigCacheSnapshot,
+	env: WorkerEnv,
+): boolean {
+	let index = 0;
+	for (const key of CONFIG_CACHE_ENV_KEYS) {
+		const expected = snapshot[index];
+		const actual = env[key];
+		if (key === "API_KEYS" && Array.isArray(expected)) {
+			if (!Array.isArray(actual) || actual.length !== expected.length)
+				return false;
+			for (let item = 0; item < expected.length; item++) {
+				if (!Object.is(actual[item], expected[item])) return false;
+			}
+		} else if (!Object.is(actual, expected)) {
+			return false;
+		}
+		index += 1;
 	}
+	return true;
 }

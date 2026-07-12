@@ -148,8 +148,8 @@ Use this contract when changing environment config parsing, config cache keys, r
 ### 2. Signatures
 
 - `CONFIG_ENV_KEYS` lists every environment key that affects `getConfig`.
-- `configCacheKey(env)` serializes the watched environment keys.
-- `getConfig(env)` returns a cached `StaticRuntimeConfig` only when the env object and serialized key still match.
+- `CONFIG_ENV_KEYS` defines the ordered fields captured by the structured cache snapshot.
+- `getConfig(env)` returns a cached `StaticRuntimeConfig` only when current watched values match the stored snapshot.
 - `assertRuntimeConfig(env)` validates the production bundle environment without exposing the internal config object.
 - `RuntimeConfigError` contains safe `code`, `setting`, and `reason` fields and never includes the rejected value.
 - `createRuntimeConfig(staticConfig, execution?, session?)` returns a new composed `RuntimeConfig` with request execution and account-session fields; it never mutates the cached static object.
@@ -160,7 +160,7 @@ Use this contract when changing environment config parsing, config cache keys, r
 ### 3. Contracts
 
 - Add every new environment variable consumed by `getConfig` to `CONFIG_ENV_KEYS`; otherwise cached configs can go stale.
-- `ADMIN_KEY` is the single administrator credential and appears once in `CONFIG_ENV_KEYS`, deployment secret templates, and Compose forwarding. It accepts only one string; placeholder and overlong values are invalid. Removed `ADMIN_KEYS` is watched only so non-empty stale configuration fails explicitly.
+- `ADMIN_KEY` is the single administrator credential and appears once in `CONFIG_ENV_KEYS`, deployment secret templates, and Compose forwarding. It accepts only one string; placeholder and overlong values are invalid.
 - `API_KEYS` uses one comma-separated format. JSON-array strings, empty members, duplicates, and non-string array entries are invalid.
 - Boolean settings accept only booleans or exact `"true"` / `"false"` strings. Integer settings accept only safe base-10 integers inside their documented bounds.
 - `GEMINI_ORIGIN` must be an absolute HTTP(S) origin with no credentials, path, query, or fragment. Context filenames must be plain filenames without path separators or control characters.
@@ -168,7 +168,9 @@ Use this contract when changing environment config parsing, config cache keys, r
 - Parsed static config and its key arrays are frozen. Request/session composition must return a distinct object.
 - The application composition root in `src/app.ts` must call `createRuntimeConfig(getConfig(env), executionContext)` before adding account-pool availability or acquiring a lease. Do not attach request/account fields directly to the cached object returned by `getConfig`.
 - `GEMINI_COOKIE` and `SAPISID` are not public runtime config keys on the D1 account-pool branch. Do not add them back to `CONFIG_ENV_KEYS`; account leases populate `RuntimeConfig.cookie` and `RuntimeConfig.sapisid` internally after selecting a D1 account.
-- Do not cache config solely by env object identity. Cloudflare-style env objects may be reused and mutated in tests or local harnesses, so `getConfig` must recompute when `configCacheKey(env)` changes.
+- Do not cache config solely by env object identity. Compare every watched value before returning a cached result.
+- Store primitive watched values directly. Do not concatenate or serialize secret-bearing strings such as `ADMIN_KEY` or string-form `API_KEYS` on cache hits.
+- Array-form `API_KEYS` uses a shallow content snapshot and invalidates after in-place replacement or length changes.
 - `requestContentLength` accepts only safe base-10 integer strings after trimming; invalid, signed, fractional, or unsafe values return `null`.
 - `readJsonRequest` must reject `Content-Length > maxBodyBytes` before reading the stream.
 - When the streamed body exceeds `maxBodyBytes`, cancel the reader and return the configured 413 error before UTF-8 decoding or JSON parsing.
@@ -195,7 +197,8 @@ Use this contract when changing environment config parsing, config cache keys, r
 - Good: call `createRuntimeConfig(staticConfig, { execution_ctx })` in `src/app.ts` and let account leases clone that runtime with session fields.
 - Good: validate the built Worker module through `assertRuntimeConfig` before Docker starts listening.
 - Base: use `requestContentLength(request)` for route-level body byte telemetry and oversized preflight checks.
-- Bad: reuse `_configCacheValue` when `_configCacheEnv === env` without checking `_configCacheKey`.
+- Bad: reuse `_configCacheValue` when `_configCacheEnv === env` without comparing the watched snapshot.
+- Bad: build one serialized cache key containing copies of all watched secrets on every request.
 - Bad: parse `Content-Length` with `Number(raw)` and accept signs, fractions, leading-zero variants, or unsafe integers.
 - Bad: assign `execution_ctx`, `gemini_account`, or `cookie` onto an object returned by `getConfig`.
 - Bad: silently clamp invalid integers, treat arbitrary truthy strings as booleans, or fall back from malformed JSON-array key text to comma parsing.
@@ -224,8 +227,12 @@ if (_configCacheValue && _configCacheEnv === env) return _configCacheValue;
 #### Correct
 
 ```typescript
-const cacheKey = configCacheKey(env);
-if (_configCacheValue && _configCacheEnv === env && _configCacheKey === cacheKey) {
+if (
+  _configCacheValue &&
+  _configCacheEnv === env &&
+  _configCacheSnapshot &&
+  configSnapshotMatches(_configCacheSnapshot, env)
+) {
   return _configCacheValue;
 }
 ```
