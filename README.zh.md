@@ -288,7 +288,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 
 | 变量                            | 默认值                      | 说明                                                                                                                                                                               |
 | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `API_KEYS`                      | empty                       | 逗号分隔的 API keys。为空时关闭认证；空成员、重复项和 JSON 数组字符串会被拒绝。                                                                                                    |
+| `API_KEYS`                      | empty                       | 逗号分隔或 JSON 数组形式的 API keys。为空时关闭认证；空成员、非字符串成员和重复项会被拒绝。                                                                                       |
 | `ADMIN_KEY`                     | empty                       | 账号池管理接口使用的唯一 admin key。占位值会被拒绝；公共 `API_KEYS` 不能管理账号池。                                                                                              |
 | `D1_ACCOUNT_ID`                 | empty                       | 仅 Docker 使用的 Cloudflare account ID，用于 D1 HTTP binding。需与 `D1_DATABASE_ID`、`D1_API_TOKEN` 同时设置；只设置一部分会导致启动失败。                                             |
 | `D1_DATABASE_ID`                | empty                       | 仅 Docker 使用的 Cloudflare D1 database ID，用于注入 `GEMINI_DB` binding。                                                                                                          |

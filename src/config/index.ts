@@ -421,11 +421,30 @@ function parseKeyList(setting: string, value: unknown): string[] {
 	} else if (typeof value === "string") {
 		const raw = value.trim();
 		if (!raw) return [];
-		if (raw.startsWith("["))
-			throw new RuntimeConfigError(setting, "must be a comma-separated list");
-		items = raw.split(",");
+		if (raw.startsWith("[")) {
+			try {
+				const parsed: unknown = JSON.parse(raw);
+				if (!Array.isArray(parsed))
+					throw new RuntimeConfigError(
+						setting,
+						"must be a comma-separated list or JSON array",
+					);
+				items = parsed;
+			} catch (error) {
+				if (error instanceof RuntimeConfigError) throw error;
+				throw new RuntimeConfigError(
+					setting,
+					"must be a comma-separated list or valid JSON array",
+				);
+			}
+		} else {
+			items = raw.split(",");
+		}
 	} else {
-		throw new RuntimeConfigError(setting, "must be a comma-separated list");
+		throw new RuntimeConfigError(
+			setting,
+			"must be a comma-separated list or JSON array",
+		);
 	}
 	const out: string[] = [];
 	const seen = new Set<string>();

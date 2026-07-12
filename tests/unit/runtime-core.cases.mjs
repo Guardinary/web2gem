@@ -396,7 +396,7 @@ export const cases = [
 		},
 	],
 	[
-		"parses strict comma-separated API key config",
+		"parses strict comma-separated and JSON-array API key config",
 		async () => {
 			assert.deepEqual(mod.getConfig({}).api_keys, []);
 			assert.deepEqual(mod.getConfig({ API_KEYS: "sk-one, sk-two" }).api_keys, [
@@ -407,9 +407,21 @@ export const cases = [
 				mod.getConfig({ API_KEYS: ["sk-array", "sk-two"] }).api_keys,
 				["sk-array", "sk-two"],
 			);
+			assert.deepEqual(
+				mod.getConfig({ API_KEYS: '["sk-json", "sk-two"]' }).api_keys,
+				["sk-json", "sk-two"],
+			);
 			assert.throws(
-				() => mod.getConfig({ API_KEYS: '["sk-json"]' }),
-				/API_KEYS must be a comma-separated list/,
+				() => mod.getConfig({ API_KEYS: '["sk-json", null]' }),
+				/API_KEYS must contain only strings/,
+			);
+			assert.throws(
+				() => mod.getConfig({ API_KEYS: '["sk-json", ""]' }),
+				/API_KEYS must not contain empty entries/,
+			);
+			assert.throws(
+				() => mod.getConfig({ API_KEYS: '["sk-json", "sk-json"]' }),
+				/API_KEYS must not contain duplicate entries/,
 			);
 			assert.throws(
 				() => mod.getConfig({ API_KEYS: "sk-one,,sk-two" }),
@@ -818,7 +830,7 @@ export const cases = [
 	[
 		"accepts alternate API key locations and rejects missing keys",
 		async () => {
-			const env = { API_KEYS: "sk-test" };
+			const env = { API_KEYS: '["sk-test", "sk-secondary"]' };
 			const missing = await mod.default.fetch(
 				new Request("https://worker.example/v1/models"),
 				env,
