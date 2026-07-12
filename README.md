@@ -71,16 +71,17 @@ Choose `main` if you want the simplest deployment and do not need a persistent a
 
 ## Core Features
 
-| Feature | What it gives you |
-| --- | --- |
-| Lightweight deployment | Run without a database or admin service; deploy one Worker bundle or one Docker service. |
-| Flash routes without a cookie | Basic Flash usage can run without `GEMINI_COOKIE`, subject to upstream Gemini Web availability. |
-| OpenAI-compatible API | Chat Completions, Responses, Images, models, streaming text, tool calls, and structured output. |
-| Google-compatible API | `generateContent`, `streamGenerateContent`, and model-list routes for Gemini-style clients. |
-| Optional authenticated features | Configure one `GEMINI_COOKIE` for Pro routing, image generation/editing, signed-in behavior, and large-context Gemini text attachments. |
-| Request-local attachments | Handle inline images and generic file inputs without implementing a persistent `/v1/files` service. |
-| Worker and Docker support | Deploy to Cloudflare Workers or self-host with Docker / Docker Compose. |
-| Optional public authentication | Protect shared API routes with `API_KEYS`; leave it empty for a private or otherwise protected deployment. |
+| Feature                      | Description                                                                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Ready-to-use Flash models    | No authentication or configuration is required; deploy the single file to start using Flash models with no usage limits, completely free.       |
+| Tool calling                 | Converts tool definitions into prompt instructions and parses DSML/XML-style tool-call output back into compatible API responses.               |
+| Structured output            | Validates and canonicalizes final JSON for non-streaming structured responses; streaming structured output is rejected by default.              |
+| Large context handling       | With `GEMINI_COOKIE` configured, large prompt context can be uploaded as Gemini text attachments instead of remaining entirely inline.           |
+| Image generation             | Supports explicit OpenAI `image_generation` metadata for non-streaming Chat/Responses requests, plus `/v1/images/generations` and `/v1/images/edits`; a Gemini cookie is required. |
+| Image input handling         | Resolves user-provided inline/base64 images through the Gemini provider path. The Worker does not fetch remote image or file URLs.                |
+| Generic file attachments     | With a Gemini cookie, request-local `input_file` and inline non-image data can use Gemini Web upload references with arbitrary filenames and MIME types; persistent `/v1/files` storage is not implemented. |
+| Worker and Docker deployment | Deploy the Worker bundle to Cloudflare Workers or self-host with Docker / Docker Compose; neither mode requires an account database on `main`.   |
+| Upstream socket transport    | Workers prefer `cloudflare:sockets` when available; Docker uses standard `fetch`.                                                                |
 
 ## Before You Start
 

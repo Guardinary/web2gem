@@ -71,16 +71,17 @@
 
 ## 核心功能
 
-| 功能 | 用户能获得什么 |
-| --- | --- |
-| 轻量部署 | 不需要数据库或管理服务，只需一个 Worker bundle 或一个 Docker 服务。 |
-| Flash 路由无需 cookie | 基础 Flash 使用不要求 `GEMINI_COOKIE`，但仍取决于上游 Gemini Web 的可用性。 |
-| OpenAI 兼容 API | 支持 Chat Completions、Responses、Images、模型列表、流式文本、工具调用和结构化输出。 |
-| Google 兼容 API | 支持 `generateContent`、`streamGenerateContent` 和 Gemini 风格模型列表。 |
-| 可选认证能力 | 配置一个 `GEMINI_COOKIE` 后，可使用 Pro 路由、生图/图片编辑、登录态行为和大上下文 Gemini 文本附件。 |
-| 请求内附件 | 支持内联图片和通用文件输入，但不实现持久化 `/v1/files` 服务。 |
-| Worker 与 Docker | 可部署到 Cloudflare Workers，也可使用 Docker / Docker Compose 自托管。 |
-| 可选公共鉴权 | 使用 `API_KEYS` 保护共享接口；私有或已有外围保护的部署可以留空。 |
+| 功能                       | 说明                                                                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Flash 模型开箱即用          | 无需任何鉴权，也无需任何配置，部署单文件即可开始使用flash模型，无用量限制，完全免费。                                                             |
+| 工具调用                   | 将工具定义转换为提示词指令，并把 DSML/XML 风格的工具调用输出解析回兼容 API 响应。                                                                 |
+| 结构化输出                 | 对非流式结构化响应执行最终 JSON 校验和规范化；默认拒绝流式结构化输出。                                                                            |
+| 大上下文处理               | 配置 `GEMINI_COOKIE` 后，可将大段提示上下文作为 Gemini 文本附件上传，而不是全部以内联文本发送。                                                    |
+| 生图                       | 支持非流式 Chat/Responses 请求中的显式 OpenAI `image_generation` 元数据，以及 `/v1/images/generations`、`/v1/images/edits`；需要配置 Gemini cookie。 |
+| 图片输入处理               | 通过 Gemini provider 路径解析用户提供的内联/base64 图片；Worker 不抓取远程图片或文件 URL。                                                        |
+| 通用文件附件               | 配置 Gemini cookie 后，请求内 `input_file` 和非图片内联数据可使用 Gemini Web 上传引用，支持任意文件名和 MIME；不实现持久化 `/v1/files` 服务。     |
+| Worker 和 Docker 部署      | 可将 Worker bundle 部署到 Cloudflare Workers，也可用 Docker / Docker Compose 自托管；`main` 的两种模式都不需要账号数据库。                        |
+| 上游 socket 传输           | Workers 在可用时优先使用 `cloudflare:sockets`；Docker 默认使用标准 `fetch`。                                                                      |
 
 ## 开始前准备
 
