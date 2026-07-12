@@ -396,6 +396,26 @@ export const cases = [
 		},
 	],
 	[
+		"recomputes config after mutating array-form API keys in place",
+		async () => {
+			const env = { API_KEYS: ["sk-one", "sk-two"] };
+			const first = mod.getConfig(env);
+			assert.deepEqual(first.api_keys, ["sk-one", "sk-two"]);
+
+			env.API_KEYS[1] = "sk-three";
+			const changed = mod.getConfig(env);
+			assert.equal(changed === first, false);
+			assert.deepEqual(changed.api_keys, ["sk-one", "sk-three"]);
+
+			env.API_KEYS.push("sk-four");
+			assert.deepEqual(mod.getConfig(env).api_keys, [
+				"sk-one",
+				"sk-three",
+				"sk-four",
+			]);
+		},
+	],
+	[
 		"parses strict comma-separated and JSON-array API key config",
 		async () => {
 			assert.deepEqual(mod.getConfig({}).api_keys, []);

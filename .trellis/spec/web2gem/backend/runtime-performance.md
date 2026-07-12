@@ -79,8 +79,8 @@ Use this contract when changing environment config parsing, config cache keys, r
 ### 2. Signatures
 
 - `CONFIG_ENV_KEYS` lists every environment key that affects `getConfig`.
-- `configCacheKey(env)` serializes the watched environment keys.
-- `getConfig(env)` returns a cached `RuntimeConfig` only when the env object and serialized key still match.
+- `CONFIG_ENV_KEYS` also defines the ordered fields captured by the structured config snapshot.
+- `getConfig(env)` returns a cached `RuntimeConfig` only when the current watched values match the stored snapshot.
 - `REQUEST_BODY_MAX_BYTES` maps to `RuntimeConfig.request_body_max_bytes`, defaults to `16777216`, and accepts integers from `1` through `104857600`.
 - `requestContentLength(request)` returns a safe decimal byte length or `null`.
 - `readJsonRequest(request, { maxBodyBytes, oversizedError })` reads UTF-8 JSON objects with optional bounded body size.
@@ -90,7 +90,9 @@ Use this contract when changing environment config parsing, config cache keys, r
 ### 3. Contracts
 
 - Add every new environment variable consumed by `getConfig` to `CONFIG_ENV_KEYS`; otherwise cached configs can go stale.
-- Do not cache config solely by env object identity. Cloudflare-style env objects may be reused and mutated in tests or local harnesses, so `getConfig` must recompute when `configCacheKey(env)` changes.
+- Do not cache config solely by env object identity. Cloudflare-style env objects may be reused and mutated in tests or local harnesses, so `getConfig` must compare every watched value before returning a cached result.
+- Store primitive watched values directly in the snapshot. Do not concatenate or serialize secret-bearing strings such as `GEMINI_COOKIE`, `SAPISID`, or string-form `API_KEYS` on cache hits.
+- Snapshot supported composite values by content. Array-form `API_KEYS` uses a shallow copied snapshot and must invalidate the cache after in-place item replacement, append, removal, or length changes.
 - `requestContentLength` accepts only safe base-10 integer strings after trimming; invalid, signed, fractional, or unsafe values return `null`.
 - `readJsonRequest` must reject `Content-Length > maxBodyBytes` before reading the stream.
 - When the streamed body exceeds `maxBodyBytes`, cancel the reader and return the configured 413 error before UTF-8 decoding or JSON parsing.
@@ -102,6 +104,7 @@ Use this contract when changing environment config parsing, config cache keys, r
 ### 4. Validation & Error Matrix
 
 - Reused env object changes `LOG_REQUESTS=false` to `LOG_REQUESTS=true` -> `getConfig` returns `true`.
+- Reused env object mutates `API_KEYS[1]` or appends a key -> `getConfig` reparses and returns the new list.
 - New env key used by config but missing from `CONFIG_ENV_KEYS` -> stale-cache bug; add the key and a cache regression test.
 - `Content-Length: 1000`, `maxBodyBytes: 999` -> 413 before body read.
 - Chunked body grows from 900 to 1001 bytes with `maxBodyBytes: 1000` -> cancel reader and return 413 using `1001 bytes > 1000`.
@@ -115,12 +118,15 @@ Use this contract when changing environment config parsing, config cache keys, r
 
 - Good: add `NEW_FEATURE_FLAG` to `CONFIG_ENV_KEYS` in the same change that reads it in `getConfig`.
 - Base: use `requestContentLength(request)` for route-level body byte telemetry and oversized preflight checks.
-- Bad: reuse `_configCacheValue` when `_configCacheEnv === env` without checking `_configCacheKey`.
+- Bad: reuse `_configCacheValue` when `_configCacheEnv === env` without comparing the watched snapshot.
+- Bad: build a single serialized cache key containing copies of all watched secrets on every request.
 - Bad: parse `Content-Length` with `Number(raw)` and accept signs, fractions, leading-zero variants, or unsafe integers.
 
 ### 6. Tests Required
 
 - Unit test that mutating and reusing one env object recomputes config.
+- Unit test in-place mutation and growth of array-form `API_KEYS`.
+- Benchmark cached reads for empty, realistic, large-secret, and maximum-secret environments.
 - Unit test each new config env key through `getConfig`.
 - Unit test `requestContentLength` for valid, absent, malformed, and unsafe values.
 - Unit test `readJsonRequest` preflight rejection from `Content-Length`.
@@ -140,8 +146,12 @@ if (_configCacheValue && _configCacheEnv === env) return _configCacheValue;
 #### Correct
 
 ```typescript
-const cacheKey = configCacheKey(env);
-if (_configCacheValue && _configCacheEnv === env && _configCacheKey === cacheKey) {
+if (
+  _configCacheValue &&
+  _configCacheEnv === env &&
+  _configCacheSnapshot &&
+  configSnapshotMatches(_configCacheSnapshot, env)
+) {
   return _configCacheValue;
 }
 ```

@@ -1,5 +1,5 @@
-import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 import { errorLine, outputLine } from "./io.mjs";
 
@@ -77,6 +77,25 @@ const SOCKET_LONG_CHUNK_LINE_BYTES = positiveInt(
 	process.env.BENCH_SOCKET_LONG_CHUNK_LINE_BYTES,
 	4096,
 );
+const CONFIG_CACHE_BENCH_ENVS = {
+	empty: {},
+	realistic: {
+		GEMINI_COOKIE: "__Secure-1PSID=bench-session; SAPISID=bench-sapisid",
+		SAPISID: "bench-sapisid",
+		API_KEYS: ["sk-bench-primary", "sk-bench-secondary"],
+		DEFAULT_MODEL: "gemini-3.5-flash",
+	},
+	large: {
+		GEMINI_COOKIE: `SID=${"x".repeat(64 * 1024)}`,
+		SAPISID: "s".repeat(4096),
+		API_KEYS: ["a".repeat(4096), "b".repeat(4096)],
+	},
+	maximum: {
+		GEMINI_COOKIE: `SID=${"x".repeat(1024 * 1024 - 4)}`,
+		SAPISID: "s".repeat(4096),
+		API_KEYS: ["a".repeat(4096), "b".repeat(4096)],
+	},
+};
 const TOOL = {
 	type: "function",
 	function: {
@@ -224,6 +243,26 @@ function emptyAttachmentResult() {
 }
 
 const cases = [
+	{
+		name: "config_cache_empty",
+		fn: () => mod.getConfig(CONFIG_CACHE_BENCH_ENVS.empty),
+	},
+	{
+		name: "config_cache_realistic",
+		fn: () => mod.getConfig(CONFIG_CACHE_BENCH_ENVS.realistic),
+	},
+	{
+		name: "config_cache_large_secrets",
+		fn: () => mod.getConfig(CONFIG_CACHE_BENCH_ENVS.large),
+		iterations: Math.min(ITERATIONS, 1000),
+		warmup: Math.min(WARMUP, 100),
+	},
+	{
+		name: "config_cache_maximum_secrets",
+		fn: () => mod.getConfig(CONFIG_CACHE_BENCH_ENVS.maximum),
+		iterations: Math.min(ITERATIONS, 200),
+		warmup: Math.min(WARMUP, 20),
+	},
 	{
 		name: "route_options",
 		fn: () =>
