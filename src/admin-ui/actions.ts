@@ -5,6 +5,7 @@ import {
 	runAccountAction,
 	updateAccount,
 } from "./api";
+import { language, tr } from "./i18n";
 import {
 	identifier,
 	identifierKey,
@@ -86,7 +87,7 @@ export function saveAdminKey(): void {
 			? window.localStorage
 			: window.sessionStorage;
 	storage.setItem(KEY_STORAGE, adminKey.value.trim());
-	showToast("Admin key saved");
+	showToast(tr("Admin key saved"));
 }
 
 export function clearAdminKey(): void {
@@ -96,13 +97,13 @@ export function clearAdminKey(): void {
 	accounts.value = [];
 	accountStats.value = null;
 	selected.value = new Set();
-	showToast("Admin key cleared");
+	showToast(tr("Admin key cleared"));
 }
 
 export function exportMetadata(): void {
 	const rows = accounts.value;
 	if (!rows.length) {
-		showToast("No accounts to export", "error");
+		showToast(tr("No accounts to export"), "error");
 		return;
 	}
 	const url = URL.createObjectURL(
@@ -113,14 +114,18 @@ export function exportMetadata(): void {
 	link.download = "gemini-account-metadata.csv";
 	link.click();
 	URL.revokeObjectURL(url);
-	showToast(`Exported ${rows.length} metadata rows`);
+	showToast(
+		language.value === "zh-CN"
+			? `已导出 ${rows.length} 条元数据`
+			: `Exported ${rows.length} metadata rows`,
+	);
 }
 
 export async function loadAccounts(
 	direction: "current" | "reset" | "next" | "prev" = "current",
 ): Promise<void> {
 	if (!adminKey.value.trim()) {
-		showToast("Admin key is required", "error");
+		showToast(tr("Admin key is required"), "error");
 		return;
 	}
 	if (direction === "reset") {
@@ -159,10 +164,14 @@ export async function loadAccounts(
 				overview.items.some((account) => identifierKey(account) === key),
 			),
 		);
-		showToast(`Loaded ${overview.items.length} accounts`);
+		showToast(
+			language.value === "zh-CN"
+				? `已加载 ${overview.items.length} 个账号`
+				: `Loaded ${overview.items.length} accounts`,
+		);
 	} catch (error) {
 		showToast(
-			error instanceof Error ? error.message : "Failed to load accounts",
+			error instanceof Error ? error.message : tr("Failed to load accounts"),
 			"error",
 		);
 	} finally {
@@ -200,7 +209,7 @@ export async function submitImport(event: Event): Promise<void> {
 		await loadAccounts("reset");
 	} catch (error) {
 		showToast(
-			error instanceof Error ? error.message : "Import failed",
+			error instanceof Error ? error.message : tr("Import failed"),
 			"error",
 		);
 	} finally {
@@ -234,7 +243,7 @@ export async function runAction(
 	options: RunActionOptions = {},
 ): Promise<void> {
 	if (!identifiers.length) {
-		showToast("Select at least one account", "error");
+		showToast(tr("Select at least one account"), "error");
 		return;
 	}
 	const targetLabel = options.targetLabel || "selected account(s)";
@@ -300,7 +309,7 @@ export async function submitEdit(event: Event): Promise<void> {
 		await loadAccounts();
 	} catch (error) {
 		showToast(
-			error instanceof Error ? error.message : "Update failed",
+			error instanceof Error ? error.message : tr("Update failed"),
 			"error",
 		);
 	} finally {

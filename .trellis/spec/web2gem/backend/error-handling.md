@@ -431,6 +431,9 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - `src/admin-ui/logic.ts` owns browser-independent identifiers, validation, parsing, formatting, summaries, and sanitized CSV construction.
 - `src/admin-ui/actions.ts` owns browser storage, API calls, pagination transitions, destructive confirmation, downloads, and toast side effects.
 - `src/admin-ui/components.tsx` owns reusable metric, desktop-row, mobile-card, action-menu, and dialog presentation; `app.tsx` remains the composition shell.
+- `src/admin-ui/i18n.ts` owns the complete English/Simplified-Chinese UI dictionary, browser-language detection, document `lang`, and persisted language preference.
+- `src/admin-ui/theme.ts` owns `light | dark | system` preference, persisted selection, system-theme resolution, and the root `data-theme` attribute.
+- `src/admin-ui/icons.tsx` owns dependency-free inline SVG icons; icons are decorative by default and their interactive parent owns the localized accessible name.
 
 ### 3. Contracts
 
@@ -455,6 +458,9 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Keep the wide account table for desktop inspection, but render account cards below the narrow-screen breakpoint. Cards must expose primary status, session health, counters, timing, and selection without horizontal scrolling; secondary source/error/timing metadata may use native disclosure.
 - Destructive actions must use the in-app confirmation state and dialog, not `window.confirm`. The dialog must identify the affected scope, receive initial focus, contain Tab navigation, close on Escape, and restore focus to the invoking control.
 - Page loading must remain distinct from mutations. Import, edit, batch, and row actions expose separate busy state; a row mutation disables and labels only that account's controls unless a broader operation genuinely requires a batch lock.
+- All authored user-facing strings, toast fallbacks, dialog copy, status labels, and icon-button accessible names must be available in English and Simplified Chinese. Language switching updates the UI and document language without a reload; arbitrary sanitized server error details remain untranslated.
+- Theme selection must support light, dark, and system modes without changing API payloads. Both resolved themes use semantic CSS tokens, visible focus, text/status contrast, and the same interaction states; non-essential transitions must respect `prefers-reduced-motion`.
+- Keep primary controls at least 44 CSS pixels high, retain the desktop table/mobile card split, and never disable browser zoom in the generated admin HTML viewport.
 
 ### 4. Validation & Error Matrix
 
@@ -472,6 +478,8 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Metadata export requested with no current rows -> no-op user error.
 - Batch import parser receives an empty string -> return no batch items so the single-account form remains authoritative; malformed non-empty rows -> safe client-side validation error.
 - Cursor pagination response with `nextCursor=null` -> disable the next-page control.
+- Missing language preference -> resolve `zh*` browser locales to `zh-CN`, otherwise English; a saved supported preference wins.
+- Theme preference `system` -> resolve from `prefers-color-scheme` and react to changes; explicit light/dark ignores the current system value.
 - Delete requested for one row or a selected/loaded batch -> show a scoped confirmation dialog before the first API request; cancellation or Escape performs no mutation.
 - Row action in progress -> mark that account busy and keep unrelated account controls available; batch action in progress -> disable batch controls without presenting page loading.
 
@@ -479,6 +487,7 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 
 - Good: static UI calls `fetch("/admin/accounts", { headers: { Authorization: "Bearer " + key } })`.
 - Good: unit tests import `admin-ui/logic.ts` through `src/test-exports.ts` without importing the browser entrypoint or adding a DOM emulator.
+- Good: pure language detection and theme resolution are exported through `src/test-exports.ts`; browser storage and DOM synchronization remain in their owner modules.
 - Good: import form submits only `provider`, `__Secure-1PSID`, `__Secure-1PSIDTS`, and optional display metadata.
 - Base: UI displays sanitized account status, enabled state, IDs, row IDs, timestamps, source metadata, and redacted error text from the v2 admin API response.
 - Base: UI may show refreshability, cooldown, success/failure counters, and category filters derived from sanitized admin fields.
@@ -487,12 +496,15 @@ Use this contract when adding or changing the built-in browser UI for Gemini acc
 - Bad: using `/admin/accounts?admin_key=...`, `x-api-key` public auth, or full `Cookie: __Secure-1PSID=...` examples.
 - Bad: adding a Gemini TXT export that serializes raw cookie values through the browser UI.
 - Bad: components implementing their own cookie parsing, identifier selection, or CSV field list instead of using `logic.ts`.
+- Bad: hard-coded Chinese/English component branches spread across files, raw per-theme hex values in components, external icon fonts, or emoji used as structural controls.
 - Bad: native `window.confirm`, a 1680px-only mobile layout, or one global mutation flag that ambiguously disables every account row.
 - Bad: adding UI text or docs that reintroduce `GEMINI_COOKIE` or single-cookie fallback setup.
 
 ### 6. Tests Required
 
 - Unit test the Worker serves the UI route with `text/html`, `no-store`, and zero D1 reads.
+- Unit test browser-independent language detection and three-mode theme resolution through the test bundle.
+- Route/static assertions must prove the generated HTML contains responsive viewport metadata, bilingual UI assets, theme selectors, skip navigation, and no external asset dependency.
 - Unit test non-GET UI requests return 404 and perform zero D1 reads.
 - Unit or snapshot-style assertions should verify static HTML/JS includes the admin API path, bearer admin header usage, value-only dual-cookie fields, and existing action names.
 - Unit or snapshot-style assertions should cover static UI controls for category/cooldown filters, pagination, safe metadata export, editing safe metadata, and success/failure counters.

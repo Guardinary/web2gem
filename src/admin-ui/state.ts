@@ -69,3 +69,5 @@ export const batchBusy = signal("");
 export const rowBusy = signal<Record<string, string>>({});
 export const confirmationDraft = signal<ConfirmationDraft | null>(null);
 export const lastDiagnostics = signal<MutationResult | null>(null);
+export const importExpanded = signal(false);
+export const diagnosticsExpanded = signal(false);

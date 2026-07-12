@@ -4,6 +4,16 @@ import { mod } from "./helpers.js";
 export const suiteName = "gemini account admin UI";
 export const cases = [
 	[
+		"admin UI resolves language and three-mode themes without browser state",
+		() => {
+			assert.equal(mod.detectLanguage("zh-CN"), "zh-CN");
+			assert.equal(mod.detectLanguage("en-US"), "en");
+			assert.equal(mod.resolveTheme("system", true), "dark");
+			assert.equal(mod.resolveTheme("system", false), "light");
+			assert.equal(mod.resolveTheme("light", true), "light");
+		},
+	],
+	[
 		"admin WebUI logic builds v2 resource paths and aggregates batch results",
 		() => {
 			assert.equal(

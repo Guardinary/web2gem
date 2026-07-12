@@ -1,6 +1,8 @@
 // Internal compatibility surface used by local unit and smoke tests.
 export { handleApplicationRequest } from "./app";
 export { createAccountsWithLimitFallback } from "./admin-ui/api";
+export { detectLanguage, statusLabel } from "./admin-ui/i18n";
+export { resolveTheme } from "./admin-ui/theme";
 export {
 	accountBusyLabel,
 	accountDisplayName,

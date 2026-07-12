@@ -1,5 +1,7 @@
 import type { JSX } from "preact";
 import { useEffect, useRef } from "preact/hooks";
+import { Icon } from "./icons";
+import { language, statusLabel, tr } from "./i18n";
 import {
 	openEdit,
 	resolveConfirmation,
@@ -81,7 +83,7 @@ export function MetricCards(): JSX.Element {
 			(sum, item) => sum + safeNumber(item.failure_count),
 			0,
 		);
-	const cards: [string, string | number][] = [
+	const cards: [Parameters<typeof tr>[0], string | number][] = [
 		["Total", total],
 		["Available", active],
 		["Needs attention", attention],
@@ -96,7 +98,7 @@ export function MetricCards(): JSX.Element {
 		<div class="metrics">
 			{cards.map(([label, value]) => (
 				<div class="metric" key={label}>
-					<div class="label">{label}</div>
+					<div class="label">{tr(label)}</div>
 					<div class="value">{value}</div>
 				</div>
 			))}
@@ -128,34 +130,37 @@ function AccountActions({ account }: { account: GeminiAccount }): JSX.Element {
 			<button
 				type="button"
 				disabled={!!busy}
-				aria-label={`Check ${label}`}
+				aria-label={`${tr("Check")} ${label}`}
 				onClick={() => run("check")}
 			>
-				{busy === "check" ? "Checking…" : "Check"}
+				<Icon name="check" />
+				{busy === "check" ? `${tr("Checking")}…` : tr("Check")}
 			</button>
 			<details class="action-menu">
-				<summary aria-label={`More actions for ${label}`}>More</summary>
+				<summary aria-label={`${tr("More")} ${label}`}>{tr("More")}</summary>
 				<div class="action-menu-items">
 					<button
 						type="button"
 						disabled={!!busy}
 						onClick={() => openEdit(account)}
 					>
-						Edit
+						<Icon name="edit" />
+						{tr("Edit")}
 					</button>
 					<button
 						type="button"
 						disabled={!!busy}
 						onClick={() => run("refresh")}
 					>
-						Refresh
+						<Icon name="refresh" />
+						{tr("Refresh")}
 					</button>
 					<button
 						type="button"
 						disabled={!!busy}
 						onClick={() => run(enabled ? "disable" : "enable")}
 					>
-						{enabled ? "Disable" : "Enable"}
+						{tr(enabled ? "Disable" : "Enable")}
 					</button>
 					<button
 						type="button"
@@ -163,7 +168,8 @@ function AccountActions({ account }: { account: GeminiAccount }): JSX.Element {
 						class="danger"
 						onClick={() => run("delete")}
 					>
-						Delete
+						<Icon name="trash" />
+						{tr("Delete")}
 					</button>
 				</div>
 			</details>
@@ -182,7 +188,7 @@ export function AccountRows(): JSX.Element {
 		return (
 			<tr>
 				<td class="loading" colSpan={15}>
-					Loading accounts…
+					{tr("Loading accounts")}…
 				</td>
 			</tr>
 		);
@@ -190,7 +196,8 @@ export function AccountRows(): JSX.Element {
 		return (
 			<tr>
 				<td class="empty" colSpan={15}>
-					No accounts match the current filters.
+					{tr("No accounts found")}.{" "}
+					{tr("Connect with an admin key or adjust the current filters.")}
 				</td>
 			</tr>
 		);
@@ -218,7 +225,7 @@ export function AccountRows(): JSX.Element {
 						<td>{accountIdentity(account)}</td>
 						<td>
 							<span class={`badge status-${account.status}`}>
-								{account.status}
+								{statusLabel(account.status)}
 							</span>
 						</td>
 						<td>
@@ -228,7 +235,11 @@ export function AccountRows(): JSX.Element {
 							<span class="badge">{sessionLabel(account)}</span>
 						</td>
 						<td>
-							<span class="badge">{account.account_category || "-"}</span>
+							<span class="badge">
+								{account.account_category
+									? statusLabel(account.account_category)
+									: "-"}
+							</span>
 						</td>
 						<td>{timeCell(account.last_used_at_ms)}</td>
 						<td>
@@ -278,11 +289,16 @@ export function AccountCards(): JSX.Element {
 	if (loading.value)
 		return (
 			<div class="card-state" role="status">
-				Loading accounts…
+				{tr("Loading accounts")}…
 			</div>
 		);
 	if (!accounts.value.length)
-		return <div class="card-state">No accounts match the current filters.</div>;
+		return (
+			<div class="card-state">
+				{tr("No accounts found")}.{" "}
+				{tr("Connect with an admin key or adjust the current filters.")}
+			</div>
+		);
 	return (
 		<div class="account-cards">
 			{accounts.value.map((account) => {
@@ -314,15 +330,19 @@ export function AccountCards(): JSX.Element {
 						</div>
 						<div class="account-card-badges">
 							<span class={`badge status-${account.status}`}>
-								{account.status}
+								{statusLabel(account.status)}
 							</span>
 							<span class="badge">{enabled ? "enabled" : "disabled"}</span>
 							<span class="badge">{sessionLabel(account)}</span>
 						</div>
 						<dl class="account-facts">
 							<div>
-								<dt>Category</dt>
-								<dd>{account.account_category || "-"}</dd>
+								<dt>{tr("Category")}</dt>
+								<dd>
+									{account.account_category
+										? statusLabel(account.account_category)
+										: "-"}
+								</dd>
 							</div>
 							<div>
 								<dt>Last used</dt>
@@ -336,7 +356,7 @@ export function AccountCards(): JSX.Element {
 								</dd>
 							</div>
 							<div>
-								<dt>Cooldown</dt>
+								<dt>{tr("Cooldown")}</dt>
 								<dd>
 									{isCooling(account)
 										? relativeTime(account.cooldown_until_ms)
@@ -502,6 +522,18 @@ export function ConfirmationModal(): JSX.Element | null {
 	const draft = confirmationDraft.value;
 	if (!draft) return null;
 	const copy = destructiveConfirmationText(draft.count, draft.targetLabel);
+	const localizedCopy =
+		language.value === "zh-CN"
+			? {
+					title: tr(draft.count === 1 ? "Delete account?" : "Delete accounts?"),
+					description: tr(
+						"This action permanently deletes the selected account metadata and cannot be undone.",
+					),
+					confirmLabel: tr(
+						draft.count === 1 ? "Delete account" : "Delete accounts",
+					),
+				}
+			: copy;
 	return (
 		<DialogSurface
 			labelledBy="confirm-title"
@@ -511,10 +543,10 @@ export function ConfirmationModal(): JSX.Element | null {
 			<div class="dialog-head">
 				<div>
 					<div id="confirm-title" class="dialog-title">
-						{copy.title}
+						{localizedCopy.title}
 					</div>
 					<p id="confirm-description" class="dialog-copy">
-						{copy.description}
+						{localizedCopy.description}
 					</p>
 				</div>
 			</div>
@@ -524,14 +556,14 @@ export function ConfirmationModal(): JSX.Element | null {
 					class="danger danger-solid"
 					onClick={() => resolveConfirmation(true)}
 				>
-					{copy.confirmLabel}
+					{localizedCopy.confirmLabel}
 				</button>
 				<button
 					type="button"
 					data-dialog-initial
 					onClick={() => resolveConfirmation(false)}
 				>
-					Cancel
+					{tr("Cancel")}
 				</button>
 			</div>
 		</DialogSurface>
@@ -556,12 +588,12 @@ export function EditModal(): JSX.Element | null {
 			<div class="dialog-head">
 				<div>
 					<div id="edit-title" class="dialog-title">
-						Edit account
+						{tr("Edit account")}
 					</div>
 					<div class="help">{draft.key}</div>
 				</div>
 				<button type="button" disabled={editBusy.value} onClick={close}>
-					Close
+					{tr("Close")}
 				</button>
 			</div>
 			<form
@@ -571,65 +603,65 @@ export function EditModal(): JSX.Element | null {
 				onSubmit={(event) => void submitEdit(event)}
 			>
 				<label>
-					Label
+					{tr("Label")}
 					<input
 						data-dialog-initial
 						value={draft.label}
 						onInput={update("label")}
-						placeholder="Display label"
+						placeholder={tr("Display label")}
 					/>
 				</label>
 				<div class="field-row">
 					<label>
-						Status
+						{tr("Status")}
 						<select value={draft.status} onChange={update("status")}>
 							{statuses.map((status) => (
 								<option key={status} value={status}>
-									{status}
+									{statusLabel(status)}
 								</option>
 							))}
 						</select>
 					</label>
 					<label>
-						Enabled
+						{tr("Enabled")}
 						<select value={draft.enabled} onChange={update("enabled")}>
-							<option value="true">Enabled</option>
-							<option value="false">Disabled</option>
+							<option value="true">{tr("Enabled")}</option>
+							<option value="false">{tr("Disabled")}</option>
 						</select>
 					</label>
 				</div>
 				<label>
-					State reason
+					{tr("State reason")}
 					<input
 						value={draft.stateReason}
 						onInput={update("stateReason")}
-						placeholder="Optional status note"
+						placeholder={tr("Optional status note")}
 					/>
 				</label>
 				<div class="field-row">
 					<label>
-						Source
+						{tr("Source")}
 						<input
 							value={draft.source}
 							onInput={update("source")}
-							placeholder="Optional source"
+							placeholder={tr("Optional source")}
 						/>
 					</label>
 					<label>
-						Source name
+						{tr("Source name")}
 						<input
 							value={draft.sourceName}
 							onInput={update("sourceName")}
-							placeholder="Optional source name"
+							placeholder={tr("Optional source name")}
 						/>
 					</label>
 				</div>
 				<div class="actions">
 					<button class="primary" type="submit" disabled={editBusy.value}>
-						{editBusy.value ? "Saving…" : "Save changes"}
+						{editBusy.value ? `${tr("Saving")}…` : tr("Save changes")}
 					</button>
 					<button type="button" disabled={editBusy.value} onClick={close}>
-						Cancel
+						{tr("Cancel")}
 					</button>
 				</div>
 			</form>
