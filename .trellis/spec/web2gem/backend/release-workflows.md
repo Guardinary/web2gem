@@ -687,13 +687,22 @@ existing one-click deployment.
   Secrets. `ADMIN_KEY` and optional `API_KEYS` remain Worker secrets.
 - The sync job requests only `contents: write`, runs only outside
   `Guardinary/web2gem`, and serializes runs with concurrency.
-- Checkout the deployment repository default branch with full history, fetch
-  the canonical account-pool branch, and use an ordinary Git merge.
-- Up-to-date runs create no commit. Successful merges push to the deployment
-  default branch so the connected Cloudflare Workers Build can deploy the
-  existing Worker.
-- Merge conflicts abort without push. Never use force push, hard reset, or a
-  merge strategy that silently selects upstream content over user changes.
+- Treat generated deployment repositories as managed mirrors. Checkout the
+  default branch with full history, fetch the canonical account-pool branch,
+  replace the tracked application tree, and preserve the deployment copy of
+  `.github/workflows` and `wrangler.jsonc`.
+- Up-to-date runs create no commit. Changed mirrors create a normal commit and
+  push to the deployment default branch so the connected Cloudflare Workers
+  Build can deploy the existing Worker.
+- Never use force push or hard reset. Arbitrary application-code customization
+  in a deployment mirror is unsupported because the next sync replaces it.
+- A real Deploy Button-created repository has been observed without workflow
+  files. Documentation must not assume they are retained: tell users to verify
+  the workflow exists and present standard GitHub Fork plus Cloudflare Import
+  as the reliable automatic-update path.
+- Source quality-gate entry jobs must require
+  `github.repository == 'Guardinary/web2gem'` so copied workflows do not consume
+  deployment-repository Actions minutes.
 - A `GITHUB_TOKEN` push does not trigger another workflow in the same GitHub
   repository; deployment must rely on the external Cloudflare Git integration,
   not a second push-triggered GitHub Actions workflow.
@@ -701,9 +710,11 @@ existing one-click deployment.
 ### 4. Validation & Error Matrix
 
 - No upstream update -> workflow succeeds without push.
-- Clean upstream update -> merge and push to the deployment default branch.
-- User/upstream conflict -> abort merge, write recovery guidance, fail without
-  push.
+- Clean upstream update -> replace the application tree, commit, and push.
+- Protected `.github/workflows` or `wrangler.jsonc` missing -> fail before
+  changing the mirror.
+- Deploy Button omits `.github/workflows` -> no scheduled updater exists; use
+  standard Fork plus Cloudflare Import.
 - Actions disabled or token write denied -> push fails; user enables Actions
   and read/write workflow permissions.
 - Protected deployment branch rejects bot push -> fail without bypass; user
@@ -715,13 +726,15 @@ existing one-click deployment.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: a deployment fork with no custom conflicts receives an upstream merge
-  and Cloudflare deploys the original Worker/D1 binding.
+- Good: a deployment mirror receives the upstream application tree while its
+  updater and Wrangler deployment configuration remain unchanged.
 - Base: the fork is already current and the scheduled run exits idempotently.
 - Bad: rerun the Deploy Button to upgrade and create a duplicate Worker.
 - Bad: commit a user-specific D1 UUID or generate `wrangler.jsonc` from a GitHub
   secret.
 - Bad: `git reset --hard upstream/gemini-account-pool` followed by force push.
+- Bad: promise that every Deploy Button repository contains GitHub Actions
+  workflows without verifying the generated repository.
 
 ### 6. Tests Required
 
@@ -729,12 +742,15 @@ existing one-click deployment.
   property.
 - Assert the migration script continues referencing the binding name.
 - Assert sync triggers, `contents: write`, source-repository guard, upstream
-  URL/branch, normal merge, abort path, and default-branch push.
+  URL/branch, protected file-tree replacement, idempotency check, normal commit,
+  and default-branch push.
 - Assert the workflow contains no force push, hard reset, Cloudflare API token,
   or D1 ID handling.
-- Assert both READMEs label the Deploy Button as first-deployment-only and cover
-  Actions enablement, write permission, manual sync, D1 provisioning, conflict
-  recovery, and Cloudflare build diagnostics.
+- Assert source quality-gate jobs skip copied deployment repositories.
+- Assert both READMEs label the Deploy Button as first-deployment-only, describe
+  the workflow-copy compatibility check, and cover standard Fork plus
+  Cloudflare Import, Actions permission, manual recovery, and Cloudflare build
+  diagnostics.
 - Run `pnpm exec actionlint`, `pnpm check:worker-types`, `pnpm unit`,
   `pnpm coverage:ci`, `pnpm smoke`, and `wrangler deploy --dry-run`.
 
@@ -770,7 +786,9 @@ git push --force origin HEAD
 
 ```sh
 git fetch upstream gemini-account-pool
-git merge --no-edit upstream/gemini-account-pool
+git rm -r --ignore-unmatch --quiet -- .
+git checkout upstream/gemini-account-pool -- .
+git checkout HEAD -- .github/workflows wrangler.jsonc
 git push origin HEAD:"${default_branch}"
 ```
 

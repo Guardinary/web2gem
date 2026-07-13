@@ -215,24 +215,36 @@ The deploy form shows non-secret Worker settings from `wrangler.jsonc` `vars` in
 
 Do not use the Deploy button to upgrade an existing deployment. Running it again creates another project instead of updating the existing Worker.
 
-#### Automatic updates for the deployment repository
+#### Updates after a Deploy Button installation (compatibility trial)
 
-The repository includes a **Sync upstream** GitHub Actions workflow. After the first deployment, complete this one-time setup in the repository created by Cloudflare:
+A repository created by the Deploy Button has been observed without its GitHub Actions workflow files, so do not assume they were retained. After the first deployment, open the generated repository and check whether **Actions → Sync upstream** or `.github/workflows/sync-upstream.yml` exists.
 
-1. Open the repository's **Actions** tab and enable workflows if GitHub asks you to enable Actions for the copied or forked repository.
+If the workflow exists, complete this one-time setup:
+
+1. Open **Actions** and enable workflows if GitHub asks.
 2. Open **Settings → Actions → General → Workflow permissions** and select **Read and write permissions**. Organization policy may require an administrator to allow this.
-3. Open **Actions → Sync upstream** and select **Run workflow** once to verify the setup.
+3. Open **Actions → Sync upstream** and select **Run workflow** once.
 
-The workflow checks `Guardinary/web2gem` `gemini-account-pool` every six hours. When Git can merge the update safely, it pushes the merged revision to the deployment repository's default branch. That push starts the connected Cloudflare Workers Build and updates the existing Worker. If there is no update, the workflow exits without creating a commit.
+The workflow checks `Guardinary/web2gem` `gemini-account-pool` every six hours and also supports manual runs. It mirrors the upstream application tree while preserving the deployment repository's `.github/workflows` and `wrangler.jsonc`, then pushes only when files changed. The connected Cloudflare Workers Build can deploy that push to the existing Worker.
 
-The D1 binding intentionally omits `database_id`. Cloudflare/Wrangler automatic provisioning keeps the actual resource association outside Git, so upstream synchronization does not replace the deployment's D1 database. Do not add a D1 database ID to GitHub Secrets; only Worker secrets such as `ADMIN_KEY` and optional `API_KEYS` belong in the Cloudflare secret flow.
+Treat this generated repository as a deployment mirror: configure secrets and bindings through Cloudflare, and avoid editing application source in the mirror because the next sync replaces it. Review upstream `wrangler.jsonc` changes separately because the deployment copy is intentionally preserved.
 
-If **Sync upstream** fails:
+The canonical D1 binding omits `database_id`. Do not add a D1 database ID to GitHub Secrets; only Worker secrets such as `ADMIN_KEY` and optional `API_KEYS` belong in the Cloudflare secret flow.
 
-- A merge conflict means the deployment repository contains custom changes that overlap an upstream update. The workflow aborts without pushing or overwriting them; resolve the conflict manually and run it again.
-- A permission error means Actions is disabled or **Workflow permissions** is not set to read and write.
-- A successful sync followed by a failed deployment should be investigated in the Worker's Cloudflare **Builds** logs.
-- GitHub may disable scheduled workflows in inactive public repositories. Re-enable the workflow from the **Actions** tab and run it manually.
+If **Sync upstream** is absent, a schedule cannot run in that repository. Do not click the Deploy Button again. Use the reliable Fork + Import path below for automatic updates.
+
+#### Reliable automatic updates: standard GitHub Fork + Cloudflare Import
+
+For a repository that GitHub owns end to end:
+
+1. Create a standard GitHub fork of `Guardinary/web2gem` and ensure the `gemini-account-pool` branch is included.
+2. Set `gemini-account-pool` as the fork's default branch so GitHub can run its scheduled workflow.
+3. Enable Actions, grant **Read and write permissions**, and manually run **Sync upstream** once.
+4. In the Cloudflare Workers dashboard, import/connect that fork and deploy its default `gemini-account-pool` branch.
+
+After this setup, the same six-hour sync pushes updates to the fork and the connected Cloudflare Workers Build updates the existing Worker. If GitHub disables scheduled workflows in an inactive public repository, re-enable the workflow from **Actions** and run it manually.
+
+If synchronization succeeds but deployment fails, inspect the Worker's Cloudflare **Builds** logs. Permission failures usually mean Actions is disabled, workflow permissions are read-only, or branch protection rejects the updater push.
 
 #### Manual: release bundle
 

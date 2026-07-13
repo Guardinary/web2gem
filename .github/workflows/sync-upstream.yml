@@ -24,31 +24,42 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
 
-      - name: Merge upstream updates
+      - name: Mirror upstream application tree
         shell: bash
         run: |
           set -euo pipefail
 
           default_branch="${{ github.event.repository.default_branch }}"
           upstream_branch="gemini-account-pool"
+          upstream_ref="upstream/${upstream_branch}"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/Guardinary/web2gem.git
-          git fetch upstream gemini-account-pool
+          git fetch --no-tags upstream "${upstream_branch}"
 
-          if git merge-base --is-ancestor "upstream/${upstream_branch}" HEAD; then
-            echo "Already up to date with upstream/${upstream_branch}." | tee -a "$GITHUB_STEP_SUMMARY"
+          for protected_path in .github/workflows wrangler.jsonc; do
+            if ! git cat-file -e "HEAD:${protected_path}"; then
+              echo "Protected deployment path is missing: ${protected_path}" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+          done
+
+          git rm -r --ignore-unmatch --quiet -- .
+          git checkout "${upstream_ref}" -- .
+          git checkout HEAD -- .github/workflows wrangler.jsonc
+
+          if git diff --cached --quiet; then
+            echo "Already matches ${upstream_ref}; protected deployment files were kept." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          if ! git merge --no-edit upstream/gemini-account-pool; then
-            git merge --abort || true
+          upstream_sha="$(git rev-parse "${upstream_ref}")"
+          if ! git commit -m "chore: sync ${upstream_branch} at ${upstream_sha:0:12}"; then
             {
-              echo "## Upstream synchronization needs attention"
+              echo "## Upstream synchronization could not create a commit"
               echo
-              echo "The deployment repository has changes that conflict with \`upstream/${upstream_branch}\`."
-              echo "No commit was pushed. Resolve the conflict manually, then run this workflow again."
+              echo "No update was pushed. Inspect the repository status, then run this workflow again."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
@@ -57,6 +68,7 @@ jobs:
           {
             echo "## Upstream synchronization complete"
             echo
-            echo "Merged \`upstream/${upstream_branch}\` into \`${default_branch}\` and pushed the result."
+            echo "Mirrored \`${upstream_ref}\` into \`${default_branch}\` and pushed the result."
+            echo "Preserved \`.github/workflows\` and \`wrangler.jsonc\` from the deployment repository."
             echo "The connected Cloudflare Workers Build should start from this push."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -23,6 +23,7 @@ env:
 jobs:
   classify:
     name: Classify Change Risk
+    if: ${{ github.repository == 'Guardinary/web2gem' }}
     runs-on: ubuntu-latest
     outputs:
       runtime: ${{ steps.risk.outputs.runtime }}
@@ -155,7 +156,7 @@ jobs:
 
   docker-smoke:
     name: Release Required Gate - Docker Smoke
-    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/gemini-account-pool') }}
+    if: ${{ github.repository == 'Guardinary/web2gem' && github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/gemini-account-pool') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

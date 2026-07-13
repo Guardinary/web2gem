@@ -591,16 +591,40 @@ export const cases = [
 			assert.match(workflow, /permissions:\s*\n\s+contents: write/);
 			assert.match(workflow, /github\.repository != 'Guardinary\/web2gem'/);
 			assert.match(workflow, /https:\/\/github\.com\/Guardinary\/web2gem\.git/);
-			assert.match(workflow, /git fetch upstream gemini-account-pool/);
+			assert.match(workflow, /git fetch --no-tags upstream/);
+			assert.match(workflow, /git rm -r --ignore-unmatch --quiet -- \./);
+			assert.match(workflow, /git checkout "\$\{upstream_ref\}" -- \./);
 			assert.match(
 				workflow,
-				/git merge --no-edit upstream\/gemini-account-pool/,
+				/git checkout HEAD -- \.github\/workflows wrangler\.jsonc/,
 			);
-			assert.match(workflow, /git merge --abort/);
+			assert.match(workflow, /git diff --cached --quiet/);
+			assert.match(workflow, /git commit -m "chore: sync/);
 			assert.match(workflow, /git push origin HEAD:/);
-			assert.doesNotMatch(workflow, /reset --hard|push --force|-X theirs/);
+			assert.doesNotMatch(
+				workflow,
+				/merge --no-edit|merge --abort|reset --hard|push --force|-X theirs/,
+			);
 			assert.doesNotMatch(workflow, /CLOUDFLARE_API_TOKEN|database_id/);
 			assert.doesNotMatch(workflow, /\t/);
+		},
+	],
+	[
+		"keeps source quality workflows out of deployment copies",
+		async () => {
+			const workflow = await readFile(
+				".github/workflows/quality-gates.yml",
+				"utf8",
+			);
+
+			assert.match(
+				workflow,
+				/classify:[\s\S]*if: \$\{\{ github\.repository == 'Guardinary\/web2gem' \}\}/,
+			);
+			assert.match(
+				workflow,
+				/docker-smoke:[\s\S]*if: \$\{\{ github\.repository == 'Guardinary\/web2gem'/,
+			);
 		},
 	],
 	[
@@ -617,9 +641,11 @@ export const cases = [
 					english,
 					[
 						/first deployment only/i,
-						/Automatic updates/,
+						/compatibility trial/i,
 						/Sync upstream/,
 						/Workflow permissions/,
+						/standard GitHub Fork \+ Cloudflare Import/,
+						/has been observed without/i,
 						/Do not add a D1 database ID to GitHub Secrets/,
 					],
 				],
@@ -628,9 +654,11 @@ export const cases = [
 					chinese,
 					[
 						/仅用于首次部署/,
-						/自动更新/,
+						/兼容性试验/,
 						/Sync upstream/,
 						/Workflow permissions/,
+						/标准 GitHub Fork \+ Cloudflare Import/,
+						/实际测试中曾出现 Deploy Button 创建的仓库没有/,
 						/不要把 D1 database ID 添加到 GitHub Secrets/,
 					],
 				],
