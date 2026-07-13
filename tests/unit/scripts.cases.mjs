@@ -579,33 +579,33 @@ export const cases = [
 		},
 	],
 	[
-		"keeps fork synchronization safe and Cloudflare-driven",
+		"keeps true forks synchronized and Cloudflare-driven",
 		async () => {
 			const workflow = await readFile(
 				".github/workflows/sync-upstream.yml",
 				"utf8",
 			);
 
+			assert.match(workflow, /schedule:[\s\S]*cron: ["']0 0 \* \* 1["']/);
 			assert.match(workflow, /workflow_dispatch:/);
-			assert.doesNotMatch(workflow, /schedule:|cron:/);
 			assert.match(workflow, /permissions:\s*\n\s+contents: write/);
-			assert.match(workflow, /github\.repository != 'Guardinary\/web2gem'/);
-			assert.match(workflow, /https:\/\/github\.com\/Guardinary\/web2gem\.git/);
-			assert.match(workflow, /git fetch --no-tags upstream/);
-			assert.match(workflow, /git rm -r --ignore-unmatch --quiet -- \./);
-			assert.match(workflow, /git checkout "\$\{upstream_ref\}" -- \./);
-			assert.match(
-				workflow,
-				/git checkout HEAD -- \.github\/workflows wrangler\.jsonc/,
-			);
-			assert.match(workflow, /git diff --cached --quiet/);
-			assert.match(workflow, /git commit -m "chore: sync/);
-			assert.match(workflow, /git push origin HEAD:/);
+			assert.match(workflow, /if: \$\{\{ github\.event\.repository\.fork \}\}/);
 			assert.doesNotMatch(
 				workflow,
-				/merge --no-edit|merge --abort|reset --hard|push --force|-X theirs/,
+				/reset --hard|push --force|-X theirs|CLOUDFLARE_API_TOKEN|database_id/,
 			);
-			assert.doesNotMatch(workflow, /CLOUDFLARE_API_TOKEN|database_id/);
+			assert.match(
+				workflow,
+				/uses: aormsby\/Fork-Sync-With-Upstream-action@v3\.4/,
+			);
+			assert.match(workflow, /upstream_sync_repo: Guardinary\/web2gem/);
+			assert.match(workflow, /upstream_sync_branch: gemini-account-pool/);
+			assert.match(workflow, /target_sync_branch: gemini-account-pool/);
+			assert.match(
+				workflow,
+				/target_repo_token: \$\{\{ secrets\.GITHUB_TOKEN \}\}/,
+			);
+			assert.match(workflow, /upstream_pull_args: ["']--ff-only["']/);
 			assert.doesNotMatch(workflow, /\t/);
 		},
 	],
@@ -641,12 +641,13 @@ export const cases = [
 					english,
 					[
 						/first deployment only/i,
-						/Manual updates/i,
-						/Sync upstream/,
+						/standard GitHub Fork \+ Cloudflare Import/,
+						/Copy the main branch only/,
+						/Upstream Sync/,
 						/Workflow permissions/,
-						/does not run on a schedule/i,
-						/Add file → Create new file/,
-						/Do not add a D1 database ID to GitHub Secrets/,
+						/no Cloudflare API token is stored in GitHub/i,
+						/Updating an existing Deploy Button clone/,
+						/git merge --no-edit upstream\/gemini-account-pool/,
 					],
 				],
 				[
@@ -654,12 +655,13 @@ export const cases = [
 					chinese,
 					[
 						/仅用于首次部署/,
-						/手动更新部署仓库/,
-						/Sync upstream/,
+						/标准 GitHub Fork \+ Cloudflare Import/,
+						/Copy the main branch only/,
+						/Upstream Sync/,
 						/Workflow permissions/,
-						/不会定时自动运行/,
-						/Add file → Create new file/,
-						/不要把 D1 database ID 添加到 GitHub Secrets/,
+						/不需要在 GitHub 保存 Cloudflare API Token/,
+						/更新已有的 Deploy Button clone/,
+						/git merge --no-edit upstream\/gemini-account-pool/,
 					],
 				],
 			]) {

@@ -203,7 +203,7 @@ Anonymous-eligible text generation works without `GEMINI_DB`. Configure `GEMINI_
 
 ### Option 1: Deploy to Cloudflare Workers
 
-#### Recommended: deploy button (first deployment only)
+#### Quick trial: deploy button (first deployment only)
 
 For source-based one-click deployment to Cloudflare Workers, use the deploy button:
 
@@ -215,27 +215,33 @@ The deploy form shows non-secret Worker settings from `wrangler.jsonc` `vars` in
 
 Do not use the Deploy button to upgrade an existing deployment. Running it again creates another project instead of updating the existing Worker.
 
-#### Manual updates for the deployment repository
+The Deploy Button creates an independent clone rather than a GitHub Fork, and Cloudflare may omit `.github/workflows`. Use it for a quick first deployment, not for a deployment that must stay synchronized automatically.
 
-The updater follows the Renewlet-style deployment-mirror model and intentionally uses only `workflow_dispatch`; it does not run on a schedule. When you want to upgrade, open the repository created by Cloudflare and check whether **Actions → Sync upstream** or `.github/workflows/sync-upstream.yml` exists.
+#### Recommended: standard GitHub Fork + Cloudflare Import
 
-If the workflow exists, complete this one-time setup:
+For a long-lived deployment with automatic updates:
 
-1. Open **Actions** and enable workflows if GitHub asks.
-2. Open **Settings → Actions → General → Workflow permissions** and select **Read and write permissions**. Organization policy may require an administrator to allow this.
-3. Open **Actions → Sync upstream**, select **Run workflow**, and confirm the run.
+1. Open the [GitHub Fork page](https://github.com/Guardinary/web2gem/fork). Clear **Copy the main branch only** so the `gemini-account-pool` branch is included, then create the Fork.
+2. In the Fork, open **Settings → Branches** and set `gemini-account-pool` as the default branch. Scheduled GitHub Actions run only from the default branch.
+3. Open **Actions**, enable **Upstream Sync**, then open **Settings → Actions → General → Workflow permissions** and select **Read and write permissions**. Run **Upstream Sync** once manually to verify it.
+4. In the Cloudflare Workers dashboard, import/connect the Fork and deploy its `gemini-account-pool` default branch. Enter `ADMIN_KEY`; `API_KEYS` remains optional.
 
-For each future upgrade, repeat only step 3. The workflow mirrors `Guardinary/web2gem` `gemini-account-pool` into the deployment repository while preserving its `.github/workflows` and `wrangler.jsonc`. It pushes only when application files changed, and the connected Cloudflare Workers Build can deploy that push to the existing Worker.
+The Fork checks `Guardinary/web2gem` every Monday at 00:00 UTC and can also be synchronized manually. It uses the repository `GITHUB_TOKEN`; no Cloudflare API token is stored in GitHub. A successful sync push starts the connected Cloudflare Workers Build and updates the existing Worker.
 
-If Cloudflare did not copy the workflow, install it once in the generated repository:
+Keep `gemini-account-pool` as a deployment-only branch and do not commit custom application changes to it. Synchronization is fast-forward-only and fails safely if the Fork diverges. The canonical `wrangler.jsonc` omits `database_id`, while Cloudflare owns the deployed D1 association and Worker secrets outside Git.
 
-1. Open the canonical [`sync-upstream.yml`](https://github.com/Guardinary/web2gem/blob/gemini-account-pool/.github/workflows/sync-upstream.yml) and copy its contents.
-2. In the generated repository, choose **Add file → Create new file**, enter `.github/workflows/sync-upstream.yml`, paste the contents, and commit the file.
-3. Enable Actions and read/write workflow permissions, then run **Sync upstream** manually.
+#### Updating an existing Deploy Button clone
 
-Treat the generated repository as a deployment mirror: configure secrets and bindings through Cloudflare, and avoid editing application source because the next sync replaces it. Review upstream `wrangler.jsonc` changes separately because the deployment copy is intentionally preserved.
+An existing button-created repository can still update its connected Worker, but it has no Fork relationship or built-in automatic sync. Clone that generated repository locally, then run:
 
-The canonical D1 binding omits `database_id`. Do not add a D1 database ID to GitHub Secrets; only Worker secrets such as `ADMIN_KEY` and optional `API_KEYS` belong in the Cloudflare secret flow. If synchronization succeeds but deployment fails, inspect the Worker's Cloudflare **Builds** logs. Permission failures usually mean Actions is disabled, workflow permissions are read-only, or branch protection rejects the updater push.
+```sh
+git remote add upstream https://github.com/Guardinary/web2gem.git
+git fetch upstream gemini-account-pool
+git merge --no-edit upstream/gemini-account-pool
+git push origin HEAD
+```
+
+If the clone has diverged, review its commits instead of force-pushing. If synchronization succeeds but deployment fails, inspect the Worker's Cloudflare **Builds** logs.
 
 #### Manual: release bundle
 

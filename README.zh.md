@@ -203,7 +203,7 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 ### 方式一：部署到 Cloudflare Workers
 
-#### 推荐：部署按钮（仅用于首次部署）
+#### 快速体验：部署按钮（仅用于首次部署）
 
 如果想从源码一键部署到 Cloudflare Workers，可以使用下面的部署按钮：
 
@@ -215,27 +215,33 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 不要使用部署按钮升级已有部署。再次点击会创建另一套项目，而不是更新原 Worker。
 
-#### 手动更新部署仓库
+Deploy Button 创建的是独立 clone，而不是真正的 GitHub Fork，并且 Cloudflare 可能不会复制 `.github/workflows`。它适合快速完成首次部署，不适合作为需要长期自动同步的部署方式。
 
-更新流程采用 Renewlet 风格的部署镜像方案，并且有意只使用 `workflow_dispatch`，不会定时自动运行。需要升级时，打开 Cloudflare 创建的仓库，确认是否存在 **Actions → Sync upstream**，或 `.github/workflows/sync-upstream.yml` 文件。
+#### 推荐：标准 GitHub Fork + Cloudflare Import
 
-如果工作流存在，只需完成一次设置：
+如果希望部署后自动更新：
 
-1. 打开 **Actions**；如果 GitHub 要求启用工作流，请确认启用。
-2. 打开 **Settings → Actions → General → Workflow permissions**，选择 **Read and write permissions**。如果仓库受组织策略管理，可能需要管理员允许。
-3. 打开 **Actions → Sync upstream**，点击 **Run workflow** 并确认运行。
+1. 打开 [GitHub Fork 页面](https://github.com/Guardinary/web2gem/fork)。取消勾选 **Copy the main branch only**，确保 `gemini-account-pool` 分支被复制，然后创建 Fork。
+2. 在 Fork 中打开 **Settings → Branches**，把 `gemini-account-pool` 设置为默认分支。GitHub 定时工作流只会从默认分支运行。
+3. 打开 **Actions**，启用 **Upstream Sync**；再打开 **Settings → Actions → General → Workflow permissions**，选择 **Read and write permissions**。手动运行一次 **Upstream Sync** 完成验证。
+4. 在 Cloudflare Workers 控制台导入/连接这个 Fork，并部署其默认的 `gemini-account-pool` 分支。填写 `ADMIN_KEY`；`API_KEYS` 仍然可选。
 
-以后每次升级只需重复第 3 步。工作流会把 `Guardinary/web2gem` 的 `gemini-account-pool` 应用文件树同步到部署仓库，同时保留部署仓库自己的 `.github/workflows` 和 `wrangler.jsonc`。只有应用文件发生变化时才会提交并推送，已连接的 Cloudflare Workers Build 随后可以把更新部署到原 Worker。
+Fork 会在每周一 00:00 UTC 检查 `Guardinary/web2gem`，也可以随时手动同步。工作流只使用仓库自带的 `GITHUB_TOKEN`，不需要在 GitHub 保存 Cloudflare API Token。同步 push 后，已连接的 Cloudflare Workers Build 会更新原 Worker。
 
-如果 Cloudflare 没有复制工作流，只需在生成的仓库中安装一次：
+请把 `gemini-account-pool` 作为只用于部署的分支，不要向其中提交自定义应用代码。同步只允许 fast-forward；如果 Fork 已经分叉，工作流会安全失败。规范的 `wrangler.jsonc` 不包含 `database_id`，实际 D1 关联和 Worker secrets 由 Cloudflare 在 Git 之外管理。
 
-1. 打开规范的 [`sync-upstream.yml`](https://github.com/Guardinary/web2gem/blob/gemini-account-pool/.github/workflows/sync-upstream.yml) 并复制内容。
-2. 在生成的仓库中选择 **Add file → Create new file**，文件名填写 `.github/workflows/sync-upstream.yml`，粘贴内容并提交。
-3. 启用 Actions 和读写 Workflow permissions，然后手动运行 **Sync upstream**。
+#### 更新已有的 Deploy Button clone
 
-请把生成的仓库视为部署镜像：通过 Cloudflare 配置 secrets 和 bindings，不要直接修改应用源码，因为下次同步会替换这些文件。由于部署仓库的 `wrangler.jsonc` 会被保留，上游新增的 Wrangler 配置需要单独检查和手动应用。
+已经通过按钮创建的仓库仍然可以更新其连接的 Worker，但它没有 Fork 关系，也没有内置自动同步。把生成的仓库 clone 到本地，然后执行：
 
-规范源配置中的 D1 binding 会省略 `database_id`。不要把 D1 database ID 添加到 GitHub Secrets；只有 `ADMIN_KEY` 和可选的 `API_KEYS` 等 Worker secrets 需要通过 Cloudflare secret 流程配置。同步成功但部署失败时，到 Worker 的 Cloudflare **Builds** 日志中排查。权限错误通常表示 Actions 未启用、Workflow permissions 仍为只读，或分支保护拒绝 updater push。
+```sh
+git remote add upstream https://github.com/Guardinary/web2gem.git
+git fetch upstream gemini-account-pool
+git merge --no-edit upstream/gemini-account-pool
+git push origin HEAD
+```
+
+如果 clone 已经分叉，请检查其中的提交，不要强制推送。同步成功但部署失败时，到 Worker 的 Cloudflare **Builds** 日志中排查。
 
 #### 手动部署：Release bundle
 

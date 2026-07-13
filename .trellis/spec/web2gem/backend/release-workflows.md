@@ -676,7 +676,8 @@ existing one-click deployment.
 - Sync workflow: `.github/workflows/sync-upstream.yml`.
 - Upstream source: `https://github.com/Guardinary/web2gem.git`, branch
   `gemini-account-pool`.
-- User trigger: manual-only `workflow_dispatch`.
+- User triggers: weekly `schedule` plus `workflow_dispatch` on a true GitHub
+  Fork whose default branch is `gemini-account-pool`.
 
 ### 3. Contracts
 
@@ -685,24 +686,21 @@ existing one-click deployment.
   physical resource association outside Git.
 - Do not put D1 database IDs in Deploy Button secret templates or GitHub
   Secrets. `ADMIN_KEY` and optional `API_KEYS` remain Worker secrets.
-- The sync job requests only `contents: write`, runs only outside
-  `Guardinary/web2gem`, and serializes runs with concurrency.
-- Treat generated deployment repositories as managed mirrors. Checkout the
-  default branch with full history, fetch the canonical account-pool branch,
-  replace the tracked application tree, and preserve the deployment copy of
-  `.github/workflows` and `wrangler.jsonc`.
-- Up-to-date runs create no commit. Changed mirrors create a normal commit and
-  push to the deployment default branch so the connected Cloudflare Workers
-  Build can deploy the existing Worker.
-- Never use force push or hard reset. Arbitrary application-code customization
-  in a deployment mirror is unsupported because the next sync replaces it.
-- Follow the Renewlet-style manual update model: do not add `schedule` or other
-  automatic triggers. Users explicitly run the updater when they want a new
-  version.
-- A real Deploy Button-created repository has been observed without workflow
-  files. Documentation must tell users to verify the workflow exists and give
-  one-time instructions for creating `.github/workflows/sync-upstream.yml` from
-  the canonical source when Cloudflare omits it.
+- The sync job requests only `contents: write`, requires
+  `github.event.repository.fork`, and serializes runs with concurrency.
+- Use `aormsby/Fork-Sync-With-Upstream-action@v3.4` with the canonical repository
+  and `gemini-account-pool` as both upstream and target branches.
+- Pass the repository `GITHUB_TOKEN` as `target_repo_token`; do not require a
+  personal token or Cloudflare API token.
+- Use fast-forward-only upstream pulls. Treat `gemini-account-pool` in the Fork
+  as a non-working deployment branch; divergence fails instead of overwriting
+  user commits.
+- Cloudflare Deploy Button clones are first-deployment-only and are not the
+  automatic-update path. Recommend a standard GitHub Fork imported into
+  Cloudflare Workers Builds.
+- Users must copy all branches when forking and set `gemini-account-pool` as the
+  Fork default branch because scheduled workflows run only from the default
+  branch.
 - Source quality-gate entry jobs must require
   `github.repository == 'Guardinary/web2gem'` so copied workflows do not consume
   deployment-repository Actions minutes.
@@ -713,11 +711,11 @@ existing one-click deployment.
 ### 4. Validation & Error Matrix
 
 - No upstream update -> workflow succeeds without push.
-- Clean upstream update -> replace the application tree, commit, and push.
-- Protected `.github/workflows` or `wrangler.jsonc` missing -> fail before
-  changing the mirror.
-- Deploy Button omits `.github/workflows` -> install the canonical manual
-  workflow once in the generated repository.
+- Clean upstream update -> fast-forward the Fork target branch and push.
+- Fork already current -> succeed without a new push.
+- Target branch diverged -> fast-forward pull fails without force push.
+- Repository is a Deploy Button clone rather than a Fork -> sync job is skipped;
+  use the documented manual upstream commands or redeploy through Fork + Import.
 - Actions disabled or token write denied -> push fails; user enables Actions
   and read/write workflow permissions.
 - Protected deployment branch rejects bot push -> fail without bypass; user
@@ -729,10 +727,9 @@ existing one-click deployment.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: a deployment mirror receives the upstream application tree while its
-  updater and Wrangler deployment configuration remain unchanged.
-- Base: the deployment mirror is already current and the manual run exits
-  idempotently.
+- Good: a true Fork fast-forwards weekly and its Cloudflare Git integration
+  deploys the same Worker.
+- Base: the Fork is already current and the scheduled run exits idempotently.
 - Bad: rerun the Deploy Button to upgrade and create a duplicate Worker.
 - Bad: commit a user-specific D1 UUID or generate `wrangler.jsonc` from a GitHub
   secret.
@@ -745,16 +742,15 @@ existing one-click deployment.
 - Assert `GEMINI_DB` keeps its stable `database_name` and has no `database_id`
   property.
 - Assert the migration script continues referencing the binding name.
-- Assert the sync workflow has only `workflow_dispatch`, plus `contents: write`,
-  source-repository guard, upstream
-  URL/branch, protected file-tree replacement, idempotency check, normal commit,
-  and default-branch push.
+- Assert weekly and manual triggers, `contents: write`, the true-Fork guard,
+  action version, upstream/target repository and branch inputs, `GITHUB_TOKEN`,
+  and fast-forward-only pulls.
 - Assert the workflow contains no force push, hard reset, Cloudflare API token,
   or D1 ID handling.
 - Assert source quality-gate jobs skip copied deployment repositories.
-- Assert both READMEs label the Deploy Button as first-deployment-only, describe
-  manual updates and one-time workflow installation, and cover Actions
-  permission, protected deployment files, and Cloudflare build diagnostics.
+- Assert both READMEs label the Deploy Button as first-deployment-only, recommend
+  standard Fork plus Cloudflare Import, cover all-branch Fork creation and
+  default-branch selection, and document manual recovery for existing clones.
 - Run `pnpm exec actionlint`, `pnpm check:worker-types`, `pnpm unit`,
   `pnpm coverage:ci`, `pnpm smoke`, and `wrangler deploy --dry-run`.
 
@@ -788,12 +784,15 @@ git push --force origin HEAD
 }
 ```
 
-```sh
-git fetch upstream gemini-account-pool
-git rm -r --ignore-unmatch --quiet -- .
-git checkout upstream/gemini-account-pool -- .
-git checkout HEAD -- .github/workflows wrangler.jsonc
-git push origin HEAD:"${default_branch}"
+```yaml
+if: ${{ github.event.repository.fork }}
+uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+with:
+  upstream_sync_repo: Guardinary/web2gem
+  upstream_sync_branch: gemini-account-pool
+  target_sync_branch: gemini-account-pool
+  target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+  upstream_pull_args: "--ff-only"
 ```
 
 ## Validation
