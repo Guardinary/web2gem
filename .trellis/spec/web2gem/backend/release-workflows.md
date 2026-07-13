@@ -676,7 +676,7 @@ existing one-click deployment.
 - Sync workflow: `.github/workflows/sync-upstream.yml`.
 - Upstream source: `https://github.com/Guardinary/web2gem.git`, branch
   `gemini-account-pool`.
-- User triggers: six-hour `schedule` plus `workflow_dispatch`.
+- User trigger: manual-only `workflow_dispatch`.
 
 ### 3. Contracts
 
@@ -696,10 +696,13 @@ existing one-click deployment.
   Build can deploy the existing Worker.
 - Never use force push or hard reset. Arbitrary application-code customization
   in a deployment mirror is unsupported because the next sync replaces it.
+- Follow the Renewlet-style manual update model: do not add `schedule` or other
+  automatic triggers. Users explicitly run the updater when they want a new
+  version.
 - A real Deploy Button-created repository has been observed without workflow
-  files. Documentation must not assume they are retained: tell users to verify
-  the workflow exists and present standard GitHub Fork plus Cloudflare Import
-  as the reliable automatic-update path.
+  files. Documentation must tell users to verify the workflow exists and give
+  one-time instructions for creating `.github/workflows/sync-upstream.yml` from
+  the canonical source when Cloudflare omits it.
 - Source quality-gate entry jobs must require
   `github.repository == 'Guardinary/web2gem'` so copied workflows do not consume
   deployment-repository Actions minutes.
@@ -713,8 +716,8 @@ existing one-click deployment.
 - Clean upstream update -> replace the application tree, commit, and push.
 - Protected `.github/workflows` or `wrangler.jsonc` missing -> fail before
   changing the mirror.
-- Deploy Button omits `.github/workflows` -> no scheduled updater exists; use
-  standard Fork plus Cloudflare Import.
+- Deploy Button omits `.github/workflows` -> install the canonical manual
+  workflow once in the generated repository.
 - Actions disabled or token write denied -> push fails; user enables Actions
   and read/write workflow permissions.
 - Protected deployment branch rejects bot push -> fail without bypass; user
@@ -728,7 +731,8 @@ existing one-click deployment.
 
 - Good: a deployment mirror receives the upstream application tree while its
   updater and Wrangler deployment configuration remain unchanged.
-- Base: the fork is already current and the scheduled run exits idempotently.
+- Base: the deployment mirror is already current and the manual run exits
+  idempotently.
 - Bad: rerun the Deploy Button to upgrade and create a duplicate Worker.
 - Bad: commit a user-specific D1 UUID or generate `wrangler.jsonc` from a GitHub
   secret.
@@ -741,16 +745,16 @@ existing one-click deployment.
 - Assert `GEMINI_DB` keeps its stable `database_name` and has no `database_id`
   property.
 - Assert the migration script continues referencing the binding name.
-- Assert sync triggers, `contents: write`, source-repository guard, upstream
+- Assert the sync workflow has only `workflow_dispatch`, plus `contents: write`,
+  source-repository guard, upstream
   URL/branch, protected file-tree replacement, idempotency check, normal commit,
   and default-branch push.
 - Assert the workflow contains no force push, hard reset, Cloudflare API token,
   or D1 ID handling.
 - Assert source quality-gate jobs skip copied deployment repositories.
 - Assert both READMEs label the Deploy Button as first-deployment-only, describe
-  the workflow-copy compatibility check, and cover standard Fork plus
-  Cloudflare Import, Actions permission, manual recovery, and Cloudflare build
-  diagnostics.
+  manual updates and one-time workflow installation, and cover Actions
+  permission, protected deployment files, and Cloudflare build diagnostics.
 - Run `pnpm exec actionlint`, `pnpm check:worker-types`, `pnpm unit`,
   `pnpm coverage:ci`, `pnpm smoke`, and `wrangler deploy --dry-run`.
 

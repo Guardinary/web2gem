@@ -586,8 +586,8 @@ export const cases = [
 				"utf8",
 			);
 
-			assert.match(workflow, /schedule:[\s\S]*cron: ["']17 \*\/6 \* \* \*["']/);
 			assert.match(workflow, /workflow_dispatch:/);
+			assert.doesNotMatch(workflow, /schedule:|cron:/);
 			assert.match(workflow, /permissions:\s*\n\s+contents: write/);
 			assert.match(workflow, /github\.repository != 'Guardinary\/web2gem'/);
 			assert.match(workflow, /https:\/\/github\.com\/Guardinary\/web2gem\.git/);
@@ -641,11 +641,11 @@ export const cases = [
 					english,
 					[
 						/first deployment only/i,
-						/compatibility trial/i,
+						/Manual updates/i,
 						/Sync upstream/,
 						/Workflow permissions/,
-						/standard GitHub Fork \+ Cloudflare Import/,
-						/has been observed without/i,
+						/does not run on a schedule/i,
+						/Add file → Create new file/,
 						/Do not add a D1 database ID to GitHub Secrets/,
 					],
 				],
@@ -654,11 +654,11 @@ export const cases = [
 					chinese,
 					[
 						/仅用于首次部署/,
-						/兼容性试验/,
+						/手动更新部署仓库/,
 						/Sync upstream/,
 						/Workflow permissions/,
-						/标准 GitHub Fork \+ Cloudflare Import/,
-						/实际测试中曾出现 Deploy Button 创建的仓库没有/,
+						/不会定时自动运行/,
+						/Add file → Create new file/,
 						/不要把 D1 database ID 添加到 GitHub Secrets/,
 					],
 				],
