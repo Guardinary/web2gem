@@ -1,14 +1,11 @@
 import type { RuntimeConfig, WorkerEnv } from "../../config";
-import { GEMINI_WEB_USER_AGENT } from "../constants";
-import { httpFetch } from "../transport";
+import { rotateGeminiAccountCookie } from "./cookie-rotator";
 import { AccountPoolService } from "./pool";
 import { D1GeminiAccountStore } from "./store-d1";
 import type {
 	D1DatabaseLike,
 	GeminiAccountLease,
-	GeminiAccountRotateResponse,
 	GeminiAccountRuntimeOptions,
-	GeminiAccountSecretRow,
 } from "./types";
 
 const DEFAULT_RUNTIME_BY_DB = new WeakMap<
@@ -30,7 +27,7 @@ export function createGeminiAccountRuntimeFromEnv(
 ): GeminiAccountRuntime | null {
 	const db = d1BindingFromEnv(env);
 	if (!db) return null;
-	const rotateCookie = options.rotateCookie || defaultRotateCookie;
+	const rotateCookie = options.rotateCookie || rotateGeminiAccountCookie;
 	return new GeminiAccountRuntime(
 		new AccountPoolService(new D1GeminiAccountStore(db), {
 			...options,
@@ -63,29 +60,4 @@ export function d1BindingFromEnv(
 function isD1DatabaseLike(value: unknown): value is D1DatabaseLike {
 	if (!value || typeof value !== "object") return false;
 	return typeof (value as Partial<D1DatabaseLike>).prepare === "function";
-}
-
-async function defaultRotateCookie(input: {
-	config: RuntimeConfig;
-	account: GeminiAccountSecretRow;
-}): Promise<GeminiAccountRotateResponse> {
-	return httpFetch("https://accounts.google.com/RotateCookies", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Origin: "https://accounts.google.com",
-			Referer: "https://accounts.google.com/",
-			"User-Agent": input.account.user_agent || GEMINI_WEB_USER_AGENT,
-			"Accept-Language": "en-US,en;q=0.9",
-			Cookie: input.account.cookie_header,
-		},
-		body: '[000,"-0000000000000000000"]',
-		timeoutMs: Math.min(
-			Math.max(Number(input.config.request_timeout_sec) || 30, 1) * 1000,
-			30000,
-		),
-		socket: input.config.upstream_socket,
-		socketFallback: "never",
-		cfg: input.config,
-	});
 }

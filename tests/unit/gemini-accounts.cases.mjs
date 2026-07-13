@@ -760,6 +760,48 @@ export const cases = [
 		},
 	],
 	[
+		"production admin factory wires the shared Gemini cookie rotator",
+		async () => {
+			const db = new FakeD1();
+			const store = new mod.D1GeminiAccountStore(db);
+			await seedAccount(store, "production-refresh", {
+				cookieHeader: "__Secure-1PSID=psid-production; __Secure-1PSIDTS=ts-old",
+				nowMs: 1000,
+			});
+
+			const originalFetch = globalThis.fetch;
+			let request;
+			globalThis.fetch = async (url, init) => {
+				request = { url: String(url), init };
+				return new Response("", {
+					status: 200,
+					headers: {
+						"set-cookie": "__Secure-1PSIDTS=ts-production; Path=/; Secure",
+					},
+				});
+			};
+			try {
+				const service = mod.createGeminiAccountAdminServiceFromD1(
+					db,
+					baseConfig({ request_timeout_sec: 10, upstream_socket: false }),
+					{ nowMs: () => 120_000 },
+				);
+				const result = await service.check("production-refresh");
+				assert.equal(result.failed, 0);
+				assert.equal(result.refreshed, 1);
+				assert.equal(request.url, "https://accounts.google.com/RotateCookies");
+				assert.equal(request.init.method, "POST");
+				assert.match(request.init.headers.Cookie, /psid-production/);
+				assert.doesNotMatch(
+					JSON.stringify(result),
+					/psid-production|ts-production/,
+				);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		},
+	],
+	[
 		"worker admin route uses admin auth separately from public API keys and avoids unauthenticated D1 reads",
 		async () => {
 			const db = new FakeD1();

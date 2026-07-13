@@ -40,6 +40,13 @@ type AccountRuntimeState = {
 	lastRotateAtMs: number;
 };
 
+type AccountPoolServiceOptions = Omit<
+	GeminiAccountRuntimeOptions,
+	"rotateCookie"
+> & {
+	rotateCookie: GeminiAccountCookieRotator;
+};
+
 export class AccountPoolService {
 	private readonly nowMs: () => number;
 	private readonly snapshotTtlMs: number;
@@ -63,7 +70,7 @@ export class AccountPoolService {
 
 	constructor(
 		private readonly store: GeminiAccountRuntimeStore,
-		options: GeminiAccountRuntimeOptions = {},
+		options: AccountPoolServiceOptions,
 	) {
 		this.nowMs = options.nowMs || Date.now;
 		this.snapshotTtlMs = positiveInt(
@@ -82,7 +89,7 @@ export class AccountPoolService {
 			options.refreshLockTtlMs,
 			DEFAULT_REFRESH_LOCK_TTL_MS,
 		);
-		this.rotateCookie = options.rotateCookie || missingRotator;
+		this.rotateCookie = options.rotateCookie;
 	}
 
 	async acquireLease(
@@ -473,8 +480,4 @@ function accountConfig(
 function positiveInt(value: unknown, fallback: number): number {
 	const n = Number(value);
 	return Number.isInteger(n) && n > 0 ? n : fallback;
-}
-
-async function missingRotator(): Promise<Response> {
-	throw new Error("Gemini account cookie rotator is not configured");
 }

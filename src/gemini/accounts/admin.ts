@@ -13,6 +13,7 @@ import {
 	WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS,
 } from "./admin-input";
 import type { GeminiAccountAdminFilterInput } from "./admin-input";
+import { rotateGeminiAccountCookie } from "./cookie-rotator";
 import { normalizeGeminiCookieHeader, sha256Hex } from "./normalize";
 import { AccountPoolService } from "./pool";
 import { d1BindingFromEnv } from "./runtime";
@@ -128,7 +129,7 @@ export class GeminiAccountAdminService {
 			snapshotTtlMs: 1,
 			versionProbeTtlMs: 1,
 			selectableLimit: 200,
-			...(options.rotateCookie ? { rotateCookie: options.rotateCookie } : {}),
+			rotateCookie: options.rotateCookie || rotateGeminiAccountCookie,
 		};
 		this.pool = new AccountPoolService(this.runtimeStore, poolOptions);
 	}
