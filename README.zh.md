@@ -203,15 +203,36 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 ### 方式一：部署到 Cloudflare Workers
 
-#### 推荐：部署按钮
+#### 推荐：部署按钮（仅用于首次部署）
 
 如果想从源码一键部署到 Cloudflare Workers，可以使用下面的部署按钮：
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem/tree/gemini-account-pool)
 
-该按钮会 fork 仓库，创建 Worker，根据 `wrangler.jsonc` 自动创建 `GEMINI_DB` D1 数据库，先构建 Worker，再通过 deploy 脚本执行 `wrangler d1 migrations apply GEMINI_DB --remote`，然后部署 Worker。部署向导中需要填写 `ADMIN_KEY`；`API_KEYS` 可选。部署完成后，打开管理页面导入你自己的 Gemini 账号值。
+该按钮会创建部署仓库和 Worker，根据 `wrangler.jsonc` 中的 draft binding 自动创建 `GEMINI_DB` D1 数据库，先构建 Worker，再通过 deploy 脚本执行 `wrangler d1 migrations apply GEMINI_DB --remote`，然后部署 Worker。部署向导中需要填写 `ADMIN_KEY`；`API_KEYS` 可选。部署完成后，打开管理页面导入你自己的 Gemini 账号值。
 
 部署表单会把 `wrangler.jsonc` `vars` 中的非隐私 Worker 配置以明文展示。只有 [`.env.example`](.env.example) 和 [`.dev.vars.example`](.dev.vars.example) 中的 secrets 会隐藏；当前只有 `API_KEYS` 和 `ADMIN_KEY`。
+
+不要使用部署按钮升级已有部署。再次点击会创建另一套项目，而不是更新原 Worker。
+
+#### 部署仓库自动更新
+
+仓库内置 **Sync upstream** GitHub Actions 工作流。首次部署完成后，在 Cloudflare 创建的仓库中进行一次设置：
+
+1. 打开仓库的 **Actions** 页面；如果 GitHub 要求为复制或 Fork 的仓库启用 Actions，请确认启用。
+2. 打开 **Settings → Actions → General → Workflow permissions**，选择 **Read and write permissions**。如果仓库受组织策略管理，可能需要管理员允许。
+3. 打开 **Actions → Sync upstream**，点击 **Run workflow** 手动运行一次，确认配置正确。
+
+工作流每 6 小时检查一次 `Guardinary/web2gem` 的 `gemini-account-pool` 分支。可以安全合并时，它会把更新推送到部署仓库的默认分支；该 push 会触发已连接的 Cloudflare Workers Build，从而升级原 Worker。没有更新时不会创建无意义提交。
+
+D1 binding 会有意省略 `database_id`。Cloudflare/Wrangler 自动 provisioning 会在 Git 之外保存实际资源关联，因此同步上游不会替换部署所使用的 D1 数据库。不要把 D1 database ID 添加到 GitHub Secrets；只有 `ADMIN_KEY` 和可选的 `API_KEYS` 等 Worker secrets 需要通过 Cloudflare secret 流程配置。
+
+如果 **Sync upstream** 失败：
+
+- 合并冲突表示部署仓库的自定义修改与上游更新重叠。工作流会中止，不会推送或覆盖修改；手动解决冲突后重新运行即可。
+- 权限错误通常表示 Actions 未启用，或 **Workflow permissions** 没有设置为读写权限。
+- 同步成功但部署失败时，到 Worker 的 Cloudflare **Builds** 日志中排查。
+- GitHub 可能停用长期无活动的公开仓库定时工作流。进入 **Actions** 页面重新启用，然后手动运行一次。
 
 #### 手动部署：Release bundle
 

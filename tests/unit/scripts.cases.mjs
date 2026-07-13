@@ -558,6 +558,88 @@ export const cases = [
 		},
 	],
 	[
+		"keeps the Deploy Button D1 binding portable across forks",
+		async () => {
+			const wrangler = parseJsoncObject(
+				await readFile("wrangler.jsonc", "utf8"),
+			);
+			const d1Bindings = wrangler.d1_databases || [];
+			const geminiDb = d1Bindings.find(
+				(binding) => binding.binding === "GEMINI_DB",
+			);
+
+			assert.equal(geminiDb?.database_name, "web2gem-gemini-accounts");
+			assert.equal(Object.hasOwn(geminiDb || {}, "database_id"), false);
+
+			const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+			assert.equal(
+				packageJson.scripts["db:migrations:apply"],
+				"wrangler d1 migrations apply GEMINI_DB --remote",
+			);
+		},
+	],
+	[
+		"keeps fork synchronization safe and Cloudflare-driven",
+		async () => {
+			const workflow = await readFile(
+				".github/workflows/sync-upstream.yml",
+				"utf8",
+			);
+
+			assert.match(workflow, /schedule:[\s\S]*cron: ["']17 \*\/6 \* \* \*["']/);
+			assert.match(workflow, /workflow_dispatch:/);
+			assert.match(workflow, /permissions:\s*\n\s+contents: write/);
+			assert.match(workflow, /github\.repository != 'Guardinary\/web2gem'/);
+			assert.match(workflow, /https:\/\/github\.com\/Guardinary\/web2gem\.git/);
+			assert.match(workflow, /git fetch upstream gemini-account-pool/);
+			assert.match(
+				workflow,
+				/git merge --no-edit upstream\/gemini-account-pool/,
+			);
+			assert.match(workflow, /git merge --abort/);
+			assert.match(workflow, /git push origin HEAD:/);
+			assert.doesNotMatch(workflow, /reset --hard|push --force|-X theirs/);
+			assert.doesNotMatch(workflow, /CLOUDFLARE_API_TOKEN|database_id/);
+			assert.doesNotMatch(workflow, /\t/);
+		},
+	],
+	[
+		"documents first deployment and automatic fork updates",
+		async () => {
+			const [english, chinese] = await Promise.all([
+				readFile("README.md", "utf8"),
+				readFile("README.zh.md", "utf8"),
+			]);
+
+			for (const [path, readme, patterns] of [
+				[
+					"README.md",
+					english,
+					[
+						/first deployment only/i,
+						/Automatic updates/,
+						/Sync upstream/,
+						/Workflow permissions/,
+						/Do not add a D1 database ID to GitHub Secrets/,
+					],
+				],
+				[
+					"README.zh.md",
+					chinese,
+					[
+						/仅用于首次部署/,
+						/自动更新/,
+						/Sync upstream/,
+						/Workflow permissions/,
+						/不要把 D1 database ID 添加到 GitHub Secrets/,
+					],
+				],
+			]) {
+				for (const pattern of patterns) assert.match(readme, pattern, path);
+			}
+		},
+	],
+	[
 		"keeps release workflows on the complete canonical quality gate",
 		async () => {
 			const packageJson = JSON.parse(await readFile("package.json", "utf8"));

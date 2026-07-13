@@ -661,6 +661,119 @@ ubuntu-quality:
   needs: classify
 ```
 
+## Scenario: Fork-Synchronized Cloudflare Deployments
+
+### 1. Scope / Trigger
+
+Use this contract when changing the Cloudflare Deploy Button, D1 draft binding,
+deployment-repository synchronization, or documentation for upgrading an
+existing one-click deployment.
+
+### 2. Signatures
+
+- Draft D1 binding: `wrangler.jsonc` `d1_databases[].binding = "GEMINI_DB"`.
+- Migration command: `wrangler d1 migrations apply GEMINI_DB --remote`.
+- Sync workflow: `.github/workflows/sync-upstream.yml`.
+- Upstream source: `https://github.com/Guardinary/web2gem.git`, branch
+  `gemini-account-pool`.
+- User triggers: six-hour `schedule` plus `workflow_dispatch`.
+
+### 3. Contracts
+
+- Keep `wrangler.jsonc` portable: declare the stable D1 binding/resource name
+  but omit `database_id`. Cloudflare/Wrangler automatic provisioning owns the
+  physical resource association outside Git.
+- Do not put D1 database IDs in Deploy Button secret templates or GitHub
+  Secrets. `ADMIN_KEY` and optional `API_KEYS` remain Worker secrets.
+- The sync job requests only `contents: write`, runs only outside
+  `Guardinary/web2gem`, and serializes runs with concurrency.
+- Checkout the deployment repository default branch with full history, fetch
+  the canonical account-pool branch, and use an ordinary Git merge.
+- Up-to-date runs create no commit. Successful merges push to the deployment
+  default branch so the connected Cloudflare Workers Build can deploy the
+  existing Worker.
+- Merge conflicts abort without push. Never use force push, hard reset, or a
+  merge strategy that silently selects upstream content over user changes.
+- A `GITHUB_TOKEN` push does not trigger another workflow in the same GitHub
+  repository; deployment must rely on the external Cloudflare Git integration,
+  not a second push-triggered GitHub Actions workflow.
+
+### 4. Validation & Error Matrix
+
+- No upstream update -> workflow succeeds without push.
+- Clean upstream update -> merge and push to the deployment default branch.
+- User/upstream conflict -> abort merge, write recovery guidance, fail without
+  push.
+- Actions disabled or token write denied -> push fails; user enables Actions
+  and read/write workflow permissions.
+- Protected deployment branch rejects bot push -> fail without bypass; user
+  adjusts branch policy or synchronizes manually.
+- Sync succeeds but Cloudflare build fails -> inspect Cloudflare Builds; do not
+  rerun the Deploy Button and create a duplicate Worker.
+- Draft D1 binding cannot be parsed -> `wrangler deploy --dry-run` or Worker
+  binding type checks fail before release.
+
+### 5. Good/Base/Bad Cases
+
+- Good: a deployment fork with no custom conflicts receives an upstream merge
+  and Cloudflare deploys the original Worker/D1 binding.
+- Base: the fork is already current and the scheduled run exits idempotently.
+- Bad: rerun the Deploy Button to upgrade and create a duplicate Worker.
+- Bad: commit a user-specific D1 UUID or generate `wrangler.jsonc` from a GitHub
+  secret.
+- Bad: `git reset --hard upstream/gemini-account-pool` followed by force push.
+
+### 6. Tests Required
+
+- Assert `GEMINI_DB` keeps its stable `database_name` and has no `database_id`
+  property.
+- Assert the migration script continues referencing the binding name.
+- Assert sync triggers, `contents: write`, source-repository guard, upstream
+  URL/branch, normal merge, abort path, and default-branch push.
+- Assert the workflow contains no force push, hard reset, Cloudflare API token,
+  or D1 ID handling.
+- Assert both READMEs label the Deploy Button as first-deployment-only and cover
+  Actions enablement, write permission, manual sync, D1 provisioning, conflict
+  recovery, and Cloudflare build diagnostics.
+- Run `pnpm exec actionlint`, `pnpm check:worker-types`, `pnpm unit`,
+  `pnpm coverage:ci`, `pnpm smoke`, and `wrangler deploy --dry-run`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```jsonc
+{
+  "d1_databases": [{
+    "binding": "GEMINI_DB",
+    "database_name": "web2gem-gemini-accounts",
+    "database_id": "<user-specific-id>"
+  }]
+}
+```
+
+```sh
+git reset --hard upstream/gemini-account-pool
+git push --force origin HEAD
+```
+
+#### Correct
+
+```jsonc
+{
+  "d1_databases": [{
+    "binding": "GEMINI_DB",
+    "database_name": "web2gem-gemini-accounts"
+  }]
+}
+```
+
+```sh
+git fetch upstream gemini-account-pool
+git merge --no-edit upstream/gemini-account-pool
+git push origin HEAD:"${default_branch}"
+```
+
 ## Validation
 
 For workflow changes, run:

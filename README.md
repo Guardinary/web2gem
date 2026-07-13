@@ -203,15 +203,36 @@ Anonymous-eligible text generation works without `GEMINI_DB`. Configure `GEMINI_
 
 ### Option 1: Deploy to Cloudflare Workers
 
-#### Recommended: deploy button
+#### Recommended: deploy button (first deployment only)
 
 For source-based one-click deployment to Cloudflare Workers, use the deploy button:
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem/tree/gemini-account-pool)
 
-The button forks the repository, creates the Worker, provisions the `GEMINI_DB` D1 database from `wrangler.jsonc`, builds the Worker, runs `wrangler d1 migrations apply GEMINI_DB --remote` through the deploy script, then deploys the Worker. During setup, enter `ADMIN_KEY`; `API_KEYS` is optional. After deployment, open the admin UI and import your own Gemini account values.
+The button creates a deployment repository and Worker, provisions the `GEMINI_DB` D1 database from the draft binding in `wrangler.jsonc`, builds the Worker, runs `wrangler d1 migrations apply GEMINI_DB --remote` through the deploy script, then deploys the Worker. During setup, enter `ADMIN_KEY`; `API_KEYS` is optional. After deployment, open the admin UI and import your own Gemini account values.
 
 The deploy form shows non-secret Worker settings from `wrangler.jsonc` `vars` in plain text. Only secrets from [`.env.example`](.env.example) and [`.dev.vars.example`](.dev.vars.example), currently `API_KEYS` and `ADMIN_KEY`, are hidden.
+
+Do not use the Deploy button to upgrade an existing deployment. Running it again creates another project instead of updating the existing Worker.
+
+#### Automatic updates for the deployment repository
+
+The repository includes a **Sync upstream** GitHub Actions workflow. After the first deployment, complete this one-time setup in the repository created by Cloudflare:
+
+1. Open the repository's **Actions** tab and enable workflows if GitHub asks you to enable Actions for the copied or forked repository.
+2. Open **Settings → Actions → General → Workflow permissions** and select **Read and write permissions**. Organization policy may require an administrator to allow this.
+3. Open **Actions → Sync upstream** and select **Run workflow** once to verify the setup.
+
+The workflow checks `Guardinary/web2gem` `gemini-account-pool` every six hours. When Git can merge the update safely, it pushes the merged revision to the deployment repository's default branch. That push starts the connected Cloudflare Workers Build and updates the existing Worker. If there is no update, the workflow exits without creating a commit.
+
+The D1 binding intentionally omits `database_id`. Cloudflare/Wrangler automatic provisioning keeps the actual resource association outside Git, so upstream synchronization does not replace the deployment's D1 database. Do not add a D1 database ID to GitHub Secrets; only Worker secrets such as `ADMIN_KEY` and optional `API_KEYS` belong in the Cloudflare secret flow.
+
+If **Sync upstream** fails:
+
+- A merge conflict means the deployment repository contains custom changes that overlap an upstream update. The workflow aborts without pushing or overwriting them; resolve the conflict manually and run it again.
+- A permission error means Actions is disabled or **Workflow permissions** is not set to read and write.
+- A successful sync followed by a failed deployment should be investigated in the Worker's Cloudflare **Builds** logs.
+- GitHub may disable scheduled workflows in inactive public repositories. Re-enable the workflow from the **Actions** tab and run it manually.
 
 #### Manual: release bundle
 

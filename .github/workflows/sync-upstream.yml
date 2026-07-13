@@ -1,0 +1,62 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync gemini-account-pool
+    if: ${{ github.repository != 'Guardinary/web2gem' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deployment repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Merge upstream updates
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          default_branch="${{ github.event.repository.default_branch }}"
+          upstream_branch="gemini-account-pool"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/Guardinary/web2gem.git
+          git fetch upstream gemini-account-pool
+
+          if git merge-base --is-ancestor "upstream/${upstream_branch}" HEAD; then
+            echo "Already up to date with upstream/${upstream_branch}." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if ! git merge --no-edit upstream/gemini-account-pool; then
+            git merge --abort || true
+            {
+              echo "## Upstream synchronization needs attention"
+              echo
+              echo "The deployment repository has changes that conflict with \`upstream/${upstream_branch}\`."
+              echo "No commit was pushed. Resolve the conflict manually, then run this workflow again."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          git push origin HEAD:"${default_branch}"
+          {
+            echo "## Upstream synchronization complete"
+            echo
+            echo "Merged \`upstream/${upstream_branch}\` into \`${default_branch}\` and pushed the result."
+            echo "The connected Cloudflare Workers Build should start from this push."
+          } >> "$GITHUB_STEP_SUMMARY"

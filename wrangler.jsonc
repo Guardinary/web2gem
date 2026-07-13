@@ -7,8 +7,7 @@
 	"d1_databases": [
 		{
 			"binding": "GEMINI_DB",
-			"database_name": "web2gem-gemini-accounts",
-			"database_id": ""
+			"database_name": "web2gem-gemini-accounts"
 		}
 	],
 	"observability": {
