@@ -4,6 +4,7 @@ import { AccountCards, AccountRows } from "../components";
 import { Icon } from "../icons";
 import { language, tr } from "../i18n";
 import { identifier, identifierKey } from "../logic";
+import { advancedFilterCount, hasFilters } from "../selectors";
 import {
 	accounts,
 	advancedFiltersExpanded,
@@ -23,17 +24,6 @@ import { WorkspaceFilters } from "./WorkspaceFilters";
 
 export function Workspace(): JSX.Element {
 	const rows = accounts.value;
-	const advancedFilterCount = [
-		categoryFilter.value,
-		cooldownFilter.value,
-		sourceFilter.value.trim(),
-	].filter(Boolean).length;
-	const hasFilters = Boolean(
-		query.value.trim() ||
-			statusFilter.value ||
-			enabledFilter.value ||
-			advancedFilterCount,
-	);
 	const selectVisible = (): void => {
 		selected.value = new Set([...selected.value, ...rows.map(identifierKey)]);
 	};
@@ -84,8 +74,8 @@ export function Workspace(): JSX.Element {
 				</div>
 			</div>
 			<WorkspaceFilters
-				advancedFilterCount={advancedFilterCount}
-				hasFilters={hasFilters}
+				advancedFilterCount={advancedFilterCount.value}
+				hasFilters={hasFilters.value}
 				onClearFilters={clearFilters}
 			/>
 			<BulkBar

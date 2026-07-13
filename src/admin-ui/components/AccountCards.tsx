@@ -1,4 +1,6 @@
 import type { JSX } from "preact";
+import { memo } from "preact/compat";
+import { useComputed } from "@preact/signals";
 import { statusLabel, tr } from "../i18n";
 import {
 	accountDisplayName,
@@ -14,16 +16,22 @@ import type { GeminiAccount } from "../types";
 import { AccountActions } from "./AccountActions";
 import { accountIdentity, refreshSummary, toggleSelected } from "./cells";
 
-function AccountCard({ account }: { account: GeminiAccount }): JSX.Element {
+const AccountCard = memo(function AccountCardView({
+	account,
+}: {
+	account: GeminiAccount;
+}): JSX.Element {
 	const key = identifierKey(account);
 	const enabled = Number(account.enabled) === 1;
+	const isSelected = useComputed(() => selected.value.has(key));
+	const busy = useComputed(() => !!rowBusy.value[key]);
 	return (
-		<article class="account-card" aria-busy={!!rowBusy.value[key]}>
+		<article class="account-card" aria-busy={busy.value}>
 			<div class="account-card-head">
 				<label class="account-select">
 					<input
 						type="checkbox"
-						checked={selected.value.has(key)}
+						checked={isSelected.value}
 						onChange={(event) =>
 							toggleSelected(
 								account,
@@ -106,7 +114,7 @@ function AccountCard({ account }: { account: GeminiAccount }): JSX.Element {
 			<AccountActions account={account} />
 		</article>
 	);
-}
+});
 
 export function AccountCards(): JSX.Element {
 	if (loading.value)

@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import { useComputed } from "@preact/signals";
 import { openEdit, runAction } from "../actions";
 import { Icon } from "../icons";
 import { tr } from "../i18n";
@@ -18,7 +19,7 @@ export function AccountActions({
 }): JSX.Element {
 	const key = identifierKey(account);
 	const enabled = Number(account.enabled) === 1;
-	const busy = rowBusy.value[key] || "";
+	const busy = useComputed(() => rowBusy.value[key] || "").value;
 	const label = accountDisplayName(account);
 	const run = (action: string): void => {
 		void runAction(action, [identifier(account)], {

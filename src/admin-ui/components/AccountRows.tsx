@@ -1,4 +1,6 @@
 import type { JSX } from "preact";
+import { memo } from "preact/compat";
+import { useComputed } from "@preact/signals";
 import { statusLabel, tr } from "../i18n";
 import {
 	accountDisplayName,
@@ -37,16 +39,22 @@ const skeletonCells = [
 	"actions",
 ] as const;
 
-function AccountRow({ account }: { account: GeminiAccount }): JSX.Element {
+const AccountRow = memo(function AccountRowView({
+	account,
+}: {
+	account: GeminiAccount;
+}): JSX.Element {
 	const key = identifierKey(account);
 	const enabled = Number(account.enabled) === 1;
+	const isSelected = useComputed(() => selected.value.has(key));
+	const busy = useComputed(() => !!rowBusy.value[key]);
 	return (
-		<tr data-key={key} aria-busy={!!rowBusy.value[key]}>
+		<tr data-key={key} aria-busy={busy.value}>
 			<td>
 				<input
 					type="checkbox"
 					aria-label={`Select ${accountDisplayName(account)}`}
-					checked={selected.value.has(key)}
+					checked={isSelected.value}
 					onChange={(event) =>
 						toggleSelected(
 							account,
@@ -111,7 +119,7 @@ function AccountRow({ account }: { account: GeminiAccount }): JSX.Element {
 			</td>
 		</tr>
 	);
-}
+});
 
 export function AccountRows(): JSX.Element {
 	const rows = accounts.value;

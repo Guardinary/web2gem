@@ -1,68 +1,20 @@
 import type { JSX } from "preact";
 import { tr } from "../i18n";
-import { isCooling, isRefreshable, safeNumber } from "../logic";
-import { accountStats, accounts, selected } from "../state";
+import { metricSummary, selectedCount } from "../selectors";
 
 export function MetricCards(): JSX.Element {
-	const stats = accountStats.value;
-	const total = stats?.total ?? accounts.value.length;
-	const active =
-		stats?.available ??
-		accounts.value.filter(
-			(item) => item.status === "active" && Number(item.enabled) === 1,
-		).length;
-	const attention =
-		stats?.needsAttention ??
-		accounts.value.filter((item) =>
-			[
-				"auth_failed",
-				"needs_cookie_update",
-				"rate_limited",
-				"cooling_down",
-				"hard_blocked",
-				"needs_user_action",
-				"missing_cookie",
-				"capability_mismatch",
-			].includes(item.status),
-		).length;
-	const disabled =
-		stats?.disabled ??
-		accounts.value.filter(
-			(item) => Number(item.enabled) !== 1 || item.status === "disabled",
-		).length;
-	const refreshable =
-		stats?.refreshable ?? accounts.value.filter(isRefreshable).length;
-	const cooling = stats?.cooling ?? accounts.value.filter(isCooling).length;
-	const psidOnly =
-		stats?.psidOnly ??
-		accounts.value.filter(
-			(item) =>
-				item.account_category === "psid_only" ||
-				item.account_category === "missing_session",
-		).length;
-	const successes =
-		stats?.successCount ??
-		accounts.value.reduce(
-			(sum, item) => sum + safeNumber(item.success_count),
-			0,
-		);
-	const failures =
-		stats?.failureCount ??
-		accounts.value.reduce(
-			(sum, item) => sum + safeNumber(item.failure_count),
-			0,
-		);
+	const stats = metricSummary.value;
 	const primaryCards: Array<{
 		label: Parameters<typeof tr>[0];
 		value: string | number;
 		tone: string;
 	}> = [
-		{ label: "Total", value: total, tone: "neutral" },
-		{ label: "Available", value: active, tone: "success" },
-		{ label: "Needs attention", value: attention, tone: "warning" },
+		{ label: "Total", value: stats.total, tone: "neutral" },
+		{ label: "Available", value: stats.available, tone: "success" },
+		{ label: "Needs attention", value: stats.needsAttention, tone: "warning" },
 		{
 			label: "Success / fail",
-			value: `${successes} / ${failures}`,
+			value: `${stats.successCount} / ${stats.failureCount}`,
 			tone: "info",
 		},
 	];
@@ -70,11 +22,11 @@ export function MetricCards(): JSX.Element {
 		label: Parameters<typeof tr>[0];
 		value: string | number;
 	}> = [
-		{ label: "Disabled", value: disabled },
-		{ label: "Refreshable", value: refreshable },
-		{ label: "Cooling", value: cooling },
-		{ label: "PSID only", value: psidOnly },
-		{ label: "Selected", value: selected.value.size },
+		{ label: "Disabled", value: stats.disabled },
+		{ label: "Refreshable", value: stats.refreshable },
+		{ label: "Cooling", value: stats.cooling },
+		{ label: "PSID only", value: stats.psidOnly },
+		{ label: "Selected", value: selectedCount.value },
 	];
 	return (
 		<div class="metrics">
