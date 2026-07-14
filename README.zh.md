@@ -203,36 +203,42 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 ### 方式一：部署到 Cloudflare Workers
 
-#### 快速体验：部署按钮（仅用于首次部署）
+> 应该选哪种方式？
+>
+> - 只想快速体验：使用**部署按钮**。
+> - 希望以后自动更新：使用下面的**推荐方式**。
 
-如果想从源码一键部署到 Cloudflare Workers，可以使用下面的部署按钮：
+#### 最快方式：部署按钮（仅用于首次部署）
+
+点击下面的按钮，然后按照 Cloudflare 页面提示操作：
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem/tree/gemini-account-pool)
 
-该按钮会创建部署仓库和 Worker，根据 `wrangler.jsonc` 中的 draft binding 自动创建 `GEMINI_DB` D1 数据库，先构建 Worker，再通过 deploy 脚本执行 `wrangler d1 migrations apply GEMINI_DB --remote`，然后部署 Worker。部署向导中需要填写 `ADMIN_KEY`；`API_KEYS` 可选。部署完成后，打开管理页面导入你自己的 Gemini 账号值。
+部署时：
 
-部署表单会把 `wrangler.jsonc` `vars` 中的非隐私 Worker 配置以明文展示。只有 [`.env.example`](.env.example) 和 [`.dev.vars.example`](.dev.vars.example) 中的 secrets 会隐藏；当前只有 `API_KEYS` 和 `ADMIN_KEY`。
+- 设置 `ADMIN_KEY`，用于保护管理页面。
+- 如果希望客户端必须携带 API Key，请设置 `API_KEYS`；否则可以留空。
+- 部署完成后打开 `/admin`，导入你的 Gemini 账号。
 
-不要使用部署按钮升级已有部署。再次点击会创建另一套项目，而不是更新原 Worker。
+部署按钮只适合首次部署，不能自动更新。再次点击会创建另一个项目，而不是升级原 Worker。
 
-Deploy Button 创建的是独立 clone，而不是真正的 GitHub Fork，并且 Cloudflare 可能不会复制 `.github/workflows`。它适合快速完成首次部署，不适合作为需要长期自动同步的部署方式。
+#### 推荐：自动更新部署
 
-#### 推荐：标准 GitHub Fork + Cloudflare Import
+先 Fork 本仓库，再从 Cloudflare 导入这个 Fork：
 
-如果希望部署后自动更新：
+1. 打开 [GitHub Fork 页面](https://github.com/Guardinary/web2gem/fork)，取消勾选 **Copy the main branch only**，然后创建 Fork。
+2. 在 Fork 中进入 **Settings → Branches**，把 `gemini-account-pool` 设置为默认分支。
+3. 进入 **Actions**，启用并手动运行一次 **Upstream Sync**。如果无法推送，把 **Settings → Actions → General → Workflow permissions** 设置为 **Read and write permissions**。
+4. 在 Cloudflare Workers 中导入这个 Fork，并部署默认分支。填写 `ADMIN_KEY`；`API_KEYS` 可选。
 
-1. 打开 [GitHub Fork 页面](https://github.com/Guardinary/web2gem/fork)。取消勾选 **Copy the main branch only**，确保 `gemini-account-pool` 分支被复制，然后创建 Fork。
-2. 在 Fork 中打开 **Settings → Branches**，把 `gemini-account-pool` 设置为默认分支。GitHub 定时工作流只会从默认分支运行。
-3. 打开 **Actions**，启用 **Upstream Sync**；再打开 **Settings → Actions → General → Workflow permissions**，选择 **Read and write permissions**。手动运行一次 **Upstream Sync** 完成验证。
-4. 在 Cloudflare Workers 控制台导入/连接这个 Fork，并部署其默认的 `gemini-account-pool` 分支。填写 `ADMIN_KEY`；`API_KEYS` 仍然可选。
+完成后，Fork 每周会自动检查更新；需要立即更新时，也可以手动运行 **Upstream Sync**。
 
-Fork 会在每周一 00:00 UTC 检查 `Guardinary/web2gem`，也可以随时手动同步。工作流只使用仓库自带的 `GITHUB_TOKEN`，不需要在 GitHub 保存 Cloudflare API Token。同步 push 后，已连接的 Cloudflare Workers Build 会更新原 Worker。
+不要直接修改 Fork 的 `gemini-account-pool` 分支，否则自动同步可能停止，需要手动处理冲突。
 
-请把 `gemini-account-pool` 作为只用于部署的分支，不要向其中提交自定义应用代码。同步只允许 fast-forward；如果 Fork 已经分叉，工作流会安全失败。规范的 `wrangler.jsonc` 不包含 `database_id`，实际 D1 关联和 Worker secrets 由 Cloudflare 在 Git 之外管理。
+<details>
+<summary>更新已有的 Deploy Button clone</summary>
 
-#### 更新已有的 Deploy Button clone
-
-已经通过按钮创建的仓库仍然可以更新其连接的 Worker，但它没有 Fork 关系，也没有内置自动同步。把生成的仓库 clone 到本地，然后执行：
+如果已经通过按钮部署，请把生成的仓库 clone 到本地，然后执行：
 
 ```sh
 git remote add upstream https://github.com/Guardinary/web2gem.git
@@ -241,26 +247,15 @@ git merge --no-edit upstream/gemini-account-pool
 git push origin HEAD
 ```
 
-如果 clone 已经分叉，请检查其中的提交，不要强制推送。同步成功但部署失败时，到 Worker 的 Cloudflare **Builds** 日志中排查。
+如果 Git 提示冲突，请先解决冲突再推送。不要再次点击部署按钮。
 
-#### 手动部署：Release bundle
+</details>
 
-从项目 [Releases](https://github.com/Guardinary/web2gem/releases) 页面下载构建产物 `worker.js`，在 Cloudflare Worker 控制台打开你的 Worker，将 Worker 源码替换为该文件内容。然后在 Worker 控制台设置中添加 `nodejs_compat` 兼容性标记。
+#### 高级方式：手动部署 `worker.js`
+
+从 [Releases](https://github.com/Guardinary/web2gem/releases) 下载 `worker.js`，粘贴到 Cloudflare Worker，并添加 `nodejs_compat` 兼容性标记。还需要绑定 `GEMINI_DB` D1 数据库并设置 `ADMIN_KEY`。数据库配置和账号导入步骤见[账号池管理](#账号池管理)。
 
 ![Cloudflare Worker 设置中的 nodejs_compat 兼容性标记](./docs/images/cloudflare-worker-settings-nodejs-compat.png)
-
-每个 Release 会发布这些文件：
-
-| 文件 | 用途 |
-|------|------|
-| `worker.js` | 单文件 Cloudflare Worker bundle。 |
-| `web2gem_<tag>_docker_linux_amd64.tar.gz` | `linux/amd64` Docker 镜像归档。 |
-| `web2gem_<tag>_docker_linux_arm64.tar.gz` | `linux/arm64` Docker 镜像归档。 |
-| `sha256sums.txt` | 发布文件校验和。 |
-
-手动部署时还需要创建并绑定 `GEMINI_DB`、执行仓库内的 schema，并在打开 `/admin` 前设置 `ADMIN_KEY`。需要保护客户端访问时再设置 `API_KEYS`。D1 命令和账号导入流程见[账号池管理](#账号池管理)。
-
-如果不使用 Release 产物、而是从源码构建，`pnpm deploy` 会先构建 `dist/worker.js`，再对 `GEMINI_DB` binding 执行 D1 migrations，并通过仓库内的 `wrangler.jsonc` 部署。
 
 ### 方式二：通过 Docker 部署
 

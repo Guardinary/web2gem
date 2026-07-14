@@ -203,36 +203,42 @@ Anonymous-eligible text generation works without `GEMINI_DB`. Configure `GEMINI_
 
 ### Option 1: Deploy to Cloudflare Workers
 
-#### Quick trial: deploy button (first deployment only)
+> Which method should I choose?
+>
+> - Want to try it quickly: use the **Deploy Button**.
+> - Want automatic updates: use the **recommended method** below.
 
-For source-based one-click deployment to Cloudflare Workers, use the deploy button:
+#### Quickest: Deploy Button (first deployment only)
+
+Click the button below and follow the Cloudflare setup page:
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Guardinary/web2gem/tree/gemini-account-pool)
 
-The button creates a deployment repository and Worker, provisions the `GEMINI_DB` D1 database from the draft binding in `wrangler.jsonc`, builds the Worker, runs `wrangler d1 migrations apply GEMINI_DB --remote` through the deploy script, then deploys the Worker. During setup, enter `ADMIN_KEY`; `API_KEYS` is optional. After deployment, open the admin UI and import your own Gemini account values.
+During setup:
 
-The deploy form shows non-secret Worker settings from `wrangler.jsonc` `vars` in plain text. Only secrets from [`.env.example`](.env.example) and [`.dev.vars.example`](.dev.vars.example), currently `API_KEYS` and `ADMIN_KEY`, are hidden.
+- Set `ADMIN_KEY` to protect the admin page.
+- Set `API_KEYS` if clients should provide an API key; otherwise leave it empty.
+- After deployment, open `/admin` and import your Gemini accounts.
 
-Do not use the Deploy button to upgrade an existing deployment. Running it again creates another project instead of updating the existing Worker.
+The Deploy Button is for the first deployment only and does not provide automatic updates. Clicking it again creates another project instead of upgrading the existing Worker.
 
-The Deploy Button creates an independent clone rather than a GitHub Fork, and Cloudflare may omit `.github/workflows`. Use it for a quick first deployment, not for a deployment that must stay synchronized automatically.
+#### Recommended: automatic updates
 
-#### Recommended: standard GitHub Fork + Cloudflare Import
+Fork this repository first, then import the Fork into Cloudflare:
 
-For a long-lived deployment with automatic updates:
+1. Open the [GitHub Fork page](https://github.com/Guardinary/web2gem/fork), clear **Copy the main branch only**, and create the Fork.
+2. In the Fork, go to **Settings → Branches** and set `gemini-account-pool` as the default branch.
+3. Go to **Actions**, enable **Upstream Sync**, and run it once. If it cannot push, set **Settings → Actions → General → Workflow permissions** to **Read and write permissions**.
+4. In Cloudflare Workers, import the Fork and deploy its default branch. Set `ADMIN_KEY`; `API_KEYS` is optional.
 
-1. Open the [GitHub Fork page](https://github.com/Guardinary/web2gem/fork). Clear **Copy the main branch only** so the `gemini-account-pool` branch is included, then create the Fork.
-2. In the Fork, open **Settings → Branches** and set `gemini-account-pool` as the default branch. Scheduled GitHub Actions run only from the default branch.
-3. Open **Actions**, enable **Upstream Sync**, then open **Settings → Actions → General → Workflow permissions** and select **Read and write permissions**. Run **Upstream Sync** once manually to verify it.
-4. In the Cloudflare Workers dashboard, import/connect the Fork and deploy its `gemini-account-pool` default branch. Enter `ADMIN_KEY`; `API_KEYS` remains optional.
+After setup, the Fork checks for updates every week. You can also run **Upstream Sync** manually whenever you want the latest version.
 
-The Fork checks `Guardinary/web2gem` every Monday at 00:00 UTC and can also be synchronized manually. It uses the repository `GITHUB_TOKEN`; no Cloudflare API token is stored in GitHub. A successful sync push starts the connected Cloudflare Workers Build and updates the existing Worker.
+Avoid editing files directly on the Fork's `gemini-account-pool` branch, or automatic synchronization may stop and require manual conflict resolution.
 
-Keep `gemini-account-pool` as a deployment-only branch and do not commit custom application changes to it. Synchronization is fast-forward-only and fails safely if the Fork diverges. The canonical `wrangler.jsonc` omits `database_id`, while Cloudflare owns the deployed D1 association and Worker secrets outside Git.
+<details>
+<summary>Updating an existing Deploy Button clone</summary>
 
-#### Updating an existing Deploy Button clone
-
-An existing button-created repository can still update its connected Worker, but it has no Fork relationship or built-in automatic sync. Clone that generated repository locally, then run:
+If you already deployed with the button, clone the generated repository and run:
 
 ```sh
 git remote add upstream https://github.com/Guardinary/web2gem.git
@@ -241,26 +247,15 @@ git merge --no-edit upstream/gemini-account-pool
 git push origin HEAD
 ```
 
-If the clone has diverged, review its commits instead of force-pushing. If synchronization succeeds but deployment fails, inspect the Worker's Cloudflare **Builds** logs.
+If Git reports a conflict, resolve it before pushing. Do not click the Deploy Button again.
 
-#### Manual: release bundle
+</details>
 
-Download the release build artifact `worker.js` from the [Releases](https://github.com/Guardinary/web2gem/releases) page, open your Cloudflare Worker in the dashboard, and replace the Worker source with the contents of that file. In the Worker dashboard settings, add the `nodejs_compat` compatibility flag.
+#### Advanced: deploy `worker.js` manually
+
+Download `worker.js` from [Releases](https://github.com/Guardinary/web2gem/releases), paste it into a Cloudflare Worker, and add the `nodejs_compat` compatibility flag. You must also bind a `GEMINI_DB` D1 database and configure `ADMIN_KEY`. See [Account Pool Management](#account-pool-management) for the database setup and account import steps.
 
 ![Cloudflare Worker settings showing nodejs_compat](./docs/images/cloudflare-worker-settings-nodejs-compat.png)
-
-Each release publishes these assets:
-
-| Asset | Use |
-|-------|-----|
-| `worker.js` | Single-file Cloudflare Worker bundle. |
-| `web2gem_<tag>_docker_linux_amd64.tar.gz` | Docker image archive for `linux/amd64`. |
-| `web2gem_<tag>_docker_linux_arm64.tar.gz` | Docker image archive for `linux/arm64`. |
-| `sha256sums.txt` | Checksums for the released files. |
-
-For a manual deployment, also create and bind `GEMINI_DB`, apply the included schema, and set `ADMIN_KEY` before opening `/admin`. Set `API_KEYS` when you want to protect shared client access. See [Account Pool Management](#account-pool-management) for the D1 command and import flow.
-
-If you build from source instead of using a release artifact, `pnpm deploy` builds `dist/worker.js`, applies D1 migrations to the `GEMINI_DB` binding, and deploys through the checked-in `wrangler.jsonc`.
 
 ### Option 2: Deploy with Docker
 
