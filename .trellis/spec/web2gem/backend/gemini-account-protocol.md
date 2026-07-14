@@ -119,3 +119,95 @@ waitUntil(refreshPromise);
 ```typescript
 cfg.execution_ctx.waitUntil(refreshPromise);
 ```
+
+## Scenario: Account-derived Headers And Passive Session Maintenance
+
+### 1. Scope / Trigger
+
+Use this contract when changing GetUserStatus capacity decoding, selected
+account model headers, Gemini response Cookie handling, or account import
+initialization.
+
+### 2. Signatures
+
+- Probe models carry `{ modelId, available, capacity, capacityField }`.
+- Known capacity precedence returns `(1,13)` for tier `21`, `(2,13)` for tier
+  `22`, `(4,12)` for capability `115`, `(3,12)` for tier `16` or capability
+  `106`, `(2,12)` for tier `8` or capability `19`, and `(1,12)` otherwise.
+- A lease exposes `modelCapability` and `flushObservedCookies()`.
+- `RuntimeConfig.gemini_account.observeSetCookie(values)` is an internal
+  in-memory response observer.
+- Account import schedules one full `refreshAccountForAdmin` for each newly
+  created canonical account ID with concurrency `4`.
+
+### 3. Contracts
+
+- Narrow and bound unknown flag arrays in `probe.ts`; never persist raw flags.
+- Keep the public model catalog static. Apply account capacity only when the
+  stored capability is fresh, available, matches the requested provider model
+  ID, and uses field `12` or `13`; otherwise preserve the static header.
+- Invoke the Cookie observer only from successful Gemini `/app` and
+  `StreamGenerate` responses. The client stages header values and performs no
+  D1 write.
+- Flush staged Cookies only after logical request success. Re-read the current
+  account under the existing distributed refresh lock, merge response Cookies,
+  remove `SNlM0e`, `at`, and `session_token`, verify stable PSID identity, skip
+  unchanged hashes, and use the duplicate-safe Cookie writer.
+- Failed, aborted, or retired leases discard staged response Cookies.
+- Worker success maintenance uses the bound `execution_ctx.waitUntil`; Docker
+  awaits it. Cookie persistence failure never changes model output.
+- Import probing applies only to newly created identities. Worker imports
+  register the bounded batch with `waitUntil`; Docker imports await the batch.
+  Probe failures never change the compact import mutation counts.
+
+### 4. Validation & Error Matrix
+
+- Unknown/malformed flags -> bounded default capacity `(1,12)`.
+- Stale, unavailable, mismatched, or invalid stored capability -> static model
+  header.
+- Non-success response, anonymous config, or no `Set-Cookie` -> no observation.
+- Missing/changed PSID, unchanged normalized hash, duplicate Cookie, or lock
+  conflict -> no passive lease mutation.
+- Successful Cookie write -> update lease Cookie, hash, config, local snapshot,
+  and session freshness together.
+- Re-imported existing identity -> no automatic probe; new identity -> exactly
+  one bounded probe.
+
+### 5. Good/Base/Bad Cases
+
+- Good: a fresh Plus capability rewrites field 12 to capacity 4 for the leased
+  account, then a successful response asynchronously persists a new PSIDTS.
+- Base: an unprobed `prefer` fallback uses the static model header and remains
+  compatible.
+- Bad: use the first integer in upstream flags, write Cookie headers directly
+  inside the client, persist page tokens, or probe unchanged imports.
+
+### 6. Tests Required
+
+- Cover every documented capacity branch, field-12/field-13 header shape, and
+  stale/mismatched fallback.
+- Cover capability metadata through D1 snapshot, pool selection, lease, and
+  text/rich/stream delegate headers.
+- Cover `/app` and StreamGenerate observation, transient-field filtering,
+  identity mismatch, unchanged hash, duplicate race, lock conflict, Worker
+  `waitUntil`, Docker awaiting, and background failure isolation.
+- Cover new-only import probing, concurrency `4`, compact mutation preservation,
+  static/type/architecture, full unit, coverage, benchmark, size, Worker types,
+  and smoke gates.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+const capacity = firstBoundedInt(tierFlags);
+await store.writeRefreshedCookie(accountId, mergeCookies(response.headers));
+```
+
+#### Correct
+
+```typescript
+const probe = decodeGeminiAccountProbe(rawStatusResponse);
+observeGeminiAccountResponseCookies(cfg, response);
+cfg.execution_ctx.waitUntil(guardedMaintenance);
+```

@@ -125,7 +125,14 @@ export class GeminiAccountAdminService {
 			? await this.adminStore.createAccountsBulk(entries)
 			: await createAccountsOneByOne(this.adminStore, entries, nowMs);
 		const changed = stored.addedCookieHashes.size;
-		return mutationResult(orderedCookieHashes.length, changed, [], 0);
+		const result = mutationResult(orderedCookieHashes.length, changed, [], 0);
+		const createdAccountIds = entries.flatMap((entry) => {
+			if (!stored.addedCookieHashes.has(entry.cookieHash)) return [];
+			const item = stored.itemsByCookieHash.get(entry.cookieHash);
+			return item ? [item.id] : [];
+		});
+		await this.scheduleImportedAccountProbes(createdAccountIds);
+		return result;
 	}
 
 	async update(
@@ -208,6 +215,46 @@ export class GeminiAccountAdminService {
 					message: "account refresh failed",
 				},
 			};
+		}
+	}
+
+	private async scheduleImportedAccountProbes(
+		accountIds: readonly string[],
+	): Promise<void> {
+		const uniqueIds = [...new Set(accountIds)];
+		if (!uniqueIds.length) return;
+		const probes = mapWithConcurrency(uniqueIds, 4, async (id) => {
+			try {
+				const account = await this.runtimeStore.getAccountForRefresh(id);
+				if (!account) return;
+				const result = await this.pool.refreshAccountForAdmin(
+					this.cfg,
+					account,
+					"import",
+				);
+				if (isRefreshFailure(result.reason))
+					log(
+						this.cfg,
+						`post-import account probe incomplete accountId=${id} reason=${result.reason}`,
+					);
+			} catch (error) {
+				log(
+					this.cfg,
+					`post-import account probe failed accountId=${id} ${errorLogSummary(error)}`,
+				);
+			}
+		});
+		if (!this.cfg.execution_ctx) {
+			await probes;
+			return;
+		}
+		try {
+			this.cfg.execution_ctx.waitUntil(probes);
+		} catch (error) {
+			log(
+				this.cfg,
+				`post-import account probe waitUntil registration failed ${errorLogSummary(error)}`,
+			);
 		}
 	}
 }

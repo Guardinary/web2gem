@@ -9,12 +9,17 @@ import {
 } from "../cookies";
 import { classifyGeminiAccountOutcome } from "./classify";
 import { isDurableGeminiAccountIssue } from "./domain";
-import { normalizeGeminiCookieHeader, sha256Hex } from "./normalize";
+import {
+	identityHashFromCookie,
+	normalizeGeminiCookieHeader,
+	sha256Hex,
+} from "./normalize";
 import { verifyGeminiAccount } from "./probe";
 import type {
 	GeminiAccountCookieRotator,
 	GeminiAccountAcquireOptions,
 	GeminiAccountLease,
+	GeminiAccountModelCapability,
 	GeminiAccountOutcome,
 	GeminiAccountRefreshResult,
 	GeminiAccountRuntimeOptions,
@@ -29,6 +34,8 @@ const DEFAULT_SNAPSHOT_TTL_MS = 30 * 1000;
 const DEFAULT_VERSION_PROBE_TTL_MS = 1 * 1000;
 const DEFAULT_SELECTABLE_LIMIT = 100;
 const DEFAULT_REFRESH_LOCK_TTL_MS = 2 * 60 * 1000;
+const MAX_OBSERVED_SET_COOKIE_HEADERS = 64;
+const MAX_OBSERVED_SET_COOKIE_CHARS = 8192;
 
 type AccountRuntimeState = {
 	cookieHeader: string;
@@ -61,7 +68,7 @@ export class AccountPoolService {
 	private snapshotRows: GeminiAccountSnapshotRow[] = [];
 	private capabilitiesByAccount = new Map<
 		string,
-		Map<string, { available: boolean; checkedAtMs: number }>
+		Map<string, GeminiAccountModelCapability>
 	>();
 	private snapshotVersion = "";
 	private snapshotExpiresAtMs = 0;
@@ -102,10 +109,10 @@ export class AccountPoolService {
 		const nowMs = this.nowMs();
 		const rows = await this.selectableSnapshot(nowMs);
 		const excluded = new Set(options.excludeAccountIds || []);
-		const row = this.chooseRow(rows, nowMs, excluded, options);
-		if (!row) return null;
-		this.incrementInFlight(row.id);
-		return new PoolLease(this, baseConfig, row);
+		const selection = this.chooseRow(rows, nowMs, excluded, options);
+		if (!selection) return null;
+		this.incrementInFlight(selection.row.id);
+		return new PoolLease(this, baseConfig, selection.row, selection.capability);
 	}
 
 	async refreshAccountForAdmin(
@@ -244,6 +251,54 @@ export class AccountPoolService {
 		await this.store.writeAccountOutcome(accountId, outcome);
 	}
 
+	async persistObservedCookies(
+		lease: PoolLease,
+		setCookieValues: readonly string[],
+	): Promise<void> {
+		if (!setCookieValues.length) return;
+		const nowMs = this.nowMs();
+		const owner = `account-response-cookie:${lease.accountId}:${uuid()}`;
+		const locked = await this.store.tryAcquireRefreshLock(
+			lease.accountId,
+			owner,
+			nowMs + this.refreshLockTtlMs,
+			nowMs,
+		);
+		if (!locked) return;
+		try {
+			const account = await this.store.getAccountForRefresh(lease.accountId);
+			if (!account) return;
+			const cookieHeader = normalizeGeminiCookieHeader(
+				mergeSetCookieHeaders(account.cookie_header, setCookieValues),
+			);
+			if (!cookieHeader) return;
+			let identityHash = "";
+			try {
+				identityHash = await identityHashFromCookie(cookieHeader);
+			} catch (_) {
+				return;
+			}
+			if (identityHash !== account.identity_hash) return;
+			const cookieHash = await sha256Hex(cookieHeader);
+			if (cookieHash === account.cookie_hash) return;
+			const writeback = await this.store.writeRefreshedCookie(lease.accountId, {
+				cookieHeader,
+				refreshedAtMs: nowMs,
+				nowMs,
+			});
+			if (!writeback.changed) return;
+			lease.updateCookie(cookieHeader, cookieHash, nowMs);
+			this.accountStates.set(lease.accountId, {
+				cookieHeader,
+				cookieHash,
+				lastRotateAtMs: 0,
+			});
+			this.applyRefreshToSnapshot(lease.accountId, cookieHeader, cookieHash);
+		} finally {
+			await this.store.releaseRefreshLock(lease.accountId, owner);
+		}
+	}
+
 	private applyOutcomeToSnapshot(
 		accountId: string,
 		outcome: GeminiAccountOutcome,
@@ -360,9 +415,7 @@ export class AccountPoolService {
 					upstreamStatus: response.status,
 				};
 			}
-			lease.cookieHeader = nextCookieHeader;
-			lease.cookieHash = nextCookieHash;
-			lease.config = nextConfig;
+			lease.updateCookie(nextCookieHeader, nextCookieHash, nowMs, nextConfig);
 			this.accountStates.set(lease.accountId, {
 				cookieHeader: nextCookieHeader,
 				cookieHash: nextCookieHash,
@@ -433,7 +486,10 @@ export class AccountPoolService {
 		nowMs: number,
 		excludedAccountIds: ReadonlySet<string>,
 		options: GeminiAccountAcquireOptions,
-	): GeminiAccountSnapshotRow | null {
+	): {
+		row: GeminiAccountSnapshotRow;
+		capability: GeminiAccountModelCapability | null;
+	} | null {
 		let selectable = rows
 			.filter((row) => !excludedAccountIds.has(row.id))
 			.filter((row) => row.enabled !== 0)
@@ -481,18 +537,24 @@ export class AccountPoolService {
 			const index = selectable.findIndex((row) => row.id === best?.id);
 			this.roundRobinCursor = index < 0 ? 0 : (index + 1) % selectable.length;
 		}
-		return best;
+		if (!best) return null;
+		const capability = modelId
+			? this.capabilitiesByAccount.get(best.id)?.get(modelId)
+			: undefined;
+		const freshAfter = Number(options.capabilityFreshAfterMs) || 0;
+		return {
+			row: best,
+			capability:
+				capability?.available && capability.checkedAtMs >= freshAfter
+					? capability
+					: null,
+		};
 	}
 
 	private async loadCapabilities(
 		rows: readonly GeminiAccountSnapshotRow[],
-	): Promise<
-		Map<string, Map<string, { available: boolean; checkedAtMs: number }>>
-	> {
-		const out = new Map<
-			string,
-			Map<string, { available: boolean; checkedAtMs: number }>
-		>();
+	): Promise<Map<string, Map<string, GeminiAccountModelCapability>>> {
+		const out = new Map<string, Map<string, GeminiAccountModelCapability>>();
 		if (!this.store.listAccountCapabilities || !rows.length) return out;
 		const capabilities = await this.store.listAccountCapabilities(
 			rows.map((row) => row.id),
@@ -504,7 +566,10 @@ export class AccountPoolService {
 				out.set(capability.account_id, account);
 			}
 			account.set(capability.model_id, {
+				modelId: capability.model_id,
 				available: capability.available !== 0,
+				capacity: capability.capacity,
+				capacityField: capability.capacity_field,
 				checkedAtMs: capability.checked_at_ms,
 			});
 		}
@@ -529,23 +594,29 @@ export class AccountPoolService {
 class PoolLease implements GeminiAccountLease {
 	readonly accountId: string;
 	readonly selectedCookieHash: string;
+	readonly modelCapability: GeminiAccountModelCapability | null;
 	config: RuntimeConfig;
 	cookieHeader: string;
 	cookieHash: string;
 	private released = false;
 	private lastRefreshSuccessAtMs: number;
+	private readonly observedSetCookieValues: string[] = [];
 
 	constructor(
 		private readonly pool: AccountPoolService,
 		baseConfig: RuntimeConfig,
 		row: GeminiAccountSnapshotRow,
+		modelCapability: GeminiAccountModelCapability | null = null,
 	) {
 		this.accountId = row.id;
 		this.selectedCookieHash = row.cookie_hash;
+		this.modelCapability = modelCapability;
 		this.cookieHeader = row.cookie_header;
 		this.cookieHash = row.cookie_hash;
 		this.lastRefreshSuccessAtMs = Number(row.last_refresh_success_at_ms) || 0;
-		this.config = accountConfig(baseConfig, row);
+		this.config = accountConfig(baseConfig, row, (values) =>
+			this.observeSetCookie(values),
+		);
 	}
 
 	refreshForRetry(reason?: string): Promise<GeminiAccountRefreshResult> {
@@ -558,6 +629,34 @@ class PoolLease implements GeminiAccountLease {
 
 	markFailure(error: unknown, nowMs?: number): Promise<void> {
 		return this.pool.markFailure(this.accountId, error, nowMs);
+	}
+
+	async flushObservedCookies(): Promise<void> {
+		if (!this.observedSetCookieValues.length) return;
+		const values = this.observedSetCookieValues.splice(0);
+		await this.pool.persistObservedCookies(this, values);
+	}
+
+	updateCookie(
+		cookieHeader: string,
+		cookieHash: string,
+		refreshedAtMs: number,
+		config?: RuntimeConfig,
+	): void {
+		this.cookieHeader = cookieHeader;
+		this.cookieHash = cookieHash;
+		this.lastRefreshSuccessAtMs = refreshedAtMs;
+		this.config =
+			config ||
+			accountConfig(
+				this.config,
+				{
+					id: this.accountId,
+					cookie_header: cookieHeader,
+					cookie_hash: cookieHash,
+				},
+				(values) => this.observeSetCookie(values),
+			);
 	}
 
 	async maintainSessionIfStale(intervalMs: number): Promise<void> {
@@ -581,13 +680,27 @@ class PoolLease implements GeminiAccountLease {
 		this.released = true;
 		this.pool.release(this.accountId);
 	}
+
+	private observeSetCookie(values: readonly string[]): void {
+		for (const value of values) {
+			if (
+				this.observedSetCookieValues.length >= MAX_OBSERVED_SET_COOKIE_HEADERS
+			)
+				break;
+			if (value.length > MAX_OBSERVED_SET_COOKIE_CHARS) continue;
+			if (value) this.observedSetCookieValues.push(value);
+		}
+	}
 }
 
 function accountConfig(
 	baseConfig: RuntimeConfig,
-	row: GeminiAccountSnapshotRow,
+	row: Pick<GeminiAccountSnapshotRow, "id" | "cookie_header" | "cookie_hash">,
+	observeSetCookie?: (values: readonly string[]) => void,
 ): RuntimeConfig {
 	const cookie = normalizeGeminiCookieHeader(row.cookie_header);
+	const observer =
+		observeSetCookie || baseConfig.gemini_account?.observeSetCookie;
 	return {
 		...baseConfig,
 		cookie,
@@ -595,6 +708,7 @@ function accountConfig(
 		gemini_account: {
 			accountId: row.id,
 			cookieHash: row.cookie_hash,
+			...(observer ? { observeSetCookie: observer } : {}),
 		},
 	};
 }

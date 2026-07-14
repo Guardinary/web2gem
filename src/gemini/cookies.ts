@@ -110,6 +110,21 @@ export function mergeSetCookieHeaders(
 	return serializeCookieMap(cookies);
 }
 
+export function observeGeminiAccountResponseCookies(
+	cfg: RuntimeConfig,
+	response: { ok: boolean; headers: Headers },
+): void {
+	const observer = cfg.gemini_account?.observeSetCookie;
+	if (!response.ok || !observer) return;
+	const values = setCookieHeaders(response.headers);
+	if (!values.length) return;
+	try {
+		observer(values);
+	} catch (_) {
+		log(cfg, "gemini account response cookie observation failed");
+	}
+}
+
 export function configWithActiveGeminiCookie(
 	cfg: RuntimeConfig,
 ): RuntimeConfig {

@@ -37,6 +37,7 @@ import {
 } from "./retry";
 import {
 	configWithFreshGeminiCookie,
+	observeGeminiAccountResponseCookies,
 	rotateGeminiCookieForRetryWithReason,
 } from "../cookies";
 import type { RuntimeConfig } from "../../config";
@@ -103,7 +104,7 @@ async function fetchGeminiStreamGenerate(
 	const url = getUrl(activeCfg);
 	const headers = await buildHeaders(activeCfg, modelHeaders, requestId);
 	const requestBody = await appendGeminiPageToken(activeCfg, body);
-	return httpFetch(url, {
+	const response = await httpFetch(url, {
 		method: "POST",
 		headers,
 		body: requestBody,
@@ -113,6 +114,8 @@ async function fetchGeminiStreamGenerate(
 		signal,
 		cfg,
 	});
+	observeGeminiAccountResponseCookies(activeCfg, response);
+	return response;
 }
 
 export async function generate(

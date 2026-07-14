@@ -7,6 +7,7 @@ export type RuntimeProfile = "worker" | "docker";
 export type GeminiAccountRuntimeContext = {
 	accountId: string;
 	cookieHash: string;
+	observeSetCookie?: (values: readonly string[]) => void;
 };
 
 export type StaticRuntimeConfig = Readonly<{

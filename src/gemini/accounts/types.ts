@@ -135,6 +135,14 @@ export type GeminiAccountCapabilityRow = {
 	checked_at_ms: number;
 };
 
+export type GeminiAccountModelCapability = {
+	modelId: string;
+	available: boolean;
+	capacity: number | null;
+	capacityField: number | null;
+	checkedAtMs: number;
+};
+
 export type GeminiAccountBulkCreateResult = {
 	itemsByCookieHash: ReadonlyMap<string, GeminiAccountSummary>;
 	addedCookieHashes: ReadonlySet<string>;
@@ -297,10 +305,12 @@ export type GeminiAccountRotateResponse = {
 export type GeminiAccountLease = {
 	accountId: string;
 	selectedCookieHash: string;
+	modelCapability: GeminiAccountModelCapability | null;
 	config: import("../../config").RuntimeConfig;
 	refreshForRetry(reason?: string): Promise<GeminiAccountRefreshResult>;
 	markSuccess(nowMs?: number): Promise<void>;
 	markFailure(error: unknown, nowMs?: number): Promise<void>;
+	flushObservedCookies(): Promise<void>;
 	maintainSessionIfStale(intervalMs: number): Promise<void>;
 	release(): void;
 };

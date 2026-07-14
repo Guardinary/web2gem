@@ -16,6 +16,7 @@ import type {
 const GET_USER_STATUS_RPC_ID = "otAQ7b";
 const MAX_PROBE_RESPONSE_CHARS = 512 * 1024;
 const MAX_PROBE_MODELS = 128;
+const MAX_PROBE_FLAG_VALUES = 256;
 const MAX_MODEL_ID_CHARS = 256;
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 
@@ -129,8 +130,10 @@ function decodeModels(
 	if (!Array.isArray(rawModels) || !rawModels.length) return [];
 	if (rawModels.length > MAX_PROBE_MODELS)
 		throw new Error("Gemini account probe returned too many models");
-	const capacity = firstBoundedInt(tierFlags);
-	const capacityField = firstBoundedInt(capabilityFlags);
+	const { capacity, capacityField } = accountModelCapacity(
+		tierFlags,
+		capabilityFlags,
+	);
 	const out: GeminiAccountProbe["models"] = [];
 	for (const item of rawModels) {
 		if (!Array.isArray(item)) continue;
@@ -141,28 +144,48 @@ function decodeModels(
 			!MODEL_ID_PATTERN.test(modelId)
 		)
 			continue;
-		const model: GeminiAccountProbe["models"][number] = {
+		out.push({
 			modelId,
 			available: true,
-		};
-		if (capacity !== undefined) model.capacity = capacity;
-		if (capacityField !== undefined) model.capacityField = capacityField;
-		out.push(model);
+			capacity,
+			capacityField,
+		});
 	}
 	return out;
 }
 
-function firstBoundedInt(value: unknown): number | undefined {
-	if (!Array.isArray(value)) return boundedInt(value);
-	for (const item of value) {
-		const direct = boundedInt(item);
-		if (direct !== undefined) return direct;
+function accountModelCapacity(
+	tierFlags: unknown,
+	capabilityFlags: unknown,
+): { capacity: number; capacityField: 12 | 13 } {
+	const tiers = boundedIntSet(tierFlags);
+	const capabilities = boundedIntSet(capabilityFlags);
+	if (tiers.has(21)) return { capacity: 1, capacityField: 13 };
+	if (tiers.has(22)) return { capacity: 2, capacityField: 13 };
+	if (capabilities.has(115)) return { capacity: 4, capacityField: 12 };
+	if (tiers.has(16) || capabilities.has(106))
+		return { capacity: 3, capacityField: 12 };
+	if (tiers.has(8) || (!capabilities.has(106) && capabilities.has(19)))
+		return { capacity: 2, capacityField: 12 };
+	return { capacity: 1, capacityField: 12 };
+}
+
+function boundedIntSet(value: unknown): Set<number> {
+	const out = new Set<number>();
+	const pending: unknown[] = [value];
+	let scanned = 0;
+	while (pending.length && scanned < MAX_PROBE_FLAG_VALUES) {
+		const item = pending.pop();
+		scanned += 1;
 		if (Array.isArray(item)) {
-			const nested = firstBoundedInt(item);
-			if (nested !== undefined) return nested;
+			for (let index = item.length - 1; index >= 0; index--)
+				pending.push(item[index]);
+			continue;
 		}
+		const number = boundedInt(item);
+		if (number !== undefined) out.add(number);
 	}
-	return undefined;
+	return out;
 }
 
 function boundedInt(value: unknown): number | undefined {

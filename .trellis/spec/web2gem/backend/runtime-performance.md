@@ -418,7 +418,8 @@ account-scoped page/push-token caches.
   refresh updates `lease.cookieHeader`, `lease.cookieHash`, and
   `lease.config.cookie/sapisid/gemini_account.cookieHash` together.
 - `/app` page tokens and content-push `push_id` stay in account-scoped runtime
-  caches. They are not D1 account columns and have no lease writeback callback.
+  caches. They are not D1 account columns and never enter the lease response
+  Cookie observer; only raw `Set-Cookie` header values cross that callback.
 - Snapshot caching, pending refresh dedupe, lock ownership, and cache keys use
   account IDs/hashes, never credentials.
 
@@ -713,7 +714,11 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 ### 2. Signatures
 
 - `createGeminiCompletionProvider(cfg, { accountRuntime })` returns a request-scoped provider.
-- Account-backed `RuntimeConfig` carries only `gemini_account.accountId` and `gemini_account.cookieHash` plus the selected Cookie/SAPISID runtime values.
+- Account-backed `RuntimeConfig` carries `gemini_account.accountId`,
+  `gemini_account.cookieHash`, and an optional internal `observeSetCookie`
+  callback plus the selected Cookie/SAPISID runtime values. The callback stages
+  trusted response Cookie headers in memory; it does not expose D1 or write on
+  the upstream response path.
 - `CompletionProvider.supportsAuthenticatedSession` is the provider-neutral signal that authenticated Gemini behavior is available through a configured account pool. Low-level cookie-shaped configs may still appear after a D1 account lease is selected.
 - `CompletionProvider.dispose()` releases an acquired request lease when preparation fails before generation.
 

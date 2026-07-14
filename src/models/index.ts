@@ -28,16 +28,72 @@ export type ResolvedModel =
 
 export const MIN_THINK_LEVEL = 0;
 export const MAX_THINK_LEVEL = 4;
-const MODEL_HEADER_KEY = "x-goog-ext-525001261-jspb";
+export const GEMINI_MODEL_HEADER_KEY = "x-goog-ext-525001261-jspb";
 
 function webModelHeaders(
 	modelId: string,
-	capacityTail: number,
+	capacity: number,
+	capacityField: 12 | 13 = 12,
 ): Record<string, string> {
+	const payload: unknown[] = [
+		1,
+		null,
+		null,
+		null,
+		modelId,
+		null,
+		null,
+		0,
+		[4],
+		null,
+		null,
+	];
+	payload[capacityField - 1] = capacity;
 	return {
-		[MODEL_HEADER_KEY]: `[1,null,null,null,"${modelId}",null,null,0,[4],null,null,${capacityTail}]`,
+		[GEMINI_MODEL_HEADER_KEY]: JSON.stringify(payload),
 		"x-goog-ext-73010989-jspb": "[0]",
 		"x-goog-ext-73010990-jspb": "[0]",
+	};
+}
+
+export function geminiProviderModelId(
+	modelHeaders: Record<string, string> | null | undefined,
+): string {
+	const raw = modelHeaders?.[GEMINI_MODEL_HEADER_KEY];
+	if (!raw) return "";
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (!Array.isArray(parsed)) return "";
+		const value = parsed[4];
+		return typeof value === "string" ? value.trim() : "";
+	} catch (_) {
+		return "";
+	}
+}
+
+export function geminiModelHeadersForCapability(
+	modelHeaders: Record<string, string> | null,
+	capability:
+		| {
+				modelId: string;
+				available: boolean;
+				capacity: number | null;
+				capacityField: number | null;
+		  }
+		| null
+		| undefined,
+): Record<string, string> | null {
+	if (!modelHeaders || !capability?.available) return modelHeaders;
+	const modelId = geminiProviderModelId(modelHeaders);
+	if (!modelId || capability.modelId !== modelId) return modelHeaders;
+	const capacity = Number(capability.capacity);
+	const capacityField = Number(capability.capacityField);
+	if (!Number.isInteger(capacity) || capacity < 1 || capacity > 4)
+		return modelHeaders;
+	if (capacityField !== 12 && capacityField !== 13) return modelHeaders;
+	return {
+		...modelHeaders,
+		...webModelHeaders(modelId, capacity, capacityField),
 	};
 }
 

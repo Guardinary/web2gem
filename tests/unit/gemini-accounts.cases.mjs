@@ -149,8 +149,8 @@ export const cases = [
 					accountProbeWrb(
 						1000,
 						[["model-pro", "Pro", "description"]],
-						[[42]],
-						[[7]],
+						[[21]],
+						[],
 					),
 				),
 				{
@@ -161,8 +161,8 @@ export const cases = [
 						{
 							modelId: "model-pro",
 							available: true,
-							capacity: 42,
-							capacityField: 7,
+							capacity: 1,
+							capacityField: 13,
 						},
 					],
 				},
@@ -177,6 +177,62 @@ export const cases = [
 				selectable: false,
 				models: [],
 			});
+			for (const [tierFlags, capabilityFlags, expected] of [
+				[[22], [], [2, 13]],
+				[[], [115], [4, 12]],
+				[[16], [], [3, 12]],
+				[[], [106], [3, 12]],
+				[[8], [], [2, 12]],
+				[[], [19], [2, 12]],
+				[[], [], [1, 12]],
+			]) {
+				const decoded = mod.decodeGeminiAccountProbe(
+					accountProbeWrb(1000, [["model"]], tierFlags, capabilityFlags),
+				);
+				assert.deepEqual(
+					[decoded.models[0].capacity, decoded.models[0].capacityField],
+					expected,
+				);
+			}
+		},
+	],
+	[
+		"builds account-specific model headers for capacity fields 12 and 13",
+		() => {
+			const resolved = mod.resolveModel("gemini-3.1-pro", "gemini-3.5-flash");
+			const modelId = mod.geminiProviderModelId(resolved.modelHeaders);
+			const field12 = mod.geminiModelHeadersForCapability(
+				resolved.modelHeaders,
+				{
+					modelId,
+					available: true,
+					capacity: 4,
+					capacityField: 12,
+				},
+			);
+			const payload12 = JSON.parse(field12["x-goog-ext-525001261-jspb"]);
+			assert.equal(payload12[11], 4);
+			const field13 = mod.geminiModelHeadersForCapability(
+				resolved.modelHeaders,
+				{
+					modelId,
+					available: true,
+					capacity: 2,
+					capacityField: 13,
+				},
+			);
+			const payload13 = JSON.parse(field13["x-goog-ext-525001261-jspb"]);
+			assert.equal(payload13[11], null);
+			assert.equal(payload13[12], 2);
+			assert.equal(
+				mod.geminiModelHeadersForCapability(resolved.modelHeaders, {
+					modelId: "other-model",
+					available: true,
+					capacity: 4,
+					capacityField: 12,
+				}),
+				resolved.modelHeaders,
+			);
 		},
 	],
 	[
@@ -281,25 +337,30 @@ export const cases = [
 		"returns one compact mutation shape for import, update, delete, and refresh",
 		async () => {
 			const store = new MemoryAccountStore();
+			let nowMs = 1000;
+			let verifyCalls = 0;
 			const service = new mod.GeminiAccountAdminService({
 				store,
 				cfg: baseConfig(),
-				nowMs: () => 1000,
+				nowMs: () => nowMs,
 				rotateCookie: async () =>
 					new Response(null, {
 						status: 200,
 						headers: { "set-cookie": "__Secure-1PSIDTS=rotated" },
 					}),
-				verifyAccount: async () => ({
-					ok: true,
-					at: "fresh-at",
-					probe: {
-						statusCode: 1000,
-						issue: null,
-						selectable: true,
-						models: [],
-					},
-				}),
+				verifyAccount: async () => {
+					verifyCalls += 1;
+					return {
+						ok: true,
+						at: "fresh-at",
+						probe: {
+							statusCode: 1000,
+							issue: null,
+							selectable: true,
+							models: [],
+						},
+					};
+				},
 			});
 
 			const imported = await service.create({
@@ -320,6 +381,7 @@ export const cases = [
 				failed: 0,
 			});
 			assert.equal(Object.hasOwn(imported, "items"), false);
+			assert.equal(verifyCalls, 1);
 			const id = [...store.rows.keys()][0];
 			assert.deepEqual(await service.update(id, { label: "Renamed" }), {
 				processed: 1,
@@ -333,6 +395,7 @@ export const cases = [
 				unchanged: 1,
 				failed: 0,
 			});
+			nowMs = 121000;
 			assert.deepEqual(await service.refresh(id), {
 				processed: 1,
 				changed: 1,
@@ -343,6 +406,94 @@ export const cases = [
 			assert.equal(missing.failed, 1);
 			assert.equal(missing.errors[0].code, "account_not_found");
 			assert.equal(typeof service.check, "undefined");
+		},
+	],
+	[
+		"probes new imports with Worker waitUntil and skips unchanged identities",
+		async () => {
+			const store = new MemoryAccountStore();
+			const pending = [];
+			let verifyCalls = 0;
+			const service = new mod.GeminiAccountAdminService({
+				store,
+				cfg: baseConfig({
+					runtime_profile: "worker",
+					execution_ctx: {
+						waitUntil(promise) {
+							pending.push(promise);
+						},
+					},
+				}),
+				nowMs: () => 1000,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+				verifyAccount: async () => {
+					verifyCalls += 1;
+					return {
+						ok: true,
+						at: "fresh-at",
+						probe: {
+							statusCode: 1000,
+							issue: null,
+							selectable: true,
+							models: [],
+						},
+					};
+				},
+			});
+			const body = {
+				provider: "gemini",
+				accounts: [{ "__Secure-1PSID": "worker", "__Secure-1PSIDTS": "t" }],
+			};
+			await service.create(body);
+			assert.equal(pending.length, 1);
+			await Promise.all(pending);
+			assert.equal(verifyCalls, 1);
+			await service.create(body);
+			assert.equal(pending.length, 1);
+			assert.equal(verifyCalls, 1);
+		},
+	],
+	[
+		"awaits Docker import probes with concurrency bounded to four",
+		async () => {
+			const store = new MemoryAccountStore();
+			let active = 0;
+			let maxActive = 0;
+			let verifyCalls = 0;
+			const service = new mod.GeminiAccountAdminService({
+				store,
+				cfg: baseConfig({ runtime_profile: "docker" }),
+				nowMs: () => 1000,
+				rotateCookie: async () => {
+					active += 1;
+					maxActive = Math.max(maxActive, active);
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					active -= 1;
+					return new Response(null, { status: 200 });
+				},
+				verifyAccount: async () => {
+					verifyCalls += 1;
+					return {
+						ok: true,
+						at: "fresh-at",
+						probe: {
+							statusCode: 1000,
+							issue: null,
+							selectable: true,
+							models: [],
+						},
+					};
+				},
+			});
+			await service.create({
+				provider: "gemini",
+				accounts: Array.from({ length: 6 }, (_, index) => ({
+					"__Secure-1PSID": `docker-${index}`,
+					"__Secure-1PSIDTS": `t-${index}`,
+				})),
+			});
+			assert.equal(maxActive, 4);
+			assert.equal(verifyCalls, 6);
 		},
 	],
 	[
@@ -497,10 +648,11 @@ export const cases = [
 		"aggregates bulk enable, disable, delete, and refresh failures",
 		async () => {
 			const store = new MemoryAccountStore();
+			let nowMs = 1000;
 			const service = new mod.GeminiAccountAdminService({
 				store,
 				cfg: baseConfig(),
-				nowMs: () => 1000,
+				nowMs: () => nowMs,
 				rotateCookie: async () => new Response(null, { status: 401 }),
 			});
 			await service.create({
@@ -521,6 +673,7 @@ export const cases = [
 			);
 			const enabled = await service.runBulkAction({ action: "enable", ids });
 			assert.equal(enabled.changed, 2);
+			nowMs = 121000;
 			const refresh = await service.runBulkAction({ action: "refresh", ids });
 			assert.equal(refresh.failed, 2);
 			assert.equal(refresh.errors[0].code, "rotation_rejected");

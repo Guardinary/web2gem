@@ -5,7 +5,11 @@ import {
 } from "./client";
 import { resolveAttachments, uploadTextFile } from "./uploads";
 import type { RuntimeConfig } from "../config";
-import type { ResolvedModel } from "../models";
+import {
+	geminiModelHeadersForCapability,
+	geminiProviderModelId,
+	type ResolvedModel,
+} from "../models";
 import type {
 	CompletionProvider,
 	CompletionProviderOptions,
@@ -49,8 +53,6 @@ export type GeminiCompletionProviderOptions = {
 	client?: Partial<GeminiClientDelegates>;
 	uploads?: Partial<GeminiUploadDelegates>;
 };
-
-const MODEL_HEADER_KEY = "x-goog-ext-525001261-jspb";
 
 type UploadRecipe =
 	| {
@@ -184,34 +186,46 @@ export function createGeminiCompletionProvider(
 			}
 		}
 		const maintenance =
-			kind === "success" &&
-			selected &&
-			cfg.execution_ctx &&
-			Number(cfg.gemini_account_refresh_interval_sec) > 0
+			kind === "success" && selected
 				? (persistence ? guardOutcome(persistence) : Promise.resolve()).then(
-						() =>
-							selected.maintainSessionIfStale(
-								Number(cfg.gemini_account_refresh_interval_sec) * 1000,
-							),
+						async () => {
+							try {
+								await selected.flushObservedCookies();
+							} catch (cookieError) {
+								log(
+									cfg,
+									`account response cookie writeback failed: ${errorLogSummary(cookieError)}`,
+								);
+							}
+							const intervalSec = Number(
+								cfg.gemini_account_refresh_interval_sec,
+							);
+							if (intervalSec > 0)
+								await selected.maintainSessionIfStale(intervalSec * 1000);
+						},
 					)
 				: null;
 		releaseLease();
 		resetAttemptState();
-		if (maintenance && cfg.execution_ctx) {
+		if (maintenance) {
 			const guardedMaintenance = maintenance.catch((maintenanceError) => {
 				log(
 					cfg,
 					`opportunistic account refresh failed: ${errorLogSummary(maintenanceError)}`,
 				);
 			});
-			try {
-				cfg.execution_ctx.waitUntil(guardedMaintenance);
-			} catch (registrationError) {
-				log(
-					cfg,
-					`opportunistic refresh waitUntil registration failed: ${errorLogSummary(registrationError)}`,
-				);
+			if (cfg.execution_ctx) {
+				try {
+					cfg.execution_ctx.waitUntil(guardedMaintenance);
+				} catch (registrationError) {
+					log(
+						cfg,
+						`account maintenance waitUntil registration failed: ${errorLogSummary(registrationError)}`,
+					);
+				}
+				return;
 			}
+			await guardedMaintenance;
 			return;
 		}
 		if (!persistence) return;
@@ -459,7 +473,7 @@ export function createGeminiCompletionProvider(
 		),
 		generateText(input: CompletionTextInput) {
 			const model = requireResolvedModel(input.rm);
-			activeProviderModelId = providerModelId(model);
+			activeProviderModelId = geminiProviderModelId(model.modelHeaders);
 			if (cfg.log_requests) logGeminiRoute(cfg, model, false);
 			const call = async (
 				activeCfg: RuntimeConfig,
@@ -472,7 +486,10 @@ export function createGeminiCompletionProvider(
 					model.thinkMode,
 					model.extra,
 					activeInput.fileRefs,
-					model.modelHeaders,
+					geminiModelHeadersForCapability(
+						model.modelHeaders,
+						lease?.modelCapability,
+					),
 				);
 				if (!text) throw upstreamEmptyResponseError(502, 0, "provider");
 				return text;
@@ -496,7 +513,7 @@ export function createGeminiCompletionProvider(
 			richOptions: CompletionRichOptions = {},
 		) {
 			const model = requireResolvedModel(input.rm);
-			activeProviderModelId = providerModelId(model);
+			activeProviderModelId = geminiProviderModelId(model.modelHeaders);
 			if (cfg.log_requests) logGeminiRoute(cfg, model, false);
 			return withGenerationLease(
 				(activeCfg, activeInput) =>
@@ -507,7 +524,10 @@ export function createGeminiCompletionProvider(
 						model.thinkMode,
 						model.extra,
 						activeInput.fileRefs,
-						model.modelHeaders,
+						geminiModelHeadersForCapability(
+							model.modelHeaders,
+							lease?.modelCapability,
+						),
 						richOptions,
 					),
 				"image",
@@ -519,7 +539,7 @@ export function createGeminiCompletionProvider(
 			streamOptions: CompletionProviderOptions = {},
 		) {
 			const model = requireResolvedModel(input.rm);
-			activeProviderModelId = providerModelId(model);
+			activeProviderModelId = geminiProviderModelId(model.modelHeaders);
 			if (cfg.log_requests) logGeminiRoute(cfg, model, true);
 			const stream = (
 				streamCfg: RuntimeConfig,
@@ -533,7 +553,10 @@ export function createGeminiCompletionProvider(
 					model.extra,
 					activeInput.fileRefs,
 					streamOptions,
-					model.modelHeaders,
+					geminiModelHeadersForCapability(
+						model.modelHeaders,
+						lease?.modelCapability,
+					),
 				);
 			const requiredReason = accountRequiredReason(
 				cfg,
@@ -707,19 +730,6 @@ function accountRequiredReason(
 function accountAttemptLimit(cfg: RuntimeConfig): number {
 	const value = Number(cfg.gemini_account_max_attempts);
 	return Number.isSafeInteger(value) && value > 0 ? value : 10;
-}
-
-function providerModelId(model: ResolvedModelOK): string {
-	const raw = model.modelHeaders?.[MODEL_HEADER_KEY];
-	if (!raw) return "";
-	try {
-		const parsed: unknown = JSON.parse(raw);
-		if (!Array.isArray(parsed)) return "";
-		const value = parsed[4];
-		return typeof value === "string" ? value.trim() : "";
-	} catch (_) {
-		return "";
-	}
 }
 
 function logGeminiRoute(

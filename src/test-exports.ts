@@ -64,6 +64,11 @@ export {
 } from "./config";
 export { createGeminiCompletionProvider } from "./gemini/completion-provider";
 export {
+	geminiModelHeadersForCapability,
+	geminiProviderModelId,
+	resolveModel,
+} from "./models";
+export {
 	createStreamTextExtractor,
 	stripArtifacts,
 } from "./gemini/client/parser";
@@ -83,6 +88,7 @@ export {
 export {
 	configWithActiveGeminiCookie,
 	mergeSetCookieHeaders,
+	observeGeminiAccountResponseCookies,
 	parseCookieHeader,
 	resetActiveGeminiCookieForTest,
 	rotateGeminiCookieForRetry,

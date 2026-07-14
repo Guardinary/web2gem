@@ -1650,6 +1650,61 @@ export const cases = [
 		},
 	],
 	[
+		"observes managed account cookies from app and generation responses",
+		async () => {
+			mod.resetGeminiUploadCachesForTest();
+			const observed = [];
+			const cfg = baseGeminiClientConfig({
+				cookie: "__Secure-1PSID=managed; __Secure-1PSIDTS=old",
+				gemini_account: {
+					accountId: "managed",
+					cookieHash: "managed-hash",
+					observeSetCookie(values) {
+						observed.push([...values]);
+					},
+				},
+			});
+			await withFetch(
+				async (url) => {
+					const href = String(url);
+					if (href === "https://gemini.example/app")
+						return new Response('{"SNlM0e":"fresh-at"}', {
+							status: 200,
+							headers: {
+								"set-cookie": "__Secure-1PSIDTS=from-app; Path=/; Secure",
+							},
+						});
+					if (href.includes("StreamGenerate"))
+						return new Response(wrbLine(["observed"]), {
+							status: 200,
+							headers: {
+								"set-cookie":
+									"__Secure-1PSIDTS=from-generation; Path=/; Secure",
+							},
+						});
+					throw new Error(`unexpected fetch ${href}`);
+				},
+				async () => {
+					assert.equal(
+						await mod.generate(cfg, "prompt", 1, 4, null, null),
+						"observed",
+					);
+				},
+			);
+			assert.equal(observed.length, 2);
+			assert.match(observed[0][0], /from-app/);
+			assert.match(observed[1][0], /from-generation/);
+			mod.observeGeminiAccountResponseCookies(
+				cfg,
+				new Response("", {
+					status: 500,
+					headers: { "set-cookie": "__Secure-1PSIDTS=ignored" },
+				}),
+			);
+			assert.equal(observed.length, 2);
+		},
+	],
+	[
 		"deduplicates repeated active cookie names",
 		async () => {
 			mod.resetActiveGeminiCookieForTest();
@@ -2894,6 +2949,78 @@ export const cases = [
 			);
 			assert.equal(accountRuntime.acquireCalls, 1);
 			assert.equal(lease.successCalls, 1);
+		},
+	],
+	[
+		"applies the selected account capacity to provider model headers",
+		async () => {
+			const model = mod.resolveModel("gemini-3.1-pro", "gemini-3.5-flash");
+			const modelId = mod.geminiProviderModelId(model.modelHeaders);
+			const modelCapability = {
+				modelId,
+				available: true,
+				capacity: 4,
+				capacityField: 12,
+				checkedAtMs: Date.now(),
+			};
+			const runtime = fakeRuntime(
+				["text", "rich", "stream"].map((id) =>
+					fakeLease(accountCfg(`capacity-${id}`, `capacity-${id}-hash`), {
+						modelCapability,
+					}),
+				),
+			);
+			const receivedHeaders = [];
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate(...args) {
+							receivedHeaders.push(args[6]);
+							return "capacity result";
+						},
+						async generateRich(...args) {
+							receivedHeaders.push(args[6]);
+							return { text: "capacity rich", images: [] };
+						},
+						async *generateStream(...args) {
+							receivedHeaders.push(args[7]);
+							yield "capacity stream";
+						},
+					},
+				},
+			);
+			assert.equal(
+				await provider.generateText({
+					prompt: "prompt",
+					rm: model,
+					fileRefs: null,
+				}),
+				"capacity result",
+			);
+			assert.deepEqual(
+				await provider.generateRich({
+					prompt: "prompt",
+					rm: model,
+					fileRefs: null,
+				}),
+				{ text: "capacity rich", images: [] },
+			);
+			const deltas = [];
+			for await (const delta of provider.streamText({
+				prompt: "prompt",
+				rm: model,
+				fileRefs: null,
+			}))
+				deltas.push(delta);
+			assert.deepEqual(deltas, ["capacity stream"]);
+			assert.equal(receivedHeaders.length, 3);
+			for (const headers of receivedHeaders) {
+				const payload = JSON.parse(headers["x-goog-ext-525001261-jspb"]);
+				assert.equal(payload[4], modelId);
+				assert.equal(payload[11], 4);
+			}
 		},
 	],
 	[
@@ -4429,6 +4556,7 @@ function fakeLease(config, overrides = {}) {
 		accountId: config.gemini_account.accountId,
 		rowId: config.gemini_account.rowId,
 		selectedCookieHash: config.gemini_account.cookieHash,
+		modelCapability: null,
 		config,
 		successCalls: 0,
 		failureCalls: 0,
@@ -4445,6 +4573,7 @@ function fakeLease(config, overrides = {}) {
 		async markFailure() {
 			this.failureCalls += 1;
 		},
+		async flushObservedCookies() {},
 		async maintainSessionIfStale() {},
 		release() {
 			this.releaseCalls += 1;

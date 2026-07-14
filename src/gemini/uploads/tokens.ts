@@ -7,7 +7,10 @@ import { GEMINI_WEB_USER_AGENT } from "../constants";
 import { httpFetch } from "../transport";
 import { createOriginScopedStringCache } from "../cache";
 import type { RuntimeConfig } from "../../config";
-import { configWithFreshGeminiCookie } from "../cookies";
+import {
+	configWithFreshGeminiCookie,
+	observeGeminiAccountResponseCookies,
+} from "../cookies";
 import { TEXT_ENCODER } from "../../shared/encoding";
 import { bytesToHex } from "../../shared/crypto";
 import { errorLogSummary } from "../../shared/errors";
@@ -107,6 +110,7 @@ export async function getFreshPageTokensForConfig(
 			cfg: activeCfg,
 		},
 	);
+	observeGeminiAccountResponseCookies(activeCfg, resp);
 	return extractGeminiAppPageTokens(resp);
 }
 
@@ -202,6 +206,7 @@ async function fetchFreshGeminiPushId(cfg: RuntimeConfig): Promise<string> {
 				cfg: activeCfg,
 			},
 		);
+		observeGeminiAccountResponseCookies(activeCfg, resp);
 		const pushId = validGeminiPushId(await extractGeminiPushId(resp));
 		if (!pushId) {
 			log(

@@ -22,10 +22,12 @@ export const cases = [
 			assert.equal(lease.accountId, "first");
 			assert.equal(lease.config.sapisid, "sapisid-value");
 			assert.match(lease.config.cookie, /__Secure-1PSID=p/);
-			assert.deepEqual(lease.config.gemini_account, {
-				accountId: "first",
-				cookieHash: "hash-first",
-			});
+			assert.equal(lease.config.gemini_account.accountId, "first");
+			assert.equal(lease.config.gemini_account.cookieHash, "hash-first");
+			assert.equal(
+				typeof lease.config.gemini_account.observeSetCookie,
+				"function",
+			);
 			lease.release();
 			assert.equal(pool.localInFlight("first"), 0);
 		},
@@ -104,6 +106,10 @@ export const cases = [
 			assert.match(lease.config.cookie, /__Secure-1PSIDTS=rotated/);
 			assert.doesNotMatch(lease.config.cookie, /__Secure-1PSIDTS=t(?:;|$)/);
 			assert.equal(lease.config.gemini_account.cookieHash, lease.cookieHash);
+			assert.equal(
+				typeof lease.config.gemini_account.observeSetCookie,
+				"function",
+			);
 		},
 	],
 	[
@@ -238,8 +244,8 @@ export const cases = [
 					account_id: "capable",
 					model_id: "model-pro",
 					available: 1,
-					capacity: null,
-					capacity_field: null,
+					capacity: 4,
+					capacity_field: 12,
 					checked_at_ms: nowMs,
 				},
 			];
@@ -253,6 +259,13 @@ export const cases = [
 				capabilityFreshAfterMs: nowMs - 1000,
 			});
 			assert.equal(capable.accountId, "capable");
+			assert.deepEqual(capable.modelCapability, {
+				modelId: "model-pro",
+				available: true,
+				capacity: 4,
+				capacityField: 12,
+				checkedAtMs: nowMs,
+			});
 			capable.release();
 
 			const fallbackStore = new FakeStore([
@@ -270,6 +283,7 @@ export const cases = [
 				capabilityFreshAfterMs: nowMs - 1000,
 			});
 			assert.equal(preferred.accountId, "unknown-only");
+			assert.equal(preferred.modelCapability, null);
 			preferred.release();
 			assert.equal(
 				await fallbackPool.acquireLease(baseConfig(), {
@@ -279,6 +293,45 @@ export const cases = [
 				}),
 				null,
 			);
+		},
+	],
+	[
+		"writes observed response cookies only after filtering and identity checks",
+		async () => {
+			const row = account("passive");
+			row.identity_hash = await mod.identityHashFromCookie(row.cookie_header);
+			row.cookie_hash = await mod.sha256Hex(
+				mod.normalizeGeminiCookieHeader(row.cookie_header),
+			);
+			const store = new FakeStore([row]);
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => 120000,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			const lease = await pool.acquireLease(baseConfig());
+			lease.config.gemini_account.observeSetCookie([
+				"__Secure-1PSIDTS=passive-update; Path=/; Secure",
+				"at=temporary; Path=/",
+				"session_token=temporary; Path=/",
+			]);
+			await lease.flushObservedCookies();
+			assert.equal(store.writes.length, 1);
+			assert.match(lease.config.cookie, /PSIDTS=passive-update/);
+			assert.doesNotMatch(lease.config.cookie, /\bat=|session_token=/);
+			assert.equal(lease.config.gemini_account.cookieHash, lease.cookieHash);
+
+			lease.config.gemini_account.observeSetCookie([
+				"__Secure-1PSID=other-identity; Path=/; Secure",
+			]);
+			await lease.flushObservedCookies();
+			assert.equal(store.writes.length, 1);
+
+			store.lockAvailable = false;
+			lease.config.gemini_account.observeSetCookie([
+				"__Secure-1PSIDTS=locked-update; Path=/; Secure",
+			]);
+			await lease.flushObservedCookies();
+			assert.equal(store.writes.length, 1);
 		},
 	],
 	[
@@ -325,6 +378,7 @@ class FakeStore {
 		this.outcomes = [];
 		this.writes = [];
 		this.writeResult = { changed: true };
+		this.lockAvailable = true;
 	}
 	async getPoolVersion() {
 		return "1";
@@ -353,7 +407,7 @@ class FakeStore {
 		return this.rows.get(id) || null;
 	}
 	async tryAcquireRefreshLock() {
-		return true;
+		return this.lockAvailable;
 	}
 	async releaseRefreshLock() {}
 	async writeRefreshedCookie(id, update) {
@@ -361,6 +415,9 @@ class FakeStore {
 		if (this.writeResult.changed) {
 			const row = this.rows.get(id);
 			row.cookie_header = update.cookieHeader;
+			row.cookie_hash = await mod.sha256Hex(
+				mod.normalizeGeminiCookieHeader(update.cookieHeader),
+			);
 			row.last_refresh_at_ms = update.refreshedAtMs;
 		}
 		return this.writeResult;
