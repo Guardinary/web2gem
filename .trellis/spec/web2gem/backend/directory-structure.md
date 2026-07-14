@@ -16,11 +16,12 @@
 - `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. `gemini/client/index.ts` should stay an orchestration layer; payload/header construction, response parsing, retry helpers, and domain error classification live in sibling client modules.
 - `src/gemini/client/generated-images.ts` owns generated-image URL candidates, browser/cookie download headers, byte hydration, supported output-format mapping, and URL fallback. It must reuse MIME detection from `src/attachments/mime.ts` and encoding from `src/attachments/base64.ts`.
 - `src/gemini/accounts/admin-input.ts` owns admin request normalization and validation. `admin.ts` owns account-admin use-case orchestration and depends on capability-specific admin/runtime store contracts.
-- `src/gemini/accounts/domain.ts` is the single owner for account categories,
-  category guards, and the shared default/minimum/maximum account page limit.
-  Admin input and D1 query/page projection code must reuse this owner instead of
-  maintaining parallel category arrays or limit clamps.
-- `src/gemini/accounts/store-d1.ts` owns D1 account persistence operations. Admin list projection, filter-to-SQL construction, and public-row mapping belong in `src/gemini/accounts/store-d1-admin.ts`; keep database execution and mutations in the main store.
+- `src/gemini/accounts/domain.ts` is the single owner for account issue/state
+  vocabularies, guards, derived-state rules, and the shared
+  default/minimum/maximum account page limit. Admin input, runtime
+  classification, and D1 summary projection must reuse this owner instead of
+  maintaining parallel status arrays or limit clamps.
+- `src/gemini/accounts/store-d1.ts` owns minimal D1 account persistence operations. Admin summary projection, derived-state filter-to-SQL construction, and global stats belong in `src/gemini/accounts/store-d1-admin.ts`; keep database execution and mutations in the main store.
 - `src/gemini/transport/http.ts` owns the unified upstream HTTP entry. It may choose `cloudflare:sockets` first and fall back to `fetch` only when request semantics are preserved.
 - `src/gemini/transport/socket.ts` is the public socket transport facade. If the socket implementation is decomposed, keep public exports compatible from this module and move internals into owner modules under `src/gemini/transport/`.
 - `src/gemini/completion-provider.ts` is the Gemini adapter for `src/completion/ports.ts`. It may import completion port types; other Gemini implementation modules should not depend on completion business modules.

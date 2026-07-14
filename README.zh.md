@@ -310,7 +310,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem-account-pool:<tag>
 | 部署要求 | 可以在没有账号数据库的情况下运行。 | 符合条件的短文本请求不需要 D1；Pro、长上下文、附件、生图、图片编辑和账号回退需要 D1 binding 与可用账号。 |
 | Docker 集成 | 使用标准 Docker 适配层和运行时环境变量。 | 通过 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN` 注入 D1 HTTP binding。 |
 | 运行时配置 | 使用 main 分支的配置契约。 | 对 boolean、整数、origin、文件名和 `API_KEYS` 执行严格校验；`ADMIN_KEY` 作为普通单字符串配置读取。无效值类型的错误诊断会脱敏。 |
-| Admin API | 不适用于持久化账号池。 | 使用 `PATCH` / `DELETE /admin/accounts/:id`，以及 `POST /admin/accounts/:id/refresh` 或 `/check`；公共 `x-api-key` 永远不能授权管理操作。 |
+| Admin API | 不适用于持久化账号池。 | 使用 `PATCH` / `DELETE /admin/accounts/:id`，以及 `POST /admin/accounts/:id/refresh`；公共 `x-api-key` 永远不能授权管理操作。 |
 
 生产 bundle 还让 Worker 与 Docker 共用同一个应用路由边界，并为流式处理、socket 解析和结构化输出路径提供代表性性能门禁。这些只是本分支的实现差异，不表示 `main` 会采用相同变更。
 
@@ -373,6 +373,8 @@ Worker 部署时，创建 D1 数据库，执行 [`migrations/0001_gemini_account
 wrangler d1 execute <database-name> --file migrations/0001_gemini_accounts.sql --remote
 ```
 
+账号池 schema 目前仍只用于开发，不提供兼容迁移。如果本地数据库由更早版本创建，请先重新创建数据库，再执行当前的 `0001` migration。
+
 Docker 部署时，在 `.env` 中同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`。三者都存在时，`scripts/docker-server.mjs` 会注入一个基于 Cloudflare D1 HTTP API 的 D1 兼容 `GEMINI_DB` binding。只设置一部分时，启动会以配置错误失败。
 
 Worker 的账号导入每个管理请求最多接受 40 个账号，以确保原生 D1 工作量低于 Workers Free 的单次调用查询上限。导入更多账号时，内置 `/admin` 页面会先提交完整批次；仅当 Worker 返回稳定的数量上限错误后，页面才会自动按每批 40 个顺序重试并汇总结果。直接调用管理 API 的客户端仍需自行拆分请求。Docker 不应用此账号数量上限，因此页面的首次完整请求会保持为单次请求；Docker 导入仍受统一的 256 KiB 管理请求体限制。
@@ -388,25 +390,23 @@ curl -X POST "https://your-worker.example/admin/accounts" \
   -d '{"provider":"gemini","accounts":[{"__Secure-1PSID":"<仅值>","__Secure-1PSIDTS":"<仅值>","label":"primary"}]}'
 ```
 
-重复导入会被安全跳过。列表响应使用 `limit` 和 `cursor` 分页，支持通过 `status`、`enabled`、`q`、`category`、`cooldown` 和 `source` 筛选，并且只返回脱敏元数据。
-
-管理 API 还可以返回当前筛选条件下的聚合统计：
+重复导入会被安全跳过。`GET /admin/accounts` 只接受 `limit`、`cursor`、`q` 和 `state`，并始终返回当前页以及全局 `total`、`available`、`cooling`、`attention`、`disabled` 统计。账号摘要只包含身份、标签、派生健康状态、当前规范化问题、冷却时间和核心时间戳；cookie 与 hash 永远不会越过管理接口边界。
 
 ```sh
-curl "https://your-worker.example/admin/accounts/stats?status=active&enabled=true" \
+curl "https://your-worker.example/admin/accounts?state=attention&q=primary" \
   -H "Authorization: Bearer $ADMIN_KEY"
 ```
 
-统计响应包含 `total`、`available`、`needsAttention`、`disabled`、`refreshable`、`cooling`、`psidOnly`、`successCount` 和 `failureCount`。
+四种 UI 状态均由运行数据派生而不是持久化：人工禁用为 `disabled`，有效冷却为 `cooling`，持久的认证/人工操作/地区问题为 `attention`，其他可选账号为 `available`。运行时问题只使用 `auth`、`rate_limit`、`user_action`、`location` 或 `transient`。请求成功或认证刷新成功会清除问题与冷却；模型或能力错误只属于当前请求，不会污染整个账号的健康状态。
 
-显式诊断接口也只对 admin 开放：
+显式刷新接口只对 admin 开放：
 
 ```sh
 curl -X POST "https://your-worker.example/admin/accounts/<account-id>/refresh" \
   -H "Authorization: Bearer $ADMIN_KEY"
 ```
 
-Refresh/check 响应包含 `checked`、`skipped`、`refreshed`、`unchanged`、`failed`、`errors`、`results` 和脱敏后的 `items`。启动、健康检查和公开模型列表不会选择账号、调用 `/app`、刷新 cookie 或探测 Google。
+所有 mutation 都返回同一个紧凑结构：`processed`、`changed`、`unchanged`、`failed`，以及可选的脱敏 `errors`；mutation 不会回显账号行。WebUI 只保留导入、搜索/状态筛选、刷新、重命名、启用/禁用、删除、选择和分页，不再提供可编辑运行状态、Check、CSV 导出或持久诊断面板。启动、健康检查和公开模型列表不会选择账号、调用 `/app`、刷新 cookie 或探测 Google。
 
 导入账号时，只使用当前支持的最短凭据形式：`__Secure-1PSID` 和 `__Secure-1PSIDTS`。用新的无痕浏览器 Gemini 登录，提取这些值后关闭浏览器，通常比复制日常浏览器的完整 cookie header 更稳定。
 

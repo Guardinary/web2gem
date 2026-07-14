@@ -310,7 +310,7 @@ Maintainers publish this edition from the default branch through **Actions → R
 | Deployment requirements | Can run without an account database. | Anonymous-eligible short text works without D1. Pro, long-context, attachment, image-generation, image-edit, and account-fallback paths require a configured D1 binding and a usable imported account. |
 | Docker integration | Uses the standard Docker adapter and runtime environment. | Adds the D1 HTTP binding through `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN`. |
 | Runtime validation | Uses the main-branch configuration contract. | Applies strict boolean, integer, origin, filename, and `API_KEYS` validation. `ADMIN_KEY` is read as one ordinary string setting. Invalid value types fail with sanitized diagnostics. |
-| Admin API | Not applicable to a persistent pool. | Uses `PATCH` / `DELETE /admin/accounts/:id` and `POST /admin/accounts/:id/refresh` or `/check`; public `x-api-key` credentials never authorize admin operations. |
+| Admin API | Not applicable to a persistent pool. | Uses `PATCH` / `DELETE /admin/accounts/:id` and `POST /admin/accounts/:id/refresh`; public `x-api-key` credentials never authorize admin operations. |
 
 The production bundle also keeps Worker and Docker routing behind one application boundary and includes representative performance gates for streaming, socket parsing, and structured-output paths. These are branch-specific implementation differences and do not imply equivalent changes to `main`.
 
@@ -373,6 +373,8 @@ For a new D1 database, apply the migration once:
 wrangler d1 execute <database-name> --file migrations/0001_gemini_accounts.sql --remote
 ```
 
+The account-pool schema is still development-only and has no compatibility migration. If you created a local database from an earlier revision, recreate it before applying the current `0001` migration.
+
 For Docker, set all of `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` in `.env`. When all three are present, `scripts/docker-server.mjs` injects a D1-compatible `GEMINI_DB` binding backed by Cloudflare's D1 HTTP API. If only some are present, startup fails with a configuration error.
 
 Worker account imports accept at most 40 accounts per admin request so native D1 work stays below the Workers Free per-invocation query limit. For larger imports, the built-in `/admin` UI first tries the complete batch and, only after the Worker returns the stable limit error, automatically retries sequentially in groups of 40 and aggregates the results. Direct admin API clients must split their own requests. Docker does not apply this account-count ceiling, so its initial UI request remains a single request; Docker imports are bounded by the shared 256 KiB admin request-body limit.
@@ -388,25 +390,23 @@ curl -X POST "https://your-worker.example/admin/accounts" \
   -d '{"provider":"gemini","accounts":[{"__Secure-1PSID":"<value-only>","__Secure-1PSIDTS":"<value-only>","label":"primary"}]}'
 ```
 
-Duplicate imports are skipped safely. List responses are paginated with `limit` and `cursor`, support `status`, `enabled`, `q`, `category`, `cooldown`, and `source` filters, and expose only redacted metadata.
-
-The admin API also exposes aggregate counts for the current filter set:
+Duplicate imports are skipped safely. `GET /admin/accounts` accepts only `limit`, `cursor`, `q`, and `state`. It always returns the current page plus global `total`, `available`, `cooling`, `attention`, and `disabled` counts. Account summaries contain only identity, label, derived health state, the current normalized issue, cooldown, and core timestamps; cookie material and hashes never cross the admin boundary.
 
 ```sh
-curl "https://your-worker.example/admin/accounts/stats?status=active&enabled=true" \
+curl "https://your-worker.example/admin/accounts?state=attention&q=primary" \
   -H "Authorization: Bearer $ADMIN_KEY"
 ```
 
-Stats responses include `total`, `available`, `needsAttention`, `disabled`, `refreshable`, `cooling`, `psidOnly`, `successCount`, and `failureCount`.
+The four UI states are derived rather than stored: disabled accounts are `disabled`, active cooldowns are `cooling`, durable authentication/user-action/location issues are `attention`, and all other selectable accounts are `available`. Runtime issues use only `auth`, `rate_limit`, `user_action`, `location`, or `transient`. A successful request or authenticated refresh clears the issue and cooldown; model/capability errors remain request-scoped and do not poison account health.
 
-Explicit diagnostics are admin-only:
+Explicit refresh is admin-only:
 
 ```sh
 curl -X POST "https://your-worker.example/admin/accounts/<account-id>/refresh" \
   -H "Authorization: Bearer $ADMIN_KEY"
 ```
 
-Refresh/check responses include countable fields such as `checked`, `skipped`, `refreshed`, `unchanged`, `failed`, `errors`, `results`, and sanitized `items`. Startup, health, and public model-list routes do not select accounts, call `/app`, rotate cookies, or probe Google.
+Every mutation returns the same compact shape: `processed`, `changed`, `unchanged`, `failed`, and optional sanitized `errors`. Mutations never echo account rows. The WebUI exposes only import, search/state filtering, refresh, rename, enable/disable, delete, selection, and pagination; it has no editable runtime status, Check action, CSV export, or persistent diagnostics panel. Startup, health, and public model-list routes do not select accounts, call `/app`, rotate cookies, or probe Google.
 
 When importing accounts, use only the shortest supported credential form: `__Secure-1PSID` and `__Secure-1PSIDTS`. A fresh private-browser Gemini login that is closed after extracting these values tends to be more stable than copying a full everyday-browser cookie header.
 

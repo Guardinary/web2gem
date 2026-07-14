@@ -298,6 +298,7 @@ defaults that affect Worker memory and CPU pressure.
   override both profiles.
 - The JSON budget includes inline Base64 text because it limits the complete
   buffered request envelope before JSON parsing.
+
 - Multipart image edits do not use `REQUEST_BODY_MAX_BYTES`. Their request
   capacity remains governed by `GENERIC_FILE_UPLOAD_MAX_BYTES` plus the existing
   multipart form overhead.
@@ -373,134 +374,117 @@ return bytesToBase64(bytes);
 
 ### 1. Scope / Trigger
 
-Use this contract when adding or changing D1-backed Gemini account runtime code, account selection, account leases, snapshot caching, account-scoped cookie rotation, or refresh dedupe.
+Use this contract when changing the D1 Gemini account schema, issue/state
+semantics, selectable snapshots, leases, outcome persistence, cookie refresh, or
+account-scoped page/push-token caches.
 
 ### 2. Signatures
 
-- `AccountPoolService.acquireLease(baseConfig)` returns a lease or `null`.
-- `getGeminiAccountRuntimeFromEnv(env)` returns one default runtime per valid D1
-  binding object inside a warm isolate; `createGeminiAccountRuntimeFromEnv(env,
-  options)` remains an uncached factory.
-- `GeminiAccountRuntimeStore.getPoolVersion()` reads one metadata row.
-- `GeminiAccountRuntimeStore.listSelectableAccounts(nowMs, limit)` reads a bounded selectable snapshot.
-- `GeminiAccountAdminStore` owns list/stats/identifier/CRUD operations; `GeminiAccountStore` remains their compatibility intersection for the D1 adapter.
-- Account refresh uses `tryAcquireRefreshLock(accountId, owner, expiresAtMs, nowMs)` and `releaseRefreshLock(accountId, owner)`.
-- `GeminiAccountStore.writeCookieState(accountId, update)` returns `{ changed: false, reason: "duplicate_cookie" }` when the normalized next Cookie hash belongs to another account.
+- `GeminiAccountRuntimeStore.listSelectableAccounts(nowMs, limit)` returns only
+  `id`, `enabled`, `cookie_header`, `cookie_hash`, `issue`,
+  `cooldown_until_ms`, and `last_used_at_ms`.
+- `GeminiAccountRuntimeStore.writeAccountOutcome(accountId, outcome)` accepts a
+  success or a failure with an optional normalized issue and cooldown.
+- `GeminiAccountRuntimeStore.writeRefreshedCookie(accountId, { cookieHeader,
+  refreshedAtMs, nowMs })` returns `{ changed, reason?: "duplicate_cookie" }`.
+- `AccountPoolService.acquireLease(baseConfig)` returns one account lease or
+  `null`; a successful refresh updates that lease's active `config`.
+- Persisted issues are `auth | rate_limit | user_action | location | transient`.
+  Public states are `available | cooling | attention | disabled`.
 
 ### 3. Contracts
 
-- A fresh selectable snapshot must satisfy account selection without a D1 account-row read and without any D1 write.
-- Snapshot freshness is timestamp-based, not row-count-based. An empty selectable
-  result must remain cacheable.
-- Concurrent stale snapshot callers share one pending version probe and optional
-  row reload. Clear the pending promise by identity in `finally`.
-- Default application routing must reuse the same runtime for the same D1 binding
-  so snapshot, round-robin, in-flight, account-state, and refresh-dedupe state can
-  work across requests. Request leases remain provider-local.
-- `AccountPoolService` must accept only `GeminiAccountRuntimeStore`. Account admin composition supplies explicit admin/runtime stores; the D1 factory may pass one `D1GeminiAccountStore` instance for both capabilities.
-- Version probes read only `gemini_pool_meta.pool_version`; reload selectable rows only when the version changes or the snapshot TTL expires.
-- Local fairness uses in-memory round-robin and in-flight counts. Do not write durable round-robin pointers or last-used timestamps synchronously during selection.
-- Register pending per-account refresh promises before the first `await` in the refresh path. If the key is computed after an async hash/read, two same-tick callers can both start refresh work.
-- The first refresh attempt for an account must not be suppressed just because `lastRotateAtMs` is initialized to `0`; apply debounce only when a prior rotate timestamp is positive.
-- Refresh lock owners and cache keys must be based on account IDs and hashes, never raw cookies or session tokens.
-- `cookie_hash` is mutable during rotation and may have a unique D1 index. Check for an existing owner before writeback and also classify a concurrent unique-constraint failure after the update attempt; both paths must return the same duplicate no-op result.
-- A duplicate-cookie no-op must not update the selected lease or its in-memory account state. Account refresh returns `rotation_duplicate` instead of throwing or reporting `rotation_updated`.
-- `createGeminiAccountRuntimeFromEnv` may return `null` for helper/admin composition and anonymous-eligible public text generation. Account-required work must translate missing authenticated-session capability into a sanitized 422 `gemini_authenticated_session_required` response with a bounded `reason` instead of attempting the authenticated operation anonymously.
+- `migrations/0001_gemini_accounts.sql` owns the compatibility-free initial
+  schema. The account table has exactly identity/label, `enabled`, normalized
+  Cookie plus unique hash, one issue/cooldown, issue/use/refresh timestamps, and
+  create/update timestamps. Retain pool metadata and refresh locks.
+- `enabled` is the only operator-controlled availability state. Never persist
+  presentation state, category, counters, capability placeholders, source
+  metadata, row aliases, page tokens, push IDs, or per-account transport
+  overrides.
+- Derive state in this order: disabled, active cooldown, durable issue, available.
+  Suppress an expired `rate_limit` or `transient` issue from public summaries.
+- `auth`, `user_action`, and `location` block durably. `rate_limit` uses a
+  five-minute cooldown; `transient` uses one minute. Model-invalid and
+  capability-mismatch errors are request-scoped and update only last use.
+- Success clears issue/cooldown/issue time. Publish `pool_version` only when a
+  health transition changes selectability; healthy last-use updates must not
+  invalidate every isolate snapshot.
+- Cookie refresh normalizes away `SNlM0e`, `session_token`, and `at`, checks
+  duplicate ownership before and after the D1 update, clears health after an
+  authenticated success, and atomically publishes pool version.
+- A duplicate-cookie refresh leaves the lease/config unchanged. A successful
+  refresh updates `lease.cookieHeader`, `lease.cookieHash`, and
+  `lease.config.cookie/sapisid/gemini_account.cookieHash` together.
+- `/app` page tokens and content-push `push_id` stay in account-scoped runtime
+  caches. They are not D1 account columns and have no lease writeback callback.
+- Snapshot caching, pending refresh dedupe, lock ownership, and cache keys use
+  account IDs/hashes, never credentials.
 
 ### 4. Validation & Error Matrix
 
-- Snapshot fresh and version probe not due -> no store calls.
-- Empty snapshot fresh and version probe not due -> no store calls and no lease.
-- Three concurrent cold snapshot reads -> one metadata read and one selectable-row
-  read with all callers receiving the same result.
-- Version probe due and version unchanged -> exactly one metadata read, no row reload.
-- Version changed -> metadata read plus bounded selectable row reload.
-- Selection with two available accounts and one local in-flight -> choose the lower in-flight account.
-- Two concurrent refresh waiters for the same account/cookie hash -> one rotate call and shared result/rejection.
-- D1 lock conflict -> typed refresh conflict result, no rotate call, no lock release attempt for a lock not owned.
-- Rotated Cookie hash already owned by another account -> `{ changed: false, reason: "rotation_duplicate" }`, unchanged lease credentials, no account-failure write.
-- Preflight duplicate lookup misses a concurrent writer and D1 raises a cookie-hash unique constraint -> re-read the hash owner and return the same duplicate result; unrelated unique errors still propagate.
-- `lastRotateAtMs = 0` -> first refresh may proceed; recent positive timestamp -> debounce.
+- Disabled row, active cooldown, or durable issue -> excluded from selection.
+- Expired temporary issue -> selectable and publicly `available` with
+  `issue: null`.
+- Model/capability error -> no issue/cooldown mutation.
+- 401/403 refresh rejection -> `auth`; 429 -> `rate_limit`; unknown
+  network/5xx failure -> `transient`.
+- Same-cookie authenticated refresh -> `unchanged`, health cleared, refresh
+  timestamp recorded.
+- Cookie hash owned by another account, including a convergence race ->
+  `rotation_duplicate`, no lease mutation and no failure outcome.
+- D1 lock conflict -> typed unchanged result and no rotate call.
+- Successful outcome persistence rejection -> preserve the upstream result and
+  handle the persistence rejection safely.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `pendingRefresh.set(key, promise)` happens before awaiting account state or hashes.
-- Good: cache the default runtime in a `WeakMap` keyed by the D1 binding object.
-- Good: assign the pending snapshot promise before any caller can await it.
-- Good: selection increments local in-flight and release is idempotent.
-- Good: cookie writeback handles both the preflight duplicate and the post-update unique-constraint race without changing lease state.
-- Base: snapshot TTL/probe values are short enough for operator changes to propagate but long enough to avoid D1 reads on every request.
-- Bad: `await sha256(cookie)` before checking the pending refresh map.
-- Bad: writing `last_used_at_ms` or global round-robin state during every lease acquisition.
-- Bad: construct a new default `AccountPoolService` for every valid generation
-  request, which resets all isolate-local scheduling and cache state.
-- Bad: use `snapshotRows.length > 0` as the freshness marker, which makes empty
-  pools hit D1 on every request.
-- Bad: catch every unique constraint as a duplicate without confirming another row owns the target Cookie hash.
+- Good: `domain.ts` owns issue/state guards and derivation; storage and admin
+  projection reuse it.
+- Good: register pending refresh by `accountId + cookieHash` before the first
+  await and update the active lease config after writeback.
+- Base: an empty selectable snapshot is cached and version-probed like any other
+  snapshot.
+- Bad: storing a mutable status enum beside `enabled` and cooldown.
+- Bad: writing page tokens, push IDs, counters, or category back to D1.
+- Bad: bumping pool version for every healthy request merely because
+  `last_used_at_ms` changed.
 
 ### 6. Tests Required
 
-- Unit tests with fake store counters for snapshot reads, version probes, row reloads, and selection write counts.
-- Unit test same-binding runtime reuse, different-binding isolation, and uncached
-  explicit factory behavior.
-- Unit test concurrent cold snapshot coalescing and empty-snapshot probe windows.
-- Unit tests for in-flight spread and idempotent release.
-- Unit tests for refresh debounce, pending dedupe, D1 lock conflict, failure propagation, and lock release.
-- Unit test a D1 cookie-hash convergence race returns `duplicate_cookie`, preserves the original row, and does not bump the pool version.
-- Unit test account refresh maps duplicate writeback to `rotation_duplicate` without changing lease Cookie state or writing a failure outcome.
-- Unit tests proving `SNlM0e`, `session_token`, and `at` stay out of outbound Cookie headers during writeback.
-- Run `pnpm typecheck`, `pnpm check:arch`, `pnpm check:static`, `pnpm unit`, and `pnpm smoke`.
+- State precedence, durable/temporary issue guards, and expired-issue
+  suppression.
+- Outcome classification for auth/rate/user-action/location/transient and
+  request-scoped model errors.
+- Selection exclusion, success recovery, local snapshot updates, and
+  transition-only pool-version publication.
+- Refresh pending dedupe, D1 lock conflict, same-cookie success, duplicate
+  preflight/race handling, rejection classification, and active lease-config
+  replacement.
+- Account-scoped page/push-token cache isolation and absence of D1 page-state
+  writeback.
+- Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`,
+  `pnpm unit`, `pnpm coverage:ci`, and `pnpm smoke`.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```typescript
-return createGeminiAccountRuntimeFromEnv(env);
+row.status = "rate_limited";
+await store.writePageState(accountId, { at, pushId });
 ```
 
 #### Correct
 
 ```typescript
-return getGeminiAccountRuntimeFromEnv(env);
-```
-
-#### Wrong
-
-```typescript
-const state = await accountState(lease);
-const key = `${lease.accountId}\0${state.cookieHash}`;
-if (pending.has(key)) return pending.get(key);
-```
-
-#### Correct
-
-```typescript
-const key = `${lease.accountId}\0${lease.cookieHash}`;
-const pending = pendingRefresh.get(key);
-if (pending) return pending;
-const promise = refreshOnce(lease).finally(() => pendingRefresh.delete(key));
-pendingRefresh.set(key, promise);
-return promise;
-```
-
-#### Wrong
-
-```typescript
-await store.writeCookieState(accountId, update);
-lease.cookieHeader = update.cookieHeader;
-lease.cookieHash = await sha256Hex(update.cookieHeader);
-```
-
-#### Correct
-
-```typescript
-const writeback = await store.writeCookieState(accountId, update);
-if (!writeback.changed) {
-  return { changed: false, reason: writeback.reason === "duplicate_cookie" ? "rotation_duplicate" : "rotation_no_update" };
-}
-lease.cookieHeader = update.cookieHeader;
-lease.cookieHash = await sha256Hex(update.cookieHeader);
+await store.writeAccountOutcome(accountId, {
+  kind: "failure",
+  issue: "rate_limit",
+  cooldownUntilMs: nowMs + 5 * 60_000,
+  nowMs,
+});
+// Page/push tokens remain in the account-scoped runtime cache.
 ```
 
 ## Scenario: Atomic Account-Pool Version Publication
@@ -598,6 +582,7 @@ await db.batch([
 ```
 
 ## Scenario: D1 Batch Account Import
+
 
 ### 1. Scope / Trigger
 
@@ -726,7 +711,7 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 ### 2. Signatures
 
 - `createGeminiCompletionProvider(cfg, { accountRuntime })` returns a request-scoped provider.
-- Account-backed `RuntimeConfig` carries `gemini_account.accountId`, `gemini_account.cookieHash`, optional `rowId`, and a narrow `gemini_account_writeback(...)` callback.
+- Account-backed `RuntimeConfig` carries only `gemini_account.accountId` and `gemini_account.cookieHash` plus the selected Cookie/SAPISID runtime values.
 - `CompletionProvider.supportsAuthenticatedSession` is the provider-neutral signal that authenticated Gemini behavior is available through a configured account pool. Low-level cookie-shaped configs may still appear after a D1 account lease is selected.
 - `CompletionProvider.dispose()` releases an acquired request lease when preparation fails before generation.
 
@@ -766,7 +751,7 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - Account-marked configs must not use the process-global single-cookie rotation singleton. Cookie/session recovery goes through account runtime leases.
 - `/app` page tokens and content-push `push_id` caches must include account identity or cookie hash when `gemini_account` is present. Build-label cache remains origin-scoped.
 - Raw cookies, `SNlM0e`, `at`, `SAPISID`, session tokens, SQL bind values, and D1 API tokens must not appear in cache keys, log fields, or public error messages.
-- Successful `/app` token bootstrap in account mode should write changed `SNlM0e`/`at` and `push_id` through the lease writeback callback. These values remain structured account/session fields, not outbound Cookie header members.
+- Successful `/app` token bootstrap updates only the account-scoped page/push-token caches. It must not write page tokens or push IDs into D1 or outbound Cookie headers.
 - Content-push upload may send selected `Push-ID`, but must not send Gemini `Cookie` or SAPISID-derived `Authorization` to `content-push.googleapis.com`.
 
 ### 4. Validation & Error Matrix
@@ -836,7 +821,7 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - Route tests proving auth and request-validation failures do not touch D1.
 - Cache tests proving account-scoped page-token and push-id isolation.
 - Upload tests proving content-push requests omit Cookie and Authorization.
-- Runtime tests proving page-token writeback keeps session tokens out of outbound Cookie headers.
+- Runtime/cache tests proving page tokens and push IDs are account-scoped, never written to D1, and never added to outbound Cookie headers.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm check:static`, `pnpm unit`, and `pnpm smoke`.
 
 ### 7. Wrong vs Correct
@@ -898,6 +883,7 @@ Use this contract when changing completion stream event helpers, OpenAI or Googl
 - Protocol writers should use `createDeltaCoalescer(..., { emitFirstImmediately: true })` when user-visible streaming latency matters.
 - Always await promise-returning `append(...)` or `flush()` results before writing a finish frame, switching delta fields, or closing the stream.
 - Responses streaming should track accumulated output length separately from joined text so empty-output checks do not require repeated full-string concatenation.
+
 
 ### 4. Validation & Error Matrix
 
