@@ -340,6 +340,27 @@ export const cases = [
 		},
 	],
 	[
+		"keeps account admin benchmark fixtures aligned with the service contract",
+		async () => {
+			const result = await runNodeScript("scripts/bench.mjs", null, {
+				BENCH_ACCOUNT_ADMIN_COUNT: "100",
+				BENCH_CASES: "account_admin_overview,account_admin_bulk_action",
+				BENCH_ITERS: "2",
+				BENCH_WARMUP: "1",
+				BENCH_JSON: "1",
+			});
+			assert.equal(result.code, 0, result.stderr);
+			const parsed = JSON.parse(result.stdout);
+			assert.deepEqual(
+				parsed.results.map((entry) => entry.name),
+				["account_admin_overview", "account_admin_bulk_action"],
+			);
+			for (const entry of parsed.results) {
+				assert.equal(typeof entry.medianMs, "number");
+			}
+		},
+	],
+	[
 		"reports an invalid benchmark bundle path",
 		async () => {
 			const result = await runNodeScript("scripts/bench.mjs", null, {

@@ -245,21 +245,24 @@ const accountAdminIds = Array.from(
 );
 const accountAdminItems = accountAdminIds.map((id) => ({
 	id,
-	row_id: `row-${id}`,
-	enabled: 1,
-	status: "active",
+	label: null,
+	enabled: true,
+	state: "available",
+	issue: null,
+	cooldown_until_ms: null,
+	last_issue_at_ms: null,
+	last_used_at_ms: null,
+	last_refresh_at_ms: null,
+	created_at_ms: 1,
+	updated_at_ms: 1,
 }));
 const accountAdminBulkIds = accountAdminIds.slice(0, 100);
 const accountAdminStats = {
 	total: accountAdminItems.length,
 	available: accountAdminItems.length,
-	needsAttention: 0,
-	disabled: 0,
-	refreshable: accountAdminItems.length,
 	cooling: 0,
-	psidOnly: 0,
-	successCount: 0,
-	failureCount: 0,
+	attention: 0,
+	disabled: 0,
 };
 const accountAdminStore = {
 	async getAdminOverview(_filter, _nowMs) {
@@ -270,11 +273,16 @@ const accountAdminStore = {
 			stats: accountAdminStats,
 		};
 	},
-	async setAccountsEnabledBulk(ids, enabled) {
-		return ids.map((id) => ({
-			...accountAdminItems[Number(id.slice(id.lastIndexOf("-") + 1))],
-			enabled: enabled ? 1 : 0,
-		}));
+	async updateAccount(id, update) {
+		const item =
+			accountAdminItems[Number(id.slice(id.lastIndexOf("-") + 1))] || null;
+		if (!item) return { item: null, changed: false };
+		const enabled = update.enabled ?? item.enabled;
+		const label = update.label === undefined ? item.label : update.label;
+		return {
+			item: { ...item, enabled, label, updated_at_ms: update.nowMs },
+			changed: enabled !== item.enabled || label !== item.label,
+		};
 	},
 	async getPoolVersion() {
 		return "1";
