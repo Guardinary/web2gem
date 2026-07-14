@@ -8,9 +8,9 @@
 
 - `.github/workflows/quality-gates.yml` runs pull request plus `dev`, `main`, and
   `gemini-account-pool` push quality checks.
-- `.github/workflows/release-artifacts.yml` is the reusable publication workflow for GitHub assets, GHCR, and optional Docker Hub/Aliyun tags.
-- `.github/workflows/reusable-versioned-release.yml` owns shared version calculation, synchronized package/Worker version update, release gates, commit, tag push, and release revision output.
-- `.github/workflows/release.yml` is the single manual account-pool versioned-release entrypoint.
+- `.github/workflows/sync-upstream.yml` keeps deployment Forks synchronized with this branch.
+- This branch contains no versioned-release or artifact-publication workflows. The default `main` branch owns `release-account-pool.yml`, `reusable-versioned-release.yml`, and `release-artifacts.yml` as the repository-wide release control plane.
+- The main-branch account-pool dispatcher checks out `gemini-account-pool`, runs this branch's release gates, pushes the version commit back here, creates a `pool-v*` tag, and publishes the captured revision.
 
 Keep workflow names stable unless the GitHub Actions UI and README are updated together.
 
@@ -18,14 +18,14 @@ Keep workflow names stable unless the GitHub Actions UI and README are updated t
 
 ## Release Asset Contract
 
-GitHub Releases must expose only these build artifacts plus checksum metadata:
+Account-pool GitHub Releases must expose only these build artifacts plus checksum metadata:
 
-- `worker.js`
-- `web2gem_<tag>_docker_linux_amd64.tar.gz`
-- `web2gem_<tag>_docker_linux_arm64.tar.gz`
+- `web2gem-account-pool-worker.js`
+- `web2gem-account-pool_<tag>_docker_linux_amd64.tar.gz`
+- `web2gem-account-pool_<tag>_docker_linux_arm64.tar.gz`
 - `sha256sums.txt`
 
-Do not add bundle tarballs for `worker.js`; the raw `worker.js` asset is the Cloudflare Worker deployment artifact. Docker image archives must be split by platform and named with the `web2gem_<tag>_docker_linux_<arch>.tar.gz` pattern.
+Do not add bundle tarballs for the Worker asset; the raw edition-named JavaScript file is the Cloudflare Worker deployment artifact. Docker image archives must be split by platform and retain the account-pool asset prefix.
 
 Before uploading assets, the release workflow should verify that every expected file exists and is non-empty. The upload list should stay explicit instead of relying on broad globs that can include stale artifacts.
 
@@ -33,13 +33,13 @@ Before uploading assets, the release workflow should verify that every expected 
 
 ## Docker Image Publishing
 
-Docker images are named `web2gem` and are tagged with:
+Account-pool Docker images use the isolated `web2gem-account-pool` repository and are tagged with:
 
-- the release tag, for example `v1.1.1`
+- the release tag, for example `pool-v1.1.1`
 - the bare package version, for example `1.1.1`
 - `latest`
 
-Docker archive assets should load into a readable local image tag, at minimum `web2gem:<tag>`. Registry images should include OCI labels for the package version and the actual release commit revision.
+The canonical GHCR image is `ghcr.io/guardinary/web2gem-account-pool`. Docker archive assets should load into `web2gem-account-pool:<tag>`. Registry images must include OCI labels for the package version and the actual release commit revision.
 
 The final Docker runtime image must include every repository-local module imported by `scripts/docker-server.mjs`. At minimum this currently includes `d1-http-binding.mjs` and `io.mjs`; unit coverage compares the adapter's relative imports against explicit runtime-stage `COPY` entries so the container cannot pass build but exit before listening due to a missing module.
 
@@ -47,11 +47,13 @@ The final Docker runtime image must include every repository-local module import
 
 ## Versioned Release Safety
 
-Only one version-bumping registry release workflow should run at a time. Use a shared concurrency group for workflows that update `package.json`, create tags, or push version commits.
+Only one version-bumping release workflow should run at a time across both editions. The two dispatchers on `main` share one concurrency group.
 
-Before running expensive release gates, validate that the target tag does not already exist. If a workflow creates a version commit before publishing Docker images, capture `git rev-parse HEAD` after the commit and use that SHA for image revision labels.
+Before running expensive release gates, the control plane validates `refs/heads/main` and the complete account-pool edition tuple. Version calculation queries only `pool-v*` tags; unfiltered `git describe --tags` is forbidden because main-edition tags must not affect this branch.
 
-Registry-specific release workflows should not duplicate the version bump / tag logic. Call `.github/workflows/reusable-versioned-release.yml` and consume its outputs:
+The control plane validates that the target `pool-v*` tag does not exist, captures `git rev-parse HEAD` after the version commit, and uses that SHA for every asset and image build.
+
+Registry-specific release workflows on `main` should not duplicate the version bump / tag logic. They call `.github/workflows/reusable-versioned-release.yml` and consume its outputs:
 
 - `new_version`
 - `new_tag`
@@ -59,43 +61,49 @@ Registry-specific release workflows should not duplicate the version bump / tag 
 
 Registry publish jobs should check out `revision_sha` before building Docker images so image labels and contents match the version commit.
 
-Account-pool version releases are branch-bound: validate `github.ref` before checkout, explicitly checkout `gemini-account-pool`, and push the version commit back to `HEAD:gemini-account-pool`. Never reuse the main-edition `HEAD:main` target from this independently released branch.
+Account-pool version releases are branch-bound even though their dispatcher lives on `main`: explicitly checkout `gemini-account-pool` and push the version commit back to `HEAD:gemini-account-pool`. Do not restore a local copy of the release workflows on this branch.
 
-## Scenario: Unified Account-Pool Release Publication
+## Scenario: Main-Controlled Account-Pool Release Publication
 
 ### 1. Scope / Trigger
 
-Use this contract when changing registry publication, GitHub Release assets, release inputs, or Docker build reuse.
+Use this contract when changing account-pool publication, asset/image identity, release documentation, or the boundary between this branch and the main-branch control plane.
 
 ### 2. Signatures
 
-- `release.yml`: `version_type`, `publish_dockerhub`, `publish_aliyun`.
-- `release-artifacts.yml`: `release_tag`, `revision_sha`, `prepared_revision`, and optional registry booleans.
+- Main dispatcher: `.github/workflows/release-account-pool.yml` on `main`.
+- Fixed edition tuple: `account-pool`, `gemini-account-pool`, `pool-v`, `web2gem-account-pool`, `web2gem-account-pool`.
+- Branch-local workflows: `quality-gates.yml` and `sync-upstream.yml` only.
 
 ### 3. Contracts
 
-- A manual release calls the branch-bound version authority exactly once, then publishes its immutable revision.
-- Publication always targets GHCR and may add Docker Hub/Aliyun tags to the same multi-platform build.
+- A maintainer runs `Release Account Pool Edition` from `main`; the dispatcher calls the shared version authority exactly once, then publishes its immutable revision.
+- Publication always targets `ghcr.io/guardinary/web2gem-account-pool` and may add matching Docker Hub/Aliyun repositories to the same multi-platform build.
 - Selected credentials are validated before login/build; account-pool Docker/D1 runtime contents remain part of the same Dockerfile build.
-- Existing tag publication still runs canonical release gates unless the prepared caller already ran them.
+- Worker assets, Docker archives, cache scope, release title, and `latest` tag remain isolated from the main edition.
+- This branch must not duplicate the main-branch release YAML files.
 
 ### 4. Validation & Error Matrix
 
-- Prepared account-pool revision -> skip duplicate gates and publish captured SHA.
+- Prepared account-pool revision -> skip duplicate gates and publish the captured SHA.
+- Main dispatcher metadata mismatch -> fail before checkout or dependency installation.
+- Main-edition `v*` tag exists -> ignore it when calculating the next account-pool version.
 - Missing selected registry credentials -> fail before image build.
 - Optional registry disabled -> do not use its secrets or tags.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: one version commit and one multi-registry publication build.
-- Base: GHCR plus Worker/archive/checksum assets.
+- Good: one main-controlled version commit to this branch and one multi-registry publication build.
+- Base: account-pool GHCR plus edition-named Worker/archive/checksum assets.
+- Bad: restore `release.yml`, `reusable-versioned-release.yml`, or `release-artifacts.yml` on this branch.
+- Bad: publish account-pool `latest` into `ghcr.io/guardinary/web2gem`.
 - Bad: independent Docker Hub/Aliyun workflows each bump and tag versions.
 
 ### 6. Tests Required
 
-- Assert one version-authority call followed by reusable publication.
-- Assert exactly one registry `docker/build-push-action` publication step and a shared cache scope.
-- Assert the obsolete independent Docker Hub workflow is absent.
+- Assert every branch-local release workflow path is absent.
+- Assert README, Compose, and `.env.docker.example` use the account-pool Worker asset and GHCR repository.
+- Assert the canonical release gate runner remains complete because the main control plane executes it after checking out this branch.
 - Run `actionlint` and the scripts unit suite.
 
 ### 7. Wrong vs Correct
@@ -104,21 +112,24 @@ Use this contract when changing registry publication, GitHub Release assets, rel
 
 ```yaml
 jobs:
-  dockerhub:
-    uses: ./.github/workflows/reusable-versioned-release.yml
-  aliyun:
+  release:
     uses: ./.github/workflows/reusable-versioned-release.yml
 ```
 
 #### Correct
 
 ```yaml
+# .github/workflows/release-account-pool.yml on main
+name: Release Account Pool Edition
 jobs:
   prepare:
     uses: ./.github/workflows/reusable-versioned-release.yml
-  publish:
-    needs: prepare
-    uses: ./.github/workflows/release-artifacts.yml
+    with:
+      edition: account-pool
+      source_branch: gemini-account-pool
+      tag_prefix: pool-v
+      asset_prefix: web2gem-account-pool
+      image_repository: web2gem-account-pool
 ```
 
 ## Scenario: Static And Independent Branch Quality Gates
@@ -396,7 +407,7 @@ export const VERSION = "2.0.0-worker";
 ```ini
 # .env.example
 PORT=52389
-WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:latest
+WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem-account-pool:latest
 API_KEYS=
 ```
 
@@ -418,7 +429,7 @@ ADMIN_KEY=
 ```ini
 # .env.docker.example
 PORT=52389
-WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:latest
+WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem-account-pool:latest
 ```
 
 ## Scenario: Generated Test Bundle Selection

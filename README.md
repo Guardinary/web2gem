@@ -251,15 +251,13 @@ If Git reports a conflict, resolve it before pushing. Do not click the Deploy Bu
 
 </details>
 
-#### Advanced: deploy `worker.js` manually
+#### Advanced: deploy the single-file Worker manually
 
-Download `worker.js` from [Releases](https://github.com/Guardinary/web2gem/releases), paste it into a Cloudflare Worker, and add the `nodejs_compat` compatibility flag. You must also bind a `GEMINI_DB` D1 database and configure `ADMIN_KEY`. See [Account Pool Management](#account-pool-management) for the database setup and account import steps.
+Download `web2gem-account-pool-worker.js` from [Releases](https://github.com/Guardinary/web2gem/releases), paste it into a Cloudflare Worker, and add the `nodejs_compat` compatibility flag. You must also bind a `GEMINI_DB` D1 database and configure `ADMIN_KEY`. See [Account Pool Management](#account-pool-management) for the database setup and account import steps.
 
 ![Cloudflare Worker settings showing nodejs_compat](./docs/images/cloudflare-worker-settings-nodejs-compat.png)
 
 ### Option 2: Deploy with Docker
-
-> **Currently unavailable:** `gemini-account-pool` has not published its first Docker image or release archives yet. The default `ghcr.io/guardinary/web2gem:latest` image currently belongs to the `main` edition, so the Compose and prebuilt-image instructions below must not be used for this branch until an account-pool release is published. Use the Cloudflare Workers deployment for now.
 
 Use [`.env.docker.example`](.env.docker.example) as the environment template and [`compose.yaml`](compose.yaml) as the Compose service definition:
 
@@ -270,7 +268,7 @@ docker compose up -d
 
 On PowerShell, use `Copy-Item .env.docker.example .env` instead of `cp`.
 
-The provided [`compose.yaml`](compose.yaml) pulls `ghcr.io/guardinary/web2gem:latest` by default, maps `${PORT:-52389}:${PORT:-52389}`, and forwards the runtime variables from `.env`. Set `ADMIN_KEY`, plus `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN`, so Docker can manage accounts and inject the required `GEMINI_DB` binding. Set `API_KEYS` for shared deployments. To pin a specific image tag, set `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:<tag>` in `.env`.
+The provided [`compose.yaml`](compose.yaml) pulls `ghcr.io/guardinary/web2gem-account-pool:latest` by default, maps `${PORT:-52389}:${PORT:-52389}`, and forwards the runtime variables from `.env`. Set `ADMIN_KEY`, plus `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN`, so Docker can manage accounts and inject the required `GEMINI_DB` binding. Set `API_KEYS` for shared deployments. To pin a specific image tag, set `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem-account-pool:<tag>` in `.env`.
 
 After the container starts, verify the local health route:
 
@@ -285,15 +283,15 @@ If you changed `PORT` in `.env`, use that host port instead. Docker deployments 
 For one-off local testing without Compose, you can still build and run the image directly:
 
 ```sh
-docker build -t web2gem .
-docker run --rm -p 52389:52389 --env-file .env web2gem
+docker build -t web2gem-account-pool .
+docker run --rm -p 52389:52389 --env-file .env web2gem-account-pool
 ```
 
 Release pages also provide prebuilt Docker image archives. Download the archive matching your platform, load it, and run the tagged image:
 
 ```sh
-gzip -dc web2gem_<tag>_docker_linux_amd64.tar.gz | docker load
-docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
+gzip -dc web2gem-account-pool_<tag>_docker_linux_amd64.tar.gz | docker load
+docker run --rm -p 52389:52389 --env-file .env web2gem-account-pool:<tag>
 ```
 
 If the upstream Gemini Web path starts returning empty output, first check whether `GEMINI_BL` needs to be refreshed from the current Gemini Web frontend. If Cloudflare egress is rate-limited, set `GEMINI_ORIGIN` to your own forwarding service or proxy endpoint.
@@ -302,7 +300,7 @@ If the upstream Gemini Web path starts returning empty output, first check wheth
 
 `gemini-account-pool` is the persistent-storage edition of `web2gem`. It is released independently from `main`; the shared OpenAI-compatible and Google-compatible generation routes remain familiar, while account provisioning and operations use a different model.
 
-Maintainers publish this branch through the single `Versioned Release` workflow. Every release publishes GitHub assets and GHCR from the captured account-pool revision, with optional Docker Hub and Aliyun publication in the same multi-platform image build.
+Maintainers publish this edition from the default branch through **Actions → Release Account Pool Edition**. The shared control plane checks out `gemini-account-pool`, creates a `pool-v*` tag, and publishes the account-pool assets and container repositories from the captured revision.
 
 | Area | `main` | `gemini-account-pool` |
 | --- | --- | --- |

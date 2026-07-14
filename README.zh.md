@@ -251,15 +251,13 @@ git push origin HEAD
 
 </details>
 
-#### 高级方式：手动部署 `worker.js`
+#### 高级方式：手动部署单文件 Worker
 
-从 [Releases](https://github.com/Guardinary/web2gem/releases) 下载 `worker.js`，粘贴到 Cloudflare Worker，并添加 `nodejs_compat` 兼容性标记。还需要绑定 `GEMINI_DB` D1 数据库并设置 `ADMIN_KEY`。数据库配置和账号导入步骤见[账号池管理](#账号池管理)。
+从 [Releases](https://github.com/Guardinary/web2gem/releases) 下载 `web2gem-account-pool-worker.js`，粘贴到 Cloudflare Worker，并添加 `nodejs_compat` 兼容性标记。还需要绑定 `GEMINI_DB` D1 数据库并设置 `ADMIN_KEY`。数据库配置和账号导入步骤见[账号池管理](#账号池管理)。
 
 ![Cloudflare Worker 设置中的 nodejs_compat 兼容性标记](./docs/images/cloudflare-worker-settings-nodejs-compat.png)
 
 ### 方式二：通过 Docker 部署
-
-> **当前暂不可用：** `gemini-account-pool` 尚未发布首个 Docker 镜像和 Release 归档。默认的 `ghcr.io/guardinary/web2gem:latest` 目前属于 `main` 版本，因此在账号池版本正式发布前，不应使用下方 Compose 和预构建镜像部署方式；当前请先使用 Cloudflare Workers 部署。
 
 使用 [`.env.docker.example`](.env.docker.example) 作为环境变量模板，使用 [`compose.yaml`](compose.yaml) 作为 Compose 服务定义：
 
@@ -270,7 +268,7 @@ docker compose up -d
 
 在 PowerShell 中，请使用 `Copy-Item .env.docker.example .env` 代替 `cp`。
 
-仓库提供的 [`compose.yaml`](compose.yaml) 默认拉取 `ghcr.io/guardinary/web2gem:latest`，映射 `${PORT:-52389}:${PORT:-52389}`，并从 `.env` 传入运行时变量。设置 `ADMIN_KEY`，并同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`，让 Docker 可以管理账号并注入必需的 `GEMINI_DB` binding。共享部署时再设置 `API_KEYS`。如需固定镜像版本，可设置 `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem:<tag>`。
+仓库提供的 [`compose.yaml`](compose.yaml) 默认拉取 `ghcr.io/guardinary/web2gem-account-pool:latest`，映射 `${PORT:-52389}:${PORT:-52389}`，并从 `.env` 传入运行时变量。设置 `ADMIN_KEY`，并同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`，让 Docker 可以管理账号并注入必需的 `GEMINI_DB` binding。共享部署时再设置 `API_KEYS`。如需固定镜像版本，可设置 `WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem-account-pool:<tag>`。
 
 容器启动后，可验证本地健康检查路由：
 
@@ -285,15 +283,15 @@ curl http://127.0.0.1:52389/
 如果只是临时本地测试，也可以不用 Compose，直接构建并运行镜像：
 
 ```sh
-docker build -t web2gem .
-docker run --rm -p 52389:52389 --env-file .env web2gem
+docker build -t web2gem-account-pool .
+docker run --rm -p 52389:52389 --env-file .env web2gem-account-pool
 ```
 
 Release 页面也提供预构建 Docker 镜像归档。下载与你的平台匹配的归档，加载后运行对应 tag：
 
 ```sh
-gzip -dc web2gem_<tag>_docker_linux_amd64.tar.gz | docker load
-docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
+gzip -dc web2gem-account-pool_<tag>_docker_linux_amd64.tar.gz | docker load
+docker run --rm -p 52389:52389 --env-file .env web2gem-account-pool:<tag>
 ```
 
 如果上游 Gemini Web 路径开始返回空输出，先检查 `GEMINI_BL` 是否需要从当前 Gemini Web 前端刷新。如果 Cloudflare 出口请求被限流，可以把 `GEMINI_ORIGIN` 设置成你自己的转发服务或代理地址。
@@ -302,7 +300,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 
 `gemini-account-pool` 是 `web2gem` 的持久化存储版本，与 `main` 独立发布。两者保留相近的 OpenAI 兼容和 Google 兼容生成接口，但账号配置与运行方式不同。
 
-维护者通过唯一的 `Versioned Release` 工作流发布此分支。每次发布都基于已捕获的账号池 revision 生成 GitHub 产物并推送 GHCR，也可以在同一次多平台镜像构建中选择发布到 Docker Hub 和阿里云容器镜像服务。
+维护者在默认分支运行 **Actions → Release Account Pool Edition** 发布此版本。共享发布控制面会检出 `gemini-account-pool`、创建 `pool-v*` tag，并从已捕获的 revision 发布账号池专用产物和容器镜像。
 
 | 方面 | `main` | `gemini-account-pool` |
 | --- | --- | --- |

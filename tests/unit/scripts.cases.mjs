@@ -401,8 +401,16 @@ export const cases = [
 		"keeps Docker Compose port mapping aligned with the container listener",
 		async () => {
 			const compose = await readFile("compose.yaml", "utf8");
+			const dockerEnv = await readFile(".env.docker.example", "utf8");
 			assert.match(compose, /\$\{PORT:-52389\}:\$\{PORT:-52389\}/);
 			assert.doesNotMatch(compose, /\$\{PORT:-52389\}:52389/);
+			for (const source of [compose, dockerEnv]) {
+				assert.match(
+					source,
+					/ghcr\.io\/guardinary\/web2gem-account-pool:latest/,
+				);
+				assert.doesNotMatch(source, /ghcr\.io\/guardinary\/web2gem:latest/);
+			}
 			assert.match(
 				compose,
 				/REQUEST_BODY_MAX_BYTES:\s*"\$\{REQUEST_BODY_MAX_BYTES:-67108864\}"/,
@@ -670,16 +678,10 @@ export const cases = [
 		},
 	],
 	[
-		"keeps release workflows on the complete canonical quality gate",
+		"keeps the account-pool release control plane on main",
 		async () => {
 			const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 			const runner = await readFile("scripts/check-release.mjs", "utf8");
-			const [releaseArtifacts, versionedRelease, releaseEntry] =
-				await Promise.all([
-					readFile(".github/workflows/release-artifacts.yml", "utf8"),
-					readFile(".github/workflows/reusable-versioned-release.yml", "utf8"),
-					readFile(".github/workflows/release.yml", "utf8"),
-				]);
 			assert.equal(
 				packageJson.scripts["check:release"],
 				"node scripts/check-release.mjs",
@@ -696,49 +698,30 @@ export const cases = [
 			]) {
 				assert.match(runner, new RegExp(`"${check.replace(":", "\\:")}"`));
 			}
-			for (const workflow of [releaseArtifacts, versionedRelease]) {
-				assert.match(workflow, /pnpm check:release\s+pnpm docker:smoke/);
-				assert.doesNotMatch(workflow, /pnpm coverage:ci/);
-				assert.doesNotMatch(workflow, /\t/);
+
+			for (const workflow of [
+				".github/workflows/release.yml",
+				".github/workflows/reusable-versioned-release.yml",
+				".github/workflows/release-artifacts.yml",
+				".github/workflows/release-main.yml",
+				".github/workflows/release-account-pool.yml",
+			]) {
+				await assert.rejects(readFile(workflow, "utf8"), /ENOENT/, workflow);
 			}
-			const sourceGuard = versionedRelease.indexOf(
-				"- name: Validate release source",
-			);
-			const checkout = versionedRelease.indexOf("- name: Checkout code");
-			const install = versionedRelease.indexOf("- name: Install dependencies");
-			assert.equal(sourceGuard >= 0 && sourceGuard < checkout, true);
-			assert.equal(checkout < install, true);
-			assert.match(
-				versionedRelease,
-				/RELEASE_REF: \$\{\{ github\.ref \}\}[\s\S]*refs\/heads\/gemini-account-pool/,
-			);
-			assert.match(
-				versionedRelease,
-				/uses: actions\/checkout@v5\s+with:\s+ref: gemini-account-pool\s+fetch-depth: 0/,
-			);
-			assert.match(
-				versionedRelease,
-				/git push origin HEAD:gemini-account-pool "\$\{NEW_TAG\}"/,
-			);
-			assert.match(
-				releaseEntry,
-				/uses: \.\/\.github\/workflows\/reusable-versioned-release\.yml[\s\S]*uses: \.\/\.github\/workflows\/release-artifacts\.yml/,
-			);
-			assert.doesNotMatch(releaseEntry, /docker\/build-push-action/);
-			assert.match(releaseArtifacts, /workflow_call:/);
-			assert.equal(
-				[...releaseArtifacts.matchAll(/uses: docker\/build-push-action@v6/g)]
-					.length,
-				1,
-			);
-			assert.match(
-				releaseArtifacts,
-				/cache-from: type=gha,scope=\$\{\{ env\.RELEASE_CACHE_SCOPE \}\}[\s\S]*cache-to: type=gha,mode=max,scope=\$\{\{ env\.RELEASE_CACHE_SCOPE \}\}/,
-			);
-			await assert.rejects(
-				readFile(".github/workflows/release-dockerhub.yml", "utf8"),
-				/ENOENT/,
-			);
+
+			const [english, chinese] = await Promise.all([
+				readFile("README.md", "utf8"),
+				readFile("README.zh.md", "utf8"),
+			]);
+			for (const readme of [english, chinese]) {
+				assert.match(readme, /Release Account Pool Edition/);
+				assert.match(readme, /pool-v\*/);
+				assert.match(readme, /web2gem-account-pool-worker\.js/);
+				assert.match(
+					readme,
+					/ghcr\.io\/guardinary\/web2gem-account-pool:latest/,
+				);
+			}
 		},
 	],
 	[
