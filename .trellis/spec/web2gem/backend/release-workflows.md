@@ -676,13 +676,15 @@ ubuntu-quality:
 
 ### 1. Scope / Trigger
 
-Use this contract when changing the Cloudflare Deploy Button, D1 draft binding,
-deployment-repository synchronization, or documentation for upgrading an
-existing one-click deployment.
+Use this contract when changing the Cloudflare Deploy Button, Worker entrypoint,
+D1 draft binding, deployment-repository synchronization, or documentation for
+upgrading an existing one-click deployment.
 
 ### 2. Signatures
 
 - Draft D1 binding: `wrangler.jsonc` `d1_databases[].binding = "GEMINI_DB"`.
+- Deploy Button entrypoint: `wrangler.jsonc` `main = "src/index.ts"`.
+- Release and Docker bundle: `scripts/build.mjs` writes `dist/worker.js`.
 - Migration command: `wrangler d1 migrations apply GEMINI_DB --remote`.
 - Sync workflow: `.github/workflows/sync-upstream.yml`.
 - Upstream source: `https://github.com/Guardinary/web2gem.git`, branch
@@ -695,6 +697,10 @@ existing one-click deployment.
 - Keep `wrangler.jsonc` portable: declare the stable D1 binding/resource name
   but omit `database_id`. Cloudflare/Wrangler automatic provisioning owns the
   physical resource association outside Git.
+- Keep `wrangler.jsonc` `main` pointed at committed source that exists in a
+  fresh clone. Deploy Button resolves the entrypoint before running the package
+  build command, so generated `dist/worker.js` cannot be the deployment
+  entrypoint even though it remains the release and Docker bundle.
 - Do not put D1 database IDs in Deploy Button secret templates or GitHub
   Secrets. `ADMIN_KEY` and optional `API_KEYS` remain Worker secrets.
 - The sync job requests only `contents: write`, requires
@@ -735,15 +741,22 @@ existing one-click deployment.
   rerun the Deploy Button and create a duplicate Worker.
 - Draft D1 binding cannot be parsed -> `wrangler deploy --dry-run` or Worker
   binding type checks fail before release.
+- `main` points at ignored `dist/worker.js` -> a fresh Deploy Button clone fails
+  during project setup with a Wrangler configuration parsing error before the
+  build command can generate the file.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: a true Fork fast-forwards weekly and its Cloudflare Git integration
   deploys the same Worker.
+- Good: `main` points at tracked `src/index.ts`; the build may still generate
+  `dist/worker.js` for release assets and Docker.
 - Base: the Fork is already current and the scheduled run exits idempotently.
 - Bad: rerun the Deploy Button to upgrade and create a duplicate Worker.
 - Bad: commit a user-specific D1 UUID or generate `wrangler.jsonc` from a GitHub
   secret.
+- Bad: point `main` at an ignored build artifact and assume Deploy Button runs
+  `pnpm build` before resolving the Wrangler configuration.
 - Bad: `git reset --hard upstream/gemini-account-pool` followed by force push.
 - Bad: promise that every Deploy Button repository contains GitHub Actions
   workflows without verifying the generated repository.
@@ -752,6 +765,8 @@ existing one-click deployment.
 
 - Assert `GEMINI_DB` keeps its stable `database_name` and has no `database_id`
   property.
+- Assert `wrangler.jsonc` `main` is `src/index.ts` and the file exists in the
+  repository.
 - Assert the migration script continues referencing the binding name.
 - Assert weekly and manual triggers, `contents: write`, the true-Fork guard,
   action version, upstream/target repository and branch inputs, `GITHUB_TOKEN`,
@@ -771,6 +786,7 @@ existing one-click deployment.
 
 ```jsonc
 {
+  "main": "dist/worker.js",
   "d1_databases": [{
     "binding": "GEMINI_DB",
     "database_name": "web2gem-gemini-accounts",
@@ -788,6 +804,7 @@ git push --force origin HEAD
 
 ```jsonc
 {
+  "main": "src/index.ts",
   "d1_databases": [{
     "binding": "GEMINI_DB",
     "database_name": "web2gem-gemini-accounts"

@@ -616,11 +616,13 @@ export const cases = [
 		},
 	],
 	[
-		"keeps the Deploy Button D1 binding portable across forks",
+		"keeps the Deploy Button config portable across fresh clones",
 		async () => {
 			const wrangler = parseJsoncObject(
 				await readFile("wrangler.jsonc", "utf8"),
 			);
+			assert.equal(wrangler.main, "src/index.ts");
+			assert.match(await readFile(wrangler.main, "utf8"), /export default/);
 			const d1Bindings = wrangler.d1_databases || [];
 			const geminiDb = d1Bindings.find(
 				(binding) => binding.binding === "GEMINI_DB",
