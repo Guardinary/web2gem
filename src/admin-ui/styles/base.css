@@ -105,7 +105,7 @@ button.danger:hover:not(:disabled),
 button.danger-solid {
 	border-color: var(--danger);
 	background: var(--danger);
-	color: white;
+	color: var(--danger-contrast);
 }
 button.subtle-danger {
 	border-color: transparent;

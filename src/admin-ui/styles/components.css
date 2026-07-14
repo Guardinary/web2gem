@@ -152,8 +152,7 @@ td.empty {
 	font-weight: 600;
 	white-space: nowrap;
 }
-.status-active,
-.status-enabled {
+.status-active {
 	border-color: color-mix(in srgb, var(--success) 32%, var(--line));
 	background: var(--success-soft);
 	color: var(--success);
