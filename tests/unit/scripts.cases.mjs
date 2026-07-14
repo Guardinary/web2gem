@@ -438,6 +438,31 @@ export const cases = [
 		},
 	],
 	[
+		"keeps local environment secrets ignored while templates remain trackable",
+		async () => {
+			const patterns = (await readFile(".gitignore", "utf8"))
+				.split(/\r?\n/)
+				.map((line) => line.trim())
+				.filter((line) => line && !line.startsWith("#"));
+
+			for (const pattern of [".env", ".env.*", ".dev.vars", ".dev.vars.*"]) {
+				assert.equal(patterns.includes(pattern), true, `missing ${pattern}`);
+			}
+			for (const example of ["!.env.example", "!.dev.vars.example"]) {
+				assert.equal(patterns.includes(example), true, `missing ${example}`);
+			}
+			assert.equal(
+				patterns.indexOf("!.env.example") > patterns.indexOf(".env.*"),
+				true,
+			);
+			assert.equal(
+				patterns.indexOf("!.dev.vars.example") >
+					patterns.indexOf(".dev.vars.*"),
+				true,
+			);
+		},
+	],
+	[
 		"keeps runtime config env keys aligned with Docker docs and Compose",
 		async () => {
 			const dockerEnvExample = parseEnvExampleKeys(
@@ -498,6 +523,37 @@ export const cases = [
 		},
 	],
 	[
+		"keeps README quality-command docs aligned with config",
+		async () => {
+			const [english, chinese, vitestConfig] = await Promise.all([
+				readFile("README.md", "utf8"),
+				readFile("README.zh.md", "utf8"),
+				readFile("vitest.config.mjs", "utf8"),
+			]);
+
+			for (const readme of [english, chinese]) {
+				for (const command of [
+					"pnpm check:static",
+					"pnpm check:worker-types",
+					"pnpm typecheck",
+					"pnpm check:arch",
+					"pnpm unit",
+					"pnpm coverage:ci",
+					"pnpm smoke",
+					"pnpm check:bench",
+					"pnpm check:size",
+					"pnpm docker:smoke",
+				]) {
+					assert.match(readme, new RegExp(command.replace(":", "\\:")));
+				}
+				assert.match(readme, /lcov/);
+				assert.match(readme, /JSON summary/);
+				assert.doesNotMatch(readme, /Vitest V8 text/);
+			}
+			assert.match(vitestConfig, /reporter:\s*\["lcov", "json-summary"\]/);
+		},
+	],
+	[
 		"keeps edition releases isolated behind the main-branch control plane",
 		async () => {
 			const packageJson = JSON.parse(await readFile("package.json", "utf8"));
@@ -555,7 +611,10 @@ export const cases = [
 				versionedRelease,
 				/ref: \$\{\{ inputs\.source_branch \}\}\s+fetch-depth: 0/,
 			);
-			assert.match(versionedRelease, /git tag --list "\$\{TAG_PREFIX\}\[0-9\]\*"/);
+			assert.match(
+				versionedRelease,
+				/git tag --list "\$\{TAG_PREFIX\}\[0-9\]\*"/,
+			);
 			assert.doesNotMatch(versionedRelease, /git describe --tags/);
 			assert.match(
 				versionedRelease,
@@ -607,7 +666,10 @@ export const cases = [
 			}
 
 			assert.match(releaseArtifacts, /workflow_call:/);
-			assert.doesNotMatch(releaseArtifacts, /workflow_dispatch:|\n  release:/);
+			assert.doesNotMatch(
+				releaseArtifacts,
+				/workflow_dispatch:|\n {2}release:/,
+			);
 			assert.match(
 				releaseArtifacts,
 				/edition:[\s\S]*tag_prefix:[\s\S]*asset_prefix:[\s\S]*image_repository:[\s\S]*release_tag:[\s\S]*revision_sha:/,
@@ -645,6 +707,45 @@ export const cases = [
 			await assert.rejects(
 				readFile(".github/workflows/release-dockerhub.yml", "utf8"),
 				/ENOENT/,
+			);
+		},
+	],
+	[
+		"keeps command runners centralized across quality scripts",
+		async () => {
+			const processHelper = await readFile("scripts/process.mjs", "utf8");
+			assert.match(processHelper, /export function runPnpm/);
+			assert.match(processHelper, /export function runCommand/);
+			assert.match(processHelper, /export function outputCommand/);
+			assert.match(processHelper, /export async function commandAvailable/);
+
+			for (const path of [
+				"scripts/unit.mjs",
+				"scripts/coverage.mjs",
+				"scripts/ensure-test-bundle-fresh.mjs",
+				"scripts/docker-smoke.mjs",
+				"scripts/check-release.mjs",
+				"scripts/check-benchmark.mjs",
+			]) {
+				const source = await readFile(path, "utf8");
+				assert.match(source, /from "\.\/process\.mjs"/, path);
+				assert.doesNotMatch(source, /from "node:child_process"/, path);
+			}
+		},
+	],
+	[
+		"keeps esbuild targets aligned with the TypeScript baseline",
+		async () => {
+			const tsconfig = JSON.parse(await readFile("tsconfig.json", "utf8"));
+			const expectedTarget = String(
+				tsconfig.compilerOptions.target,
+			).toLowerCase();
+			const buildScript = await readFile("scripts/build.mjs", "utf8");
+
+			assert.match(
+				buildScript,
+				new RegExp(`target:\\s*"${expectedTarget}"`),
+				"scripts/build.mjs",
 			);
 		},
 	],
