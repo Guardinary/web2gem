@@ -1,7 +1,6 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, globSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, normalize, relative, resolve } from "node:path";
-import { globSync } from "node:fs";
 import { errorLine, outputLine } from "./io.mjs";
 
 const root = process.cwd();
@@ -15,7 +14,7 @@ const rules = [
 	{
 		label: "admin UI modules must stay browser-boundary only",
 		files: "src/admin-ui/**/*.{ts,tsx}",
-		disallowed: ["../"],
+		disallowedOutside: "src/admin-ui",
 	},
 	{
 		label: "shared modules must stay leaf-level",
@@ -219,6 +218,20 @@ for (const rule of rules) {
 		const text = await readFile(resolve(root, file), "utf8");
 		for (const match of text.matchAll(importPattern)) {
 			const specifier = match[1];
+			if (rule.disallowedOutside && specifier.startsWith(".")) {
+				const resolvedSpecifier = normalizeSourcePath(
+					relative(root, resolve(dirname(resolve(root, file)), specifier)),
+				);
+				if (
+					resolvedSpecifier !== rule.disallowedOutside &&
+					!resolvedSpecifier.startsWith(`${rule.disallowedOutside}/`)
+				) {
+					violations.push(
+						`${normalizeSourcePath(relative(root, resolve(root, file)))}: ${specifier} (${rule.label})`,
+					);
+					continue;
+				}
+			}
 			if (
 				rule.allowed?.some(
 					(prefix) =>

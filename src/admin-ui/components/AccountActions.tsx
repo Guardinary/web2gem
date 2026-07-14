@@ -1,8 +1,8 @@
-import type { JSX } from "preact";
 import { useComputed } from "@preact/signals";
+import type { JSX } from "preact";
 import { openEdit, runAction } from "../actions";
-import { Icon } from "../icons";
 import { tr } from "../i18n";
+import { Icon } from "../icons";
 import {
 	accountBusyLabel,
 	accountDisplayName,
@@ -10,7 +10,7 @@ import {
 	identifierKey,
 } from "../logic";
 import { rowBusy } from "../state";
-import type { GeminiAccount } from "../types";
+import type { AccountAction, GeminiAccount } from "../types";
 
 export function AccountActions({
 	account,
@@ -18,10 +18,9 @@ export function AccountActions({
 	account: GeminiAccount;
 }): JSX.Element {
 	const key = identifierKey(account);
-	const enabled = Number(account.enabled) === 1;
 	const busy = useComputed(() => rowBusy.value[key] || "").value;
 	const label = accountDisplayName(account);
-	const run = (action: string): void => {
+	const run = (action: AccountAction): void => {
 		void runAction(action, [identifier(account)], {
 			scope: "row",
 			targetLabel: `account “${label}”`,
@@ -32,11 +31,11 @@ export function AccountActions({
 			<button
 				type="button"
 				disabled={!!busy}
-				aria-label={`${tr("Check")} ${label}`}
-				onClick={() => run("check")}
+				aria-label={`${tr("Refresh")} ${label}`}
+				onClick={() => run("refresh")}
 			>
-				<Icon name="check" />
-				{busy === "check" ? `${tr("Checking")}…` : tr("Check")}
+				<Icon name="refresh" />
+				{busy === "refresh" ? `${tr("Refreshing")}…` : tr("Refresh")}
 			</button>
 			<details class="action-menu">
 				<summary aria-label={`${tr("More")} ${label}`}>{tr("More")}</summary>
@@ -47,22 +46,14 @@ export function AccountActions({
 						onClick={() => openEdit(account)}
 					>
 						<Icon name="edit" />
-						{tr("Edit")}
+						{tr("Rename")}
 					</button>
 					<button
 						type="button"
 						disabled={!!busy}
-						onClick={() => run("refresh")}
+						onClick={() => run(account.enabled ? "disable" : "enable")}
 					>
-						<Icon name="refresh" />
-						{tr("Refresh")}
-					</button>
-					<button
-						type="button"
-						disabled={!!busy}
-						onClick={() => run(enabled ? "disable" : "enable")}
-					>
-						{tr(enabled ? "Disable" : "Enable")}
+						{tr(account.enabled ? "Disable" : "Enable")}
 					</button>
 					<button
 						type="button"

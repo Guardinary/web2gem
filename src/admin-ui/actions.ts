@@ -9,7 +9,6 @@ import { language, tr } from "./i18n";
 import {
 	identifier,
 	identifierKey,
-	metadataCsv,
 	parseBatchImport,
 	resultSummary,
 	text,
@@ -17,18 +16,15 @@ import {
 } from "./logic";
 import {
 	accountStats,
-	authExpanded,
-	adminKey,
 	accounts,
+	adminKey,
+	authExpanded,
 	batchBusy,
-	categoryFilter,
 	confirmationDraft,
 	connectionVerified,
-	cooldownFilter,
 	cursorStack,
 	editBusy,
 	editDraft,
-	enabledFilter,
 	importBatch,
 	importBusy,
 	importLabel,
@@ -37,18 +33,16 @@ import {
 	KEY_STORAGE,
 	KEY_STORAGE_MODE,
 	keyStorageMode,
-	lastDiagnostics,
 	loading,
 	nextCursor,
 	pageIndex,
 	query,
 	rowBusy,
 	selected,
-	sourceFilter,
-	statusFilter,
+	stateFilter,
 	toastItems,
 } from "./state";
-import type { AccountIdentifier, GeminiAccount } from "./types";
+import type { AccountAction, AccountIdentifier, GeminiAccount } from "./types";
 
 let toastId = 0;
 let confirmationResolver: ((confirmed: boolean) => void) | null = null;
@@ -108,27 +102,6 @@ export function clearAdminKey(): void {
 	showToast(tr("Admin key cleared"));
 }
 
-export function exportMetadata(): void {
-	const rows = accounts.value;
-	if (!rows.length) {
-		showToast(tr("No accounts to export"), "error");
-		return;
-	}
-	const url = URL.createObjectURL(
-		new Blob([metadataCsv(rows)], { type: "text/csv;charset=utf-8" }),
-	);
-	const link = document.createElement("a");
-	link.href = url;
-	link.download = "gemini-account-metadata.csv";
-	link.click();
-	URL.revokeObjectURL(url);
-	showToast(
-		language.value === "zh-CN"
-			? `已导出 ${rows.length} 条元数据`
-			: `Exported ${rows.length} metadata rows`,
-	);
-}
-
 export async function loadAccounts(
 	direction: "current" | "reset" | "next" | "prev" = "current",
 	verifyConnection = false,
@@ -162,17 +135,12 @@ export async function loadAccounts(
 	}
 	loading.value = true;
 	try {
-		const options = {
+		const overview = await getAccountOverview({
 			adminKey: adminKey.value,
 			cursor: cursorStack.value[pageIndex.value] || "",
-			status: statusFilter.value,
-			enabled: enabledFilter.value,
 			q: query.value.trim(),
-			category: categoryFilter.value,
-			cooldown: cooldownFilter.value,
-			source: sourceFilter.value.trim(),
-		};
-		const overview = await getAccountOverview(options);
+			state: stateFilter.value,
+		});
 		accounts.value = overview.items;
 		accountStats.value = overview.stats;
 		nextCursor.value = overview.nextCursor;
@@ -209,26 +177,18 @@ export async function submitImport(event: Event): Promise<void> {
 	try {
 		importBusy.value = true;
 		const batch = parseBatchImport(importBatch.value);
-		const result =
-			batch.length > 1
-				? await createAccountsWithLimitFallback(adminKey.value, {
-						accounts: batch,
-					})
-				: await createAccount(
-						adminKey.value,
-						batch[0] || {
-							label: importLabel.value.trim(),
-							psid: validateCookieValue(importPsid.value, "__Secure-1PSID"),
-							psidts: validateCookieValue(
-								importPsidts.value,
-								"__Secure-1PSIDTS",
-							),
-						},
-					);
-		lastDiagnostics.value = result;
+		const result = batch.length
+			? await createAccountsWithLimitFallback(adminKey.value, {
+					accounts: batch,
+				})
+			: await createAccount(adminKey.value, {
+					label: importLabel.value.trim(),
+					psid: validateCookieValue(importPsid.value, "__Secure-1PSID"),
+					psidts: validateCookieValue(importPsidts.value, "__Secure-1PSIDTS"),
+				});
 		showToast(
 			resultSummary("import", result),
-			result.failed || result.errors?.length ? "error" : undefined,
+			result.failed ? "error" : undefined,
 		);
 		resetImport();
 		await loadAccounts("reset");
@@ -257,13 +217,10 @@ function confirmDeletion(count: number, targetLabel: string): Promise<boolean> {
 	});
 }
 
-type RunActionOptions = {
-	targetLabel?: string;
-	scope?: "batch" | "row";
-};
+type RunActionOptions = { targetLabel?: string; scope?: "batch" | "row" };
 
 export async function runAction(
-	action: string,
+	action: AccountAction,
 	identifiers: AccountIdentifier[],
 	options: RunActionOptions = {},
 ): Promise<void> {
@@ -279,16 +236,13 @@ export async function runAction(
 	const keys = identifiers.map((item) => item.id);
 	const rowScoped = options.scope === "row" && keys.length === 1;
 	try {
-		if (rowScoped) {
+		if (rowScoped)
 			rowBusy.value = { ...rowBusy.value, [keys[0] || ""]: action };
-		} else {
-			batchBusy.value = action;
-		}
+		else batchBusy.value = action;
 		const result = await runAccountAction(adminKey.value, action, identifiers);
-		lastDiagnostics.value = result;
 		showToast(
 			resultSummary(action, result),
-			result.failed || result.errors?.length ? "error" : undefined,
+			result.failed ? "error" : undefined,
 		);
 		await loadAccounts();
 	} catch (error) {
@@ -301,9 +255,7 @@ export async function runAction(
 			const next = { ...rowBusy.value };
 			delete next[keys[0] || ""];
 			rowBusy.value = next;
-		} else {
-			batchBusy.value = "";
-		}
+		} else batchBusy.value = "";
 	}
 }
 
@@ -323,13 +275,11 @@ export async function submitEdit(event: Event): Promise<void> {
 		const result = await updateAccount(adminKey.value, {
 			...identifier(account),
 			label: draft.label.trim() || null,
-			status: draft.status,
-			enabled: draft.enabled === "true",
-			state_reason: draft.stateReason.trim() || null,
-			source: draft.source.trim() || null,
-			source_name: draft.sourceName.trim() || null,
 		});
-		showToast(resultSummary("update", result));
+		showToast(
+			resultSummary("update", result),
+			result.failed ? "error" : undefined,
+		);
 		editDraft.value = null;
 		await loadAccounts();
 	} catch (error) {
@@ -343,15 +293,7 @@ export async function submitEdit(event: Event): Promise<void> {
 }
 
 export function openEdit(account: GeminiAccount): void {
-	editDraft.value = {
-		key: identifierKey(account),
-		label: text(account.label),
-		status: account.status,
-		enabled: Number(account.enabled) === 1 ? "true" : "false",
-		stateReason: text(account.state_reason),
-		source: text(account.source),
-		sourceName: text(account.source_name),
-	};
+	editDraft.value = { key: identifierKey(account), label: text(account.label) };
 }
 
 export function resetImport(): void {

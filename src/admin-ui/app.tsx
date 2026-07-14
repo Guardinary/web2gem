@@ -3,7 +3,6 @@ import { useEffect } from "preact/hooks";
 import { loadAccounts, restoreAdminKey } from "./actions";
 import { ConfirmationModal, EditModal } from "./components";
 import { AuthPanel } from "./sections/AuthPanel";
-import { Diagnostics } from "./sections/Diagnostics";
 import { ImportPanel } from "./sections/ImportPanel";
 import { OverviewSection } from "./sections/OverviewSection";
 import { Toasts } from "./sections/Toasts";
@@ -29,7 +28,6 @@ export function App(): JSX.Element {
 				<OverviewSection />
 				<ImportPanel />
 				<Workspace />
-				<Diagnostics />
 			</main>
 			<EditModal />
 			<ConfirmationModal />

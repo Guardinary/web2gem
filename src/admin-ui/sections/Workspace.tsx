@@ -1,23 +1,18 @@
 import type { JSX } from "preact";
-import { exportMetadata, loadAccounts, runAction } from "../actions";
+import { loadAccounts, runAction } from "../actions";
 import { AccountCards, AccountRows } from "../components";
-import { Icon } from "../icons";
 import { language, tr } from "../i18n";
+import { Icon } from "../icons";
 import { identifier, identifierKey } from "../logic";
-import { advancedFilterCount, hasFilters } from "../selectors";
+import { hasFilters } from "../selectors";
 import {
 	accounts,
-	advancedFiltersExpanded,
-	categoryFilter,
-	cooldownFilter,
-	enabledFilter,
 	loading,
 	nextCursor,
 	pageIndex,
 	query,
 	selected,
-	sourceFilter,
-	statusFilter,
+	stateFilter,
 } from "../state";
 import { BulkBar } from "./BulkBar";
 import { WorkspaceFilters } from "./WorkspaceFilters";
@@ -35,12 +30,7 @@ export function Workspace(): JSX.Element {
 	};
 	const clearFilters = (): void => {
 		query.value = "";
-		statusFilter.value = "";
-		enabledFilter.value = "";
-		categoryFilter.value = "";
-		cooldownFilter.value = "";
-		sourceFilter.value = "";
-		advancedFiltersExpanded.value = false;
+		stateFilter.value = "";
 		void loadAccounts("reset");
 	};
 
@@ -56,25 +46,16 @@ export function Workspace(): JSX.Element {
 					<h2 id="accounts-title" class="panel-title">
 						{tr("Account workspace")}
 					</h2>
-					<p>
-						{tr(
-							"Search, filter, inspect, and operate on sanitized account metadata.",
-						)}
-					</p>
+					<p>{tr("Search accounts and manage their availability.")}</p>
 				</div>
 				<div class="actions">
 					<button type="button" onClick={() => void loadAccounts("reset")}>
 						<Icon name="refresh" />
 						{tr("Refresh")}
 					</button>
-					<button type="button" onClick={exportMetadata}>
-						<Icon name="download" />
-						{tr("Export CSV")}
-					</button>
 				</div>
 			</div>
 			<WorkspaceFilters
-				advancedFilterCount={advancedFilterCount.value}
 				hasFilters={hasFilters.value}
 				onClearFilters={clearFilters}
 			/>
@@ -89,18 +70,10 @@ export function Workspace(): JSX.Element {
 						<tr>
 							<th>{tr("Select")}</th>
 							<th>{tr("Account")}</th>
-							<th>{tr("Status")}</th>
-							<th>{tr("Enabled")}</th>
-							<th>{tr("Session")}</th>
-							<th>{tr("Category")}</th>
-							<th>{tr("Used")}</th>
-							<th>{tr("Refresh")}</th>
-							<th>{tr("Last success")}</th>
-							<th>{tr("Last failure")}</th>
-							<th>{tr("Outcome")}</th>
-							<th>{tr("Cooldown")}</th>
-							<th>{tr("Errors")}</th>
-							<th>{tr("Source")}</th>
+							<th>{tr("State")}</th>
+							<th>{tr("Last used")}</th>
+							<th>{tr("Current issue")}</th>
+							<th>{tr("Last refresh")}</th>
 							<th>{tr("Actions")}</th>
 						</tr>
 					</thead>

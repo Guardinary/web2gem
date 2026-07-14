@@ -1,10 +1,11 @@
 import type { JSX } from "preact";
 import { runAction, selectedIdentifiers } from "../actions";
+import { tr } from "../i18n";
 import { Icon } from "../icons";
-import { statusLabel, tr } from "../i18n";
 import { batchBusy, selected } from "../state";
+import type { AccountAction } from "../types";
 
-const batchActions = ["check", "refresh", "enable"] as const;
+const batchActions: readonly AccountAction[] = ["refresh", "enable", "disable"];
 
 type BulkBarProps = {
 	onSelectVisible: () => void;
@@ -55,7 +56,13 @@ export function BulkBar({
 									})
 								}
 							>
-								{statusLabel(action)}
+								{tr(
+									action === "refresh"
+										? "Refresh"
+										: action === "enable"
+											? "Enable"
+											: "Disable",
+								)}
 								{batchBusy.value === action ? "…" : ""}
 							</button>
 						))
@@ -64,17 +71,6 @@ export function BulkBar({
 					<details class="action-menu bulk-menu">
 						<summary>{tr("More")}</summary>
 						<div class="action-menu-items">
-							<button
-								type="button"
-								disabled={!!batchBusy.value}
-								onClick={() =>
-									void runAction("disable", selectedIdentifiers(), {
-										scope: "batch",
-									})
-								}
-							>
-								{tr("Disable selected")}
-							</button>
 							<button
 								class="danger"
 								type="button"

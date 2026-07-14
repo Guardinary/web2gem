@@ -1,4 +1,4 @@
-/* Components: table, badges, action menus, cards, dialogs, toasts, diagnostics. */
+/* Components: table, badges, action menus, cards, dialogs, and toasts. */
 
 .table-wrap {
 	max-width: 100%;
@@ -7,7 +7,7 @@
 }
 table {
 	width: 100%;
-	min-width: 1660px;
+	min-width: 900px;
 	border-collapse: separate;
 	border-spacing: 0;
 	font-size: var(--text-sm);
@@ -79,13 +79,6 @@ tbody tr[aria-busy="true"] {
 	z-index: 4;
 	background: var(--surface-subtle);
 }
-/* Errors and source columns hold wrapping prose — keep them readable. */
-.table-wrap th:nth-child(13),
-.table-wrap td:nth-child(13),
-.table-wrap th:nth-child(14),
-.table-wrap td:nth-child(14) {
-	min-width: 190px;
-}
 /* Lift the cell hosting an open row menu above later sticky cells. */
 .table-wrap td:has(.action-menu[open]) {
 	z-index: 5;
@@ -152,28 +145,22 @@ td.empty {
 	font-weight: 600;
 	white-space: nowrap;
 }
-.status-active {
+.status-available {
 	border-color: color-mix(in srgb, var(--success) 32%, var(--line));
 	background: var(--success-soft);
 	color: var(--success);
 }
-.status-rate_limited,
-.status-cooling_down,
-.status-transient_failed {
+.status-cooling {
 	border-color: color-mix(in srgb, var(--warning) 32%, var(--line));
 	background: var(--warning-soft);
 	color: var(--warning);
 }
-.status-auth_failed,
-.status-hard_blocked,
-.status-missing_cookie {
+.status-attention {
 	border-color: color-mix(in srgb, var(--danger) 32%, var(--line));
 	background: var(--danger-soft);
 	color: var(--danger);
 }
-.status-needs_cookie_update,
-.status-needs_user_action,
-.status-capability_mismatch {
+.status-disabled {
 	border-color: color-mix(in srgb, var(--info) 32%, var(--line));
 	background: var(--info-soft);
 	color: var(--info);
@@ -291,9 +278,6 @@ td.empty {
 	background: var(--surface-subtle);
 	padding: var(--space-2);
 }
-.account-facts .wide {
-	grid-column: 1 / -1;
-}
 .account-facts dt {
 	color: var(--muted);
 	font-size: var(--text-xs);
@@ -304,51 +288,12 @@ td.empty {
 	margin: 3px 0 0;
 	overflow-wrap: anywhere;
 }
-.account-details {
-	margin-top: var(--space-3);
-}
-.account-details > summary {
-	color: var(--accent);
-	cursor: pointer;
-	font-size: var(--text-sm);
-	font-weight: 600;
-}
-.account-details[open] > summary {
-	margin-bottom: 2px;
-}
 .account-card > .account-actions {
 	margin-top: var(--space-3);
-}
-
-/* Diagnostics */
-.diagnostics {
-	margin-top: var(--space-4);
-}
-.diagnostics-toggle {
-	width: 100%;
-	min-height: 56px;
-	justify-content: space-between;
-	border: 0;
-	border-radius: 0;
-	background: transparent;
-	padding: var(--space-3) var(--space-4);
-	text-align: left;
 }
 button[aria-expanded] > .icon:last-child {
 	transition: transform 140ms ease;
 }
 button[aria-expanded="true"] > .icon:last-child {
 	transform: rotate(180deg);
-}
-.diagnostics-toggle span {
-	display: grid;
-}
-.diagnostics-toggle small {
-	margin-top: 2px;
-	color: var(--muted);
-}
-.diagnostics code {
-	display: block;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
 }

@@ -14,9 +14,6 @@
 	.primary-metrics {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
-	.secondary-metrics {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-	}
 	.filters {
 		grid-template-columns: repeat(3, minmax(150px, 1fr));
 	}
@@ -61,9 +58,6 @@
 	.workspace-head {
 		align-items: flex-start;
 		flex-direction: column;
-	}
-	.advanced-filters {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
 	}
 }
 
@@ -120,14 +114,10 @@
 	.section-heading button {
 		width: 100%;
 	}
-	.primary-metrics,
-	.secondary-metrics {
+	.primary-metrics {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 	.filters {
-		grid-template-columns: 1fr;
-	}
-	.advanced-filters {
 		grid-template-columns: 1fr;
 	}
 	.search-field {
@@ -192,9 +182,6 @@
 	}
 	.primary-metrics {
 		grid-template-columns: 1fr;
-	}
-	.secondary-metrics {
-		grid-template-columns: 1fr 1fr;
 	}
 	.panel-head,
 	.filters,

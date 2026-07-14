@@ -1,10 +1,10 @@
-import { parseMutation, parseOverview, parsePage, parseStats } from "./schemas";
 import { accountResourcePath, mergeMutationResults } from "./logic";
+import { parseMutation, parseOverview } from "./schemas";
 import type {
+	AccountAction,
 	AccountIdentifier,
 	AccountOverview,
-	AccountPage,
-	AccountStats,
+	GeminiAccountState,
 	MutationResult,
 } from "./types";
 
@@ -15,47 +15,26 @@ const BULK_ACTION_BATCH_SIZE = 100;
 const BULK_ACTION_LIMIT_CODE = "admin_bulk_action_limit_exceeded";
 
 export class AdminApiError extends Error {
-	readonly status: number;
-	readonly code: string | null;
-
-	constructor(message: string, status: number, code: string | null) {
+	constructor(
+		message: string,
+		readonly status: number,
+		readonly code: string | null,
+	) {
 		super(message);
 		this.name = "AdminApiError";
-		this.status = status;
-		this.code = code;
 	}
 }
 
 export type ListOptions = {
 	adminKey: string;
 	cursor?: string;
-	status?: string;
-	enabled?: string;
 	q?: string;
-	category?: string;
-	cooldown?: string;
-	source?: string;
+	state?: GeminiAccountState | "";
 };
 
-export type CreateInput = {
-	label?: string;
-	psid: string;
-	psidts: string;
-};
-
-export type CreateBatchInput = {
-	accounts: CreateInput[];
-};
-
-export type UpdateInput = {
-	id: string;
-	label: string | null;
-	status: string;
-	enabled: boolean;
-	state_reason: string | null;
-	source: string | null;
-	source_name: string | null;
-};
+export type CreateInput = { label?: string; psid: string; psidts: string };
+export type CreateBatchInput = { accounts: CreateInput[] };
+export type UpdateInput = { id: string; label: string | null };
 
 function headers(adminKey: string, json: boolean): HeadersInit {
 	const normalized = adminKey.trim();
@@ -112,47 +91,15 @@ function responseError(body: unknown): {
 	return { message: message || code || "", code };
 }
 
-export async function listAccounts(options: ListOptions): Promise<AccountPage> {
-	const params = listParams(options);
-	return parsePage(
-		await request(options.adminKey, `${API_PATH}?${params.toString()}`),
-	);
-}
-
 export async function getAccountOverview(
 	options: ListOptions,
 ): Promise<AccountOverview> {
-	const params = listParams(options);
-	params.set("include_stats", "true");
-	return parseOverview(
-		await request(options.adminKey, `${API_PATH}?${params.toString()}`),
-	);
-}
-
-function listParams(options: ListOptions): URLSearchParams {
 	const params = new URLSearchParams({ limit: "200" });
 	if (options.cursor) params.set("cursor", options.cursor);
-	if (options.status) params.set("status", options.status);
-	if (options.enabled) params.set("enabled", options.enabled);
 	if (options.q) params.set("q", options.q);
-	if (options.category) params.set("category", options.category);
-	if (options.cooldown) params.set("cooldown", options.cooldown);
-	if (options.source) params.set("source", options.source);
-	return params;
-}
-
-export async function getAccountStats(
-	options: ListOptions,
-): Promise<AccountStats> {
-	const params = new URLSearchParams();
-	if (options.status) params.set("status", options.status);
-	if (options.enabled) params.set("enabled", options.enabled);
-	if (options.q) params.set("q", options.q);
-	if (options.category) params.set("category", options.category);
-	if (options.cooldown) params.set("cooldown", options.cooldown);
-	if (options.source) params.set("source", options.source);
-	return parseStats(
-		await request(options.adminKey, `${API_PATH}/stats?${params.toString()}`),
+	if (options.state) params.set("state", options.state);
+	return parseOverview(
+		await request(options.adminKey, `${API_PATH}?${params.toString()}`),
 	);
 }
 
@@ -180,15 +127,12 @@ export async function createAccounts(
 			method: "POST",
 			body: {
 				provider: "gemini",
-				accounts: input.accounts.map((account) => {
-					const payload: Record<string, string> = {
-						provider: "gemini",
-						"__Secure-1PSID": account.psid,
-						"__Secure-1PSIDTS": account.psidts,
-					};
-					if (account.label) payload.label = account.label;
-					return payload;
-				}),
+				accounts: input.accounts.map((account) => ({
+					provider: "gemini",
+					"__Secure-1PSID": account.psid,
+					"__Secure-1PSIDTS": account.psidts,
+					...(account.label ? { label: account.label } : {}),
+				})),
 			},
 		}),
 	);
@@ -206,17 +150,15 @@ export async function createAccountsWithLimitFallback(
 			error.status !== 413 ||
 			error.code !== WORKER_ACCOUNT_IMPORT_LIMIT_CODE ||
 			input.accounts.length <= WORKER_ACCOUNT_IMPORT_BATCH_SIZE
-		) {
+		)
 			throw error;
-		}
 	}
-
 	const results: MutationResult[] = [];
 	for (
 		let offset = 0;
 		offset < input.accounts.length;
 		offset += WORKER_ACCOUNT_IMPORT_BATCH_SIZE
-	) {
+	)
 		results.push(
 			await createAccounts(adminKey, {
 				accounts: input.accounts.slice(
@@ -225,7 +167,6 @@ export async function createAccountsWithLimitFallback(
 				),
 			}),
 		);
-	}
 	return mergeMutationResults(results);
 }
 
@@ -233,21 +174,21 @@ export async function updateAccount(
 	adminKey: string,
 	input: UpdateInput,
 ): Promise<MutationResult> {
-	const { id, ...patch } = input;
 	return parseMutation(
-		await request(adminKey, accountResourcePath(id), {
+		await request(adminKey, accountResourcePath(input.id), {
 			method: "PATCH",
-			body: patch,
+			body: { label: input.label },
 		}),
 	);
 }
 
 export async function runAccountAction(
 	adminKey: string,
-	action: string,
+	action: AccountAction,
 	identifiers: AccountIdentifier[],
 ): Promise<MutationResult> {
-	if (!identifiers.length) return {};
+	if (!identifiers.length)
+		return { processed: 0, changed: 0, unchanged: 0, failed: 0 };
 	try {
 		return await requestBulkAccountAction(adminKey, action, identifiers);
 	} catch (error) {
@@ -277,7 +218,7 @@ export async function runAccountAction(
 
 async function requestBulkAccountAction(
 	adminKey: string,
-	action: string,
+	action: AccountAction,
 	identifiers: AccountIdentifier[],
 ): Promise<MutationResult> {
 	return parseMutation(

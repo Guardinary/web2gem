@@ -1,10 +1,6 @@
 import type { JSX } from "preact";
-import {
-	accountDisplayName,
-	formatTime,
-	identifierKey,
-	relativeTime,
-} from "../logic";
+import { statusLabel } from "../i18n";
+import { accountDisplayName, identifierKey, relativeTime } from "../logic";
 import { selected } from "../state";
 import type { GeminiAccount } from "../types";
 
@@ -21,36 +17,20 @@ export function accountIdentity(account: GeminiAccount): JSX.Element {
 		<div class="row-main">
 			<div class="row-title">{accountDisplayName(account)}</div>
 			<div class="row-sub">{account.id}</div>
-			<div class="row-sub">{account.row_id}</div>
 		</div>
 	);
 }
 
-export function refreshSummary(account: GeminiAccount): string {
-	return (
-		[
-			account.last_refresh_at_ms
-				? `ok ${relativeTime(account.last_refresh_at_ms)}`
-				: "",
-			account.last_refresh_attempt_at_ms
-				? `try ${relativeTime(account.last_refresh_attempt_at_ms)}`
-				: "",
-		]
-			.filter(Boolean)
-			.join(" / ") || "-"
-	);
+export function issueSummary(account: GeminiAccount): string {
+	if (account.state === "cooling") {
+		const issue = account.issue
+			? statusLabel(account.issue)
+			: statusLabel("cooling");
+		return `${issue} · ${relativeTime(account.cooldown_until_ms)}`;
+	}
+	return account.issue ? statusLabel(account.issue) : "-";
 }
 
-export function timeCell(
-	value: number | null,
-	showRelative = true,
-): JSX.Element {
-	return (
-		<div class="row-main">
-			<div class="row-sub nowrap">
-				{showRelative ? relativeTime(value) : "-"}
-			</div>
-			<div class="row-sub nowrap">{formatTime(value)}</div>
-		</div>
-	);
+export function timeCell(value: number | null): JSX.Element {
+	return <span class="nowrap">{relativeTime(value)}</span>;
 }

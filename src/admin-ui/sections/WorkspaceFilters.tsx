@@ -1,27 +1,16 @@
 import type { JSX } from "preact";
 import { loadAccounts } from "../actions";
-import { Icon } from "../icons";
 import { statusLabel, tr } from "../i18n";
-import {
-	advancedFiltersExpanded,
-	categories,
-	categoryFilter,
-	cooldownFilter,
-	enabledFilter,
-	query,
-	sourceFilter,
-	statusFilter,
-	statuses,
-} from "../state";
+import { Icon } from "../icons";
+import { accountStates, query, stateFilter } from "../state";
+import type { GeminiAccountState } from "../types";
 
 type WorkspaceFiltersProps = {
-	advancedFilterCount: number;
 	hasFilters: boolean;
 	onClearFilters: () => void;
 };
 
 export function WorkspaceFilters({
-	advancedFilterCount,
 	hasFilters,
 	onClearFilters,
 }: WorkspaceFiltersProps): JSX.Element {
@@ -33,7 +22,7 @@ export function WorkspaceFilters({
 				<div class="input-with-icon">
 					<Icon name="search" />
 					<input
-						placeholder={tr("Label, ID, source, status")}
+						placeholder={tr("Label or account ID")}
 						value={query.value}
 						onInput={(event) => {
 							query.value = (event.currentTarget as HTMLInputElement).value;
@@ -42,50 +31,22 @@ export function WorkspaceFilters({
 				</div>
 			</label>
 			<label>
-				{tr("Status")}
+				{tr("State")}
 				<select
-					value={statusFilter.value}
+					value={stateFilter.value}
 					onChange={(event) => {
-						statusFilter.value = (
-							event.currentTarget as HTMLSelectElement
-						).value;
+						stateFilter.value = (event.currentTarget as HTMLSelectElement)
+							.value as GeminiAccountState | "";
 					}}
 				>
-					<option value="">{tr("All statuses")}</option>
-					{statuses.map((status) => (
-						<option key={status} value={status}>
-							{statusLabel(status)}
+					<option value="">{tr("All states")}</option>
+					{accountStates.map((state) => (
+						<option key={state} value={state}>
+							{statusLabel(state)}
 						</option>
 					))}
 				</select>
 			</label>
-			<label>
-				{tr("Enabled")}
-				<select
-					value={enabledFilter.value}
-					onChange={(event) => {
-						enabledFilter.value = (
-							event.currentTarget as HTMLSelectElement
-						).value;
-					}}
-				>
-					<option value="">{tr("All")}</option>
-					<option value="true">{tr("Enabled")}</option>
-					<option value="false">{tr("Disabled")}</option>
-				</select>
-			</label>
-			<button
-				class="secondary filter-disclosure"
-				type="button"
-				aria-expanded={advancedFiltersExpanded.value}
-				onClick={() => {
-					advancedFiltersExpanded.value = !advancedFiltersExpanded.value;
-				}}
-			>
-				{tr(advancedFiltersExpanded.value ? "Hide filters" : "More filters")}
-				{advancedFilterCount ? ` (${advancedFilterCount})` : ""}
-				<Icon name="chevron" />
-			</button>
 			<button
 				class="primary filter-submit"
 				type="button"
@@ -101,54 +62,6 @@ export function WorkspaceFilters({
 			>
 				{tr("Clear filters")}
 			</button>
-			{advancedFiltersExpanded.value ? (
-				<div class="advanced-filters">
-					<label>
-						{tr("Category")}
-						<select
-							value={categoryFilter.value}
-							onChange={(event) => {
-								categoryFilter.value = (
-									event.currentTarget as HTMLSelectElement
-								).value;
-							}}
-						>
-							<option value="">{tr("All categories")}</option>
-							{categories.map((category) => (
-								<option key={category} value={category}>
-									{statusLabel(category)}
-								</option>
-							))}
-						</select>
-					</label>
-					<label>
-						{tr("Cooldown")}
-						<select
-							value={cooldownFilter.value}
-							onChange={(event) => {
-								cooldownFilter.value = (
-									event.currentTarget as HTMLSelectElement
-								).value;
-							}}
-						>
-							<option value="">{tr("All")}</option>
-							<option value="active">{tr("Not cooling")}</option>
-							<option value="cooling">{tr("Cooling")}</option>
-						</select>
-					</label>
-					<label>
-						{tr("Source")}
-						<input
-							value={sourceFilter.value}
-							onInput={(event) => {
-								sourceFilter.value = (
-									event.currentTarget as HTMLInputElement
-								).value;
-							}}
-						/>
-					</label>
-				</div>
-			) : null}
 		</fieldset>
 	);
 }

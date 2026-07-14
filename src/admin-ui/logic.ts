@@ -1,33 +1,6 @@
 import type { AccountIdentifier, GeminiAccount, MutationResult } from "./types";
 
-export type BatchImportItem = {
-	label?: string;
-	psid: string;
-	psidts: string;
-};
-
-export const METADATA_CSV_FIELDS = [
-	"id",
-	"row_id",
-	"label",
-	"enabled",
-	"status",
-	"account_category",
-	"state_reason",
-	"last_used_at_ms",
-	"last_success_at_ms",
-	"last_failure_at_ms",
-	"last_refresh_at_ms",
-	"last_refresh_attempt_at_ms",
-	"cooldown_until_ms",
-	"success_count",
-	"failure_count",
-	"last_error_code",
-	"last_error_message_redacted",
-	"source",
-	"source_id",
-	"source_name",
-] as const;
+export type BatchImportItem = { label?: string; psid: string; psidts: string };
 
 export function text(value: unknown): string {
 	return String(value == null ? "" : value);
@@ -42,7 +15,7 @@ export function identifierKey(account: GeminiAccount): string {
 }
 
 export function accountDisplayName(account: GeminiAccount): string {
-	return account.label || account.id || account.row_id || "Gemini account";
+	return account.label || account.id || "Gemini account";
 }
 
 export function accountBusyLabel(action: string): string {
@@ -63,50 +36,28 @@ export function destructiveConfirmationText(
 	};
 }
 
-export function accountResourcePath(
-	id: string,
-	action?: "refresh" | "check",
-): string {
-	const resource = `/admin/accounts/${encodeURIComponent(id)}`;
-	return action ? `${resource}/${action}` : resource;
+export function accountResourcePath(id: string): string {
+	return `/admin/accounts/${encodeURIComponent(id)}`;
 }
 
 export function mergeMutationResults(
 	results: readonly MutationResult[],
 ): MutationResult {
-	const merged: MutationResult = {};
-	for (const key of [
-		"added",
-		"duplicates",
-		"skipped",
-		"updated",
-		"removed",
-		"checked",
-		"refreshed",
-		"unchanged",
-		"failed",
-	] as const) {
-		const values = results
-			.map((result) => result[key])
-			.filter((value): value is number => value !== undefined);
-		if (values.length)
-			merged[key] = values.reduce((sum, value) => sum + value, 0);
+	const merged: MutationResult = {
+		processed: 0,
+		changed: 0,
+		unchanged: 0,
+		failed: 0,
+	};
+	for (const result of results) {
+		merged.processed += result.processed;
+		merged.changed += result.changed;
+		merged.unchanged += result.unchanged;
+		merged.failed += result.failed;
 	}
 	const errors = results.flatMap((result) => result.errors || []);
 	if (errors.length) merged.errors = errors;
-	const items = results.flatMap((result) => result.items || []);
-	if (items.length) merged.items = items;
 	return merged;
-}
-
-export function formatTime(value: number | null): string {
-	const n = Number(value);
-	if (!Number.isFinite(n) || n <= 0) return "-";
-	try {
-		return new Date(n).toLocaleString();
-	} catch {
-		return "-";
-	}
 }
 
 export function relativeTime(
@@ -130,55 +81,14 @@ export function relativeTime(
 	return diff >= 0 ? `in ${amount}${unit}` : `${amount}${unit} ago`;
 }
 
-export function safeNumber(value: unknown): number {
-	const n = Number(value);
-	return Number.isFinite(n) ? n : 0;
-}
-
-export function isCooling(
-	account: GeminiAccount,
-	nowMs: number = Date.now(),
-): boolean {
-	return Number(account.cooldown_until_ms) > nowMs;
-}
-
-export function isRefreshable(account: GeminiAccount): boolean {
-	return (
-		["full_session", "psid_psidts"].includes(text(account.account_category)) &&
-		Number(account.enabled) === 1
-	);
-}
-
-export function sessionLabel(account: GeminiAccount): string {
-	return (
-		[
-			account.has_cookie ? "cookie" : "",
-			account.has_sapisid ? "sapisid" : "",
-			account.has_session_token ? "token" : "",
-		]
-			.filter(Boolean)
-			.join(" / ") || "missing"
-	);
+export function isCooling(account: GeminiAccount): boolean {
+	return account.state === "cooling";
 }
 
 export function resultSummary(action: string, result: MutationResult): string {
-	const parts: string[] = [];
-	for (const key of [
-		"checked",
-		"refreshed",
-		"unchanged",
-		"updated",
-		"removed",
-		"added",
-		"duplicates",
-		"skipped",
-		"failed",
-	] as const) {
-		if (result[key] != null) parts.push(`${key} ${result[key]}`);
-	}
-	const firstError =
-		result.errors?.[0]?.error || result.errors?.[0]?.message || "";
-	return `${action} completed${parts.length ? `: ${parts.join(", ")}` : ""}${firstError ? ` - ${firstError}` : ""}`;
+	const summary = `processed ${result.processed}, changed ${result.changed}, unchanged ${result.unchanged}, failed ${result.failed}`;
+	const firstError = result.errors?.[0]?.message || "";
+	return `${action} completed: ${summary}${firstError ? ` - ${firstError}` : ""}`;
 }
 
 export function validateCookieValue(value: string, name: string): string {
@@ -190,9 +100,8 @@ export function validateCookieValue(value: string, name: string): string {
 		normalized.startsWith("{") ||
 		normalized.startsWith("[") ||
 		/__Secure-1PSID/i.test(normalized)
-	) {
+	)
 		throw new Error(`${name} must be a value only`);
-	}
 	return normalized;
 }
 
@@ -217,17 +126,4 @@ export function parseBatchImport(rawValue: string): BatchImportItem[] {
 	}
 	if (!out.length) throw new Error("Batch import is empty");
 	return out;
-}
-
-export function metadataCsv(rows: readonly GeminiAccount[]): string {
-	return [
-		METADATA_CSV_FIELDS.join(","),
-		...rows.map((account) =>
-			METADATA_CSV_FIELDS.map((field) => csvValue(account[field])).join(","),
-		),
-	].join("\n");
-}
-
-function csvValue(value: unknown): string {
-	return `"${text(value).replace(/"/g, '""')}"`;
 }

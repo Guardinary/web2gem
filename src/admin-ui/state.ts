@@ -1,30 +1,15 @@
 import { signal } from "@preact/signals";
-import type { AccountStats, GeminiAccount, MutationResult } from "./types";
+import type { AccountStats, GeminiAccount, GeminiAccountState } from "./types";
 
 export const KEY_STORAGE = "web2gem_gemini_admin_key";
 export const KEY_STORAGE_MODE = "web2gem_gemini_admin_key_storage";
 
-export const statuses = [
-	"active",
+export const accountStates = [
+	"available",
+	"cooling",
+	"attention",
 	"disabled",
-	"auth_failed",
-	"needs_cookie_update",
-	"rate_limited",
-	"cooling_down",
-	"transient_failed",
-	"hard_blocked",
-	"needs_user_action",
-	"missing_cookie",
-	"capability_mismatch",
-] as const;
-
-export const categories = [
-	"full_session",
-	"psid_psidts",
-	"psid_only",
-	"session_token_only",
-	"missing_session",
-] as const;
+] as const satisfies readonly GeminiAccountState[];
 
 export type ToastItem = { id: number; message: string; kind?: "error" };
 export type ConfirmationDraft = {
@@ -32,15 +17,7 @@ export type ConfirmationDraft = {
 	count: number;
 	targetLabel: string;
 };
-export type EditDraft = {
-	key: string;
-	label: string;
-	status: string;
-	enabled: string;
-	stateReason: string;
-	source: string;
-	sourceName: string;
-};
+export type EditDraft = { key: string; label: string };
 
 export const adminKey = signal("");
 export const connectionVerified = signal(false);
@@ -48,11 +25,7 @@ export const accounts = signal<GeminiAccount[]>([]);
 export const selected = signal<Set<string>>(new Set());
 export const loading = signal(false);
 export const query = signal("");
-export const statusFilter = signal("");
-export const enabledFilter = signal("");
-export const categoryFilter = signal("");
-export const cooldownFilter = signal("");
-export const sourceFilter = signal("");
+export const stateFilter = signal<GeminiAccountState | "">("");
 export const cursorStack = signal<string[]>([""]);
 export const pageIndex = signal(0);
 export const nextCursor = signal<string | null>(null);
@@ -69,8 +42,5 @@ export const editBusy = signal(false);
 export const batchBusy = signal("");
 export const rowBusy = signal<Record<string, string>>({});
 export const confirmationDraft = signal<ConfirmationDraft | null>(null);
-export const lastDiagnostics = signal<MutationResult | null>(null);
 export const importExpanded = signal(false);
-export const diagnosticsExpanded = signal(false);
 export const authExpanded = signal(false);
-export const advancedFiltersExpanded = signal(false);
