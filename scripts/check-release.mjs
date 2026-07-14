@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { runPnpm } from "./process.mjs";
 
 export const RELEASE_CHECKS = [
 	"check:static",
@@ -12,10 +12,5 @@ export const RELEASE_CHECKS = [
 ];
 
 for (const check of RELEASE_CHECKS) {
-	const result = spawnSync("pnpm", [check], {
-		stdio: "inherit",
-		shell: process.platform === "win32",
-	});
-	if (result.error) throw result.error;
-	if (result.status !== 0) process.exit(result.status ?? 1);
+	await runPnpm([check]);
 }

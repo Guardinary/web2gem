@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
 import { outputLine } from "./io.mjs";
+import { commandAvailable, outputCommand, runCommand } from "./process.mjs";
 
 if (!(await commandAvailable("docker"))) {
 	outputLine("Docker smoke skipped: docker executable not found");
@@ -10,9 +10,9 @@ const image = `web2gem:smoke-${process.pid}`;
 let container = "";
 
 try {
-	await run("docker", ["build", "-t", image, "."]);
+	await runCommand("docker", ["build", "-t", image, "."]);
 	container = (
-		await output("docker", [
+		await outputCommand("docker", [
 			"run",
 			"-d",
 			"--rm",
@@ -68,15 +68,15 @@ try {
 	outputLine("Docker smoke check passed");
 } finally {
 	if (container) {
-		await output("docker", ["stop", container], { allowFailure: true });
+		await outputCommand("docker", ["stop", container], { allowFailure: true });
 	}
-	await output("docker", ["rmi", image], { allowFailure: true });
+	await outputCommand("docker", ["rmi", image], { allowFailure: true });
 }
 
 async function mappedPort(containerId) {
 	for (let i = 0; i < 30; i++) {
 		const raw = (
-			await output("docker", ["port", containerId, "52389/tcp"], {
+			await outputCommand("docker", ["port", containerId, "52389/tcp"], {
 				allowFailure: true,
 			})
 		).trim();
@@ -110,59 +110,4 @@ function delay(ms) {
 
 function assert(ok, message) {
 	if (!ok) throw new Error(`Docker smoke failed: ${message}`);
-}
-
-async function commandAvailable(command) {
-	try {
-		await output(command, ["--version"], { allowFailure: true });
-		return true;
-	} catch (error) {
-		return !(
-			error &&
-			typeof error === "object" &&
-			"code" in error &&
-			error.code === "ENOENT"
-		);
-	}
-}
-
-function run(command, args, options = {}) {
-	return new Promise((resolve, reject) => {
-		const child = spawn(command, args, {
-			cwd: process.cwd(),
-			stdio: "inherit",
-		});
-		child.on("error", reject);
-		child.on("exit", (code, signal) => {
-			if (code === 0 || options.allowFailure) {
-				resolve();
-				return;
-			}
-			const suffix = signal ? `signal ${signal}` : `exit code ${code}`;
-			reject(new Error(`${command} ${args.join(" ")} failed with ${suffix}`));
-		});
-	});
-}
-
-function output(command, args, options = {}) {
-	return new Promise((resolve, reject) => {
-		const child = spawn(command, args, {
-			cwd: process.cwd(),
-			stdio: ["ignore", "pipe", options.allowFailure ? "ignore" : "inherit"],
-		});
-		let stdout = "";
-		child.stdout.setEncoding("utf8");
-		child.stdout.on("data", (chunk) => {
-			stdout += chunk;
-		});
-		child.on("error", reject);
-		child.on("exit", (code, signal) => {
-			if (code === 0 || options.allowFailure) {
-				resolve(stdout);
-				return;
-			}
-			const suffix = signal ? `signal ${signal}` : `exit code ${code}`;
-			reject(new Error(`${command} ${args.join(" ")} failed with ${suffix}`));
-		});
-	});
 }

@@ -6,7 +6,12 @@ coverage/
 *.log
 AGENTS.md
 .env
-.env.local
+.env.*
+!.env.example
+!.env.docker.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
 
 # Local agent and workspace state
 .claude/

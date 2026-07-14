@@ -442,6 +442,7 @@ Authored source lives under `src/`. Do not hand-edit generated files under `dist
 
 ```sh
 pnpm install
+pnpm check:static
 pnpm typecheck
 pnpm check:arch
 pnpm unit
@@ -459,13 +460,17 @@ The build script emits two bundles:
 
 | Command             | Description                                                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm check:static` | Run Biome static analysis with warnings treated as errors.                                                                      |
+| `pnpm check:worker-types` | Verify generated Cloudflare Worker binding types are current.                                                            |
 | `pnpm typecheck`    | Run TypeScript with strict compiler settings.                                                                                   |
 | `pnpm check:arch`   | Enforce import boundaries and detect source dependency cycles.                                                                  |
 | `pnpm unit:quick`   | Rebuild stale test bundles when needed, then run local unit checks under `tests/unit/` with Vitest.                             |
 | `pnpm unit`         | Build both bundles and run local unit checks under `tests/unit/` with Vitest.                                                   |
-| `pnpm coverage`     | Build an isolated coverage bundle and write Vitest V8 text, lcov, and JSON summary reports to `coverage/`.                      |
+| `pnpm coverage`     | Build an isolated coverage bundle and write Vitest V8 lcov and JSON summary reports to `coverage/`.                             |
 | `pnpm coverage:ci`  | Run Vitest V8 coverage with global thresholds plus source line and branch coverage gates.                                       |
 | `pnpm smoke`        | Build both bundles, verify public exports, request-level routing checks, health route, and DSML tool-call parsing.              |
+| `pnpm check:bench`  | Run the performance regression gate against representative hot paths.                                                           |
+| `pnpm check:size`   | Build the production Worker and enforce the gzip bundle-size budget.                                                            |
 | `pnpm docker:smoke` | Build the Docker image, run a temporary container, and verify health, auth, and OpenAI route behavior through the Node adapter. |
 
 Coverage builds write sourcemapped test bundles to `dist-coverage/` so normal `dist/` builds and coverage runs do not share generated artifacts. Vitest discovers `tests/unit/*.test.mjs` wrappers for `pnpm unit`; shared case lists live in `tests/unit/*.cases.mjs`, use Vitest-backed assertions, and coverage uses Vitest's V8 provider against the isolated test bundle. `pnpm coverage` and `pnpm coverage:ci` use a Node runner so environment variables are handled consistently across Windows and Unix shells. `pnpm coverage:ci` also reads `coverage/coverage-summary.json` through `scripts/check-coverage.mjs` to catch regressions in key source directories and selected high-risk branch paths.
@@ -473,6 +478,7 @@ Coverage builds write sourcemapped test bundles to `dist-coverage/` so normal `d
 Recommended pre-commit gate:
 
 ```sh
+pnpm check:static
 pnpm typecheck
 pnpm check:arch
 pnpm unit

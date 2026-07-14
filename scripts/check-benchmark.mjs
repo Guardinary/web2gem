@@ -1,6 +1,6 @@
-import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { errorLine, outputLine } from "./io.mjs";
+import { outputCommand } from "./process.mjs";
 
 const DEFAULT_CASE = "stream_sieve_held_tool";
 const DEFAULT_MAX_MEDIAN_MS = 20;
@@ -76,24 +76,14 @@ function benchmarkBudgets(inputPath) {
 }
 
 function runBenchmark(targetCases) {
-	return new Promise((resolve, reject) => {
-		const env = {
+	return outputCommand(process.execPath, ["scripts/bench.mjs"], {
+		env: {
 			...process.env,
 			BENCH_CASES: targetCases.join(","),
 			BENCH_ITERS: process.env.BENCH_ITERS || DEFAULT_ITERS,
 			BENCH_WARMUP: process.env.BENCH_WARMUP || DEFAULT_WARMUP,
 			BENCH_JSON: "1",
-		};
-		execFile(
-			process.execPath,
-			["scripts/bench.mjs"],
-			{ cwd: process.cwd(), env },
-			(error, stdout, stderr) => {
-				if (stderr) process.stderr.write(stderr);
-				if (error) reject(error);
-				else resolve(stdout);
-			},
-		);
+		},
 	});
 }
 

@@ -1,7 +1,7 @@
-import esbuild from "esbuild";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
+import esbuild from "esbuild";
 
 const DEFAULT_OUTFILE = "src/generated/admin-ui.ts";
 
@@ -20,7 +20,7 @@ export async function buildAdminUi(options = {}) {
 		minify: true,
 		outdir: "admin-ui",
 		platform: "browser",
-		target: "es2020",
+		target: "es2025",
 		write: false,
 	});
 
