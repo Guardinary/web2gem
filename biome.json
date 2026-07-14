@@ -45,6 +45,9 @@
 				"rules": {
 					"correctness": {
 						"noSolidDestructuredProps": "off"
+					},
+					"style": {
+						"noDescendingSpecificity": "off"
 					}
 				}
 			}

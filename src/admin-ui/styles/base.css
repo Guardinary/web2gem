@@ -1,0 +1,250 @@
+/* Base element styles and shared primitives. */
+
+* {
+	box-sizing: border-box;
+}
+html {
+	min-width: 320px;
+	background: var(--bg);
+	scroll-behavior: smooth;
+}
+body {
+	margin: 0;
+	min-height: 100vh;
+	background:
+		radial-gradient(
+			ellipse 60% 32rem at 50% -8rem,
+			color-mix(in srgb, var(--accent) 7%, transparent),
+			transparent
+		),
+		var(--bg);
+	color: var(--text);
+	font-size: var(--text-md);
+	line-height: 1.5;
+	-webkit-font-smoothing: antialiased;
+}
+button,
+input,
+select,
+textarea {
+	font: inherit;
+}
+input[type="checkbox"] {
+	width: 16px;
+	min-height: 16px;
+	accent-color: var(--accent);
+}
+button,
+input,
+select {
+	min-height: 36px;
+}
+button,
+input,
+select,
+textarea {
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--surface-raised);
+	color: var(--text);
+}
+button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 6px 12px;
+	font-size: var(--text-sm);
+	font-weight: 600;
+	cursor: pointer;
+	transition:
+		border-color 140ms ease,
+		background 140ms ease,
+		color 140ms ease,
+		box-shadow 140ms ease;
+}
+button:hover:not(:disabled) {
+	border-color: var(--line-strong);
+	background: var(--surface-subtle);
+}
+button:active:not(:disabled) {
+	background: var(--gray-2);
+}
+button:disabled {
+	cursor: not-allowed;
+	opacity: 0.45;
+}
+button.primary {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--accent-contrast);
+}
+button.primary:hover:not(:disabled) {
+	border-color: var(--accent-hover);
+	background: var(--accent-hover);
+}
+button.secondary {
+	border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+	background: var(--accent-muted);
+	color: var(--accent);
+}
+button.secondary[aria-expanded="true"] {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--accent-contrast);
+}
+button.secondary[aria-expanded="true"]:hover:not(:disabled) {
+	border-color: var(--accent-hover);
+	background: var(--accent-hover);
+}
+button.danger {
+	border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
+	color: var(--danger);
+}
+button.danger:hover:not(:disabled),
+button.danger-solid {
+	border-color: var(--danger);
+	background: var(--danger);
+	color: white;
+}
+button.subtle-danger {
+	border-color: transparent;
+	background: transparent;
+}
+input,
+select,
+textarea {
+	width: 100%;
+	padding: 7px 10px;
+	font-size: var(--text-md);
+	outline: none;
+	transition:
+		border-color 140ms ease,
+		box-shadow 140ms ease;
+}
+textarea {
+	min-height: 104px;
+	resize: vertical;
+	line-height: 1.55;
+}
+input:hover,
+select:hover,
+textarea:hover {
+	border-color: var(--line-strong);
+}
+:where(button, input, select, textarea, summary, a):focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+	border-color: var(--focus);
+}
+label {
+	display: grid;
+	gap: 5px;
+	color: var(--muted);
+	font-size: var(--text-sm);
+	font-weight: 600;
+}
+h1,
+h2,
+p {
+	margin-top: 0;
+}
+h1 {
+	margin-bottom: 0;
+	font-size: var(--text-lg);
+	line-height: 1.2;
+	letter-spacing: -0.01em;
+	font-weight: 650;
+}
+h2 {
+	margin-bottom: 4px;
+	font-size: var(--text-xl);
+	line-height: 1.25;
+	letter-spacing: -0.015em;
+	font-weight: 650;
+}
+p {
+	margin-bottom: 0;
+	color: var(--muted);
+}
+.icon {
+	flex: 0 0 auto;
+}
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+	padding: 0;
+	margin: -1px;
+}
+.nowrap {
+	white-space: nowrap;
+}
+.help {
+	color: var(--muted);
+	font-size: var(--text-sm);
+	overflow-wrap: anywhere;
+}
+.skip-link {
+	position: fixed;
+	z-index: 100;
+	top: 8px;
+	left: 8px;
+	transform: translateY(-160%);
+	border-radius: var(--radius-sm);
+	background: var(--accent);
+	padding: 10px 14px;
+	color: var(--accent-contrast);
+	font-weight: 650;
+}
+.skip-link:focus {
+	transform: translateY(0);
+}
+
+@keyframes reveal-panel {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+@keyframes skeleton-shimmer {
+	from {
+		background-position: 100% 0;
+	}
+	to {
+		background-position: -100% 0;
+	}
+}
+@keyframes toast-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+@keyframes dialog-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px) scale(0.99);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+@keyframes loading-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}

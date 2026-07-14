@@ -1,0 +1,107 @@
+/* Overlays: toasts and dialogs. */
+
+/* Toasts */
+.toast {
+	position: fixed;
+	z-index: 60;
+	right: var(--space-4);
+	bottom: var(--space-4);
+	display: grid;
+	width: min(390px, calc(100% - 36px));
+	gap: var(--space-2);
+}
+.toast-item {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-2);
+	border: 1px solid var(--line);
+	border-left: 3px solid var(--success);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+	box-shadow: var(--shadow-lg);
+	padding: var(--space-3);
+	animation: toast-in 180ms ease-out;
+}
+.toast-item.error {
+	border-left-color: var(--danger);
+}
+.toast-icon {
+	display: inline-flex;
+	width: 26px;
+	height: 26px;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	border-radius: 999px;
+	background: var(--success-soft);
+	color: var(--success);
+}
+.toast-item.error .toast-icon {
+	background: var(--danger-soft);
+	color: var(--danger);
+}
+.toast-copy {
+	display: grid;
+	gap: 2px;
+}
+.toast-copy strong {
+	font-size: var(--text-sm);
+}
+.toast-copy > span {
+	color: var(--muted);
+	font-size: var(--text-sm);
+}
+
+/* Dialogs */
+.modal {
+	position: fixed;
+	z-index: 50;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: color-mix(in srgb, var(--gray-12) 45%, transparent);
+	padding: var(--space-4);
+	backdrop-filter: blur(6px);
+}
+:root[data-theme="dark"] .modal {
+	background: color-mix(in srgb, var(--gray-0) 62%, transparent);
+}
+.dialog {
+	width: min(560px, 100%);
+	max-height: calc(100dvh - 36px);
+	overflow: auto;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-lg);
+	background: var(--surface-raised);
+	box-shadow: var(--shadow-lg);
+	padding: var(--space-5);
+	animation: dialog-in 160ms ease-out;
+}
+.dialog-head {
+	display: flex;
+	align-items: start;
+	justify-content: space-between;
+	gap: var(--space-3);
+	margin-bottom: var(--space-4);
+}
+.dialog-title {
+	font-size: var(--text-lg);
+	font-weight: 650;
+}
+.dialog-copy {
+	margin-top: var(--space-2);
+	line-height: 1.6;
+}
+.dialog-actions {
+	justify-content: flex-end;
+}
+.field-row {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--space-2);
+}
+.grid {
+	display: grid;
+	gap: var(--space-3);
+}

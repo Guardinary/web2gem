@@ -1,0 +1,232 @@
+/* Responsive behavior + reduced motion. */
+
+@media (max-width: 1180px) {
+	.auth-panel {
+		grid-template-columns: 1fr;
+		align-items: stretch;
+	}
+	.auth-panel.compact:not(.expanded) {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+	.auth-panel.compact.expanded {
+		grid-template-columns: 1fr;
+	}
+	.primary-metrics {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.secondary-metrics {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+	.filters {
+		grid-template-columns: repeat(3, minmax(150px, 1fr));
+	}
+	.search-field {
+		grid-column: span 2;
+	}
+	.filter-submit {
+		align-self: end;
+	}
+	.bulkbar {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+}
+
+@media (max-width: 840px) {
+	.topbar {
+		position: static;
+		align-items: flex-start;
+		flex-direction: column;
+	}
+	.global-tools {
+		width: 100%;
+		justify-content: flex-start;
+		flex-wrap: wrap;
+	}
+	.connection-pill {
+		margin-right: auto;
+	}
+	.auth {
+		grid-template-columns: 1fr 130px;
+	}
+	.auth button {
+		width: 100%;
+	}
+	.import-grid {
+		grid-template-columns: 1fr;
+	}
+	.wide-field {
+		grid-column: auto;
+	}
+	.workspace-head {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+	.advanced-filters {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+
+@media (max-width: 760px) {
+	.shell,
+	.topbar {
+		width: min(100% - 20px, 1500px);
+	}
+	.shell {
+		padding-top: var(--space-3);
+	}
+	.topbar {
+		margin-top: 6px;
+		border-radius: var(--radius-md);
+	}
+	.compact-control {
+		flex: 1 1 145px;
+	}
+	.compact-control select {
+		flex: 1;
+		min-width: 0;
+	}
+	.auth-panel {
+		padding: var(--space-4);
+	}
+	.auth-panel.compact,
+	.auth-panel.compact:not(.expanded),
+	.auth-panel.compact.expanded {
+		grid-template-columns: 1fr;
+	}
+	.auth-panel.compact:not(.expanded) .auth-copy {
+		display: grid;
+		gap: 6px;
+	}
+	.auth-panel.compact:not(.expanded) .auth-copy p {
+		margin-left: 0;
+	}
+	.auth-panel.expanded .auth-toggle {
+		position: static;
+		width: 100%;
+	}
+	.auth {
+		grid-template-columns: 1fr;
+	}
+	input,
+	select,
+	textarea {
+		font-size: 16px;
+	}
+	.section-heading {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+	.section-heading button {
+		width: 100%;
+	}
+	.primary-metrics,
+	.secondary-metrics {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.filters {
+		grid-template-columns: 1fr;
+	}
+	.advanced-filters {
+		grid-template-columns: 1fr;
+	}
+	.search-field {
+		grid-column: auto;
+	}
+	.table-wrap {
+		display: none;
+	}
+	.account-cards,
+	.card-state {
+		display: grid;
+	}
+	.card-state[role="status"]::before {
+		width: 24px;
+		height: 24px;
+		margin: 0 auto var(--space-2);
+		border: 3px solid var(--line);
+		border-top-color: var(--accent);
+		border-radius: 999px;
+		animation: loading-spin 700ms linear infinite;
+		content: "";
+	}
+	.bulkbar .actions {
+		width: 100%;
+	}
+	.bulkbar .actions button {
+		flex: 1 1 130px;
+	}
+	.bulk-menu {
+		flex: 1 1 130px;
+	}
+	.bulk-menu summary {
+		width: 100%;
+		min-height: 40px;
+		justify-content: center;
+	}
+	.account-actions button,
+	.action-menu summary {
+		min-height: 40px;
+	}
+	.pager {
+		justify-content: space-between;
+		gap: var(--space-2);
+		font-size: var(--text-sm);
+	}
+	.pager button {
+		padding-inline: 10px;
+	}
+	.field-row {
+		grid-template-columns: 1fr;
+	}
+}
+
+@media (max-width: 430px) {
+	.brand-mark {
+		width: 36px;
+		height: 36px;
+	}
+	.connection-pill {
+		width: 100%;
+		justify-content: center;
+	}
+	.primary-metrics {
+		grid-template-columns: 1fr;
+	}
+	.secondary-metrics {
+		grid-template-columns: 1fr 1fr;
+	}
+	.panel-head,
+	.filters,
+	.bulkbar,
+	.panel-body {
+		padding-inline: var(--space-3);
+	}
+	.account-card-head {
+		flex-direction: column;
+	}
+	.account-actions {
+		width: 100%;
+	}
+	.account-actions > * {
+		flex: 1;
+	}
+	.toast {
+		right: 10px;
+		bottom: 10px;
+		width: calc(100% - 20px);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	html {
+		scroll-behavior: auto;
+	}
+	*,
+	*::before,
+	*::after {
+		transition-duration: 0.01ms;
+		animation-duration: 0.01ms;
+		animation-iteration-count: 1;
+	}
+}

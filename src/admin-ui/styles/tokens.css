@@ -1,0 +1,128 @@
+/* Design tokens — Direction A: Linear-style, dark-forward.
+   Neutral gray ramp + single indigo accent + semantic status hues. */
+
+:root {
+	color-scheme: light;
+
+	/* Neutral ramp (light) */
+	--gray-0: #fcfcfd;
+	--gray-1: #f7f8fa;
+	--gray-2: #eef0f4;
+	--gray-3: #e3e6ec;
+	--gray-4: #d2d6df;
+	--gray-5: #b4bac7;
+	--gray-6: #8a92a3;
+	--gray-7: #666f81;
+	--gray-8: #4d5464;
+	--gray-9: #363c4a;
+	--gray-10: #262b36;
+	--gray-11: #191d26;
+	--gray-12: #101318;
+
+	/* Surfaces & text derived from the ramp */
+	--bg: var(--gray-1);
+	--surface: #ffffff;
+	--surface-raised: #ffffff;
+	--surface-subtle: var(--gray-1);
+	--text: var(--gray-11);
+	--muted: var(--gray-7);
+	--line: var(--gray-3);
+	--line-strong: var(--gray-4);
+
+	/* Single accent */
+	--accent: #5e6ad2;
+	--accent-hover: #4f5abf;
+	--accent-muted: #edeefb;
+	--accent-contrast: #ffffff;
+	/* Back-compat aliases */
+	--primary: var(--accent);
+	--primary-hover: var(--accent-hover);
+	--primary-soft: var(--accent-muted);
+	--focus: var(--accent);
+
+	/* Semantic status (AA on light surfaces) */
+	--success: #177245;
+	--success-soft: #e5f4ec;
+	--warning: #96590a;
+	--warning-soft: #fdf3e1;
+	--danger: #c22f45;
+	--danger-soft: #fdeef1;
+	--info: #22629e;
+	--info-soft: #eaf3fc;
+
+	/* Elevation: hairlines over shadows */
+	--shadow-sm: 0 1px 2px rgba(16, 19, 24, 0.05);
+	--shadow-lg:
+		0 4px 12px rgba(16, 19, 24, 0.08), 0 16px 40px -16px rgba(16, 19, 24, 0.14);
+
+	/* Radii — tighter, Linear-like */
+	--radius-sm: 6px;
+	--radius-md: 10px;
+	--radius-lg: 14px;
+
+	/* Spacing scale (4px base) */
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 20px;
+	--space-6: 24px;
+	--space-8: 32px;
+
+	/* Type scale */
+	--text-xs: 11px;
+	--text-sm: 12.5px;
+	--text-md: 13.5px;
+	--text-lg: 16px;
+	--text-xl: 21px;
+
+	font-family:
+		Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+		"Segoe UI", sans-serif;
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+
+	/* Neutral ramp (dark) — cool graphite, not blue-black */
+	--gray-0: #08090c;
+	--gray-1: #0e1015;
+	--gray-2: #14161d;
+	--gray-3: #1c1f28;
+	--gray-4: #262a36;
+	--gray-5: #333849;
+	--gray-6: #4c5268;
+	--gray-7: #7c839b;
+	--gray-8: #9ba1b5;
+	--gray-9: #c0c5d4;
+	--gray-10: #dcdfe9;
+	--gray-11: #edeef4;
+	--gray-12: #fafafd;
+
+	--bg: var(--gray-1);
+	--surface: var(--gray-2);
+	--surface-raised: var(--gray-3);
+	--surface-subtle: var(--gray-2);
+	--text: var(--gray-11);
+	--muted: var(--gray-7);
+	--line: var(--gray-4);
+	--line-strong: var(--gray-5);
+
+	--accent: #7b86e8;
+	--accent-hover: #929bee;
+	--accent-muted: #23263c;
+	--accent-contrast: #0e1015;
+
+	--success: #4ec98a;
+	--success-soft: #13291e;
+	--warning: #e5a54f;
+	--warning-soft: #2d2312;
+	--danger: #ee7285;
+	--danger-soft: #331a20;
+	--info: #6cabe8;
+	--info-soft: #16283b;
+
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+	--shadow-lg:
+		0 4px 12px rgba(0, 0, 0, 0.45), 0 16px 48px -16px rgba(0, 0, 0, 0.6);
+}
