@@ -1,6 +1,7 @@
 // Internal compatibility surface used by local unit and smoke tests.
 export { handleApplicationRequest } from "./app";
 export { createAccountsWithLimitFallback } from "./admin-ui/api";
+export { isAccount, parseMutation, parseOverview } from "./admin-ui/schemas";
 export { loadAccounts } from "./admin-ui/actions";
 export { detectLanguage, statusLabel } from "./admin-ui/i18n";
 export {
@@ -19,19 +20,17 @@ export {
 	identifier,
 	identifierKey,
 	isCooling,
-	isRefreshable,
-	metadataCsv,
 	mergeMutationResults,
 	parseBatchImport,
 	relativeTime,
 	resultSummary,
-	sessionLabel,
 	validateCookieValue,
 } from "./admin-ui/logic";
 export {
 	createInputFromAccount as createGeminiAccountInputFromAdmin,
 	hasAccountUpdate,
 	listFilterFromSearchParams as geminiAccountListFilterFromSearchParams,
+	normalizeBulkAction as normalizeGeminiAccountBulkAction,
 	normalizeCreateAccounts,
 	normalizeListFilter as normalizeGeminiAccountListFilter,
 	updateFromBody as geminiAccountUpdateFromAdminBody,
@@ -105,16 +104,20 @@ export {
 	GeminiAccountRuntime,
 } from "./gemini/accounts/runtime";
 export {
-	accountRowId,
 	changedRows,
 	cleanAccountString,
-	cookiePreview,
-	geminiAccountCategory,
-	hashNullable,
 	normalizeGeminiCookieHeader,
-	sanitizeGeminiAccount,
 	sha256Hex,
 } from "./gemini/accounts/normalize";
+export {
+	boundedGeminiAccountPageLimit,
+	geminiAccountState,
+	isDurableGeminiAccountIssue,
+	isGeminiAccountIssue,
+	isGeminiAccountState,
+	isTemporaryGeminiAccountIssue,
+	visibleGeminiAccountIssue,
+} from "./gemini/accounts/domain";
 export {
 	extractGeminiAppPageTokens,
 	extractGeminiBuildLabel,

@@ -1,14 +1,10 @@
 import { isRecord, type UnknownRecord } from "../../shared/types";
-import {
-	boundedGeminiAccountPageLimit,
-	isGeminiAccountCategory,
-} from "./domain";
+import { boundedGeminiAccountPageLimit, isGeminiAccountState } from "./domain";
 import type {
 	GeminiAccountAdminFilter,
 	GeminiAccountBulkAction,
-	GeminiAccountCategory,
 	GeminiAccountCreateInput,
-	GeminiAccountStatus,
+	GeminiAccountState,
 	GeminiAccountUpdate,
 } from "./types";
 
@@ -17,11 +13,6 @@ const SAFE_CREATE_KEYS = new Set([
 	"__Secure-1PSID",
 	"__Secure-1PSIDTS",
 	"label",
-	"user_agent",
-	"gemini_origin",
-	"source",
-	"source_id",
-	"source_name",
 ]);
 const UNSAFE_CREATE_KEYS = new Set([
 	"tokens",
@@ -31,39 +22,8 @@ const UNSAFE_CREATE_KEYS = new Set([
 	"cookies",
 ]);
 const COOKIE_NAME_RE = /(?:^|[;\s])__Secure-1PSID(?:TS)?\s*=/i;
-const SAFE_UPDATE_KEYS = new Set([
-	"label",
-	"enabled",
-	"status",
-	"state_reason",
-	"cooldown_until_ms",
-	"account_status_code",
-	"account_status_description",
-	"user_agent",
-	"gemini_origin",
-	"source",
-	"source_id",
-	"source_name",
-]);
-const LIST_QUERY_KEYS = new Set([
-	"limit",
-	"cursor",
-	"status",
-	"enabled",
-	"q",
-	"category",
-	"cooldown",
-	"source",
-	"include_stats",
-]);
-const STATS_QUERY_KEYS = new Set([
-	"status",
-	"enabled",
-	"q",
-	"category",
-	"cooldown",
-	"source",
-]);
+const SAFE_UPDATE_KEYS = new Set(["label", "enabled"]);
+const LIST_QUERY_KEYS = new Set(["limit", "cursor", "q", "state"]);
 
 export class GeminiAccountAdminError extends Error {
 	constructor(
@@ -97,13 +57,18 @@ export function accountIdFromPathSegment(segment: string): string {
 	return id;
 }
 
+export type GeminiAccountAdminFilterInput = {
+	limit?: unknown;
+	cursor?: unknown;
+	q?: unknown;
+	state?: unknown;
+};
+
 export function listFilterFromSearchParams(
 	params: URLSearchParams,
-	options: { stats?: boolean } = {},
 ): GeminiAccountAdminFilterInput {
-	const allowed = options.stats ? STATS_QUERY_KEYS : LIST_QUERY_KEYS;
 	for (const key of new Set(params.keys())) {
-		if (!allowed.has(key))
+		if (!LIST_QUERY_KEYS.has(key))
 			throw new GeminiAccountAdminError(
 				400,
 				"unknown_admin_query_parameter",
@@ -118,26 +83,13 @@ export function listFilterFromSearchParams(
 	}
 
 	const filter: GeminiAccountAdminFilterInput = {};
-	if (!options.stats && params.has("limit"))
+	if (params.has("limit"))
 		filter.limit = parsePageLimit(requiredQueryValue(params, "limit"));
-	if (!options.stats && params.has("cursor"))
-		filter.cursor = boundedQueryText(params, "cursor");
-	if (params.has("status"))
-		filter.status = normalizeStatus(requiredQueryValue(params, "status"));
-	if (params.has("enabled"))
-		filter.enabled = parseQueryBoolean(requiredQueryValue(params, "enabled"));
+	if (params.has("cursor")) filter.cursor = boundedQueryText(params, "cursor");
 	if (params.has("q")) filter.q = boundedQueryText(params, "q");
-	if (params.has("category"))
-		filter.category = normalizeCategory(requiredQueryValue(params, "category"));
-	if (params.has("cooldown"))
-		filter.cooldown = normalizeCooldown(requiredQueryValue(params, "cooldown"));
-	if (params.has("source")) filter.source = boundedQueryText(params, "source");
+	if (params.has("state"))
+		filter.state = normalizeState(requiredQueryValue(params, "state"));
 	return filter;
-}
-
-export function includeStatsFromSearchParams(params: URLSearchParams): boolean {
-	if (!params.has("include_stats")) return false;
-	return parseQueryBoolean(requiredQueryValue(params, "include_stats"));
 }
 
 export const ADMIN_BULK_ACTION_MAX_IDS = 100;
@@ -159,13 +111,12 @@ export function normalizeBulkAction(body: UnknownRecord): {
 		action !== "enable" &&
 		action !== "disable" &&
 		action !== "delete" &&
-		action !== "refresh" &&
-		action !== "check"
+		action !== "refresh"
 	)
 		throw new GeminiAccountAdminError(
 			400,
 			"invalid_bulk_action",
-			"action must be enable, disable, delete, refresh, or check",
+			"action must be enable, disable, delete, or refresh",
 		);
 	if (!Array.isArray(body.ids) || body.ids.length === 0)
 		throw new GeminiAccountAdminError(
@@ -207,14 +158,6 @@ export function assertNoAdminQueryParams(params: URLSearchParams): void {
 		);
 }
 
-export type GeminiAccountAdminFilterInput = Partial<
-	Omit<GeminiAccountAdminFilter, "status" | "category" | "cooldown">
-> & {
-	status?: unknown;
-	category?: unknown;
-	cooldown?: unknown;
-};
-
 export const WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS = 40;
 
 export function normalizeCreateAccounts(
@@ -225,11 +168,7 @@ export function normalizeCreateAccounts(
 		Array.isArray(body.tokens) &&
 		body.tokens.some((token) => cleanOptionalString(token))
 	) {
-		throw new GeminiAccountAdminError(
-			400,
-			"gemini_import_dual_cookie_only",
-			"Gemini import accepts only __Secure-1PSID and __Secure-1PSIDTS fields",
-		);
+		throw dualCookieOnlyError();
 	}
 	const hasBatch = Object.hasOwn(body, "accounts");
 	if (hasBatch) {
@@ -252,8 +191,13 @@ export function normalizeCreateAccounts(
 			);
 	}
 	const topProvider = optionalInputString(body.provider, "provider");
-	const accountsRaw = hasBatch ? (body.accounts as UnknownRecord[]) : [body];
-	const accounts = accountsRaw;
+	if (topProvider && topProvider !== "gemini")
+		throw new GeminiAccountAdminError(
+			400,
+			"gemini_provider_mismatch",
+			"Gemini admin endpoints accept only provider=gemini",
+		);
+	const accounts = hasBatch ? (body.accounts as UnknownRecord[]) : [body];
 	if (!accounts.length)
 		throw new GeminiAccountAdminError(
 			400,
@@ -266,15 +210,7 @@ export function normalizeCreateAccounts(
 			"gemini_import_account_limit_exceeded",
 			`Gemini account import exceeds the Worker limit of ${maxAccounts} accounts`,
 		);
-	const topLevelGemini = !topProvider || topProvider === "gemini";
-	if (topProvider && topProvider !== "gemini") {
-		throw new GeminiAccountAdminError(
-			400,
-			"gemini_provider_mismatch",
-			"Gemini admin endpoints accept only provider=gemini",
-		);
-	}
-	for (const item of accounts) validateCreateAccount(item, topLevelGemini);
+	for (const item of accounts) validateCreateAccount(item);
 	return accounts;
 }
 
@@ -292,17 +228,7 @@ export function createInputFromAccount(
 		nowMs,
 	};
 	const label = cleanOptionalString(item.label);
-	const userAgent = cleanOptionalString(item.user_agent);
-	const geminiOrigin = cleanOptionalString(item.gemini_origin);
-	const source = cleanOptionalString(item.source);
-	const sourceId = cleanOptionalString(item.source_id);
-	const sourceName = cleanOptionalString(item.source_name);
 	if (label) input.label = label;
-	if (userAgent) input.userAgent = userAgent;
-	if (geminiOrigin) input.geminiOrigin = geminiOrigin;
-	if (source) input.source = source;
-	if (sourceId) input.sourceId = sourceId;
-	if (sourceName) input.sourceName = sourceName;
 	return input;
 }
 
@@ -329,52 +255,6 @@ export function updateFromBody(
 			);
 		update.enabled = body.enabled;
 	}
-	if ("status" in body) {
-		if (typeof body.status !== "string")
-			throw new GeminiAccountAdminError(
-				400,
-				"invalid_account_status",
-				"invalid account status",
-			);
-		const status = normalizeStatus(body.status);
-		if (!status)
-			throw new GeminiAccountAdminError(
-				400,
-				"invalid_account_status",
-				"invalid account status",
-			);
-		update.status = status;
-	}
-	if ("state_reason" in body)
-		update.stateReason = nullableInputString(body.state_reason, "state_reason");
-	if ("cooldown_until_ms" in body)
-		update.cooldownUntilMs = nullableInputNumber(
-			body.cooldown_until_ms,
-			"cooldown_until_ms",
-		);
-	if ("account_status_code" in body)
-		update.accountStatusCode = nullableInputNumber(
-			body.account_status_code,
-			"account_status_code",
-		);
-	if ("account_status_description" in body)
-		update.accountStatusDescription = nullableInputString(
-			body.account_status_description,
-			"account_status_description",
-		);
-	if ("user_agent" in body)
-		update.userAgent = nullableInputString(body.user_agent, "user_agent");
-	if ("gemini_origin" in body)
-		update.geminiOrigin = nullableInputString(
-			body.gemini_origin,
-			"gemini_origin",
-		);
-	if ("source" in body)
-		update.source = nullableInputString(body.source, "source");
-	if ("source_id" in body)
-		update.sourceId = nullableInputString(body.source_id, "source_id");
-	if ("source_name" in body)
-		update.sourceName = nullableInputString(body.source_name, "source_name");
 	return update;
 }
 
@@ -389,50 +269,27 @@ export function normalizeListFilter(
 		limit: boundedGeminiAccountPageLimit(filter.limit),
 	};
 	const cursor = cleanOptionalString(filter.cursor);
-	if (cursor) normalized.cursor = cursor;
-	const status = normalizeStatus(filter.status);
-	if (status) normalized.status = status;
-	if (typeof filter.enabled === "boolean") normalized.enabled = filter.enabled;
+	if (cursor) normalized.cursor = cursor.slice(0, 200);
 	const q = cleanOptionalString(filter.q);
 	if (q) normalized.q = q.slice(0, 200);
-	const category = normalizeCategory(filter.category);
-	if (category) normalized.category = category;
-	const cooldown = normalizeCooldown(filter.cooldown);
-	if (cooldown) normalized.cooldown = cooldown;
-	const source = cleanOptionalString(filter.source);
-	if (source) normalized.source = source.slice(0, 200);
+	const state = normalizeState(filter.state);
+	if (state) normalized.state = state;
 	return normalized;
 }
 
-function validateCreateAccount(
-	item: UnknownRecord,
-	topLevelGemini: boolean,
-): void {
+function validateCreateAccount(item: UnknownRecord): void {
 	const provider = optionalInputString(item.provider, "provider");
-	if (provider && provider !== "gemini") {
+	if (provider && provider !== "gemini")
 		throw new GeminiAccountAdminError(
 			400,
 			"gemini_provider_mismatch",
 			"Gemini import cannot mix other providers",
 		);
-	}
-	if (topLevelGemini && provider && provider !== "gemini") {
-		throw new GeminiAccountAdminError(
-			400,
-			"gemini_provider_mismatch",
-			"Gemini import cannot mix other providers",
-		);
-	}
 	for (const key of Object.keys(item)) {
 		const value = item[key];
 		if (value == null) continue;
-		if (UNSAFE_CREATE_KEYS.has(key) || !SAFE_CREATE_KEYS.has(key)) {
-			throw new GeminiAccountAdminError(
-				400,
-				"gemini_import_dual_cookie_only",
-				"Gemini import accepts only safe dual cookie fields and metadata",
-			);
-		}
+		if (UNSAFE_CREATE_KEYS.has(key) || !SAFE_CREATE_KEYS.has(key))
+			throw dualCookieOnlyError();
 		if (typeof value !== "string")
 			throw new GeminiAccountAdminError(
 				400,
@@ -447,6 +304,14 @@ function validateCreateAccount(
 	);
 	validateBareCookieValue(psid);
 	validateBareCookieValue(psidts);
+}
+
+function dualCookieOnlyError(): GeminiAccountAdminError {
+	return new GeminiAccountAdminError(
+		400,
+		"gemini_import_dual_cookie_only",
+		"Gemini import accepts only __Secure-1PSID, __Secure-1PSIDTS, and label",
+	);
 }
 
 function cleanRequiredString(value: unknown, name: string): string {
@@ -497,17 +362,6 @@ function nullableInputString(value: unknown, name: string): string | null {
 	return text || null;
 }
 
-function nullableInputNumber(value: unknown, name: string): number | null {
-	if (value == null) return null;
-	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
-		throw new GeminiAccountAdminError(
-			400,
-			"invalid_admin_field_type",
-			`${name} must be a non-negative safe integer or null`,
-		);
-	return value;
-}
-
 function validateBareCookieValue(value: string): void {
 	const lowered = value.toLowerCase();
 	if (
@@ -526,55 +380,16 @@ function validateBareCookieValue(value: string): void {
 	}
 }
 
-function normalizeStatus(value: unknown): GeminiAccountStatus | undefined {
+function normalizeState(value: unknown): GeminiAccountState | undefined {
 	const text = cleanOptionalString(value);
 	if (!text) return undefined;
-	if (!isGeminiAccountStatus(text))
+	if (!isGeminiAccountState(text))
 		throw new GeminiAccountAdminError(
 			400,
-			"invalid_account_status",
-			"invalid account status",
+			"invalid_account_state",
+			"state must be available, cooling, attention, or disabled",
 		);
 	return text;
-}
-
-function isGeminiAccountStatus(value: string): value is GeminiAccountStatus {
-	return [
-		"active",
-		"disabled",
-		"auth_failed",
-		"needs_cookie_update",
-		"rate_limited",
-		"cooling_down",
-		"transient_failed",
-		"hard_blocked",
-		"needs_user_action",
-		"missing_cookie",
-		"capability_mismatch",
-	].includes(value);
-}
-
-function normalizeCategory(value: unknown): GeminiAccountCategory | undefined {
-	const text = cleanOptionalString(value);
-	if (!text) return undefined;
-	if (!isGeminiAccountCategory(text))
-		throw new GeminiAccountAdminError(
-			400,
-			"invalid_account_category",
-			"invalid account category",
-		);
-	return text;
-}
-
-function normalizeCooldown(value: unknown): "active" | "cooling" | undefined {
-	const text = cleanOptionalString(value);
-	if (!text) return undefined;
-	if (text === "active" || text === "cooling") return text;
-	throw new GeminiAccountAdminError(
-		400,
-		"invalid_cooldown_filter",
-		"invalid cooldown filter",
-	);
 }
 
 function requiredQueryValue(params: URLSearchParams, name: string): string {
@@ -607,14 +422,4 @@ function parsePageLimit(value: string): number {
 			"limit must be an integer between 1 and 200",
 		);
 	return Number(value);
-}
-
-function parseQueryBoolean(value: string): boolean {
-	if (value === "true" || value === "1") return true;
-	if (value === "false" || value === "0") return false;
-	throw new GeminiAccountAdminError(
-		400,
-		"invalid_admin_enabled_filter",
-		"enabled must be true, false, 1, or 0",
-	);
 }

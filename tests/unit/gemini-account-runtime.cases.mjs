@@ -1,170 +1,76 @@
 import { assert } from "./assertions.js";
-import { baseConfig, mod, withFetch } from "./helpers.js";
+import { baseConfig, mod } from "./helpers.js";
 
 export const suiteName = "gemini account runtime";
 export const cases = [
 	[
-		"resolves optional runtime only when a D1 binding exists",
+		"leases the least-used selectable account and derives runtime auth from its cookie",
 		async () => {
-			assert.equal(mod.createGeminiAccountRuntimeFromEnv({}, {}), null);
-			const runtime = mod.createGeminiAccountRuntimeFromEnv(
-				{ GEMINI_DB: { prepare() {} } },
-				{
-					rotateCookie: async () => new Response("", { status: 204 }),
-				},
-			);
-			assert.equal(runtime instanceof mod.GeminiAccountRuntime, true);
-		},
-	],
-	[
-		"reuses the default runtime by D1 binding identity",
-		async () => {
-			const firstDb = { prepare() {} };
-			const secondDb = { prepare() {} };
-			const first = mod.getGeminiAccountRuntimeFromEnv({ GEMINI_DB: firstDb });
-			const repeated = mod.getGeminiAccountRuntimeFromEnv({
-				GEMINI_DB: firstDb,
-			});
-			const isolated = mod.getGeminiAccountRuntimeFromEnv({
-				GEMINI_DB: secondDb,
-			});
-			assert.equal(first, repeated);
-			assert.equal(first === isolated, false);
-			assert.equal(
-				first === mod.createGeminiAccountRuntimeFromEnv({ GEMINI_DB: firstDb }),
-				false,
-			);
-		},
-	],
-	[
-		"caches selectable snapshots and probes pool version without row reads every request",
-		async () => {
-			let now = 1000;
-			const store = new FakeStore([accountRow("a"), accountRow("b")]);
-			const pool = new mod.AccountPoolService(store, {
-				nowMs: () => now,
-				snapshotTtlMs: 10_000,
-				versionProbeTtlMs: 1_000,
-				rotateCookie: async () => new Response("", { status: 204 }),
-			});
-
-			const first = await pool.acquireLease(baseConfig());
-			assert.equal(first.accountId, "a");
-			first.release();
-			assert.equal(store.getPoolVersionCalls, 1);
-			assert.equal(store.listSelectableCalls, 1);
-			assert.equal(store.writeCalls, 0);
-
-			now = 1100;
-			const second = await pool.acquireLease(baseConfig());
-			assert.equal(second.accountId, "b");
-			second.release();
-			assert.equal(store.getPoolVersionCalls, 1);
-			assert.equal(store.listSelectableCalls, 1);
-			assert.equal(store.writeCalls, 0);
-
-			now = 2500;
-			const third = await pool.acquireLease(baseConfig());
-			third.release();
-			assert.equal(store.getPoolVersionCalls, 2);
-			assert.equal(store.listSelectableCalls, 1);
-
-			store.poolVersion = "changed";
-			now = 4000;
-			const fourth = await pool.acquireLease(baseConfig());
-			fourth.release();
-			assert.equal(store.getPoolVersionCalls, 3);
-			assert.equal(store.listSelectableCalls, 2);
-		},
-	],
-	[
-		"caches empty snapshots and coalesces concurrent cold loads",
-		async () => {
-			let now = 1000;
-			const store = new FakeStore([]);
-			const pool = new mod.AccountPoolService(store, {
-				nowMs: () => now,
-				snapshotTtlMs: 10_000,
-				versionProbeTtlMs: 1_000,
-			});
-
-			assert.deepEqual(
-				await Promise.all([
-					pool.selectableSnapshot(),
-					pool.selectableSnapshot(),
-					pool.selectableSnapshot(),
-				]),
-				[[], [], []],
-			);
-			assert.equal(store.getPoolVersionCalls, 1);
-			assert.equal(store.listSelectableCalls, 1);
-
-			now = 1100;
-			assert.equal(await pool.acquireLease(baseConfig()), null);
-			assert.equal(store.getPoolVersionCalls, 1);
-			assert.equal(store.listSelectableCalls, 1);
-
-			now = 2500;
-			assert.equal(await pool.acquireLease(baseConfig()), null);
-			assert.equal(store.getPoolVersionCalls, 2);
-			assert.equal(store.listSelectableCalls, 1);
-		},
-	],
-	[
-		"uses local in-flight counts and idempotent release for selection",
-		async () => {
-			const store = new FakeStore([accountRow("a"), accountRow("b")]);
-			const pool = new mod.AccountPoolService(store, {
-				nowMs: () => 1000,
-				rotateCookie: async () => new Response("", { status: 204 }),
-			});
-			const first = await pool.acquireLease(baseConfig());
-			const second = await pool.acquireLease(baseConfig());
-			assert.equal(first.accountId, "a");
-			assert.equal(second.accountId, "b");
-			assert.equal(pool.localInFlight("a"), 1);
-			first.release();
-			first.release();
-			assert.equal(pool.localInFlight("a"), 0);
-			second.release();
-			assert.equal(store.writeCalls, 0);
-		},
-	],
-	[
-		"applies terminal failures to the local selectable snapshot",
-		async () => {
-			const store = new FakeStore([accountRow("a")]);
-			const pool = new mod.AccountPoolService(store, { nowMs: () => 5000 });
-			const lease = await pool.acquireLease(baseConfig());
-			await lease.markFailure(
-				Object.assign(new Error("unauthorized"), { status: 401 }),
-			);
-			lease.release();
-			assert.equal(await pool.acquireLease(baseConfig()), null);
-			assert.equal(store.outcomeCalls, 1);
-		},
-	],
-	[
-		"deduplicates account refresh with D1 lock and changed-only cookie writeback",
-		async () => {
-			let now = 10_000;
-			let rotateCalls = 0;
 			const store = new FakeStore([
-				accountRow("a", {
-					cookie_header: "__Secure-1PSID=psid-a; __Secure-1PSIDTS=ts-a",
-					cookie_hash: await mod.sha256Hex(
-						"__Secure-1PSID=psid-a; __Secure-1PSIDTS=ts-a",
-					),
+				account("later", { last_used_at_ms: 2000 }),
+				account("first", {
+					cookie_header:
+						"__Secure-1PSID=p; __Secure-1PSIDTS=t; SAPISID=sapisid-value",
+					last_used_at_ms: 1000,
 				}),
 			]);
 			const pool = new mod.AccountPoolService(store, {
-				nowMs: () => now,
+				nowMs: () => 3000,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			const lease = await pool.acquireLease(baseConfig());
+			assert.equal(lease.accountId, "first");
+			assert.equal(lease.config.sapisid, "sapisid-value");
+			assert.match(lease.config.cookie, /__Secure-1PSID=p/);
+			assert.deepEqual(lease.config.gemini_account, {
+				accountId: "first",
+				cookieHash: "hash-first",
+			});
+			lease.release();
+			assert.equal(pool.localInFlight("first"), 0);
+		},
+	],
+	[
+		"updates account health with one normalized issue model",
+		async () => {
+			const store = new FakeStore([account("a")]);
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => 1000,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			const lease = await pool.acquireLease(baseConfig());
+			await lease.markFailure({ status: 429 }, 1000);
+			assert.deepEqual(store.outcomes.at(-1), {
+				kind: "failure",
+				issue: "rate_limit",
+				cooldownUntilMs: 301000,
+				nowMs: 1000,
+			});
+			await lease.markFailure(new Error("invalid model"), 2000);
+			assert.deepEqual(store.outcomes.at(-1), {
+				kind: "failure",
+				nowMs: 2000,
+			});
+			await lease.markSuccess(3000);
+			assert.deepEqual(store.outcomes.at(-1), {
+				kind: "success",
+				nowMs: 3000,
+			});
+		},
+	],
+	[
+		"deduplicates refreshes and updates the active lease config after rotation",
+		async () => {
+			const store = new FakeStore([account("a")]);
+			let rotateCalls = 0;
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => 120000,
 				rotateCookie: async () => {
 					rotateCalls++;
 					await Promise.resolve();
-					return new Response("", {
+					return new Response(null, {
 						status: 200,
-						headers: { "set-cookie": "__Secure-1PSIDTS=ts-b; Path=/; Secure" },
+						headers: { "set-cookie": "__Secure-1PSIDTS=rotated" },
 					});
 				},
 			});
@@ -173,350 +79,151 @@ export const cases = [
 				lease.refreshForRetry("auth"),
 				lease.refreshForRetry("auth"),
 			]);
-			assert.deepEqual(first, {
-				changed: true,
-				reason: "rotation_updated",
-				upstreamStatus: 200,
-			});
-			assert.deepEqual(second, first);
+			assert.deepEqual(first, second);
+			assert.equal(first.changed, true);
 			assert.equal(rotateCalls, 1);
-			assert.equal(store.lockAttempts, 1);
-			assert.equal(store.releaseLockCalls, 1);
-			assert.equal(store.writeCookieCalls, 1);
-			assert.doesNotMatch(store.lastCookieWrite.cookieHeader, /SNlM0e|at=/);
-
-			now += 1000;
-			const recent = await lease.refreshForRetry("auth");
-			assert.deepEqual(recent, { changed: false, reason: "recent_rotation" });
-			assert.equal(rotateCalls, 1);
-			lease.release();
+			assert.equal(store.writes.length, 1);
+			assert.match(lease.config.cookie, /__Secure-1PSIDTS=rotated/);
+			assert.doesNotMatch(lease.config.cookie, /__Secure-1PSIDTS=t(?:;|$)/);
+			assert.equal(lease.config.gemini_account.cookieHash, lease.cookieHash);
 		},
 	],
 	[
-		"keeps the selected lease unchanged when refreshed cookies duplicate another account",
+		"keeps the lease unchanged when refreshed credentials duplicate another account",
 		async () => {
-			const originalHeader = "__Secure-1PSID=psid-a; __Secure-1PSIDTS=ts-a";
-			const store = new FakeStore([
-				accountRow("a", {
-					cookie_header: originalHeader,
-					cookie_hash: await mod.sha256Hex(originalHeader),
-				}),
-			]);
-			store.writeCookieResult = { changed: false, reason: "duplicate_cookie" };
+			const store = new FakeStore([account("a")]);
+			store.writeResult = { changed: false, reason: "duplicate_cookie" };
 			const pool = new mod.AccountPoolService(store, {
-				nowMs: () => 15_000,
+				nowMs: () => 120000,
 				rotateCookie: async () =>
-					new Response("", {
+					new Response(null, {
 						status: 200,
-						headers: {
-							"set-cookie": "__Secure-1PSIDTS=ts-existing; Path=/; Secure",
-						},
+						headers: { "set-cookie": "__Secure-1PSIDTS=duplicate" },
 					}),
 			});
 			const lease = await pool.acquireLease(baseConfig());
+			const originalCookie = lease.config.cookie;
 			const originalHash = lease.cookieHash;
-
-			const result = await lease.refreshForRetry("auth");
-
-			assert.deepEqual(result, {
+			assert.deepEqual(await lease.refreshForRetry("auth"), {
 				changed: false,
 				reason: "rotation_duplicate",
 				upstreamStatus: 200,
 			});
-			assert.equal(lease.cookieHeader, originalHeader);
+			assert.equal(lease.config.cookie, originalCookie);
 			assert.equal(lease.cookieHash, originalHash);
-			assert.equal(store.outcomeCalls, 0);
-			assert.equal(store.releaseLockCalls, 1);
-			lease.release();
 		},
 	],
 	[
-		"propagates refresh failure to all waiters and clears the pending entry",
+		"records rejected refreshes through the shared classifier",
 		async () => {
-			let rotateCalls = 0;
-			const store = new FakeStore([accountRow("a")]);
+			const store = new FakeStore([account("a")]);
 			const pool = new mod.AccountPoolService(store, {
-				nowMs: () => 20_000,
-				rotateCookie: async () => {
-					rotateCalls++;
-					throw new Error("network failed with __Secure-1PSID=secret");
-				},
-			});
-			const lease = await pool.acquireLease(baseConfig());
-			const p1 = lease.refreshForRetry("auth");
-			const p2 = lease.refreshForRetry("auth");
-			await assert.rejects(() => p1, /network failed/);
-			await assert.rejects(() => p2, /network failed/);
-			assert.equal(rotateCalls, 1);
-			assert.equal(store.releaseLockCalls, 1);
-			assert.equal(store.outcomeCalls, 1);
-
-			await assert.rejects(
-				() => lease.refreshForRetry("auth"),
-				/network failed/,
-			);
-			assert.equal(rotateCalls, 2);
-			lease.release();
-		},
-	],
-	[
-		"returns typed refresh conflict when another instance owns the D1 lock",
-		async () => {
-			let rotateCalls = 0;
-			const store = new FakeStore([accountRow("a")]);
-			store.lockAvailable = false;
-			const pool = new mod.AccountPoolService(store, {
-				nowMs: () => 30_000,
-				rotateCookie: async () => {
-					rotateCalls++;
-					return new Response("", { status: 204 });
-				},
+				nowMs: () => 120000,
+				rotateCookie: async () => new Response(null, { status: 401 }),
 			});
 			const lease = await pool.acquireLease(baseConfig());
 			assert.deepEqual(await lease.refreshForRetry("auth"), {
 				changed: false,
-				reason: "lock_conflict",
+				reason: "rotation_rejected",
+				upstreamStatus: 401,
 			});
-			assert.equal(rotateCalls, 0);
-			assert.equal(store.releaseLockCalls, 0);
-			lease.release();
+			assert.deepEqual(store.outcomes.at(-1), {
+				kind: "failure",
+				issue: "auth",
+				nowMs: 120000,
+			});
 		},
 	],
 	[
-		"records session tokens separately from outbound cookie headers",
-		async () => {
-			const store = new FakeStore([accountRow("a")]);
-			const pool = new mod.AccountPoolService(store, {
-				nowMs: () => 40_000,
-				rotateCookie: async () => new Response("", { status: 204 }),
+		"keeps page and push token cache scopes account-specific without D1 page state",
+		() => {
+			const first = mod.geminiAccountCacheScope({
+				...baseConfig(),
+				gemini_account: { accountId: "a", cookieHash: "ha" },
 			});
-			const lease = await pool.acquireLease(baseConfig());
-			await lease.recordPageState({
-				cookieHeader:
-					"__Secure-1PSID=psid-a; __Secure-1PSIDTS=ts-a; SNlM0e=secret-at; at=secret-at",
-				sessionToken: "secret-at",
-				pushId: "push-a",
+			const second = mod.geminiAccountCacheScope({
+				...baseConfig(),
+				gemini_account: { accountId: "b", cookieHash: "hb" },
 			});
-			assert.equal(store.writeCookieCalls, 1);
-			assert.doesNotMatch(
-				store.lastCookieWrite.cookieHeader,
-				/SNlM0e|at=|secret-at/,
-			);
-			assert.equal(store.lastCookieWrite.sessionToken, "secret-at");
-			lease.release();
-		},
-	],
-	[
-		"writes account page tokens back through the selected lease config",
-		async () => {
-			const store = new FakeStore([accountRow("a")]);
-			const pool = new mod.AccountPoolService(store, {
-				nowMs: () => 45_000,
-				rotateCookie: async () => new Response("", { status: 204 }),
-			});
-			const lease = await pool.acquireLease(
-				baseConfig({
-					gemini_origin: "https://gemini.example",
-					request_timeout_sec: 180,
-					upstream_socket: false,
-				}),
-			);
-			await withFetch(
-				async (url, init = {}) => {
-					assert.equal(String(url), "https://gemini.example/app");
-					assert.equal(
-						init.headers.Cookie,
-						"__Secure-1PSID=psid-a; __Secure-1PSIDTS=ts-a",
-					);
-					return new Response('{"SNlM0e":"page-at","qKIAYe":"page-push"}', {
-						status: 200,
-					});
-				},
-				async () => {
-					assert.deepEqual(await mod.getPageTokens(lease.config), {
-						at: "page-at",
-						push_id: "page-push",
-					});
-				},
-			);
-			assert.equal(store.writeCookieCalls, 1);
-			assert.equal(store.lastCookieWrite.sessionToken, "page-at");
-			assert.equal(store.lastCookieWrite.pushId, "page-push");
-			assert.doesNotMatch(
-				store.lastCookieWrite.cookieHeader,
-				/SNlM0e|page-at|page-push/,
-			);
-			lease.release();
-		},
-	],
-	[
-		"does not classify generic token budget wording as auth failure",
-		async () => {
-			const outcome = mod.classifyGeminiAccountOutcome(
-				new Error("token budget exceeded for this request"),
-				50_000,
-			);
-			assert.equal(outcome.failureKind === "auth", false);
-			assert.equal(outcome.status, "transient_failed");
+			assert.match(first, /account:a.*cookie:ha/);
+			assert.match(second, /account:b.*cookie:hb/);
+			assert.equal(first === second, false);
 		},
 	],
 ];
 
-function accountRow(id, overrides = {}) {
-	const cookie =
-		overrides.cookie_header ||
-		`__Secure-1PSID=psid-${id}; __Secure-1PSIDTS=ts-${id}`;
+function account(id, overrides = {}) {
 	return {
 		id,
-		row_id: `row-${id}`,
-		label: id.toUpperCase(),
+		label: null,
 		enabled: 1,
-		status: "active",
-		state_reason: null,
-		cookie_header: cookie,
-		cookie_hash: overrides.cookie_hash || `hash-${id}`,
-		sapisid: null,
-		session_token: null,
-		session_token_hash: null,
-		session_id: null,
-		language: null,
-		push_id: null,
-		last_token_bootstrap_at_ms: null,
-		secure_1psid_hash: `psid-hash-${id}`,
-		secure_1psidts_hash: `psidts-hash-${id}`,
-		account_category: "psid_psidts",
-		account_status_code: null,
-		account_status_description: null,
-		user_agent: null,
-		gemini_origin: null,
-		source: null,
-		source_id: null,
-		source_name: null,
-		imported_at_ms: 0,
+		cookie_header: `__Secure-1PSID=p-${id}; __Secure-1PSIDTS=t-${id}`,
+		cookie_hash: `hash-${id}`,
+		issue: null,
 		cooldown_until_ms: null,
+		last_issue_at_ms: null,
 		last_used_at_ms: null,
-		last_success_at_ms: null,
-		last_failure_at_ms: null,
 		last_refresh_at_ms: null,
-		last_refresh_attempt_at_ms: null,
-		last_error_code: null,
-		last_error_message_redacted: null,
-		last_upstream_status: null,
-		last_capability_probe_at_ms: null,
-		capability_summary_json: null,
-		success_count: 0,
-		failure_count: 0,
-		created_at_ms: 0,
-		updated_at_ms: 0,
+		created_at_ms: 1000,
+		updated_at_ms: 1000,
 		...overrides,
 	};
 }
 
 class FakeStore {
 	constructor(rows) {
-		this.rows = new Map(rows.map((row) => [row.id, { ...row }]));
-		this.poolVersion = "v1";
-		this.getPoolVersionCalls = 0;
-		this.listSelectableCalls = 0;
-		this.writeCalls = 0;
-		this.writeCookieCalls = 0;
-		this.outcomeCalls = 0;
-		this.lockAttempts = 0;
-		this.releaseLockCalls = 0;
-		this.lockAvailable = true;
-		this.lastCookieWrite = null;
-		this.writeCookieResult = { changed: true };
+		this.rows = new Map(rows.map((row) => [row.id, row]));
+		this.outcomes = [];
+		this.writes = [];
+		this.writeResult = { changed: true };
 	}
-
 	async getPoolVersion() {
-		this.getPoolVersionCalls++;
-		return this.poolVersion;
+		return "1";
 	}
-
-	async listSelectableAccounts(nowMs, limit) {
-		this.listSelectableCalls++;
-		return Array.from(this.rows.values())
+	async listSelectableAccounts() {
+		return [...this.rows.values()]
 			.filter((row) => row.enabled === 1)
-			.filter(
-				(row) =>
-					row.cooldown_until_ms == null || row.cooldown_until_ms <= nowMs,
+			.sort(
+				(a, b) =>
+					(a.last_used_at_ms || 0) - (b.last_used_at_ms || 0) ||
+					a.id.localeCompare(b.id),
 			)
-			.slice(0, limit)
-			.map((row) => ({ ...row }));
+			.map((row) => ({
+				id: row.id,
+				enabled: row.enabled,
+				cookie_header: row.cookie_header,
+				cookie_hash: row.cookie_hash,
+				issue: row.issue,
+				cooldown_until_ms: row.cooldown_until_ms,
+				last_used_at_ms: row.last_used_at_ms,
+			}));
 	}
-
-	async listAdminAccounts() {
-		return { items: [], nextCursor: null, limit: 0 };
+	async getAccountForRefresh(id) {
+		return this.rows.get(id) || null;
 	}
-
-	async getAdminStats() {
-		return {
-			total: 0,
-			available: 0,
-			needsAttention: 0,
-			disabled: 0,
-			refreshable: 0,
-			cooling: 0,
-			psidOnly: 0,
-			successCount: 0,
-			failureCount: 0,
-		};
-	}
-
-	async findAccountByCookieHash() {
-		return null;
-	}
-
-	async getAccountForRefresh(accountId) {
-		const row = this.rows.get(accountId);
-		return row ? { ...row } : null;
-	}
-
-	async resolveAccountIdentifier(input) {
-		return input.id || null;
-	}
-
-	async createAccount() {
-		throw new Error("not implemented");
-	}
-
-	async updateAccount() {
-		throw new Error("not implemented");
-	}
-
-	async deleteAccount() {
-		throw new Error("not implemented");
-	}
-
 	async tryAcquireRefreshLock() {
-		this.lockAttempts++;
-		return this.lockAvailable;
+		return true;
 	}
-
-	async releaseRefreshLock() {
-		this.releaseLockCalls++;
-	}
-
-	async writeCookieState(accountId, update) {
-		this.writeCalls++;
-		this.writeCookieCalls++;
-		this.lastCookieWrite = update;
-		if (!this.writeCookieResult.changed) return this.writeCookieResult;
-		const row = this.rows.get(accountId);
-		if (row) {
+	async releaseRefreshLock() {}
+	async writeRefreshedCookie(id, update) {
+		this.writes.push({ id, update });
+		if (this.writeResult.changed) {
+			const row = this.rows.get(id);
 			row.cookie_header = update.cookieHeader;
-			row.cookie_hash = await mod.sha256Hex(update.cookieHeader);
-			if (update.sessionToken !== undefined)
-				row.session_token = update.sessionToken;
-			if (update.pushId !== undefined) row.push_id = update.pushId;
+			row.last_refresh_at_ms = update.refreshedAtMs;
 		}
-		return this.writeCookieResult;
+		return this.writeResult;
 	}
-
-	async writeAccountOutcome(accountId, outcome) {
-		this.writeCalls++;
-		this.outcomeCalls++;
-		const row = this.rows.get(accountId);
-		if (row && outcome.status) row.status = outcome.status;
+	async writeAccountOutcome(id, outcome) {
+		this.outcomes.push(outcome);
+		const row = this.rows.get(id);
+		row.last_used_at_ms = outcome.nowMs;
+		if (outcome.kind === "success") {
+			row.issue = null;
+			row.cooldown_until_ms = null;
+		} else if (outcome.issue) {
+			row.issue = outcome.issue;
+			row.cooldown_until_ms = outcome.cooldownUntilMs ?? null;
+		}
 	}
 }

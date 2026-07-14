@@ -79,7 +79,6 @@ export async function getPageTokensForConfig(
 				},
 			);
 			Object.assign(tokens, await extractGeminiAppPageTokens(resp));
-			await recordGeminiPageTokens(activeCfg, tokens);
 			if (!hasAnyPageToken(tokens)) {
 				log(
 					activeCfg,
@@ -198,7 +197,6 @@ async function fetchFreshGeminiPushId(cfg: RuntimeConfig): Promise<string> {
 			},
 		);
 		const pushId = validGeminiPushId(await extractGeminiPushId(resp));
-		if (pushId) await recordGeminiPageTokens(activeCfg, { push_id: pushId });
 		if (!pushId) {
 			log(
 				activeCfg,
@@ -213,23 +211,4 @@ async function fetchFreshGeminiPushId(cfg: RuntimeConfig): Promise<string> {
 		);
 		return "";
 	}
-}
-
-async function recordGeminiPageTokens(
-	cfg: RuntimeConfig,
-	tokens: PageTokens,
-): Promise<void> {
-	const writeback = cfg.gemini_account_writeback;
-	if (!writeback) return;
-	const sessionToken =
-		typeof tokens.at === "string" && tokens.at.trim() ? tokens.at.trim() : "";
-	const pushId =
-		typeof tokens.push_id === "string" && tokens.push_id.trim()
-			? tokens.push_id.trim()
-			: "";
-	if (!sessionToken && !pushId) return;
-	await writeback({
-		sessionToken: sessionToken || undefined,
-		pushId: pushId || undefined,
-	});
 }

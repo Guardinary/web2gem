@@ -2,23 +2,23 @@ import type { RuntimeConfig } from "../../config";
 import { uuid } from "../../shared/crypto";
 import {
 	COOKIE_ROTATE_MIN_INTERVAL_MS,
+	extractCookieValue,
 	mergeSetCookieHeaders,
 	parseCookieHeader,
 	setCookieHeaders,
 } from "../cookies";
 import { classifyGeminiAccountOutcome } from "./classify";
+import { isDurableGeminiAccountIssue } from "./domain";
 import { normalizeGeminiCookieHeader, sha256Hex } from "./normalize";
 import type {
 	GeminiAccountCookieRotator,
 	GeminiAccountLease,
 	GeminiAccountOutcome,
-	GeminiAccountPageState,
 	GeminiAccountRefreshResult,
+	GeminiAccountRuntimeOptions,
+	GeminiAccountRuntimeStore,
 	GeminiAccountSecretRow,
 	GeminiAccountSnapshotRow,
-	GeminiAccountRuntimeStore,
-	GeminiAccountRuntimeOptions,
-	GeminiCookieWritebackResult,
 } from "./types";
 
 const DEFAULT_SNAPSHOT_TTL_MS = 30 * 1000;
@@ -26,17 +26,9 @@ const DEFAULT_VERSION_PROBE_TTL_MS = 1 * 1000;
 const DEFAULT_SELECTABLE_LIMIT = 100;
 const DEFAULT_REFRESH_LOCK_TTL_MS = 2 * 60 * 1000;
 
-const SELECTABLE_STATUSES = new Set([
-	"active",
-	"transient_failed",
-	"rate_limited",
-	"cooling_down",
-]);
-
 type AccountRuntimeState = {
 	cookieHeader: string;
 	cookieHash: string;
-	sapisid: string | null;
 	lastRotateAtMs: number;
 };
 
@@ -106,11 +98,11 @@ export class AccountPoolService {
 	async refreshAccountForAdmin(
 		baseConfig: RuntimeConfig,
 		account: GeminiAccountSecretRow,
-		reason = "admin",
+		_reason = "admin",
 	): Promise<GeminiAccountRefreshResult> {
 		const lease = new PoolLease(this, baseConfig, account);
 		try {
-			return await this.refreshForRetry(lease, reason);
+			return await this.refreshForRetry(lease);
 		} finally {
 			lease.release();
 		}
@@ -162,41 +154,7 @@ export class AccountPoolService {
 		else this.inFlight.set(accountId, current - 1);
 	}
 
-	async recordPageState(
-		lease: PoolLease,
-		update: GeminiAccountPageState,
-	): Promise<GeminiCookieWritebackResult> {
-		const nowMs = update.nowMs ?? this.nowMs();
-		const cookieHeader = normalizeGeminiCookieHeader(
-			update.cookieHeader ?? lease.cookieHeader,
-		);
-		const result = await this.store.writeCookieState(lease.accountId, {
-			cookieHeader,
-			sapisid: update.sapisid,
-			sessionToken: update.sessionToken,
-			sessionId: update.sessionId,
-			language: update.language,
-			pushId: update.pushId,
-			nowMs,
-		});
-		if (result.changed) {
-			lease.cookieHeader = cookieHeader;
-			lease.cookieHash = await sha256Hex(cookieHeader);
-			this.accountStates.set(lease.accountId, {
-				cookieHeader,
-				cookieHash: lease.cookieHash,
-				sapisid: update.sapisid === undefined ? lease.sapisid : update.sapisid,
-				lastRotateAtMs:
-					this.accountStates.get(lease.accountId)?.lastRotateAtMs || 0,
-			});
-		}
-		return result;
-	}
-
-	async refreshForRetry(
-		lease: PoolLease,
-		_reason = "retry",
-	): Promise<GeminiAccountRefreshResult> {
+	async refreshForRetry(lease: PoolLease): Promise<GeminiAccountRefreshResult> {
 		const pendingKey = `${lease.accountId}\0${lease.cookieHash}`;
 		const pending = this.pendingRefresh.get(pendingKey);
 		if (pending) return pending;
@@ -213,6 +171,11 @@ export class AccountPoolService {
 		const state = await this.accountState(lease);
 		const nowMs = this.nowMs();
 		if (!parseCookieHeader(state.cookieHeader).get("__Secure-1PSID")) {
+			await this.markFailure(
+				lease.accountId,
+				{ code: "invalid_gemini_cookie" },
+				nowMs,
+			);
 			return { changed: false, reason: "missing_secure_1psid" };
 		}
 		if (
@@ -249,18 +212,22 @@ export class AccountPoolService {
 	): void {
 		this.snapshotRows = this.snapshotRows.map((row) => {
 			if (row.id !== accountId) return row;
+			if (outcome.kind === "success") {
+				return {
+					...row,
+					issue: null,
+					cooldown_until_ms: null,
+					last_used_at_ms: outcome.nowMs,
+				};
+			}
 			return {
 				...row,
-				status: outcome.status ?? row.status,
+				issue: outcome.issue ?? row.issue,
 				cooldown_until_ms:
-					outcome.cooldownUntilMs === undefined
+					outcome.issue === undefined
 						? row.cooldown_until_ms
-						: outcome.cooldownUntilMs,
+						: (outcome.cooldownUntilMs ?? null),
 				last_used_at_ms: outcome.nowMs,
-				last_success_at_ms:
-					outcome.kind === "success" ? outcome.nowMs : row.last_success_at_ms,
-				last_failure_at_ms:
-					outcome.kind === "failure" ? outcome.nowMs : row.last_failure_at_ms,
 			};
 		});
 	}
@@ -286,17 +253,18 @@ export class AccountPoolService {
 				account,
 			});
 			state.lastRotateAtMs = nowMs;
-			if (response.status === 401 || response.status === 403) {
-				return {
-					changed: false,
-					reason: "rotation_rejected",
-					upstreamStatus: response.status,
-				};
-			}
 			if (!response.ok) {
+				await this.markFailure(
+					lease.accountId,
+					{ status: response.status },
+					nowMs,
+				);
 				return {
 					changed: false,
-					reason: "rotation_failed",
+					reason:
+						response.status === 401 || response.status === 403
+							? "rotation_rejected"
+							: "rotation_failed",
 					upstreamStatus: response.status,
 				};
 			}
@@ -306,54 +274,79 @@ export class AccountPoolService {
 					setCookieHeaders(response.headers),
 				),
 			);
-			const nextCookieHash = await sha256Hex(nextCookieHeader);
-			if (!nextCookieHeader || nextCookieHash === account.cookie_hash) {
+			if (!nextCookieHeader) {
+				await this.markFailure(
+					lease.accountId,
+					{ code: "invalid_gemini_cookie" },
+					nowMs,
+				);
 				return {
 					changed: false,
-					reason: "rotation_no_update",
+					reason: "rotation_failed",
 					upstreamStatus: response.status,
 				};
 			}
-			const writeback = await this.store.writeCookieState(lease.accountId, {
+			const nextCookieHash = await sha256Hex(nextCookieHeader);
+			const writeback = await this.store.writeRefreshedCookie(lease.accountId, {
 				cookieHeader: nextCookieHeader,
-				sapisid: account.sapisid,
-				sessionToken: account.session_token,
-				lastRefreshAtMs: nowMs,
-				lastRefreshAttemptAtMs: nowMs,
+				refreshedAtMs: nowMs,
 				nowMs,
 			});
-			if (!writeback.changed) {
+			if (!writeback.changed && writeback.reason === "duplicate_cookie") {
 				return {
 					changed: false,
-					reason:
-						writeback.reason === "duplicate_cookie"
-							? "rotation_duplicate"
-							: "rotation_no_update",
+					reason: "rotation_duplicate",
 					upstreamStatus: response.status,
 				};
 			}
 			lease.cookieHeader = nextCookieHeader;
 			lease.cookieHash = nextCookieHash;
+			lease.config = accountConfig(lease.config, {
+				...account,
+				cookie_header: nextCookieHeader,
+				cookie_hash: nextCookieHash,
+			});
 			this.accountStates.set(lease.accountId, {
 				cookieHeader: nextCookieHeader,
 				cookieHash: nextCookieHash,
-				sapisid: account.sapisid,
 				lastRotateAtMs: nowMs,
 			});
+			this.applyRefreshToSnapshot(
+				lease.accountId,
+				nextCookieHeader,
+				nextCookieHash,
+			);
 			return {
-				changed: true,
-				reason: "rotation_updated",
+				changed: writeback.changed,
+				reason: writeback.changed ? "rotation_updated" : "rotation_no_update",
 				upstreamStatus: response.status,
 			};
 		} catch (error) {
-			await this.store.writeAccountOutcome(
-				lease.accountId,
-				classifyGeminiAccountOutcome(error, nowMs),
+			await this.markFailure(lease.accountId, error, nowMs).catch(
+				() => undefined,
 			);
 			throw error;
 		} finally {
 			await this.store.releaseRefreshLock(lease.accountId, owner);
 		}
+	}
+
+	private applyRefreshToSnapshot(
+		accountId: string,
+		cookieHeader: string,
+		cookieHash: string,
+	): void {
+		this.snapshotRows = this.snapshotRows.map((row) =>
+			row.id === accountId
+				? {
+						...row,
+						cookie_header: cookieHeader,
+						cookie_hash: cookieHash,
+						issue: null,
+						cooldown_until_ms: null,
+					}
+				: row,
+		);
 	}
 
 	private chooseRow(
@@ -362,7 +355,7 @@ export class AccountPoolService {
 	): GeminiAccountSnapshotRow | null {
 		const selectable = rows
 			.filter((row) => row.enabled !== 0)
-			.filter((row) => SELECTABLE_STATUSES.has(row.status))
+			.filter((row) => !isDurableGeminiAccountIssue(row.issue))
 			.filter(
 				(row) =>
 					row.cooldown_until_ms == null || row.cooldown_until_ms <= nowMs,
@@ -395,24 +388,18 @@ export class AccountPoolService {
 		if (existing && existing.cookieHash === lease.cookieHash) return existing;
 		const cookieHeader = normalizeGeminiCookieHeader(lease.cookieHeader);
 		const cookieHash = await sha256Hex(cookieHeader);
-		const state = {
-			cookieHeader,
-			cookieHash,
-			sapisid: lease.sapisid,
-			lastRotateAtMs: 0,
-		};
+		const state = { cookieHeader, cookieHash, lastRotateAtMs: 0 };
 		this.accountStates.set(lease.accountId, state);
 		return state;
 	}
 }
 
 class PoolLease implements GeminiAccountLease {
-	accountId: string;
-	rowId?: string;
-	selectedCookieHash: string;
+	readonly accountId: string;
+	readonly selectedCookieHash: string;
+	config: RuntimeConfig;
 	cookieHeader: string;
 	cookieHash: string;
-	sapisid: string | null;
 	private released = false;
 
 	constructor(
@@ -421,26 +408,14 @@ class PoolLease implements GeminiAccountLease {
 		row: GeminiAccountSnapshotRow,
 	) {
 		this.accountId = row.id;
-		this.rowId = row.row_id;
 		this.selectedCookieHash = row.cookie_hash;
 		this.cookieHeader = row.cookie_header;
 		this.cookieHash = row.cookie_hash;
-		this.sapisid = row.sapisid;
-		this.config = accountConfig(baseConfig, row, (update) =>
-			this.recordPageState(update),
-		);
+		this.config = accountConfig(baseConfig, row);
 	}
 
-	readonly config: RuntimeConfig;
-
-	recordPageState(
-		update: GeminiAccountPageState,
-	): Promise<GeminiCookieWritebackResult> {
-		return this.pool.recordPageState(this, update);
-	}
-
-	refreshForRetry(reason?: string): Promise<GeminiAccountRefreshResult> {
-		return this.pool.refreshForRetry(this, reason);
+	refreshForRetry(): Promise<GeminiAccountRefreshResult> {
+		return this.pool.refreshForRetry(this);
 	}
 
 	markSuccess(nowMs?: number): Promise<void> {
@@ -461,19 +436,16 @@ class PoolLease implements GeminiAccountLease {
 function accountConfig(
 	baseConfig: RuntimeConfig,
 	row: GeminiAccountSnapshotRow,
-	writeback: NonNullable<RuntimeConfig["gemini_account_writeback"]>,
 ): RuntimeConfig {
+	const cookie = normalizeGeminiCookieHeader(row.cookie_header);
 	return {
 		...baseConfig,
-		cookie: normalizeGeminiCookieHeader(row.cookie_header),
-		sapisid: row.sapisid || "",
-		gemini_origin: row.gemini_origin || baseConfig.gemini_origin,
+		cookie,
+		sapisid: extractCookieValue(cookie, "SAPISID"),
 		gemini_account: {
 			accountId: row.id,
-			rowId: row.row_id,
 			cookieHash: row.cookie_hash,
 		},
-		gemini_account_writeback: writeback,
 	};
 }
 

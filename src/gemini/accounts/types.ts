@@ -1,3 +1,5 @@
+import type { GeminiAccountIssue, GeminiAccountState } from "./domain";
+
 export type D1Result<T = unknown> = {
 	results?: T[];
 	success?: boolean;
@@ -26,79 +28,19 @@ export type D1PreparedStatementLike = {
 	run<T = unknown>(): Promise<D1Result<T>>;
 };
 
-export type GeminiAccountStatus =
-	| "active"
-	| "disabled"
-	| "auth_failed"
-	| "needs_cookie_update"
-	| "rate_limited"
-	| "cooling_down"
-	| "transient_failed"
-	| "hard_blocked"
-	| "needs_user_action"
-	| "missing_cookie"
-	| "capability_mismatch";
-
-export type GeminiAccountFailureKind =
-	| "auth"
-	| "rate_limit"
-	| "usage_limit"
-	| "hard_block"
-	| "needs_user_action"
-	| "location_or_ip_block"
-	| "model_invalid"
-	| "model_capability"
-	| "temporary_model_error"
-	| "empty_response"
-	| "network"
-	| "upstream_5xx"
-	| "transient"
-	| "capability_mismatch"
-	| "unknown";
-
-export type { GeminiAccountCategory } from "./domain";
-import type { GeminiAccountCategory } from "./domain";
+export type { GeminiAccountIssue, GeminiAccountState } from "./domain";
 
 export type GeminiAccountRow = {
 	id: string;
 	label: string | null;
 	enabled: number;
-	status: GeminiAccountStatus;
-	state_reason: string | null;
-	row_id: string;
 	cookie_header: string;
 	cookie_hash: string;
-	sapisid: string | null;
-	session_token: string | null;
-	session_token_hash: string | null;
-	session_id: string | null;
-	language: string | null;
-	push_id: string | null;
-	last_token_bootstrap_at_ms: number | null;
-	secure_1psid_hash: string;
-	secure_1psidts_hash: string | null;
-	account_category: GeminiAccountCategory | null;
-	account_status_code: number | null;
-	account_status_description: string | null;
-	user_agent: string | null;
-	gemini_origin: string | null;
-	source: string | null;
-	source_id: string | null;
-	source_name: string | null;
-	imported_at_ms: number | null;
+	issue: GeminiAccountIssue | null;
 	cooldown_until_ms: number | null;
+	last_issue_at_ms: number | null;
 	last_used_at_ms: number | null;
-	last_success_at_ms: number | null;
-	last_failure_at_ms: number | null;
 	last_refresh_at_ms: number | null;
-	last_refresh_attempt_at_ms: number | null;
-	last_error_code: string | null;
-	last_error_message_redacted: string | null;
-	last_upstream_status: number | null;
-	last_capability_probe_at_ms: number | null;
-	capability_summary_json: string | null;
-	success_count: number;
-	failure_count: number;
 	created_at_ms: number;
 	updated_at_ms: number;
 };
@@ -106,48 +48,39 @@ export type GeminiAccountRow = {
 export type GeminiAccountSnapshotRow = Pick<
 	GeminiAccountRow,
 	| "id"
-	| "row_id"
-	| "label"
 	| "enabled"
-	| "status"
 	| "cookie_header"
 	| "cookie_hash"
-	| "sapisid"
-	| "session_token"
-	| "session_token_hash"
-	| "user_agent"
-	| "gemini_origin"
+	| "issue"
 	| "cooldown_until_ms"
 	| "last_used_at_ms"
-	| "last_success_at_ms"
-	| "last_failure_at_ms"
 >;
 
 export type GeminiAccountSecretRow = GeminiAccountRow;
 
-export type GeminiAccountPublic = Omit<
-	GeminiAccountRow,
-	"cookie_header" | "sapisid" | "session_token"
-> & {
-	has_cookie: boolean;
-	has_sapisid: boolean;
-	has_session_token: boolean;
-	cookie_preview: string;
+export type GeminiAccountSummary = {
+	id: string;
+	label: string | null;
+	enabled: boolean;
+	state: GeminiAccountState;
+	issue: GeminiAccountIssue | null;
+	cooldown_until_ms: number | null;
+	last_issue_at_ms: number | null;
+	last_used_at_ms: number | null;
+	last_refresh_at_ms: number | null;
+	created_at_ms: number;
+	updated_at_ms: number;
 };
 
 export type GeminiAccountAdminFilter = {
 	limit: number;
 	cursor?: string;
-	status?: GeminiAccountStatus;
-	enabled?: boolean;
 	q?: string;
-	category?: GeminiAccountCategory;
-	cooldown?: "active" | "cooling";
-	source?: string;
+	state?: GeminiAccountState;
 };
 
-export type GeminiAccountPublicPage = {
-	items: GeminiAccountPublic[];
+export type GeminiAccountSummaryPage = {
+	items: GeminiAccountSummary[];
 	nextCursor: string | null;
 	limit: number;
 };
@@ -155,16 +88,12 @@ export type GeminiAccountPublicPage = {
 export type GeminiAccountAdminStats = {
 	total: number;
 	available: number;
-	needsAttention: number;
-	disabled: number;
-	refreshable: number;
 	cooling: number;
-	psidOnly: number;
-	successCount: number;
-	failureCount: number;
+	attention: number;
+	disabled: number;
 };
 
-export type GeminiAccountAdminOverview = GeminiAccountPublicPage & {
+export type GeminiAccountAdminOverview = GeminiAccountSummaryPage & {
 	stats: GeminiAccountAdminStats;
 };
 
@@ -172,23 +101,12 @@ export type GeminiAccountBulkAction =
 	| "enable"
 	| "disable"
 	| "delete"
-	| "refresh"
-	| "check";
+	| "refresh";
 
 export type GeminiAccountCreateInput = {
 	id?: string;
 	label?: string;
 	cookieHeader: string;
-	sapisid?: string;
-	sessionToken?: string;
-	sessionId?: string;
-	language?: string;
-	pushId?: string;
-	userAgent?: string;
-	geminiOrigin?: string;
-	source?: string;
-	sourceId?: string;
-	sourceName?: string;
 	nowMs: number;
 };
 
@@ -198,54 +116,36 @@ export type GeminiAccountBulkCreateEntry = {
 };
 
 export type GeminiAccountBulkCreateResult = {
-	itemsByCookieHash: ReadonlyMap<string, GeminiAccountPublic>;
+	itemsByCookieHash: ReadonlyMap<string, GeminiAccountSummary>;
 	addedCookieHashes: ReadonlySet<string>;
 };
 
 export type GeminiAccountUpdate = {
 	label?: string | null;
 	enabled?: boolean;
-	status?: GeminiAccountStatus;
-	stateReason?: string | null;
-	cooldownUntilMs?: number | null;
-	accountStatusCode?: number | null;
-	accountStatusDescription?: string | null;
-	userAgent?: string | null;
-	geminiOrigin?: string | null;
-	source?: string | null;
-	sourceId?: string | null;
-	sourceName?: string | null;
 	nowMs: number;
 };
 
-export type GeminiCookieWriteback = {
+export type GeminiAccountUpdateResult = {
+	item: GeminiAccountSummary | null;
+	changed: boolean;
+};
+
+export type GeminiRefreshedCookieWrite = {
 	cookieHeader: string;
-	sapisid?: string | null | undefined;
-	sessionToken?: string | null | undefined;
-	sessionId?: string | null | undefined;
-	language?: string | null | undefined;
-	pushId?: string | null | undefined;
-	lastRefreshAtMs?: number | null | undefined;
-	lastRefreshAttemptAtMs?: number | null | undefined;
-	status?: GeminiAccountStatus;
-	stateReason?: string | null;
+	refreshedAtMs: number;
 	nowMs: number;
 };
 
-export type GeminiCookieWritebackResult = {
+export type GeminiRefreshedCookieWriteResult = {
 	changed: boolean;
 	reason?: "duplicate_cookie";
 };
 
 export type GeminiAccountOutcome = {
 	kind: "success" | "failure";
-	failureKind?: GeminiAccountFailureKind | undefined;
-	status?: GeminiAccountStatus | undefined;
-	stateReason?: string | null | undefined;
-	cooldownUntilMs?: number | null | undefined;
-	upstreamStatus?: number | null | undefined;
-	errorCode?: string | null | undefined;
-	errorMessageRedacted?: string | null | undefined;
+	issue?: GeminiAccountIssue;
+	cooldownUntilMs?: number;
 	nowMs: number;
 };
 
@@ -265,10 +165,10 @@ export type GeminiAccountRuntimeStore = {
 		nowMs: number,
 	): Promise<boolean>;
 	releaseRefreshLock(accountId: string, owner: string): Promise<void>;
-	writeCookieState(
+	writeRefreshedCookie(
 		accountId: string,
-		update: GeminiCookieWriteback,
-	): Promise<GeminiCookieWritebackResult>;
+		update: GeminiRefreshedCookieWrite,
+	): Promise<GeminiRefreshedCookieWriteResult>;
 	writeAccountOutcome(
 		accountId: string,
 		outcome: GeminiAccountOutcome,
@@ -276,39 +176,28 @@ export type GeminiAccountRuntimeStore = {
 };
 
 export type GeminiAccountAdminStore = {
-	listAdminAccounts(
-		filter: GeminiAccountAdminFilter,
-		nowMs: number,
-	): Promise<GeminiAccountPublicPage>;
-	getAdminStats(
-		filter: Omit<GeminiAccountAdminFilter, "cursor" | "limit">,
-		nowMs: number,
-	): Promise<GeminiAccountAdminStats>;
-	getAdminOverview?(
+	getAdminOverview(
 		filter: GeminiAccountAdminFilter,
 		nowMs: number,
 	): Promise<GeminiAccountAdminOverview>;
 	findAccountByCookieHash(
 		cookieHash: string,
-	): Promise<GeminiAccountPublic | null>;
-	resolveAccountIdentifier(input: {
-		id?: string;
-		rowId?: string;
-	}): Promise<string | null>;
-	createAccount(input: GeminiAccountCreateInput): Promise<GeminiAccountPublic>;
+		nowMs: number,
+	): Promise<GeminiAccountSummary | null>;
+	createAccount(input: GeminiAccountCreateInput): Promise<GeminiAccountSummary>;
 	createAccountsBulk?(
 		entries: GeminiAccountBulkCreateEntry[],
 	): Promise<GeminiAccountBulkCreateResult>;
 	updateAccount(
 		accountId: string,
 		update: GeminiAccountUpdate,
-	): Promise<GeminiAccountPublic | null>;
-	deleteAccount(accountId: string): Promise<boolean>;
+	): Promise<GeminiAccountUpdateResult>;
+	deleteAccount(accountId: string, nowMs: number): Promise<boolean>;
 	setAccountsEnabledBulk?(
 		accountIds: readonly string[],
 		enabled: boolean,
 		nowMs: number,
-	): Promise<GeminiAccountPublic[]>;
+	): Promise<string[]>;
 	deleteAccountsBulk?(
 		accountIds: readonly string[],
 		nowMs: number,
@@ -338,24 +227,10 @@ export type GeminiAccountRotateResponse = {
 	headers: Headers;
 };
 
-export type GeminiAccountPageState = {
-	cookieHeader?: string | undefined;
-	sapisid?: string | null | undefined;
-	sessionToken?: string | null | undefined;
-	sessionId?: string | null | undefined;
-	language?: string | null | undefined;
-	pushId?: string | null | undefined;
-	nowMs?: number;
-};
-
 export type GeminiAccountLease = {
 	accountId: string;
-	rowId?: string;
 	selectedCookieHash: string;
 	config: import("../../config").RuntimeConfig;
-	recordPageState(
-		update: GeminiAccountPageState,
-	): Promise<GeminiCookieWritebackResult>;
 	refreshForRetry(reason?: string): Promise<GeminiAccountRefreshResult>;
 	markSuccess(nowMs?: number): Promise<void>;
 	markFailure(error: unknown, nowMs?: number): Promise<void>;
@@ -363,7 +238,6 @@ export type GeminiAccountLease = {
 };
 
 export type GeminiAccountRefreshReason =
-	| "missing_cookie"
 	| "missing_secure_1psid"
 	| "recent_rotation"
 	| "lock_conflict"
@@ -372,11 +246,24 @@ export type GeminiAccountRefreshReason =
 	| "rotation_failed"
 	| "rotation_no_update"
 	| "rotation_duplicate"
-	| "rotation_error"
 	| "rotation_updated";
 
 export type GeminiAccountRefreshResult = {
 	changed: boolean;
 	reason: GeminiAccountRefreshReason;
 	upstreamStatus?: number;
+};
+
+export type GeminiAccountMutationError = {
+	id?: string;
+	code: string;
+	message: string;
+};
+
+export type GeminiAccountMutationResult = {
+	processed: number;
+	changed: number;
+	unchanged: number;
+	failed: number;
+	errors?: GeminiAccountMutationError[];
 };

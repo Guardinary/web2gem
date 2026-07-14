@@ -2,17 +2,17 @@ import type { RuntimeConfig, WorkerEnv } from "../../config";
 import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
+import type { GeminiAccountAdminFilterInput } from "./admin-input";
 import {
 	createInputFromAccount,
 	GeminiAccountAdminError,
 	hasAccountUpdate,
-	normalizeCreateAccounts,
 	normalizeBulkAction,
+	normalizeCreateAccounts,
 	normalizeListFilter,
 	updateFromBody,
 	WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS,
 } from "./admin-input";
-import type { GeminiAccountAdminFilterInput } from "./admin-input";
 import { rotateGeminiAccountCookie } from "./cookie-rotator";
 import { normalizeGeminiCookieHeader, sha256Hex } from "./normalize";
 import { AccountPoolService } from "./pool";
@@ -20,69 +20,19 @@ import { d1BindingFromEnv } from "./runtime";
 import { D1GeminiAccountStore, isD1UniqueConstraintError } from "./store-d1";
 import type {
 	D1DatabaseLike,
+	GeminiAccountAdminOverview,
+	GeminiAccountAdminStore,
 	GeminiAccountBulkCreateEntry,
 	GeminiAccountBulkCreateResult,
-	GeminiAccountAdminFilter,
-	GeminiAccountAdminOverview,
-	GeminiAccountAdminStats,
-	GeminiAccountAdminStore,
 	GeminiAccountCookieRotator,
-	GeminiAccountPublic,
-	GeminiAccountPublicPage,
-	GeminiAccountRefreshResult,
+	GeminiAccountMutationError,
+	GeminiAccountMutationResult,
+	GeminiAccountRefreshReason,
 	GeminiAccountRuntimeStore,
 	GeminiAccountStore,
 } from "./types";
 
 export { GeminiAccountAdminError } from "./admin-input";
-
-export type GeminiAccountMutationResult = {
-	items: GeminiAccountPublic[];
-	updated?: number;
-	removed?: number;
-	skipped?: number;
-};
-
-export type GeminiAccountBulkActionResult = GeminiAccountMutationResult & {
-	checked?: number;
-	refreshed?: number;
-	unchanged?: number;
-	failed?: number;
-	errors: GeminiAccountDiagnosticError[];
-	results: GeminiAccountDiagnosticItem[];
-};
-
-export type GeminiAccountCreateResult = {
-	added: number;
-	skipped: number;
-	items: GeminiAccountPublic[];
-	duplicates?: number;
-};
-
-export type GeminiAccountDiagnosticItem = {
-	id?: string;
-	row_id?: string;
-	status: "refreshed" | "unchanged" | "failed" | "skipped";
-	reason?: string;
-	upstreamStatus?: number;
-};
-
-export type GeminiAccountDiagnosticError = {
-	id?: string;
-	row_id?: string;
-	error: string;
-};
-
-export type GeminiAccountDiagnosticResult = {
-	checked: number;
-	skipped: number;
-	refreshed: number;
-	unchanged: number;
-	failed: number;
-	errors: GeminiAccountDiagnosticError[];
-	results: GeminiAccountDiagnosticItem[];
-	items: GeminiAccountPublic[];
-};
 
 export type GeminiAccountAdminServiceOptions = {
 	store?: GeminiAccountStore;
@@ -100,6 +50,10 @@ type GeminiAccountAdminFactoryOptions = Partial<
 		"store" | "adminStore" | "runtimeStore" | "cfg"
 	>
 >;
+
+type MutationOutcome =
+	| { changed: true }
+	| { changed: false; error?: GeminiAccountMutationError };
 
 export class GeminiAccountAdminService {
 	private readonly adminStore: GeminiAccountAdminStore;
@@ -124,55 +78,25 @@ export class GeminiAccountAdminService {
 					? null
 					: WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS
 				: options.maxCreateAccounts;
-		const poolOptions = {
+		this.pool = new AccountPoolService(this.runtimeStore, {
 			nowMs: this.nowMs,
 			snapshotTtlMs: 1,
 			versionProbeTtlMs: 1,
 			selectableLimit: 200,
 			rotateCookie: options.rotateCookie || rotateGeminiAccountCookie,
-		};
-		this.pool = new AccountPoolService(this.runtimeStore, poolOptions);
-	}
-
-	list(
-		filter: GeminiAccountAdminFilterInput,
-	): Promise<GeminiAccountPublicPage> {
-		return this.adminStore.listAdminAccounts(
-			normalizeListFilter(filter),
-			this.nowMs(),
-		);
+		});
 	}
 
 	overview(
 		filter: GeminiAccountAdminFilterInput,
 	): Promise<GeminiAccountAdminOverview> {
-		const normalized = normalizeListFilter(filter);
-		const nowMs = this.nowMs();
-		if (this.adminStore.getAdminOverview)
-			return this.adminStore.getAdminOverview(normalized, nowMs);
-		return Promise.all([
-			this.adminStore.listAdminAccounts(normalized, nowMs),
-			this.stats(normalized),
-		]).then(([page, stats]) => ({ ...page, stats }));
+		return this.adminStore.getAdminOverview(
+			normalizeListFilter(filter),
+			this.nowMs(),
+		);
 	}
 
-	stats(
-		filter: GeminiAccountAdminFilterInput,
-	): Promise<GeminiAccountAdminStats> {
-		const nowMs = this.nowMs();
-		const normalized = normalizeListFilter({ ...filter, limit: 1 });
-		const statsFilter: Omit<GeminiAccountAdminFilter, "cursor" | "limit"> = {};
-		if (normalized.status) statsFilter.status = normalized.status;
-		if (normalized.enabled !== undefined)
-			statsFilter.enabled = normalized.enabled;
-		if (normalized.q) statsFilter.q = normalized.q;
-		if (normalized.category) statsFilter.category = normalized.category;
-		if (normalized.cooldown) statsFilter.cooldown = normalized.cooldown;
-		if (normalized.source) statsFilter.source = normalized.source;
-		return this.adminStore.getAdminStats(statsFilter, nowMs);
-	}
-
-	async create(body: UnknownRecord): Promise<GeminiAccountCreateResult> {
+	async create(body: UnknownRecord): Promise<GeminiAccountMutationResult> {
 		const accounts = normalizeCreateAccounts(body, this.maxCreateAccounts);
 		const nowMs = this.nowMs();
 		const uniqueEntries = new Map<string, GeminiAccountBulkCreateEntry>();
@@ -190,25 +114,9 @@ export class GeminiAccountAdminService {
 		const entries = Array.from(uniqueEntries.values());
 		const stored = this.adminStore.createAccountsBulk
 			? await this.adminStore.createAccountsBulk(entries)
-			: await createAccountsCompatibility(this.adminStore, entries);
-		let added = 0;
-		let skipped = 0;
-		let duplicates = 0;
-		const items: GeminiAccountPublic[] = [];
-		const seen = new Set<string>();
-		for (const cookieHash of orderedCookieHashes) {
-			const item = stored.itemsByCookieHash.get(cookieHash);
-			if (!item) throw new Error("account import result is incomplete");
-			items.push(item);
-			if (stored.addedCookieHashes.has(cookieHash) && !seen.has(cookieHash)) {
-				added += 1;
-			} else {
-				skipped += 1;
-				duplicates += 1;
-			}
-			seen.add(cookieHash);
-		}
-		return { added, skipped, duplicates, items };
+			: await createAccountsOneByOne(this.adminStore, entries, nowMs);
+		const changed = stored.addedCookieHashes.size;
+		return mutationResult(orderedCookieHashes.length, changed, [], 0);
 	}
 
 	async update(
@@ -216,151 +124,97 @@ export class GeminiAccountAdminService {
 		body: UnknownRecord,
 	): Promise<GeminiAccountMutationResult> {
 		const update = updateFromBody(body, this.nowMs());
-		if (!hasAccountUpdate(update)) {
+		if (!hasAccountUpdate(update))
 			throw new GeminiAccountAdminError(
 				400,
 				"account_update_required",
 				"no account update fields provided",
 			);
-		}
-		const item = await this.adminStore.updateAccount(id, update);
-		if (!item) throw accountNotFound();
-		return { updated: 1, skipped: 0, items: [item] };
+		const result = await this.adminStore.updateAccount(id, update);
+		if (!result.item) return mutationResult(1, 0, [accountNotFoundError(id)]);
+		return mutationResult(1, result.changed ? 1 : 0);
 	}
 
 	async delete(id: string): Promise<GeminiAccountMutationResult> {
-		if (!(await this.adminStore.deleteAccount(id))) throw accountNotFound();
-		return { removed: 1, skipped: 0, items: [] };
+		const changed = await this.adminStore.deleteAccount(id, this.nowMs());
+		return changed
+			? mutationResult(1, 1)
+			: mutationResult(1, 0, [accountNotFoundError(id)]);
 	}
 
 	async runBulkAction(
 		body: UnknownRecord,
-	): Promise<GeminiAccountBulkActionResult> {
+	): Promise<GeminiAccountMutationResult> {
 		const { action, ids } = normalizeBulkAction(body);
-		if (action === "refresh" || action === "check") {
-			const outcomes = await mapWithConcurrency(ids, 4, (id) =>
-				this.refreshOrCheckOne(id, action),
-			);
-			return diagnosticResult(
-				outcomes.map((outcome) => outcome.item),
-				outcomes.flatMap((outcome) => (outcome.error ? [outcome.error] : [])),
-				[],
-			);
-		}
-		if (action === "delete") {
-			let removedIds: string[];
-			if (this.adminStore.deleteAccountsBulk) {
-				removedIds = await this.adminStore.deleteAccountsBulk(
-					ids,
-					this.nowMs(),
-				);
-			} else {
-				const deleted = await Promise.all(
-					ids.map((id) => this.adminStore.deleteAccount(id)),
-				);
-				removedIds = ids.filter((_id, index) => deleted[index]);
+		const nowMs = this.nowMs();
+		const outcomes = await mapWithConcurrency(ids, 4, async (id) => {
+			if (action === "refresh") return this.refreshOne(id);
+			if (action === "delete") {
+				return (await this.adminStore.deleteAccount(id, nowMs))
+					? { changed: true }
+					: { changed: false, error: accountNotFoundError(id) };
 			}
-			return bulkMutationResult(action, ids, removedIds, []);
-		}
-		const enabled = action === "enable";
-		const items = this.adminStore.setAccountsEnabledBulk
-			? await this.adminStore.setAccountsEnabledBulk(ids, enabled, this.nowMs())
-			: (
-					await Promise.all(
-						ids.map((id) =>
-							this.adminStore.updateAccount(id, {
-								enabled,
-								nowMs: this.nowMs(),
-							}),
-						),
-					)
-				).filter((item): item is GeminiAccountPublic => item !== null);
-		return bulkMutationResult(
-			action,
-			ids,
-			items.map((item) => item.id),
-			items,
-		);
+			const result = await this.adminStore.updateAccount(id, {
+				enabled: action === "enable",
+				nowMs,
+			});
+			if (!result.item)
+				return { changed: false, error: accountNotFoundError(id) };
+			return { changed: result.changed };
+		});
+		return mutationResultFromOutcomes(outcomes);
 	}
 
-	async refresh(id: string): Promise<GeminiAccountDiagnosticResult> {
-		return this.runDiagnostic(id, "refresh");
+	async refresh(id: string): Promise<GeminiAccountMutationResult> {
+		return mutationResultFromOutcomes([await this.refreshOne(id)]);
 	}
 
-	async check(id: string): Promise<GeminiAccountDiagnosticResult> {
-		return this.runDiagnostic(id, "check");
-	}
-
-	private async runDiagnostic(
-		id: string,
-		mode: "refresh" | "check",
-	): Promise<GeminiAccountDiagnosticResult> {
-		const result = await this.refreshOrCheckOne(id, mode);
-		if (result.item.reason === "account_missing") throw accountNotFound();
-		return diagnosticResult(
-			[result.item],
-			result.error ? [result.error] : [],
-			[],
-		);
-	}
-
-	private async refreshOrCheckOne(
-		id: string,
-		mode: "refresh" | "check",
-	): Promise<{
-		item: GeminiAccountDiagnosticItem;
-		error?: GeminiAccountDiagnosticError;
-	}> {
+	private async refreshOne(id: string): Promise<MutationOutcome> {
 		const account = await this.runtimeStore.getAccountForRefresh(id);
-		const identity = account
-			? { id: account.id, row_id: account.row_id }
-			: { id };
-		if (!account) {
-			return {
-				item: { ...identity, status: "skipped", reason: "account_missing" },
-			};
-		}
-		if (account.enabled === 0) {
-			return {
-				item: { ...identity, status: "skipped", reason: "account_disabled" },
-			};
-		}
-		if (
-			account.account_category !== "full_session" &&
-			account.account_category !== "psid_psidts"
-		) {
-			return {
-				item: { ...identity, status: "skipped", reason: "not_refreshable" },
-			};
-		}
+		if (!account) return { changed: false, error: accountNotFoundError(id) };
 		try {
-			const refresh = await this.pool.refreshAccountForAdmin(
-				this.cfg,
-				account,
-				mode,
-			);
-			return { item: diagnosticItemFromRefresh(identity, refresh) };
+			const refresh = await this.pool.refreshAccountForAdmin(this.cfg, account);
+			if (refresh.changed) return { changed: true };
+			if (isRefreshFailure(refresh.reason)) {
+				return {
+					changed: false,
+					error: {
+						id,
+						code: refresh.reason,
+						message: refreshFailureMessage(refresh.reason),
+					},
+				};
+			}
+			return { changed: false };
 		} catch (error) {
 			log(
 				this.cfg,
-				`admin diagnostic error id=${id} mode=${mode} ${errorLogSummary(error)}`,
+				`admin account refresh failed id=${id} ${errorLogSummary(error)}`,
 			);
 			return {
-				item: { ...identity, status: "failed", reason: "refresh_error" },
-				error: { ...identity, error: safeAdminError(error) },
+				changed: false,
+				error: {
+					id,
+					code: "account_refresh_failed",
+					message: "account refresh failed",
+				},
 			};
 		}
 	}
 }
 
-async function createAccountsCompatibility(
+async function createAccountsOneByOne(
 	store: GeminiAccountAdminStore,
 	entries: GeminiAccountBulkCreateEntry[],
+	nowMs: number,
 ): Promise<GeminiAccountBulkCreateResult> {
-	const itemsByCookieHash = new Map<string, GeminiAccountPublic>();
+	const itemsByCookieHash = new Map();
 	const addedCookieHashes = new Set<string>();
 	for (const entry of entries) {
-		const existing = await store.findAccountByCookieHash(entry.cookieHash);
+		const existing = await store.findAccountByCookieHash(
+			entry.cookieHash,
+			nowMs,
+		);
 		if (existing) {
 			itemsByCookieHash.set(entry.cookieHash, existing);
 			continue;
@@ -371,7 +225,10 @@ async function createAccountsCompatibility(
 			addedCookieHashes.add(entry.cookieHash);
 		} catch (error) {
 			if (!isD1UniqueConstraintError(error)) throw error;
-			const duplicate = await store.findAccountByCookieHash(entry.cookieHash);
+			const duplicate = await store.findAccountByCookieHash(
+				entry.cookieHash,
+				nowMs,
+			);
 			if (!duplicate) throw error;
 			itemsByCookieHash.set(entry.cookieHash, duplicate);
 		}
@@ -408,71 +265,53 @@ export function createGeminiAccountAdminServiceFromD1(
 	});
 }
 
-function diagnosticItemFromRefresh(
-	identity: { id: string; row_id?: string },
-	refresh: GeminiAccountRefreshResult,
-): GeminiAccountDiagnosticItem {
-	const item: GeminiAccountDiagnosticItem = {
-		...identity,
-		status: refresh.changed ? "refreshed" : "unchanged",
-		reason: refresh.reason,
-	};
-	if (refresh.upstreamStatus !== undefined)
-		item.upstreamStatus = refresh.upstreamStatus;
-	return item;
-}
-
-function diagnosticResult(
-	results: GeminiAccountDiagnosticItem[],
-	errors: GeminiAccountDiagnosticError[],
-	items: GeminiAccountPublic[],
-): GeminiAccountDiagnosticResult {
-	let skipped = 0;
-	let refreshed = 0;
-	let unchanged = 0;
-	let failed = 0;
-	for (const result of results) {
-		if (result.status === "skipped") skipped++;
-		else if (result.status === "refreshed") refreshed++;
-		else if (result.status === "unchanged") unchanged++;
-		else if (result.status === "failed") failed++;
-	}
-	return {
-		checked: results.length,
-		skipped,
-		refreshed,
-		unchanged,
-		failed,
-		errors,
-		results: results.sort((a, b) =>
-			String(a.id || "").localeCompare(String(b.id || "")),
-		),
-		items,
-	};
-}
-
-function bulkMutationResult(
-	action: "enable" | "disable" | "delete",
-	ids: readonly string[],
-	changedIdsInput: readonly string[],
-	items: GeminiAccountPublic[],
-): GeminiAccountBulkActionResult {
-	const changedIds = new Set(
-		action === "delete" ? changedIdsInput : items.map((item) => item.id),
+function mutationResultFromOutcomes(
+	outcomes: readonly MutationOutcome[],
+): GeminiAccountMutationResult {
+	const changed = outcomes.filter((outcome) => outcome.changed).length;
+	const errors = outcomes.flatMap((outcome) =>
+		!outcome.changed && outcome.error ? [outcome.error] : [],
 	);
-	const results: GeminiAccountDiagnosticItem[] = ids.map((id) => ({
-		id,
-		status: changedIds.has(id) ? "refreshed" : "skipped",
-		...(!changedIds.has(id) ? { reason: "account_missing" } : {}),
-	}));
-	const changed = changedIds.size;
-	return {
-		items,
-		...(action === "delete" ? { removed: changed } : { updated: changed }),
-		skipped: ids.length - changed,
-		errors: [],
-		results,
+	return mutationResult(outcomes.length, changed, errors);
+}
+
+function mutationResult(
+	processed: number,
+	changed: number,
+	errors: GeminiAccountMutationError[] = [],
+	failed = errors.length,
+): GeminiAccountMutationResult {
+	const result: GeminiAccountMutationResult = {
+		processed,
+		changed,
+		unchanged: processed - changed - failed,
+		failed,
 	};
+	if (errors.length) result.errors = errors;
+	return result;
+}
+
+function accountNotFoundError(id: string): GeminiAccountMutationError {
+	return { id, code: "account_not_found", message: "account not found" };
+}
+
+function isRefreshFailure(reason: GeminiAccountRefreshReason): boolean {
+	return (
+		reason === "missing_secure_1psid" ||
+		reason === "account_missing" ||
+		reason === "rotation_rejected" ||
+		reason === "rotation_failed" ||
+		reason === "rotation_duplicate"
+	);
+}
+
+function refreshFailureMessage(reason: GeminiAccountRefreshReason): string {
+	if (reason === "missing_secure_1psid") return "account cookie is incomplete";
+	if (reason === "account_missing") return "account not found";
+	if (reason === "rotation_rejected") return "account refresh was rejected";
+	if (reason === "rotation_duplicate")
+		return "refreshed cookie belongs to another account";
+	return "account refresh failed";
 }
 
 async function mapWithConcurrency<T, R>(
@@ -491,17 +330,4 @@ async function mapWithConcurrency<T, R>(
 		}),
 	);
 	return results;
-}
-
-function safeAdminError(error: unknown): string {
-	if (error instanceof GeminiAccountAdminError) return error.code;
-	return "admin_diagnostic_failed";
-}
-
-function accountNotFound(): GeminiAccountAdminError {
-	return new GeminiAccountAdminError(
-		404,
-		"account_not_found",
-		"account not found",
-	);
 }

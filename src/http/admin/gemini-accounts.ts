@@ -6,7 +6,6 @@ import {
 import {
 	accountIdFromPathSegment,
 	assertNoAdminQueryParams,
-	includeStatsFromSearchParams,
 	listFilterFromSearchParams,
 } from "../../gemini/accounts/admin-input";
 import { errorLogSummary } from "../../shared/errors";
@@ -39,19 +38,7 @@ export async function handleGeminiAccountAdminRequest(
 		if (method === "GET" && path === ADMIN_PATH_PREFIX) {
 			const filter = listFilterFromSearchParams(url.searchParams);
 			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
-			return jsonResponse(
-				includeStatsFromSearchParams(url.searchParams)
-					? await service.overview(filter)
-					: await service.list(filter),
-			);
-		}
-
-		if (method === "GET" && path === `${ADMIN_PATH_PREFIX}/stats`) {
-			const filter = listFilterFromSearchParams(url.searchParams, {
-				stats: true,
-			});
-			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
-			return jsonResponse(await service.stats(filter));
+			return jsonResponse(await service.overview(filter));
 		}
 
 		if (method === "POST" && path === ADMIN_PATH_PREFIX) {
@@ -87,12 +74,6 @@ export async function handleGeminiAccountAdminRequest(
 				assertAdminBodyAbsent(request);
 				const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
 				return jsonResponse(await service.refresh(resource.id));
-			}
-			if (method === "POST" && resource.action === "check") {
-				assertNoAdminQueryParams(url.searchParams);
-				assertAdminBodyAbsent(request);
-				const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
-				return jsonResponse(await service.check(resource.id));
 			}
 		}
 
@@ -187,20 +168,16 @@ function adminErrorResponse(error: unknown): Response {
 
 type AccountResourceRoute = {
 	id: string;
-	action: "refresh" | "check" | null;
+	action: "refresh" | null;
 };
 
 function accountResourceFromPath(path: string): AccountResourceRoute | null {
 	if (!path.startsWith(`${ADMIN_PATH_PREFIX}/`)) return null;
 	const remainder = path.slice(ADMIN_PATH_PREFIX.length + 1);
 	const segments = remainder.split("/");
-	if (segments.length === 1 && segments[0] && segments[0] !== "stats")
+	if (segments.length === 1 && segments[0])
 		return { id: accountIdFromPathSegment(segments[0]), action: null };
-	if (
-		segments.length === 2 &&
-		segments[0] &&
-		(segments[1] === "refresh" || segments[1] === "check")
-	)
+	if (segments.length === 2 && segments[0] && segments[1] === "refresh")
 		return {
 			id: accountIdFromPathSegment(segments[0]),
 			action: segments[1],

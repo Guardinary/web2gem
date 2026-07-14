@@ -7,17 +7,6 @@ export type RuntimeProfile = "worker" | "docker";
 export type GeminiAccountRuntimeContext = {
 	accountId: string;
 	cookieHash: string;
-	rowId?: string;
-};
-
-export type GeminiAccountPageStateWriteback = {
-	cookieHeader?: string | undefined;
-	sapisid?: string | null | undefined;
-	sessionToken?: string | null | undefined;
-	sessionId?: string | null | undefined;
-	language?: string | null | undefined;
-	pushId?: string | null | undefined;
-	nowMs?: number;
 };
 
 export type StaticRuntimeConfig = Readonly<{
@@ -49,9 +38,6 @@ export type GeminiAccountSessionContext = {
 	cookie: string;
 	sapisid: string;
 	gemini_account?: GeminiAccountRuntimeContext;
-	gemini_account_writeback?: (
-		update: GeminiAccountPageStateWriteback,
-	) => Promise<unknown>;
 };
 
 export type RuntimeConfig = StaticRuntimeConfig &

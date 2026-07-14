@@ -16,7 +16,7 @@ export async function rotateGeminiAccountCookie(input: {
 			"Content-Type": "application/json",
 			Origin: "https://accounts.google.com",
 			Referer: "https://accounts.google.com/",
-			"User-Agent": input.account.user_agent || GEMINI_WEB_USER_AGENT,
+			"User-Agent": GEMINI_WEB_USER_AGENT,
 			"Accept-Language": "en-US,en;q=0.9",
 			Cookie: input.account.cookie_header,
 		},

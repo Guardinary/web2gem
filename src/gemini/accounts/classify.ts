@@ -28,6 +28,13 @@ const LOCATION_BLOCK_MARKERS = [
 	"unsupported region",
 ];
 
+const REQUEST_SCOPED_MARKERS = [
+	"model invalid",
+	"invalid model",
+	"capability",
+	"model not available",
+];
+
 export function classifyGeminiAccountOutcome(
 	error: unknown,
 	nowMs: number,
@@ -43,16 +50,7 @@ export function classifyGeminiAccountOutcome(
 		code === "invalid_gemini_cookie" ||
 		hasMarker(lower, AUTH_MARKERS)
 	) {
-		return {
-			kind: "failure",
-			failureKind: "auth",
-			status: "needs_cookie_update",
-			stateReason: "auth",
-			upstreamStatus,
-			errorCode: code || "auth",
-			errorMessageRedacted: "Gemini account authentication failed",
-			nowMs,
-		};
+		return { kind: "failure", issue: "auth", nowMs };
 	}
 
 	if (
@@ -61,96 +59,31 @@ export function classifyGeminiAccountOutcome(
 	) {
 		return {
 			kind: "failure",
-			failureKind: "rate_limit",
-			status: "rate_limited",
-			stateReason: "rate_limit",
+			issue: "rate_limit",
 			cooldownUntilMs: nowMs + 5 * 60 * 1000,
-			upstreamStatus,
-			errorCode: code || "rate_limit",
-			errorMessageRedacted: "Gemini account is rate limited",
 			nowMs,
 		};
 	}
 
 	if (hasMarker(lower, USER_ACTION_MARKERS)) {
-		return durableFailure(
-			"needs_user_action",
-			"needs_user_action",
-			"Gemini account needs user action",
-			upstreamStatus,
-			code,
-			nowMs,
-		);
+		return { kind: "failure", issue: "user_action", nowMs };
 	}
 
 	if (hasMarker(lower, LOCATION_BLOCK_MARKERS) || /\b1060\b/.test(text)) {
-		return durableFailure(
-			"location_or_ip_block",
-			"hard_blocked",
-			"Gemini account is blocked by location or IP",
-			upstreamStatus,
-			code,
-			nowMs,
-		);
-	}
-
-	if (/\b(1050|1052|model invalid|capability)\b/i.test(text)) {
-		return durableFailure(
-			"model_capability",
-			"capability_mismatch",
-			"Gemini account lacks requested capability",
-			upstreamStatus,
-			code,
-			nowMs,
-		);
+		return { kind: "failure", issue: "location", nowMs };
 	}
 
 	if (
-		Number(upstreamStatus) >= 500 ||
-		/\b(5\d\d|network|timeout|empty response|1013)\b/i.test(text)
+		/\b(1050|1052)\b/.test(text) ||
+		hasMarker(lower, REQUEST_SCOPED_MARKERS)
 	) {
-		return {
-			kind: "failure",
-			failureKind: Number(upstreamStatus) >= 500 ? "upstream_5xx" : "transient",
-			status: "transient_failed",
-			stateReason: "transient",
-			cooldownUntilMs: nowMs + 60 * 1000,
-			upstreamStatus,
-			errorCode: code || "transient",
-			errorMessageRedacted: "Gemini account hit a transient upstream failure",
-			nowMs,
-		};
+		return { kind: "failure", nowMs };
 	}
 
 	return {
 		kind: "failure",
-		failureKind: "unknown",
-		status: "transient_failed",
-		stateReason: "unknown",
+		issue: "transient",
 		cooldownUntilMs: nowMs + 60 * 1000,
-		upstreamStatus,
-		errorCode: code || "unknown",
-		errorMessageRedacted: "Gemini account hit an unknown runtime failure",
-		nowMs,
-	};
-}
-
-function durableFailure(
-	failureKind: GeminiAccountOutcome["failureKind"],
-	status: NonNullable<GeminiAccountOutcome["status"]>,
-	message: string,
-	upstreamStatus: number | undefined,
-	code: string,
-	nowMs: number,
-): GeminiAccountOutcome {
-	return {
-		kind: "failure",
-		failureKind,
-		status,
-		stateReason: failureKind || "failure",
-		upstreamStatus,
-		errorCode: code || failureKind || "failure",
-		errorMessageRedacted: message,
 		nowMs,
 	};
 }
