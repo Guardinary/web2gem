@@ -12,6 +12,7 @@ import { isDurableGeminiAccountIssue } from "./domain";
 import { normalizeGeminiCookieHeader, sha256Hex } from "./normalize";
 import type {
 	GeminiAccountCookieRotator,
+	GeminiAccountAcquireOptions,
 	GeminiAccountLease,
 	GeminiAccountOutcome,
 	GeminiAccountRefreshResult,
@@ -86,10 +87,12 @@ export class AccountPoolService {
 
 	async acquireLease(
 		baseConfig: RuntimeConfig,
+		options: GeminiAccountAcquireOptions = {},
 	): Promise<GeminiAccountLease | null> {
 		const nowMs = this.nowMs();
 		const rows = await this.selectableSnapshot(nowMs);
-		const row = this.chooseRow(rows, nowMs);
+		const excluded = new Set(options.excludeAccountIds || []);
+		const row = this.chooseRow(rows, nowMs, excluded);
 		if (!row) return null;
 		this.incrementInFlight(row.id);
 		return new PoolLease(this, baseConfig, row);
@@ -154,28 +157,35 @@ export class AccountPoolService {
 		else this.inFlight.set(accountId, current - 1);
 	}
 
-	async refreshForRetry(lease: PoolLease): Promise<GeminiAccountRefreshResult> {
+	async refreshForRetry(
+		lease: PoolLease,
+		recordFailure = true,
+	): Promise<GeminiAccountRefreshResult> {
 		const pendingKey = `${lease.accountId}\0${lease.cookieHash}`;
 		const pending = this.pendingRefresh.get(pendingKey);
 		if (pending) return pending;
-		const promise = this.refreshForRetryOnce(lease).finally(() => {
-			this.pendingRefresh.delete(pendingKey);
-		});
+		const promise = this.refreshForRetryOnce(lease, recordFailure).finally(
+			() => {
+				this.pendingRefresh.delete(pendingKey);
+			},
+		);
 		this.pendingRefresh.set(pendingKey, promise);
 		return promise;
 	}
 
 	private async refreshForRetryOnce(
 		lease: PoolLease,
+		recordFailure: boolean,
 	): Promise<GeminiAccountRefreshResult> {
 		const state = await this.accountState(lease);
 		const nowMs = this.nowMs();
 		if (!parseCookieHeader(state.cookieHeader).get("__Secure-1PSID")) {
-			await this.markFailure(
-				lease.accountId,
-				{ code: "invalid_gemini_cookie" },
-				nowMs,
-			);
+			if (recordFailure)
+				await this.markFailure(
+					lease.accountId,
+					{ code: "invalid_gemini_cookie" },
+					nowMs,
+				);
 			return { changed: false, reason: "missing_secure_1psid" };
 		}
 		if (
@@ -184,7 +194,7 @@ export class AccountPoolService {
 		) {
 			return { changed: false, reason: "recent_rotation" };
 		}
-		return this.refreshAccountOnce(lease, state, nowMs);
+		return this.refreshAccountOnce(lease, state, nowMs, recordFailure);
 	}
 
 	async markSuccess(
@@ -236,6 +246,7 @@ export class AccountPoolService {
 		lease: PoolLease,
 		state: AccountRuntimeState,
 		nowMs: number,
+		recordFailure: boolean,
 	): Promise<GeminiAccountRefreshResult> {
 		const owner = `account-refresh:${lease.accountId}:${uuid()}`;
 		const locked = await this.store.tryAcquireRefreshLock(
@@ -254,11 +265,12 @@ export class AccountPoolService {
 			});
 			state.lastRotateAtMs = nowMs;
 			if (!response.ok) {
-				await this.markFailure(
-					lease.accountId,
-					{ status: response.status },
-					nowMs,
-				);
+				if (recordFailure)
+					await this.markFailure(
+						lease.accountId,
+						{ status: response.status },
+						nowMs,
+					);
 				return {
 					changed: false,
 					reason:
@@ -275,11 +287,12 @@ export class AccountPoolService {
 				),
 			);
 			if (!nextCookieHeader) {
-				await this.markFailure(
-					lease.accountId,
-					{ code: "invalid_gemini_cookie" },
-					nowMs,
-				);
+				if (recordFailure)
+					await this.markFailure(
+						lease.accountId,
+						{ code: "invalid_gemini_cookie" },
+						nowMs,
+					);
 				return {
 					changed: false,
 					reason: "rotation_failed",
@@ -322,9 +335,10 @@ export class AccountPoolService {
 				upstreamStatus: response.status,
 			};
 		} catch (error) {
-			await this.markFailure(lease.accountId, error, nowMs).catch(
-				() => undefined,
-			);
+			if (recordFailure)
+				await this.markFailure(lease.accountId, error, nowMs).catch(
+					() => undefined,
+				);
 			throw error;
 		} finally {
 			await this.store.releaseRefreshLock(lease.accountId, owner);
@@ -352,8 +366,10 @@ export class AccountPoolService {
 	private chooseRow(
 		rows: readonly GeminiAccountSnapshotRow[],
 		nowMs: number,
+		excludedAccountIds: ReadonlySet<string>,
 	): GeminiAccountSnapshotRow | null {
 		const selectable = rows
+			.filter((row) => !excludedAccountIds.has(row.id))
 			.filter((row) => row.enabled !== 0)
 			.filter((row) => !isDurableGeminiAccountIssue(row.issue))
 			.filter(
@@ -414,8 +430,8 @@ class PoolLease implements GeminiAccountLease {
 		this.config = accountConfig(baseConfig, row);
 	}
 
-	refreshForRetry(): Promise<GeminiAccountRefreshResult> {
-		return this.pool.refreshForRetry(this);
+	refreshForRetry(reason?: string): Promise<GeminiAccountRefreshResult> {
+		return this.pool.refreshForRetry(this, reason !== "auth");
 	}
 
 	markSuccess(nowMs?: number): Promise<void> {

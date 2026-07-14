@@ -16,7 +16,11 @@ import {
 	geminiAuthenticatedSessionRequiredError,
 	type GeminiAuthenticatedSessionReason,
 } from "../shared/errors";
-import type { AttachmentPlan } from "../attachments/types";
+import type {
+	AttachmentFileRef,
+	AttachmentPlan,
+	AttachmentUploadResult,
+} from "../attachments/types";
 import { errorLogSummary } from "../shared/errors";
 import { isAbortError } from "../shared/abort";
 import { log, logStage } from "../shared/logging";
@@ -24,6 +28,7 @@ import { promptByteLengthGreaterThan } from "../shared/tokens";
 import type { ErrorWithMetadata } from "../shared/types";
 import type { GeminiAccountLease } from "./accounts/types";
 import type { GeminiAccountRuntime } from "./accounts/runtime";
+import { classifyGeminiAccountOutcome } from "./accounts/classify";
 import { upstreamEmptyResponseError } from "./client/errors";
 
 type ResolvedModelOK = Extract<ResolvedModel, { name: string }>;
@@ -45,6 +50,23 @@ export type GeminiCompletionProviderOptions = {
 	uploads?: Partial<GeminiUploadDelegates>;
 };
 
+const MAX_ACCOUNT_ATTEMPTS = 3;
+
+type UploadRecipe =
+	| {
+			kind: "attachments";
+			plan: AttachmentPlan;
+			currentRefs: AttachmentFileRef[];
+	  }
+	| {
+			kind: "text";
+			text: string;
+			filename: string;
+			currentRef: AttachmentFileRef;
+	  };
+
+type RecoveryResult = { retry: true } | { retry: false; error: unknown };
+
 export function createGeminiCompletionProvider(
 	cfg: RuntimeConfig,
 	providerOptions: GeminiCompletionProviderOptions = {},
@@ -63,20 +85,42 @@ export function createGeminiCompletionProvider(
 	};
 	let leasePromise: Promise<GeminiAccountLease | null> | null = null;
 	let lease: GeminiAccountLease | null = null;
-	let terminal = false;
+	let accountAttempts = 0;
+	let disposed = false;
+	let uploadQueue: Promise<void> = Promise.resolve();
+	const attemptedAccountIds = new Set<string>();
+	const refreshedAccountIds = new Set<string>();
+	const uploadRecipes: UploadRecipe[] = [];
+	const refAliases = new Map<string, AttachmentFileRef>();
 
 	const acquireAccountConfig = async (
 		reason: GeminiAuthenticatedSessionReason,
 	): Promise<RuntimeConfig> => {
 		if (!runtime) throw geminiAuthenticatedSessionRequiredError(reason);
+		if (disposed) throw new Error("Gemini completion provider is disposed");
 		if (!leasePromise) {
-			leasePromise = runtime.acquireLease(cfg).then((acquiredLease) => {
-				if (!acquiredLease) throw noAvailableAccountError();
-				lease = acquiredLease;
-				return acquiredLease;
-			});
+			if (accountAttempts >= MAX_ACCOUNT_ATTEMPTS)
+				throw noAvailableAccountError();
+			leasePromise = runtime
+				.acquireLease(cfg, { excludeAccountIds: attemptedAccountIds })
+				.then((acquiredLease) => {
+					if (!acquiredLease) throw noAvailableAccountError();
+					if (attemptedAccountIds.has(acquiredLease.accountId)) {
+						acquiredLease.release();
+						throw noAvailableAccountError();
+					}
+					accountAttempts += 1;
+					lease = acquiredLease;
+					return acquiredLease;
+				});
 		}
-		const selected = await leasePromise;
+		let selected: GeminiAccountLease | null;
+		try {
+			selected = await leasePromise;
+		} catch (error) {
+			leasePromise = null;
+			throw error;
+		}
 		if (!selected) throw noAvailableAccountError();
 		return selected.config;
 	};
@@ -87,27 +131,47 @@ export function createGeminiCompletionProvider(
 		leasePromise = null;
 	};
 
-	const finalizeOutcome = async (
-		kind: "success" | "failure",
-		error?: unknown,
-	): Promise<void> => {
-		const selected = lease;
-		const persistence = selected
-			? kind === "success"
-				? selected.markSuccess()
-				: error !== undefined && !isAbortError(error)
-					? selected.markFailure(error)
-					: null
-			: null;
-		releaseLease();
-		terminal = true;
-		if (!persistence) return;
-		const guarded = persistence.catch((persistenceError: unknown) => {
+	const resetAttemptState = (): void => {
+		accountAttempts = 0;
+		attemptedAccountIds.clear();
+		refreshedAccountIds.clear();
+		uploadRecipes.length = 0;
+		refAliases.clear();
+	};
+
+	const guardOutcome = (persistence: Promise<void>): Promise<void> =>
+		persistence.catch((persistenceError: unknown) => {
 			log(
 				cfg,
 				`account outcome persistence failed: ${errorLogSummary(persistenceError)}`,
 			);
 		});
+
+	const finalizeOutcome = async (
+		kind: "success" | "failure",
+		error?: unknown,
+	): Promise<void> => {
+		const selected = lease;
+		let persistence: Promise<void> | null = null;
+		if (selected) {
+			try {
+				persistence =
+					kind === "success"
+						? selected.markSuccess()
+						: error !== undefined && !isAbortError(error)
+							? selected.markFailure(error)
+							: null;
+			} catch (persistenceError) {
+				log(
+					cfg,
+					`account outcome persistence failed: ${errorLogSummary(persistenceError)}`,
+				);
+			}
+		}
+		releaseLease();
+		resetAttemptState();
+		if (!persistence) return;
+		const guarded = guardOutcome(persistence);
 		if (cfg.execution_ctx) {
 			try {
 				cfg.execution_ctx.waitUntil(guarded);
@@ -122,65 +186,219 @@ export function createGeminiCompletionProvider(
 		await guarded;
 	};
 
-	const withGenerationLease = async <T>(
-		fn: (activeCfg: RuntimeConfig) => Promise<T>,
-		reason: GeminiAuthenticatedSessionReason,
-	): Promise<T> => {
-		const activeCfg = await acquireAccountConfig(reason);
+	const retireLease = async (error: unknown): Promise<void> => {
+		const selected = lease;
+		if (!selected) return;
+		attemptedAccountIds.add(selected.accountId);
 		try {
-			const result = await fn(activeCfg);
-			await finalizeOutcome("success");
-			return result;
-		} catch (error) {
-			await finalizeOutcome("failure", error);
-			throw error;
+			await guardOutcome(selected.markFailure(error));
+		} catch (persistenceError) {
+			log(
+				cfg,
+				`account outcome persistence failed: ${errorLogSummary(persistenceError)}`,
+			);
+		}
+		releaseLease();
+	};
+
+	const replaceAliases = (
+		previous: readonly AttachmentFileRef[],
+		next: readonly AttachmentFileRef[],
+	) => {
+		if (previous.length !== next.length)
+			throw uploadReplayError(
+				"uploaded file reference count changed during account failover",
+			);
+		for (let index = 0; index < previous.length; index++) {
+			const previousRef = previous[index];
+			const nextRef = next[index];
+			if (previousRef === undefined || nextRef === undefined)
+				throw uploadReplayError(
+					"uploaded file reference is missing during account failover",
+				);
+			const previousKey = fileRefKey(previousRef);
+			const nextKey = fileRefKey(nextRef);
+			if (!previousKey || !nextKey)
+				throw uploadReplayError(
+					"uploaded file reference is invalid during account failover",
+				);
+			for (const [alias, current] of refAliases) {
+				if (fileRefKey(current) === previousKey) refAliases.set(alias, nextRef);
+			}
+			refAliases.set(previousKey, nextRef);
+			refAliases.set(nextKey, nextRef);
 		}
 	};
 
-	const withUploadLease = async <T>(
-		fn: (activeCfg: RuntimeConfig) => Promise<T>,
-		reason: GeminiAuthenticatedSessionReason,
-	): Promise<T> => {
-		const activeCfg = await acquireAccountConfig(reason);
-		try {
-			return await fn(activeCfg);
-		} catch (error) {
-			await finalizeOutcome("failure", error);
-			throw error;
+	const replayUploads = async (): Promise<void> => {
+		const activeCfg = lease?.config;
+		if (!activeCfg) throw noAvailableAccountError();
+		for (const recipe of uploadRecipes) {
+			if (recipe.kind === "text") {
+				const nextRef = await uploadDelegates.uploadTextFile(
+					activeCfg,
+					recipe.text,
+					recipe.filename,
+				);
+				replaceAliases([recipe.currentRef], [nextRef]);
+				recipe.currentRef = nextRef;
+				continue;
+			}
+			const nextResult = await uploadDelegates.resolveAttachments(
+				activeCfg,
+				recipe.plan,
+			);
+			const nextRefs = nextResult.fileRefs || [];
+			replaceAliases(recipe.currentRefs, nextRefs);
+			recipe.currentRefs = [...nextRefs];
 		}
 	};
+
+	const recoverAccount = async (
+		initialError: unknown,
+		allowAccountSwitch: boolean,
+	): Promise<RecoveryResult> => {
+		let error = initialError;
+		while (lease) {
+			if (isAbortError(error)) return { retry: false, error };
+			const outcome = classifyGeminiAccountOutcome(error, Date.now());
+			if (!outcome.issue) return { retry: false, error };
+
+			const selected = lease;
+			if (
+				outcome.issue === "auth" &&
+				!refreshedAccountIds.has(selected.accountId)
+			) {
+				refreshedAccountIds.add(selected.accountId);
+				try {
+					const refreshed = await selected.refreshForRetry("auth");
+					if (refreshed.changed) return { retry: true };
+				} catch (refreshError) {
+					log(
+						cfg,
+						`account credential refresh failed: ${errorLogSummary(refreshError)}`,
+					);
+				}
+			}
+
+			if (!allowAccountSwitch || accountAttempts >= MAX_ACCOUNT_ATTEMPTS)
+				return { retry: false, error };
+
+			await retireLease(error);
+			try {
+				await acquireAccountConfig("attachment");
+			} catch (_) {
+				return { retry: false, error };
+			}
+			try {
+				await replayUploads();
+				return { retry: true };
+			} catch (replayError) {
+				error = replayError;
+			}
+		}
+		return { retry: false, error };
+	};
+
+	const remapInput = (input: CompletionTextInput): CompletionTextInput => {
+		if (!input.fileRefs?.length) return input;
+		return {
+			...input,
+			fileRefs: input.fileRefs.map((fileRef) => {
+				const key = fileRefKey(fileRef);
+				return (key && refAliases.get(key)) || fileRef;
+			}),
+		};
+	};
+
+	const hasOpaqueRefs = (input: CompletionTextInput): boolean =>
+		!!input.fileRefs?.some((fileRef) => {
+			const key = fileRefKey(fileRef);
+			return !key || !refAliases.has(key);
+		});
+
+	const withGenerationLease = async <T>(
+		fn: (
+			activeCfg: RuntimeConfig,
+			activeInput: CompletionTextInput,
+		) => Promise<T>,
+		reason: GeminiAuthenticatedSessionReason,
+		input: CompletionTextInput,
+	): Promise<T> => {
+		await uploadQueue;
+		await acquireAccountConfig(reason);
+		while (lease) {
+			try {
+				const result = await fn(lease.config, remapInput(input));
+				await finalizeOutcome("success");
+				return result;
+			} catch (error) {
+				const recovery = await recoverAccount(error, !hasOpaqueRefs(input));
+				if (recovery.retry) continue;
+				await finalizeOutcome("failure", recovery.error);
+				throw recovery.error;
+			}
+		}
+		throw noAvailableAccountError();
+	};
+
+	const serializeUpload = <T>(operation: () => Promise<T>): Promise<T> => {
+		const result = uploadQueue.then(operation, operation);
+		uploadQueue = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	};
+
+	const withUploadLease = <T>(
+		fn: (activeCfg: RuntimeConfig) => Promise<T>,
+		reason: GeminiAuthenticatedSessionReason,
+		record: (result: T) => void,
+	): Promise<T> =>
+		serializeUpload(async () => {
+			await acquireAccountConfig(reason);
+			while (lease) {
+				try {
+					const result = await fn(lease.config);
+					record(result);
+					return result;
+				} catch (error) {
+					const recovery = await recoverAccount(error, true);
+					if (recovery.retry) continue;
+					await finalizeOutcome("failure", recovery.error);
+					throw recovery.error;
+				}
+			}
+			throw noAvailableAccountError();
+		});
 
 	const withAnonymousFallback = async <T>(
 		anonymousCall: (activeCfg: RuntimeConfig) => Promise<T>,
-		accountCall: (activeCfg: RuntimeConfig) => Promise<T>,
+		accountCall: (
+			activeCfg: RuntimeConfig,
+			activeInput: CompletionTextInput,
+		) => Promise<T>,
+		input: CompletionTextInput,
 	): Promise<T> => {
 		let anonymousError: unknown;
 		try {
 			const result = await anonymousCall(anonymousCfg);
-			terminal = true;
 			return result;
 		} catch (error) {
 			if (isAbortError(error)) {
-				terminal = true;
 				throw error;
 			}
 			anonymousError = error;
 		}
 
-		let activeCfg: RuntimeConfig;
+		let acquiredAccount = false;
 		try {
-			activeCfg = await acquireAccountConfig("attachment");
-		} catch (_) {
-			releaseLease();
-			terminal = true;
-			throw anonymousError;
-		}
-		try {
-			const result = await accountCall(activeCfg);
-			await finalizeOutcome("success");
-			return result;
+			await acquireAccountConfig("attachment");
+			acquiredAccount = true;
+			return await withGenerationLease(accountCall, "attachment", input);
 		} catch (error) {
-			await finalizeOutcome("failure", error);
+			if (!acquiredAccount) throw anonymousError;
 			throw error;
 		}
 	};
@@ -192,14 +410,17 @@ export function createGeminiCompletionProvider(
 		generateText(input: CompletionTextInput) {
 			const model = requireResolvedModel(input.rm);
 			if (cfg.log_requests) logGeminiRoute(cfg, model, false);
-			const call = async (activeCfg: RuntimeConfig): Promise<string> => {
+			const call = async (
+				activeCfg: RuntimeConfig,
+				activeInput: CompletionTextInput,
+			): Promise<string> => {
 				const text = await client.generate(
 					activeCfg,
-					input.prompt,
+					activeInput.prompt,
 					model.modeId,
 					model.thinkMode,
 					model.extra,
-					input.fileRefs,
+					activeInput.fileRefs,
 					model.modelHeaders,
 				);
 				if (!text) throw upstreamEmptyResponseError(502, 0, "provider");
@@ -211,8 +432,13 @@ export function createGeminiCompletionProvider(
 				input,
 				leasePromise !== null,
 			);
-			if (requiredReason) return withGenerationLease(call, requiredReason);
-			return withAnonymousFallback(call, call);
+			if (requiredReason)
+				return withGenerationLease(call, requiredReason, input);
+			return withAnonymousFallback(
+				(activeCfg) => call(activeCfg, input),
+				call,
+				input,
+			);
 		},
 		generateRich(
 			input: CompletionTextInput,
@@ -221,18 +447,19 @@ export function createGeminiCompletionProvider(
 			const model = requireResolvedModel(input.rm);
 			if (cfg.log_requests) logGeminiRoute(cfg, model, false);
 			return withGenerationLease(
-				(activeCfg) =>
+				(activeCfg, activeInput) =>
 					client.generateRich(
 						activeCfg,
-						input.prompt,
+						activeInput.prompt,
 						model.modeId,
 						model.thinkMode,
 						model.extra,
-						input.fileRefs,
+						activeInput.fileRefs,
 						model.modelHeaders,
 						richOptions,
 					),
 				"image",
+				input,
 			);
 		},
 		async *streamText(
@@ -241,14 +468,17 @@ export function createGeminiCompletionProvider(
 		) {
 			const model = requireResolvedModel(input.rm);
 			if (cfg.log_requests) logGeminiRoute(cfg, model, true);
-			const stream = (streamCfg: RuntimeConfig) =>
+			const stream = (
+				streamCfg: RuntimeConfig,
+				activeInput: CompletionTextInput,
+			) =>
 				client.generateStream(
 					streamCfg,
-					input.prompt,
+					activeInput.prompt,
 					model.modeId,
 					model.thinkMode,
 					model.extra,
-					input.fileRefs,
+					activeInput.fileRefs,
 					streamOptions,
 					model.modelHeaders,
 				);
@@ -259,24 +489,37 @@ export function createGeminiCompletionProvider(
 				leasePromise !== null,
 			);
 			if (requiredReason) {
-				const activeCfg = await acquireAccountConfig(requiredReason);
-				try {
-					for await (const delta of stream(activeCfg)) {
-						const text = String(delta || "");
-						if (text) yield text;
+				await uploadQueue;
+				await acquireAccountConfig(requiredReason);
+				while (lease) {
+					let emitted = false;
+					try {
+						for await (const delta of stream(lease.config, remapInput(input))) {
+							const text = String(delta || "");
+							if (!text) continue;
+							emitted = true;
+							yield text;
+						}
+						await finalizeOutcome("success");
+						return;
+					} catch (error) {
+						if (emitted) {
+							await finalizeOutcome("failure", error);
+							throw error;
+						}
+						const recovery = await recoverAccount(error, !hasOpaqueRefs(input));
+						if (recovery.retry) continue;
+						await finalizeOutcome("failure", recovery.error);
+						throw recovery.error;
 					}
-					await finalizeOutcome("success");
-				} catch (error) {
-					await finalizeOutcome("failure", error);
-					throw error;
 				}
-				return;
+				throw noAvailableAccountError();
 			}
 
 			let emitted = false;
 			let anonymousError: unknown;
 			try {
-				for await (const delta of stream(anonymousCfg)) {
+				for await (const delta of stream(anonymousCfg, input)) {
 					const text = String(delta || "");
 					if (!text) continue;
 					emitted = true;
@@ -284,34 +527,42 @@ export function createGeminiCompletionProvider(
 				}
 				if (!emitted)
 					throw upstreamEmptyResponseError(502, 0, "provider stream");
-				terminal = true;
 				return;
 			} catch (error) {
 				if (isAbortError(error) || emitted) {
-					terminal = true;
 					throw error;
 				}
 				anonymousError = error;
 			}
 
-			let activeCfg: RuntimeConfig;
 			try {
-				activeCfg = await acquireAccountConfig("attachment");
+				await acquireAccountConfig("attachment");
 			} catch (_) {
-				releaseLease();
-				terminal = true;
 				throw anonymousError;
 			}
-			try {
-				for await (const delta of stream(activeCfg)) {
-					const text = String(delta || "");
-					if (text) yield text;
+			while (lease) {
+				let accountEmitted = false;
+				try {
+					for await (const delta of stream(lease.config, remapInput(input))) {
+						const text = String(delta || "");
+						if (!text) continue;
+						accountEmitted = true;
+						yield text;
+					}
+					await finalizeOutcome("success");
+					return;
+				} catch (error) {
+					if (accountEmitted) {
+						await finalizeOutcome("failure", error);
+						throw error;
+					}
+					const recovery = await recoverAccount(error, !hasOpaqueRefs(input));
+					if (recovery.retry) continue;
+					await finalizeOutcome("failure", recovery.error);
+					throw recovery.error;
 				}
-				await finalizeOutcome("success");
-			} catch (error) {
-				await finalizeOutcome("failure", error);
-				throw error;
 			}
+			throw noAvailableAccountError();
 		},
 		resolveAttachments(plan: AttachmentPlan) {
 			if (
@@ -323,6 +574,14 @@ export function createGeminiCompletionProvider(
 			return withUploadLease(
 				(activeCfg) => uploadDelegates.resolveAttachments(activeCfg, plan),
 				"attachment",
+				(result: AttachmentUploadResult) => {
+					const currentRefs = [...(result.fileRefs || [])];
+					for (const ref of currentRefs) {
+						const key = fileRefKey(ref);
+						if (key) refAliases.set(key, ref);
+					}
+					uploadRecipes.push({ kind: "attachments", plan, currentRefs });
+				},
 			);
 		},
 		uploadTextFile(text: string, filename: string) {
@@ -330,14 +589,38 @@ export function createGeminiCompletionProvider(
 				(activeCfg) =>
 					uploadDelegates.uploadTextFile(activeCfg, text, filename),
 				"large_context",
+				(ref: AttachmentFileRef) => {
+					const key = fileRefKey(ref);
+					if (key) refAliases.set(key, ref);
+					uploadRecipes.push({ kind: "text", text, filename, currentRef: ref });
+				},
 			);
 		},
-		dispose() {
-			if (terminal) return;
+		async dispose() {
+			if (disposed) return;
+			disposed = true;
+			try {
+				await leasePromise;
+			} catch (_) {
+				// Acquisition failure has no lease to release.
+			}
 			releaseLease();
-			terminal = true;
+			resetAttemptState();
 		},
 	};
+}
+
+function fileRefKey(fileRef: AttachmentFileRef): string | null {
+	if (typeof fileRef === "string") return fileRef || null;
+	const value = fileRef.ref || fileRef.fileRef || fileRef.id;
+	return value ? String(value) : null;
+}
+
+function uploadReplayError(message: string): ErrorWithMetadata {
+	const error: ErrorWithMetadata = new Error(message);
+	error.code = "gemini_upload_replay_failed";
+	error.status = 502;
+	return error;
 }
 
 function noAvailableAccountError(): ErrorWithMetadata {

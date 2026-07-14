@@ -199,7 +199,7 @@ export async function generate(
 			)
 				throw e;
 			lastErr = e;
-			await waitBeforeRetry(cfg, attempt, e, "Retry");
+			if (!(await waitBeforeRetry(cfg, attempt, e, "Retry"))) throw e;
 		}
 	}
 	throw lastErr;
@@ -305,7 +305,7 @@ export async function generateRich(
 			)
 				throw e;
 			lastErr = e;
-			await waitBeforeRetry(cfg, attempt, e, "Rich retry");
+			if (!(await waitBeforeRetry(cfg, attempt, e, "Rich retry"))) throw e;
 		}
 	}
 	throw lastErr;

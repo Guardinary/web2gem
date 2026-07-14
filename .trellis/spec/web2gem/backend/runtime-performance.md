@@ -387,8 +387,9 @@ account-scoped page/push-token caches.
   success or a failure with an optional normalized issue and cooldown.
 - `GeminiAccountRuntimeStore.writeRefreshedCookie(accountId, { cookieHeader,
   refreshedAtMs, nowMs })` returns `{ changed, reason?: "duplicate_cookie" }`.
-- `AccountPoolService.acquireLease(baseConfig)` returns one account lease or
-  `null`; a successful refresh updates that lease's active `config`.
+- `AccountPoolService.acquireLease(baseConfig, { excludeAccountIds? })` returns
+  one unexcluded account lease or `null`; a successful refresh updates that
+  lease's active `config`.
 - Persisted issues are `auth | rate_limit | user_action | location | transient`.
   Public states are `available | cooling | attention | disabled`.
 
@@ -423,7 +424,8 @@ account-scoped page/push-token caches.
 
 ### 4. Validation & Error Matrix
 
-- Disabled row, active cooldown, or durable issue -> excluded from selection.
+- Disabled row, active cooldown, durable issue, or request-local excluded ID ->
+  excluded from selection.
 - Expired temporary issue -> selectable and publicly `available` with
   `issue: null`.
 - Model/capability error -> no issue/cooldown mutation.
@@ -456,8 +458,8 @@ account-scoped page/push-token caches.
   suppression.
 - Outcome classification for auth/rate/user-action/location/transient and
   request-scoped model errors.
-- Selection exclusion, success recovery, local snapshot updates, and
-  transition-only pool-version publication.
+- Selection exclusion, request-local attempted-ID exclusion, success recovery,
+  local snapshot updates, and transition-only pool-version publication.
 - Refresh pending dedupe, D1 lock conflict, same-cookie success, duplicate
   preflight/race handling, rejection classification, and active lease-config
   replacement.
@@ -718,10 +720,21 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 ### 3. Contracts
 
 - Public auth and JSON/multipart request validation must happen before account lease acquisition or D1 account reads. Constructing a runtime object is allowed before parsing, but `acquireLease` and store reads must stay lazy.
-- A provider instance may lazily acquire at most one account lease and must reuse it across `resolveAttachments`, `uploadTextFile`, `generateText`, `generateRich`, and `streamText`.
+- A provider instance keeps at most one active account lease at a time and reuses
+  it across `resolveAttachments`, `uploadTextFile`, and the generation attempt
+  that consumes their refs. One request may acquire at most three distinct
+  leases after account-scoped failures, excluding every previously failed ID.
 - Upload-only provider calls keep the lease for the later generation call. If preparation returns an error after upload/bootstrap, the HTTP handler must call `provider.dispose()` before returning.
 - Non-streaming generation marks account success only after the Gemini call resolves. Streaming marks success only after the async iterator completes normally.
-- Non-abort provider failures mark the selected account failure and release the lease. Abort/disconnect errors release without recording noisy account failure.
+- Non-abort provider failures mark the selected account failure and release the
+  lease. Failover is allowed only when the shared classifier returns a normalized
+  account issue. Abort/disconnect and request-scoped model/capability errors do
+  not acquire another account.
+- Authentication failures attempt `lease.refreshForRetry("auth")` once for the
+  selected account. A changed credential retries that account before failover.
+- Managed-account client calls do not spend generic same-account retry delays;
+  anonymous calls retain the configured retry behavior and explicit build-label
+  repair remains allowed.
 - Terminal outcomes update the isolate-local snapshot before durable persistence,
   so an auth-failed or cooling account is not immediately selected again locally.
 - Account outcome persistence is auxiliary state management. Its rejection must
@@ -741,10 +754,14 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - Pro mode (`modeId === 3`), oversized prompts, uploaded or existing file refs,
   image generation, and image editing are account-required and never attempt
   anonymous generation.
-- An anonymous non-abort error or empty response may acquire one lease and retry
-  through the existing account selector. Streaming may do this only before its
-  first non-empty delta. If lease acquisition cannot start because the runtime
-  is absent or the pool is empty, preserve the original anonymous error.
+- An anonymous non-abort error or empty response may enter the same bounded
+  three-account path. Streaming may do this only before its first non-empty
+  delta. If lease acquisition cannot start because the runtime is absent or the
+  pool is empty, preserve the original anonymous error.
+- Request-generated attachment, `message.txt`, and `tools.txt` uploads retain
+  source recipes. After switching accounts, replay every successful recipe and
+  immutably remap old refs to refs created by the new account. An externally
+  supplied Gemini ref without a recipe prevents cross-account failover.
 - No eligible account for direct account-required work must throw a sanitized
   503 error with code `no_available_gemini_account` and must not call anonymous
   upstream Gemini.
@@ -767,8 +784,15 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
   success when upstream succeeds; after anonymous failure, preserve that error.
 - D1 configured with no selectable account plus direct account-required work ->
   503 `no_available_gemini_account`, zero upstream Gemini calls.
-- Anonymous error before output plus one selectable account -> retry once with
-  the selected account and record only that account attempt's outcome.
+- Anonymous error before output plus selectable accounts -> try at most three
+  distinct accounts and record each attempted account's outcome.
+- Account A returns a normalized account issue before output -> persist A's
+  outcome, release A, acquire B with A excluded, replay generated uploads, and
+  retry through B.
+- Account A returns a model/capability error, request aborts, or a stream has
+  emitted output -> release/finalize A without acquiring B.
+- All three accounts fail -> release each lease exactly once and preserve the
+  third account's meaningful upstream error.
 - Anonymous abort or stream error after a non-empty delta -> no account lease.
 - Upload then generation -> one lease acquisition, same account config in both calls, one success, one release.
 - `/app` page token fetch for account A then account B -> distinct cache keys; tokens cannot cross accounts.
@@ -782,7 +806,8 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 
 ### 5. Good/Base/Bad Cases
 
-- Good: provider closure stores the lease promise and reuses `lease.config` for upload and generation.
+- Good: provider coordinator stores one active lease, an attempted-ID set, and
+  upload recipes; it releases a failed lease before acquiring an untried one.
 - Good: create one guarded outcome promise, release the lease, then pass the
   guarded promise to `waitUntil`.
 - Good: HTTP prepare-error branches call `provider.dispose?.()` before returning a validation error after possible upload work.
@@ -805,7 +830,8 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 
 ### 6. Tests Required
 
-- Provider unit tests for lease reuse across upload plus text/rich generation.
+- Provider unit tests for lease reuse across upload plus text/rich generation,
+  A-to-B success, three-account exhaustion, and exclusion propagation.
 - Provider tests for threshold equality vs threshold-plus-one, both Pro models,
   uploaded/existing refs, and rich image operations.
 - Provider tests for anonymous preference with no D1/empty D1, anonymous error
@@ -814,8 +840,10 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - Stream tests for fallback before output, empty-stream fallback, and no fallback
   after a delta or abort.
 - Provider stream tests for success only after iterator completion and release on stream failure.
-- Provider tests proving `waitUntil` registration, successful-result preservation,
-  original-error preservation, and handled outcome-write rejection.
+- Provider tests proving `waitUntil` registration, successful-result
+  preservation, original-error preservation, handled intermediate/terminal
+  outcome-write rejection, auth refresh, recipe replay/ref remapping, and opaque
+  ref pinning.
 - Runtime test proving a terminal auth failure immediately removes the account
   from the local selectable set.
 - Route tests proving auth and request-validation failures do not touch D1.
@@ -859,6 +887,27 @@ const guarded = lease.markSuccess().catch((error) => logSafe(error));
 lease.release();
 cfg.execution_ctx?.waitUntil(guarded);
 return result;
+```
+
+#### Wrong
+
+```typescript
+await lease.markFailure(error);
+lease.release();
+throw error;
+```
+
+#### Correct
+
+```typescript
+attemptedAccountIds.add(lease.accountId);
+await guardOutcome(lease.markFailure(error));
+lease.release();
+const next = await runtime.acquireLease(cfg, {
+  excludeAccountIds: attemptedAccountIds,
+});
+await replayRequestGeneratedUploads(next);
+return retryWithRemappedRefs(next);
 ```
 
 ## Scenario: Streaming Delta Coalescing

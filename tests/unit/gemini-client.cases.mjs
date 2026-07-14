@@ -3418,6 +3418,637 @@ export const cases = [
 			assert.equal(lease.releaseCalls, 1);
 		},
 	],
+	[
+		"fails over account-scoped text errors to an excluded alternate account",
+		async () => {
+			const first = fakeLease(accountCfg("failover-a", "hash-a"));
+			const second = fakeLease(accountCfg("failover-b", "hash-b"));
+			const runtime = fakeRuntime([first, second]);
+			const seen = [];
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate(activeCfg) {
+							const id = activeCfg.gemini_account.accountId;
+							seen.push(id);
+							if (id === "failover-a")
+								throw Object.assign(new Error("rate limited"), { status: 429 });
+							return "alternate answer";
+						},
+					},
+				},
+			);
+
+			assert.equal(
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				}),
+				"alternate answer",
+			);
+			assert.deepEqual(seen, ["failover-a", "failover-b"]);
+			assert.deepEqual(runtime.acquireOptions, [[], ["failover-a"]]);
+			assert.equal(first.failureCalls, 1);
+			assert.equal(first.releaseCalls, 1);
+			assert.equal(second.successCalls, 1);
+			assert.equal(second.releaseCalls, 1);
+		},
+	],
+	[
+		"returns the third account error after exhausting the request budget",
+		async () => {
+			const leases = ["a", "b", "c"].map((id) =>
+				fakeLease(accountCfg(`exhaust-${id}`, `hash-${id}`)),
+			);
+			const errors = leases.map((_, index) =>
+				Object.assign(new Error(`failure-${index + 1}`), { status: 429 }),
+			);
+			const runtime = fakeRuntime([...leases]);
+			let calls = 0;
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate() {
+							throw errors[calls++];
+						},
+					},
+				},
+			);
+
+			let seenError;
+			try {
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				});
+			} catch (error) {
+				seenError = error;
+			}
+			assert.equal(seenError, errors[2]);
+			assert.equal(runtime.acquireCalls, 3);
+			assert.deepEqual(runtime.acquireOptions, [
+				[],
+				["exhaust-a"],
+				["exhaust-a", "exhaust-b"],
+			]);
+			for (const lease of leases) {
+				assert.equal(lease.failureCalls, 1);
+				assert.equal(lease.releaseCalls, 1);
+			}
+		},
+	],
+	[
+		"keeps model errors and aborts on the selected account",
+		async () => {
+			for (const error of [
+				new Error("invalid model capability"),
+				Object.assign(new Error("cancelled"), { name: "AbortError" }),
+			]) {
+				const first = fakeLease(accountCfg("scoped-a", "hash-a"));
+				const second = fakeLease(accountCfg("scoped-b", "hash-b"));
+				const runtime = fakeRuntime([first, second]);
+				const provider = mod.createGeminiCompletionProvider(
+					baseGeminiClientConfig(),
+					{
+						accountRuntime: runtime,
+						client: {
+							async generate() {
+								throw error;
+							},
+						},
+					},
+				);
+				let seenError;
+				try {
+					await provider.generateText({
+						prompt: "prompt",
+						rm: providerProModel(),
+						fileRefs: null,
+					});
+				} catch (caught) {
+					seenError = caught;
+				}
+				assert.equal(seenError, error);
+				assert.equal(runtime.acquireCalls, 1);
+				assert.equal(first.failureCalls, error.name === "AbortError" ? 0 : 1);
+				assert.equal(first.releaseCalls, 1);
+			}
+		},
+	],
+	[
+		"retries one authentication failure on the refreshed account",
+		async () => {
+			const lease = fakeLease(accountCfg("refresh-a", "hash-a"), {
+				async refreshForRetry(reason) {
+					this.refreshCalls = (this.refreshCalls || 0) + 1;
+					assert.equal(reason, "auth");
+					return { changed: true, reason: "rotation_updated" };
+				},
+			});
+			const runtime = fakeRuntime([lease]);
+			let calls = 0;
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate() {
+							calls += 1;
+							if (calls === 1)
+								throw Object.assign(new Error("unauthorized"), { status: 401 });
+							return "refreshed answer";
+						},
+					},
+				},
+			);
+			assert.equal(
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				}),
+				"refreshed answer",
+			);
+			assert.equal(calls, 2);
+			assert.equal(runtime.acquireCalls, 1);
+			assert.equal(lease.refreshCalls, 1);
+			assert.equal(lease.failureCalls, 0);
+			assert.equal(lease.successCalls, 1);
+		},
+	],
+	[
+		"fails over streams only before the first visible account delta",
+		async () => {
+			const beforeA = fakeLease(accountCfg("before-a", "hash-a"));
+			const beforeB = fakeLease(accountCfg("before-b", "hash-b"));
+			const beforeRuntime = fakeRuntime([beforeA, beforeB]);
+			const beforeProvider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: beforeRuntime,
+					client: {
+						async *generateStream(activeCfg) {
+							if (activeCfg.gemini_account.accountId === "before-a")
+								throw Object.assign(new Error("temporary"), { status: 503 });
+							yield "from-b";
+						},
+					},
+				},
+			);
+			const beforeOutput = [];
+			for await (const delta of beforeProvider.streamText({
+				prompt: "prompt",
+				rm: providerProModel(),
+				fileRefs: null,
+			}))
+				beforeOutput.push(delta);
+			assert.deepEqual(beforeOutput, ["from-b"]);
+			assert.equal(beforeRuntime.acquireCalls, 2);
+
+			const afterA = fakeLease(accountCfg("after-a", "hash-a"));
+			const afterB = fakeLease(accountCfg("after-b", "hash-b"));
+			const afterRuntime = fakeRuntime([afterA, afterB]);
+			const afterProvider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: afterRuntime,
+					client: {
+						async *generateStream() {
+							yield "partial";
+							throw new Error("stream broke");
+						},
+					},
+				},
+			);
+			const afterOutput = [];
+			await assert.rejects(async () => {
+				for await (const delta of afterProvider.streamText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				}))
+					afterOutput.push(delta);
+			}, /stream broke/);
+			assert.deepEqual(afterOutput, ["partial"]);
+			assert.equal(afterRuntime.acquireCalls, 1);
+		},
+	],
+	[
+		"replays generated upload recipes and remaps refs on account failover",
+		async () => {
+			const first = fakeLease(accountCfg("upload-a", "hash-a"));
+			const second = fakeLease(accountCfg("upload-b", "hash-b"));
+			const uploadCalls = [];
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: fakeRuntime([first, second]),
+					uploads: {
+						async resolveAttachments(activeCfg) {
+							const id = activeCfg.gemini_account.accountId;
+							uploadCalls.push(`attachment:${id}`);
+							return attachmentResult(`/attachment/${id}`);
+						},
+						async uploadTextFile(activeCfg, _text, filename) {
+							const id = activeCfg.gemini_account.accountId;
+							uploadCalls.push(`text:${id}`);
+							return { ref: `/text/${id}`, name: filename };
+						},
+					},
+					client: {
+						async generate(activeCfg, _prompt, _model, _think, _extra, refs) {
+							const id = activeCfg.gemini_account.accountId;
+							if (id === "upload-a")
+								throw Object.assign(new Error("rate limited"), { status: 429 });
+							assert.deepEqual(refs, [
+								{ ref: "/attachment/upload-b", name: "file.txt" },
+								{ ref: "/text/upload-b", name: "context.txt" },
+							]);
+							return "remapped";
+						},
+					},
+				},
+			);
+			const attachments = await provider.resolveAttachments(
+				mod.createAttachmentPlan({
+					files: [{ b64: "aA==", filename: "file.txt", mime: "text/plain" }],
+				}),
+			);
+			const contextRef = await provider.uploadTextFile("body", "context.txt");
+			assert.equal(
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: [...attachments.fileRefs, contextRef],
+				}),
+				"remapped",
+			);
+			assert.deepEqual(uploadCalls, [
+				"attachment:upload-a",
+				"text:upload-a",
+				"attachment:upload-b",
+				"text:upload-b",
+			]);
+		},
+	],
+	[
+		"does not move opaque external refs to another account",
+		async () => {
+			const first = fakeLease(accountCfg("opaque-a", "hash-a"));
+			const runtime = fakeRuntime([
+				first,
+				fakeLease(accountCfg("opaque-b", "hash-b")),
+			]);
+			const error = Object.assign(new Error("rate limited"), { status: 429 });
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate() {
+							throw error;
+						},
+					},
+				},
+			);
+			let seenError;
+			try {
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: [{ fileRef: "/external/ref", name: "external.txt" }],
+				});
+			} catch (caught) {
+				seenError = caught;
+			}
+			assert.equal(seenError, error);
+			assert.equal(runtime.acquireCalls, 1);
+			assert.equal(first.failureCalls, 1);
+		},
+	],
+	[
+		"fails over rich generation and anonymous-account chains",
+		async () => {
+			const richRuntime = fakeRuntime([
+				fakeLease(accountCfg("rich-a", "hash-a")),
+				fakeLease(accountCfg("rich-b", "hash-b")),
+			]);
+			const richProvider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: richRuntime,
+					client: {
+						async generateRich(activeCfg) {
+							if (activeCfg.gemini_account.accountId === "rich-a")
+								throw Object.assign(new Error("temporary"), { status: 503 });
+							return { text: "rich-b", images: [] };
+						},
+					},
+				},
+			);
+			assert.deepEqual(
+				await richProvider.generateRich({
+					prompt: "draw",
+					rm: providerProModel(),
+					fileRefs: null,
+				}),
+				{ text: "rich-b", images: [] },
+			);
+			assert.equal(richRuntime.acquireCalls, 2);
+
+			const chainRuntime = fakeRuntime([
+				fakeLease(accountCfg("chain-a", "hash-a")),
+				fakeLease(accountCfg("chain-b", "hash-b")),
+			]);
+			const seen = [];
+			const chainProvider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: chainRuntime,
+					client: {
+						async generate(activeCfg) {
+							const id = activeCfg.gemini_account?.accountId || null;
+							seen.push(id);
+							if (!id) throw new Error("anonymous unavailable");
+							if (id === "chain-a")
+								throw Object.assign(new Error("rate limited"), { status: 429 });
+							return "chain-b";
+						},
+					},
+				},
+			);
+			assert.equal(
+				await chainProvider.generateText({
+					prompt: "prompt",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				}),
+				"chain-b",
+			);
+			assert.deepEqual(seen, [null, "chain-a", "chain-b"]);
+		},
+	],
+	[
+		"keeps failover working when an intermediate outcome write rejects",
+		async () => {
+			const first = fakeLease(accountCfg("write-a", "hash-a"), {
+				async markFailure() {
+					this.failureCalls += 1;
+					throw new Error("D1 unavailable");
+				},
+			});
+			const second = fakeLease(accountCfg("write-b", "hash-b"));
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: fakeRuntime([first, second]),
+					client: {
+						async generate(activeCfg) {
+							if (activeCfg.gemini_account.accountId === "write-a")
+								throw Object.assign(new Error("rate limited"), { status: 429 });
+							return "write-b";
+						},
+					},
+				},
+			);
+			assert.equal(
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				}),
+				"write-b",
+			);
+			assert.equal(first.failureCalls, 1);
+			assert.equal(first.releaseCalls, 1);
+			assert.equal(second.successCalls, 1);
+		},
+	],
+	[
+		"continues failover after refresh and synchronous outcome failures",
+		async () => {
+			const first = fakeLease(accountCfg("throw-a", "hash-a"), {
+				async refreshForRetry() {
+					throw new Error("refresh unavailable");
+				},
+				markFailure() {
+					this.failureCalls += 1;
+					throw new Error("sync D1 failure");
+				},
+			});
+			const second = fakeLease(accountCfg("throw-b", "hash-b"), {
+				markSuccess() {
+					this.successCalls += 1;
+					throw new Error("sync success write failure");
+				},
+			});
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: fakeRuntime([first, second]),
+					client: {
+						async generate(activeCfg) {
+							if (activeCfg.gemini_account.accountId === "throw-a")
+								throw Object.assign(new Error("unauthorized"), { status: 401 });
+							return "throw-b";
+						},
+					},
+				},
+			);
+			assert.equal(
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				}),
+				"throw-b",
+			);
+			assert.equal(first.failureCalls, 1);
+			assert.equal(second.successCalls, 1);
+			assert.equal(first.releaseCalls, 1);
+			assert.equal(second.releaseCalls, 1);
+		},
+	],
+	[
+		"rejects selector reuse of an already attempted account",
+		async () => {
+			const first = fakeLease(accountCfg("duplicate-a", "hash-a"));
+			const duplicate = fakeLease(accountCfg("duplicate-a", "hash-a"));
+			const runtime = fakeRuntime([first, duplicate]);
+			const upstreamError = Object.assign(new Error("rate limited"), {
+				status: 429,
+			});
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate() {
+							throw upstreamError;
+						},
+					},
+				},
+			);
+			let seenError;
+			try {
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				});
+			} catch (error) {
+				seenError = error;
+			}
+			assert.equal(seenError, upstreamError);
+			assert.equal(runtime.acquireCalls, 2);
+			assert.equal(first.releaseCalls, 1);
+			assert.equal(duplicate.releaseCalls, 1);
+		},
+	],
+	[
+		"returns a replay error when replacement uploads lose refs",
+		async () => {
+			const runtime = fakeRuntime([
+				fakeLease(accountCfg("replay-a", "hash-a")),
+				fakeLease(accountCfg("replay-b", "hash-b")),
+			]);
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					uploads: {
+						async resolveAttachments(activeCfg) {
+							return activeCfg.gemini_account.accountId === "replay-a"
+								? attachmentResult("/replay/a")
+								: { ...attachmentResult("/replay/b"), fileRefs: null };
+						},
+					},
+					client: {
+						async generate() {
+							throw Object.assign(new Error("rate limited"), { status: 429 });
+						},
+					},
+				},
+			);
+			const attachments = await provider.resolveAttachments(
+				mod.createAttachmentPlan({
+					files: [{ b64: "aA==", filename: "file.txt", mime: "text/plain" }],
+				}),
+			);
+			await assert.rejects(async () => {
+				try {
+					await provider.generateText({
+						prompt: "prompt",
+						rm: providerProModel(),
+						fileRefs: attachments.fileRefs,
+					});
+				} catch (error) {
+					assert.equal(error.code, "gemini_upload_replay_failed");
+					assert.equal(error.status, 502);
+					throw error;
+				}
+			}, /reference count changed/);
+			assert.equal(runtime.acquireCalls, 3);
+		},
+	],
+	[
+		"keeps request-scoped and post-output account stream errors on one lease",
+		async () => {
+			for (const scenario of ["scoped", "partial"]) {
+				const runtime = fakeRuntime([
+					fakeLease(accountCfg(`stream-${scenario}-a`, "hash-a")),
+					fakeLease(accountCfg(`stream-${scenario}-b`, "hash-b")),
+				]);
+				const provider = mod.createGeminiCompletionProvider(
+					baseGeminiClientConfig(),
+					{
+						accountRuntime: runtime,
+						client: {
+							async *generateStream() {
+								if (scenario === "partial") yield "partial";
+								throw new Error(
+									scenario === "scoped"
+										? "invalid model capability"
+										: "account stream broke",
+								);
+							},
+						},
+					},
+				);
+				const output = [];
+				await assert.rejects(async () => {
+					for await (const delta of provider.streamText({
+						prompt: "prompt",
+						rm: providerProModel(),
+						fileRefs: null,
+					}))
+						output.push(delta);
+				});
+				assert.deepEqual(output, scenario === "partial" ? ["partial"] : []);
+				assert.equal(runtime.acquireCalls, 1);
+			}
+
+			const fallbackRuntime = fakeRuntime([
+				fakeLease(accountCfg("fallback-partial-a", "hash-a")),
+				fakeLease(accountCfg("fallback-partial-b", "hash-b")),
+			]);
+			const fallbackProvider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: fallbackRuntime,
+					client: {
+						async *generateStream(activeCfg) {
+							if (!activeCfg.gemini_account)
+								throw new Error("anonymous unavailable");
+							yield "account partial";
+							throw new Error("fallback account broke");
+						},
+					},
+				},
+			);
+			const fallbackOutput = [];
+			await assert.rejects(async () => {
+				for await (const delta of fallbackProvider.streamText({
+					prompt: "prompt",
+					rm: providerResolvedModel(),
+					fileRefs: null,
+				}))
+					fallbackOutput.push(delta);
+			}, /fallback account broke/);
+			assert.deepEqual(fallbackOutput, ["account partial"]);
+			assert.equal(fallbackRuntime.acquireCalls, 1);
+		},
+	],
+	[
+		"does not spend generic retry attempts on managed accounts",
+		async () => {
+			const cfg = accountCfgFromBase(
+				baseGeminiClientConfig({ cookie: "", retry_attempts: 3 }),
+				"managed-retry",
+				"hash",
+			);
+			let fetchCalls = 0;
+			await withFetch(
+				async () => {
+					fetchCalls += 1;
+					throw new Error("network failed");
+				},
+				async () => {
+					await assert.rejects(
+						() => mod.generate(cfg, "prompt", 1, 4, null, null),
+						/network failed/,
+					);
+				},
+			);
+			assert.equal(fetchCalls, 1);
+		},
+	],
 ];
 
 async function bodyBytes(body) {
@@ -3474,9 +4105,35 @@ function accountCfg(accountId, cookieHash) {
 function fakeRuntime(leases) {
 	return {
 		acquireCalls: 0,
-		async acquireLease() {
+		acquireOptions: [],
+		async acquireLease(_cfg, options = {}) {
 			this.acquireCalls += 1;
+			this.acquireOptions.push([
+				...(options.excludeAccountIds ? options.excludeAccountIds : []),
+			]);
 			return leases.shift() ?? null;
+		},
+	};
+}
+
+function attachmentResult(ref) {
+	const fileRef = { ref, name: "file.txt" };
+	return {
+		fileRefs: [fileRef],
+		imageFileRefs: null,
+		genericFileRefs: [fileRef],
+		promptText: "",
+		droppedNote: "",
+		supportsFileRefs: true,
+		usage: {
+			uploadedFiles: 1,
+			dedupedFiles: 0,
+			uploadedBytes: 1,
+			fileRefBytes: 1,
+			inlinedFiles: 0,
+			inlinedBytes: 0,
+			droppedFiles: 0,
+			multipartUploads: 1,
 		},
 	};
 }

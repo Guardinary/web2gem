@@ -216,6 +216,10 @@ export type GeminiAccountRuntimeOptions = {
 	rotateCookie?: GeminiAccountCookieRotator;
 };
 
+export type GeminiAccountAcquireOptions = {
+	excludeAccountIds?: ReadonlySet<string> | readonly string[];
+};
+
 export type GeminiAccountCookieRotator = (input: {
 	config: import("../../config").RuntimeConfig;
 	account: GeminiAccountSecretRow;

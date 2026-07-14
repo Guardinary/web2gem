@@ -91,6 +91,7 @@ export async function waitBeforeRetry(
 	label: string,
 	signal: AbortSignal | null | undefined = undefined,
 ): Promise<boolean> {
+	if (cfg.gemini_account) return false;
 	if (attempt >= Math.max(0, cfg.retry_attempts || 0) - 1) return false;
 	log(
 		cfg,

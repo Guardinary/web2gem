@@ -59,6 +59,21 @@ export const cases = [
 		},
 	],
 	[
+		"excludes request-attempted accounts before load balancing",
+		async () => {
+			const store = new FakeStore([account("a"), account("b")]);
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => 1000,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			const lease = await pool.acquireLease(baseConfig(), {
+				excludeAccountIds: new Set(["a"]),
+			});
+			assert.equal(lease.accountId, "b");
+			lease.release();
+		},
+	],
+	[
 		"deduplicates refreshes and updates the active lease config after rotation",
 		async () => {
 			const store = new FakeStore([account("a")]);
@@ -121,12 +136,14 @@ export const cases = [
 				nowMs: () => 120000,
 				rotateCookie: async () => new Response(null, { status: 401 }),
 			});
-			const lease = await pool.acquireLease(baseConfig());
-			assert.deepEqual(await lease.refreshForRetry("auth"), {
-				changed: false,
-				reason: "rotation_rejected",
-				upstreamStatus: 401,
-			});
+			assert.deepEqual(
+				await pool.refreshAccountForAdmin(baseConfig(), account("a")),
+				{
+					changed: false,
+					reason: "rotation_rejected",
+					upstreamStatus: 401,
+				},
+			);
 			assert.deepEqual(store.outcomes.at(-1), {
 				kind: "failure",
 				issue: "auth",

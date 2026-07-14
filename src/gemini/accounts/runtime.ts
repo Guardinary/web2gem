@@ -4,6 +4,7 @@ import { AccountPoolService } from "./pool";
 import { D1GeminiAccountStore } from "./store-d1";
 import type {
 	D1DatabaseLike,
+	GeminiAccountAcquireOptions,
 	GeminiAccountLease,
 	GeminiAccountRuntimeOptions,
 } from "./types";
@@ -16,8 +17,11 @@ const DEFAULT_RUNTIME_BY_DB = new WeakMap<
 export class GeminiAccountRuntime {
 	constructor(readonly pool: AccountPoolService) {}
 
-	acquireLease(baseConfig: RuntimeConfig): Promise<GeminiAccountLease | null> {
-		return this.pool.acquireLease(baseConfig);
+	acquireLease(
+		baseConfig: RuntimeConfig,
+		options: GeminiAccountAcquireOptions = {},
+	): Promise<GeminiAccountLease | null> {
+		return this.pool.acquireLease(baseConfig, options);
 	}
 }
 
