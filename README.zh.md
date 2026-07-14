@@ -329,7 +329,11 @@ docker run --rm -p 52389:52389 --env-file .env web2gem-account-pool:<tag>
 | `GEMINI_ORIGIN`                 | `https://gemini.google.com` | 不含凭据、路径、查询或 fragment 的绝对 HTTP(S) 上游 origin。可指向你自己的转发服务或代理 origin。                                                                                  |
 | `UPSTREAM_SOCKET`               | `true`                      | 可用时优先使用 `cloudflare:sockets` 作为上游传输。                                                                                                                                 |
 | `DEFAULT_MODEL`                 | `gemini-3.5-flash`          | 请求省略 `model` 时使用的模型。                                                                                                                                                    |
-| `RETRY_ATTEMPTS`                | `3`                         | 上游重试次数；必须是 `1` 到 `10` 的严格整数。                                                                                                                                      |
+| `RETRY_ATTEMPTS`                | `3`                         | 单账号内部的上游传输重试次数；与跨账号故障转移分开计数。                                                                                                                            |
+| `GEMINI_ACCOUNT_MAX_ATTEMPTS`   | `10`                        | 单个逻辑请求最多尝试的不同账号数。接受任意正安全整数；实际自然受当前可用账号池限制，不会为了耗尽预算重复尝试同一账号。                                                               |
+| `GEMINI_ACCOUNT_REFRESH_INTERVAL_SEC` | `600`               | 成功请求后的会话维护间隔。`0` 表示禁用，否则范围为 `60` 到 `604800`；Worker 通过 `waitUntil` 执行，不影响已完成响应。                                                               |
+| `GEMINI_ACCOUNT_CAPABILITY_TTL_SEC` | `3600`                  | 账号模型能力快照的有效期，必须是 `60` 到 `604800` 的严格整数。                                                                                                                       |
+| `GEMINI_ACCOUNT_CAPABILITY_MODE` | `prefer`                   | `off`、`prefer` 或 `strict`。`prefer` 优先选择已知可用账号并允许未知/过期账号后备；`strict` 只接受能力快照新鲜且明确支持目标模型的账号。                                               |
 | `RETRY_DELAY_SEC`               | `2`                         | 重试间隔秒数；必须是 `0` 到 `60` 的严格整数。                                                                                                                                      |
 | `REQUEST_TIMEOUT_SEC`           | `180`                       | 上游请求超时秒数；必须是 `1` 到 `3600` 的严格整数。                                                                                                                                |
 | `REQUEST_BODY_MAX_BYTES`        | Worker：`16777216`；Docker：`67108864` | 缓冲式生成 JSON 请求体（包括内联 Base64 数据）的最大字节数，可设置为 `1` 到 `104857600`。Multipart 图像编辑不受此项影响，仍由 `GENERIC_FILE_UPLOAD_MAX_BYTES` 加表单开销独立控制。 |
@@ -363,9 +367,9 @@ wrangler secret put ADMIN_KEY
 
 建议使用新的或专门的 Gemini 浏览器会话。不要粘贴完整 Cookie header、浏览器 Cookie 导出、Cookie 名称、等号、分号或无关的 access token。管理响应和账号列表均已脱敏，不会返回保存的会话凭据。
 
-当前分支使用混合上游路由。符合条件的短文本请求会先走 Gemini Web 上游无鉴权模式，并且不会读取 D1；如果匿名生成在输出前失败，Provider 会通过现有的最少在途请求与轮询账号池选择一个账号并重试一次。Pro、长上下文、附件、生图和图片编辑直接走账号池。部署缺少认证会话能力时返回 HTTP 422、错误码 `gemini_authenticated_session_required` 和机器可读的 `reason`；已配置账号池但暂时没有可用账号时返回 HTTP 503 与 `no_available_gemini_account`，而匿名请求失败且没有回退账号时保留原始匿名上游错误。
+当前分支使用混合上游路由。符合条件的短文本请求会先走 Gemini Web 上游无鉴权模式，并且不会读取 D1；如果匿名生成在输出前失败，Provider 会按照 `GEMINI_ACCOUNT_MAX_ATTEMPTS`（默认 `10`，并自然受账号池规模限制）继续尝试不同账号。Pro、长上下文、附件、生图和图片编辑直接走能力感知账号池。部署缺少认证会话能力时返回 HTTP 422、错误码 `gemini_authenticated_session_required` 和机器可读的 `reason`；已配置账号池但暂时没有可用账号时返回 HTTP 503 与 `no_available_gemini_account`，而匿名请求失败且没有回退账号时保留原始匿名上游错误。
 
-Worker 部署时，创建 D1 数据库，执行 [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql)，并在 `wrangler.jsonc` 或 Cloudflare 控制台配置中把它绑定为 `GEMINI_DB`。该 schema 会创建结构化的 `gemini_accounts`、`gemini_pool_meta` 和 `gemini_account_locks` 表，不会把账号状态作为单个 JSON blob 存储。
+Worker 部署时，创建 D1 数据库，执行 [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql)，并在 `wrangler.jsonc` 或 Cloudflare 控制台配置中把它绑定为 `GEMINI_DB`。最终开发期 schema 会直接创建账号、模型能力、元数据和协调锁表；稳定 PSID 身份从首次写入起必填且唯一。
 
 新建 D1 数据库时，执行一次迁移：
 

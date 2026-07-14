@@ -40,6 +40,8 @@ export type GeminiResponseParts = {
 	webImageCount: number;
 };
 
+export type GeminiFatalCode = "1013" | "1037" | "1050" | "1052" | "1060";
+
 export function stripArtifacts(text: unknown): string {
 	let source = String(text || "");
 	if (!source) return "";
@@ -206,7 +208,7 @@ export function extractResponseText(raw: unknown): string {
 export function extractResponseParts(raw: unknown): GeminiResponseParts {
 	const candidateStates = new Map<number, CandidateState>();
 	let candidateCount = 0;
-	let fatalCode = "";
+	let fatalCode: GeminiFatalCode | undefined;
 	const source = String(raw || "");
 	for (const envelope of parseWrbEnvelopes(source)) {
 		fatalCode ||= fatalCodeFromEnvelope(envelope);
@@ -241,6 +243,30 @@ export function extractResponseParts(raw: unknown): GeminiResponseParts {
 		webImageCount,
 	};
 	if (fatalCode) out.fatalCode = fatalCode;
+	return out;
+}
+
+export function extractResponseFatalCode(
+	raw: unknown,
+): GeminiFatalCode | undefined {
+	const source = String(raw || "");
+	for (const envelope of parseWrbEnvelopes(source)) {
+		const envelopeCode = fatalCodeFromEnvelope(envelope);
+		if (envelopeCode) return envelopeCode;
+		const inner = innerPayloadFromEnvelope(envelope);
+		if (!inner) continue;
+		const innerCode = fatalCodeFromInner(inner);
+		if (innerCode) return innerCode;
+	}
+	return undefined;
+}
+
+export function extractWrbInnerPayloads(raw: unknown): unknown[][] {
+	const out: unknown[][] = [];
+	for (const envelope of parseWrbEnvelopes(String(raw || ""))) {
+		const inner = innerPayloadFromEnvelope(envelope);
+		if (inner) out.push(inner);
+	}
 	return out;
 }
 
@@ -532,15 +558,17 @@ function dedupeImages(images: GeminiParsedImage[]): GeminiParsedImage[] {
 	return out;
 }
 
-function fatalCodeFromInner(inner: unknown[]): string {
+function fatalCodeFromInner(inner: unknown[]): GeminiFatalCode | undefined {
 	return stableFatalCode(getNested(inner, [5, 2, 0, 1, 0]));
 }
 
-function fatalCodeFromEnvelope(envelope: unknown[]): string {
+function fatalCodeFromEnvelope(
+	envelope: unknown[],
+): GeminiFatalCode | undefined {
 	return stableFatalCode(getNested(envelope, [5, 2, 0, 1, 0]));
 }
 
-function stableFatalCode(code: unknown): string {
+function stableFatalCode(code: unknown): GeminiFatalCode | undefined {
 	const normalized =
 		typeof code === "string" || typeof code === "number"
 			? String(code).trim()
@@ -553,7 +581,7 @@ function stableFatalCode(code: unknown): string {
 		case "1060":
 			return normalized;
 		default:
-			return "";
+			return undefined;
 	}
 }
 

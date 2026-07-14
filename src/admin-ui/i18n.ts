@@ -73,6 +73,7 @@ const zh = {
 	Account: "账号",
 	"Current issue": "当前问题",
 	"Last refresh": "最近刷新",
+	"Status checked": "状态检查",
 	Actions: "操作",
 	More: "更多",
 	Rename: "重命名",

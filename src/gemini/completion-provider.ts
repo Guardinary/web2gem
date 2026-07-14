@@ -50,7 +50,7 @@ export type GeminiCompletionProviderOptions = {
 	uploads?: Partial<GeminiUploadDelegates>;
 };
 
-const MAX_ACCOUNT_ATTEMPTS = 3;
+const MODEL_HEADER_KEY = "x-goog-ext-525001261-jspb";
 
 type UploadRecipe =
 	| {
@@ -88,6 +88,7 @@ export function createGeminiCompletionProvider(
 	let accountAttempts = 0;
 	let disposed = false;
 	let uploadQueue: Promise<void> = Promise.resolve();
+	let activeProviderModelId = "";
 	const attemptedAccountIds = new Set<string>();
 	const refreshedAccountIds = new Set<string>();
 	const uploadRecipes: UploadRecipe[] = [];
@@ -99,10 +100,23 @@ export function createGeminiCompletionProvider(
 		if (!runtime) throw geminiAuthenticatedSessionRequiredError(reason);
 		if (disposed) throw new Error("Gemini completion provider is disposed");
 		if (!leasePromise) {
-			if (accountAttempts >= MAX_ACCOUNT_ATTEMPTS)
+			if (accountAttempts >= accountAttemptLimit(cfg))
 				throw noAvailableAccountError();
 			leasePromise = runtime
-				.acquireLease(cfg, { excludeAccountIds: attemptedAccountIds })
+				.acquireLease(cfg, {
+					excludeAccountIds: attemptedAccountIds,
+					...(activeProviderModelId
+						? { providerModelId: activeProviderModelId }
+						: {}),
+					capabilityMode: cfg.gemini_account_capability_mode || "prefer",
+					capabilityFreshAfterMs:
+						Date.now() -
+						Math.max(
+							Number(cfg.gemini_account_capability_ttl_sec) || 3600,
+							60,
+						) *
+							1000,
+				})
 				.then((acquiredLease) => {
 					if (!acquiredLease) throw noAvailableAccountError();
 					if (attemptedAccountIds.has(acquiredLease.accountId)) {
@@ -137,6 +151,7 @@ export function createGeminiCompletionProvider(
 		refreshedAccountIds.clear();
 		uploadRecipes.length = 0;
 		refAliases.clear();
+		activeProviderModelId = "";
 	};
 
 	const guardOutcome = (persistence: Promise<void>): Promise<void> =>
@@ -168,8 +183,37 @@ export function createGeminiCompletionProvider(
 				);
 			}
 		}
+		const maintenance =
+			kind === "success" &&
+			selected &&
+			cfg.execution_ctx &&
+			Number(cfg.gemini_account_refresh_interval_sec) > 0
+				? (persistence ? guardOutcome(persistence) : Promise.resolve()).then(
+						() =>
+							selected.maintainSessionIfStale(
+								Number(cfg.gemini_account_refresh_interval_sec) * 1000,
+							),
+					)
+				: null;
 		releaseLease();
 		resetAttemptState();
+		if (maintenance && cfg.execution_ctx) {
+			const guardedMaintenance = maintenance.catch((maintenanceError) => {
+				log(
+					cfg,
+					`opportunistic account refresh failed: ${errorLogSummary(maintenanceError)}`,
+				);
+			});
+			try {
+				cfg.execution_ctx.waitUntil(guardedMaintenance);
+			} catch (registrationError) {
+				log(
+					cfg,
+					`opportunistic refresh waitUntil registration failed: ${errorLogSummary(registrationError)}`,
+				);
+			}
+			return;
+		}
 		if (!persistence) return;
 		const guarded = guardOutcome(persistence);
 		if (cfg.execution_ctx) {
@@ -262,7 +306,9 @@ export function createGeminiCompletionProvider(
 		while (lease) {
 			if (isAbortError(error)) return { retry: false, error };
 			const outcome = classifyGeminiAccountOutcome(error, Date.now());
-			if (!outcome.issue) return { retry: false, error };
+			const recoveryScope =
+				outcome.recoveryScope ?? (outcome.issue ? "try_next_account" : "none");
+			if (recoveryScope === "none") return { retry: false, error };
 
 			const selected = lease;
 			if (
@@ -281,7 +327,11 @@ export function createGeminiCompletionProvider(
 				}
 			}
 
-			if (!allowAccountSwitch || accountAttempts >= MAX_ACCOUNT_ATTEMPTS)
+			if (
+				recoveryScope !== "try_next_account" ||
+				!allowAccountSwitch ||
+				accountAttempts >= accountAttemptLimit(cfg)
+			)
 				return { retry: false, error };
 
 			await retireLease(error);
@@ -409,6 +459,7 @@ export function createGeminiCompletionProvider(
 		),
 		generateText(input: CompletionTextInput) {
 			const model = requireResolvedModel(input.rm);
+			activeProviderModelId = providerModelId(model);
 			if (cfg.log_requests) logGeminiRoute(cfg, model, false);
 			const call = async (
 				activeCfg: RuntimeConfig,
@@ -445,6 +496,7 @@ export function createGeminiCompletionProvider(
 			richOptions: CompletionRichOptions = {},
 		) {
 			const model = requireResolvedModel(input.rm);
+			activeProviderModelId = providerModelId(model);
 			if (cfg.log_requests) logGeminiRoute(cfg, model, false);
 			return withGenerationLease(
 				(activeCfg, activeInput) =>
@@ -467,6 +519,7 @@ export function createGeminiCompletionProvider(
 			streamOptions: CompletionProviderOptions = {},
 		) {
 			const model = requireResolvedModel(input.rm);
+			activeProviderModelId = providerModelId(model);
 			if (cfg.log_requests) logGeminiRoute(cfg, model, true);
 			const stream = (
 				streamCfg: RuntimeConfig,
@@ -649,6 +702,24 @@ function accountRequiredReason(
 	)
 		return "large_context";
 	return null;
+}
+
+function accountAttemptLimit(cfg: RuntimeConfig): number {
+	const value = Number(cfg.gemini_account_max_attempts);
+	return Number.isSafeInteger(value) && value > 0 ? value : 10;
+}
+
+function providerModelId(model: ResolvedModelOK): string {
+	const raw = model.modelHeaders?.[MODEL_HEADER_KEY];
+	if (!raw) return "";
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (!Array.isArray(parsed)) return "";
+		const value = parsed[4];
+		return typeof value === "string" ? value.trim() : "";
+	} catch (_) {
+		return "";
+	}
 }
 
 function logGeminiRoute(

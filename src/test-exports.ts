@@ -40,6 +40,7 @@ export {
 	buildPayload,
 	cleanText,
 	extractResponseParts,
+	extractResponseFatalCode,
 	extractResponseText,
 	extractTextsFromLine,
 	generate,
@@ -106,6 +107,7 @@ export {
 export {
 	changedRows,
 	cleanAccountString,
+	identityHashFromCookie,
 	normalizeGeminiCookieHeader,
 	sha256Hex,
 } from "./gemini/accounts/normalize";
@@ -198,12 +200,18 @@ export { createAttachmentPlan } from "./attachments/plan";
 export { attachmentDrop, droppedAttachmentNote } from "./attachments/notes";
 export {
 	getCachedGeminiPushId,
+	getFreshPageTokensForConfig,
 	getGeminiPushId,
 	getPageTokens,
 	refreshGeminiPushId,
 	resetGeminiUploadCachesForTest,
 	setCachedGeminiPushId,
 } from "./gemini/uploads/tokens";
+export {
+	decodeGeminiAccountProbe,
+	fetchGeminiAccountProbe,
+	verifyGeminiAccount,
+} from "./gemini/accounts/probe";
 export { buildMultipartFileBody } from "./gemini/uploads/multipart";
 export {
 	attachmentDedupeKeyForTest,

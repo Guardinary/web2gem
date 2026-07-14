@@ -21,6 +21,7 @@ const skeletonCells = [
 	"used",
 	"issue",
 	"refresh",
+	"status-checked",
 	"actions",
 ] as const;
 
@@ -55,7 +56,8 @@ const AccountRow = memo(function AccountRowView({
 			</td>
 			<td>{timeCell(account.last_used_at_ms)}</td>
 			<td>{issueSummary(account)}</td>
-			<td>{timeCell(account.last_refresh_at_ms)}</td>
+			<td>{timeCell(account.last_refresh_success_at_ms)}</td>
+			<td>{timeCell(account.status_checked_at_ms)}</td>
 			<td>
 				<AccountActions account={account} />
 			</td>
@@ -69,7 +71,7 @@ export function AccountRows(): JSX.Element {
 		return (
 			<>
 				<tr class="sr-only">
-					<td colSpan={7} role="status">
+					<td colSpan={8} role="status">
 						{tr("Loading accounts")}…
 					</td>
 				</tr>
@@ -87,7 +89,7 @@ export function AccountRows(): JSX.Element {
 	if (!rows.length)
 		return (
 			<tr>
-				<td class="empty" colSpan={7}>
+				<td class="empty" colSpan={8}>
 					{tr("No accounts found")}.{" "}
 					{tr("Connect with an admin key or adjust the current filters.")}
 				</td>

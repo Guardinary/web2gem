@@ -50,7 +50,11 @@ const AccountCard = memo(function AccountCardView({
 				</div>
 				<div>
 					<dt>{tr("Last refresh")}</dt>
-					<dd>{relativeTime(account.last_refresh_at_ms)}</dd>
+					<dd>{relativeTime(account.last_refresh_success_at_ms)}</dd>
+				</div>
+				<div>
+					<dt>{tr("Status checked")}</dt>
+					<dd>{relativeTime(account.status_checked_at_ms)}</dd>
 				</div>
 			</dl>
 			<AccountActions account={account} />

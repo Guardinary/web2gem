@@ -450,6 +450,31 @@ export const cases = [
 		},
 	],
 	[
+		"bypasses the page-token cache for forced Gemini session verification",
+		async () => {
+			mod.resetActiveGeminiCookieForTest();
+			mod.resetGeminiUploadCachesForTest();
+			let appCalls = 0;
+			const cfg = baseUploadCfg({ cookie: "__Secure-1PSID=psid" });
+			await withFetch(
+				async (url) => {
+					if (String(url) !== "https://gemini.example/app")
+						throw new Error(`unexpected fetch ${url}`);
+					appCalls += 1;
+					return new Response(`{"SNlM0e":"at-${appCalls}"}`, { status: 200 });
+				},
+				async () => {
+					assert.deepEqual(await mod.getPageTokens(cfg), { at: "at-1" });
+					assert.deepEqual(await mod.getPageTokens(cfg), { at: "at-1" });
+					assert.deepEqual(await mod.getFreshPageTokensForConfig(cfg), {
+						at: "at-2",
+					});
+				},
+			);
+			assert.equal(appCalls, 2);
+		},
+	],
+	[
 		"scopes Gemini page tokens by account context",
 		async () => {
 			mod.resetActiveGeminiCookieForTest();

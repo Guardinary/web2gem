@@ -290,6 +290,8 @@ function uiAccount(overrides = {}) {
 		last_issue_at_ms: null,
 		last_used_at_ms: null,
 		last_refresh_at_ms: null,
+		status_checked_at_ms: null,
+		last_refresh_success_at_ms: null,
 		created_at_ms: 1000,
 		updated_at_ms: 1000,
 		...overrides,

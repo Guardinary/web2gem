@@ -23,6 +23,16 @@ export async function sha256Hex(value: string): Promise<string> {
 	return bytesToHex(new Uint8Array(buf));
 }
 
+export async function identityHashFromCookie(
+	cookieHeader: unknown,
+): Promise<string> {
+	const psid = parseCookieHeader(normalizeGeminiCookieHeader(cookieHeader)).get(
+		"__Secure-1PSID",
+	);
+	if (!psid) throw new Error("Gemini account identity requires __Secure-1PSID");
+	return sha256Hex(psid);
+}
+
 export function changedRows(meta: unknown): number | null {
 	if (!meta || typeof meta !== "object") return null;
 	const record = meta as Record<string, unknown>;

@@ -11,7 +11,8 @@ import type {
 
 export const ADMIN_ACCOUNT_SELECT = `
   id, label, enabled, issue, cooldown_until_ms, last_issue_at_ms,
-  last_used_at_ms, last_refresh_at_ms, created_at_ms, updated_at_ms
+  last_used_at_ms, last_refresh_at_ms, status_checked_at_ms,
+  last_refresh_success_at_ms, created_at_ms, updated_at_ms
 `;
 
 export type GeminiAccountSummarySqlRow = {
@@ -23,6 +24,8 @@ export type GeminiAccountSummarySqlRow = {
 	last_issue_at_ms: number | null;
 	last_used_at_ms: number | null;
 	last_refresh_at_ms: number | null;
+	status_checked_at_ms: number | null;
+	last_refresh_success_at_ms: number | null;
 	created_at_ms: number;
 	updated_at_ms: number;
 };
@@ -77,6 +80,8 @@ export function summaryFromSql(
 		last_issue_at_ms: row.last_issue_at_ms,
 		last_used_at_ms: row.last_used_at_ms,
 		last_refresh_at_ms: row.last_refresh_at_ms,
+		status_checked_at_ms: row.status_checked_at_ms,
+		last_refresh_success_at_ms: row.last_refresh_success_at_ms,
 		created_at_ms: row.created_at_ms,
 		updated_at_ms: row.updated_at_ms,
 	};

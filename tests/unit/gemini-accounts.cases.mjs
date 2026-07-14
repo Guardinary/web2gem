@@ -2,6 +2,20 @@ import { readFileSync } from "node:fs";
 import { assert } from "./assertions.js";
 import { baseConfig, mod } from "./helpers.js";
 
+function accountProbeWrb(
+	statusCode,
+	models = [],
+	tierFlags = [],
+	capabilityFlags = [],
+) {
+	const payload = [];
+	payload[14] = statusCode;
+	payload[15] = models;
+	payload[16] = tierFlags;
+	payload[17] = capabilityFlags;
+	return JSON.stringify([["wrb.fr", "otAQ7b", JSON.stringify(payload)]]);
+}
+
 export const suiteName = "gemini accounts";
 export const cases = [
 	[
@@ -59,6 +73,7 @@ export const cases = [
 				{
 					kind: "failure",
 					issue: "auth",
+					recoveryScope: "try_next_account",
 					nowMs: 1000,
 				},
 			);
@@ -68,12 +83,13 @@ export const cases = [
 					kind: "failure",
 					issue: "rate_limit",
 					cooldownUntilMs: 301000,
+					recoveryScope: "try_next_account",
 					nowMs: 1000,
 				},
 			);
 			assert.deepEqual(
 				mod.classifyGeminiAccountOutcome(new Error("invalid model"), 1000),
-				{ kind: "failure", nowMs: 1000 },
+				{ kind: "failure", recoveryScope: "none", nowMs: 1000 },
 			);
 			assert.deepEqual(
 				mod.classifyGeminiAccountOutcome(new Error("network reset"), 1000),
@@ -81,9 +97,86 @@ export const cases = [
 					kind: "failure",
 					issue: "transient",
 					cooldownUntilMs: 61000,
+					recoveryScope: "try_next_account",
 					nowMs: 1000,
 				},
 			);
+			assert.deepEqual(
+				mod.classifyGeminiAccountOutcome(
+					{
+						code: "gemini_semantic_error",
+						geminiSource: "stream_generate",
+						geminiCode: "1050",
+					},
+					1000,
+				),
+				{
+					kind: "failure",
+					recoveryScope: "try_next_account",
+					nowMs: 1000,
+				},
+			);
+			assert.deepEqual(
+				mod.classifyGeminiAccountOutcome(
+					{
+						code: "gemini_semantic_error",
+						geminiSource: "stream_generate",
+						geminiCode: "1060",
+					},
+					1000,
+				),
+				{ kind: "failure", recoveryScope: "none", nowMs: 1000 },
+			);
+			assert.deepEqual(
+				mod.classifyGeminiAccountOutcome(
+					{ geminiSource: "account_status", geminiCode: "1060" },
+					1000,
+				),
+				{
+					kind: "failure",
+					issue: "location",
+					recoveryScope: "none",
+					nowMs: 1000,
+				},
+			);
+		},
+	],
+	[
+		"decodes bounded GetUserStatus account and model capability data",
+		() => {
+			assert.deepEqual(
+				mod.decodeGeminiAccountProbe(
+					accountProbeWrb(
+						1000,
+						[["model-pro", "Pro", "description"]],
+						[[42]],
+						[[7]],
+					),
+				),
+				{
+					statusCode: 1000,
+					issue: null,
+					selectable: true,
+					models: [
+						{
+							modelId: "model-pro",
+							available: true,
+							capacity: 42,
+							capacityField: 7,
+						},
+					],
+				},
+			);
+			assert.throws(
+				() => mod.decodeGeminiAccountProbe(accountProbeWrb(9999)),
+				/unknown Gemini account status/,
+			);
+			assert.deepEqual(mod.decodeGeminiAccountProbe(accountProbeWrb(1016)), {
+				statusCode: 1016,
+				issue: "auth",
+				selectable: false,
+				models: [],
+			});
 		},
 	],
 	[
@@ -181,7 +274,7 @@ export const cases = [
 				JSON.stringify(overview),
 				/secret-p|secret-t|cookie_hash/,
 			);
-			assert.equal(Object.keys(overview.items[0]).length, 11);
+			assert.equal(Object.keys(overview.items[0]).length, 13);
 		},
 	],
 	[
@@ -197,6 +290,16 @@ export const cases = [
 						status: 200,
 						headers: { "set-cookie": "__Secure-1PSIDTS=rotated" },
 					}),
+				verifyAccount: async () => ({
+					ok: true,
+					at: "fresh-at",
+					probe: {
+						statusCode: 1000,
+						issue: null,
+						selectable: true,
+						models: [],
+					},
+				}),
 			});
 
 			const imported = await service.create({
@@ -294,19 +397,25 @@ export const cases = [
 				"enabled",
 				"cookie_header",
 				"cookie_hash",
+				"identity_hash",
 				"issue",
 				"cooldown_until_ms",
 				"last_issue_at_ms",
 				"last_used_at_ms",
 				"last_refresh_at_ms",
+				"account_status_code",
+				"status_checked_at_ms",
+				"last_refresh_attempt_at_ms",
+				"last_refresh_success_at_ms",
 				"created_at_ms",
 				"updated_at_ms",
 			])
 				assert.match(sql, new RegExp(`\\b${column}\\b`));
 			assert.doesNotMatch(
 				sql,
-				/row_id|account_category|account_status_code|session_token|success_count|failure_count|source_id/,
+				/row_id|account_category|session_token|success_count|failure_count|source_id/,
 			);
+			assert.match(sql, /CREATE TABLE IF NOT EXISTS gemini_account_models/);
 		},
 	],
 	[
@@ -562,6 +671,49 @@ export const cases = [
 			});
 			assert.equal(db.rows.get("first").issue, null);
 
+			const stableIdentity = await mod.identityHashFromCookie(
+				"__Secure-1PSID=p1; __Secure-1PSIDTS=another",
+			);
+			assert.equal(db.rows.get("first").identity_hash, stableIdentity);
+			const reimported = await store.createAccount({
+				id: "duplicate-id",
+				label: "Updated identity",
+				cookieHeader: "__Secure-1PSID=p1; __Secure-1PSIDTS=reimported",
+				nowMs: 5500,
+			});
+			assert.equal(reimported.id, "first");
+			assert.equal(db.rows.size, 1);
+			assert.match(db.rows.get("first").cookie_header, /PSIDTS=reimported/);
+
+			await store.writeAccountProbe(
+				"first",
+				{
+					statusCode: 1000,
+					issue: null,
+					selectable: true,
+					models: [
+						{
+							modelId: "model-pro",
+							available: true,
+							capacity: 42,
+							capacityField: 7,
+						},
+					],
+				},
+				5600,
+			);
+			assert.equal(db.rows.get("first").account_status_code, 1000);
+			assert.deepEqual(await store.listAccountCapabilities(["first"]), [
+				{
+					account_id: "first",
+					model_id: "model-pro",
+					available: 1,
+					capacity: 42,
+					capacity_field: 7,
+					checked_at_ms: 5600,
+				},
+			]);
+
 			const entries = [];
 			for (const [id, cookie] of [
 				["second", "p2"],
@@ -570,6 +722,7 @@ export const cases = [
 				const cookieHeader = `__Secure-1PSID=${cookie}; __Secure-1PSIDTS=t`;
 				entries.push({
 					cookieHash: await mod.sha256Hex(cookieHeader),
+					identityHash: await mod.identityHashFromCookie(cookieHeader),
 					input: { id, cookieHeader, nowMs: 6000 },
 				});
 			}
@@ -597,11 +750,16 @@ function accountRow(id, overrides = {}) {
 		enabled: 1,
 		cookie_header: `__Secure-1PSID=secret-p-${id}; __Secure-1PSIDTS=secret-t-${id}`,
 		cookie_hash: `hash-${id}`,
+		identity_hash: `identity-${id}`,
 		issue: null,
 		cooldown_until_ms: null,
 		last_issue_at_ms: null,
 		last_used_at_ms: null,
 		last_refresh_at_ms: null,
+		account_status_code: null,
+		status_checked_at_ms: null,
+		last_refresh_attempt_at_ms: null,
+		last_refresh_success_at_ms: null,
 		created_at_ms: 1000,
 		updated_at_ms: 1000,
 		...overrides,
@@ -760,6 +918,7 @@ class MutableD1 {
 		this.rows = new Map();
 		this.meta = new Map([["pool_version", "0"]]);
 		this.locks = new Map();
+		this.models = new Map();
 		this.lastChanges = 0;
 	}
 	prepare(sql) {
@@ -793,6 +952,11 @@ class MutableStatement {
 				[...this.db.rows.values()].find(
 					(row) => row.cookie_hash === this.values[0],
 				) || null;
+		} else if (this.sql.includes("WHERE identity_hash = ?")) {
+			value =
+				[...this.db.rows.values()].find(
+					(row) => row.identity_hash === this.values[0],
+				) || null;
 		}
 		return columnName && value ? value[columnName] : value;
 	}
@@ -801,6 +965,14 @@ class MutableStatement {
 		if (this.sql.includes("WHERE cookie_hash IN")) {
 			results = [...this.db.rows.values()].filter((row) =>
 				this.values.includes(row.cookie_hash),
+			);
+		} else if (this.sql.includes("WHERE identity_hash IN")) {
+			results = [...this.db.rows.values()].filter((row) =>
+				this.values.includes(row.identity_hash),
+			);
+		} else if (this.sql.includes("FROM gemini_account_models")) {
+			results = [...this.db.models.values()].filter((row) =>
+				this.values.includes(row.account_id),
 			);
 		} else if (this.sql.includes("SELECT * FROM gemini_accounts WHERE id IN")) {
 			results = this.values.flatMap((id) => {
@@ -826,22 +998,38 @@ class MutableStatement {
 					"enabled",
 					"cookie_header",
 					"cookie_hash",
+					"identity_hash",
 					"issue",
 					"cooldown_until_ms",
 					"last_issue_at_ms",
 					"last_used_at_ms",
 					"last_refresh_at_ms",
+					"account_status_code",
+					"status_checked_at_ms",
+					"last_refresh_attempt_at_ms",
+					"last_refresh_success_at_ms",
 					"created_at_ms",
 					"updated_at_ms",
 				].map((key, index) => [key, this.values[index]]),
 			);
-			const duplicate = [...this.db.rows.values()].some(
+			const identityMatch = [...this.db.rows.values()].find(
+				(existing) => existing.identity_hash === row.identity_hash,
+			);
+			const cookieMatch = [...this.db.rows.values()].find(
 				(existing) => existing.cookie_hash === row.cookie_hash,
 			);
-			if (!duplicate) {
+			if (identityMatch && this.sql.includes("ON CONFLICT(identity_hash)")) {
+				Object.assign(identityMatch, {
+					label: row.label,
+					cookie_header: row.cookie_header,
+					cookie_hash: row.cookie_hash,
+					updated_at_ms: row.updated_at_ms,
+				});
+				changes = 1;
+			} else if (!cookieMatch) {
 				this.db.rows.set(row.id, row);
 				changes = 1;
-			} else if (!this.sql.includes("DO NOTHING")) {
+			} else {
 				throw new Error(
 					"UNIQUE constraint failed: gemini_accounts.cookie_hash",
 				);
@@ -869,6 +1057,28 @@ class MutableStatement {
 				this.db.locks.delete(this.values[0]);
 				changes = 1;
 			}
+		} else if (this.sql.startsWith("DELETE FROM gemini_account_models")) {
+			for (const [key, row] of this.db.models)
+				if (row.account_id === this.values[0]) this.db.models.delete(key);
+			changes = 1;
+		} else if (this.sql.startsWith("INSERT INTO gemini_account_models")) {
+			const [
+				account_id,
+				model_id,
+				available,
+				capacity,
+				capacity_field,
+				checked_at_ms,
+			] = this.values;
+			this.db.models.set(`${account_id}\0${model_id}`, {
+				account_id,
+				model_id,
+				available,
+				capacity,
+				capacity_field,
+				checked_at_ms,
+			});
+			changes = 1;
 		} else if (this.sql.startsWith("DELETE FROM gemini_accounts")) {
 			const ids = this.sql.includes(" IN ") ? this.values : [this.values[0]];
 			for (const id of ids) if (this.db.rows.delete(id)) changes++;
@@ -898,29 +1108,39 @@ class MutableStatement {
 			return changes;
 		}
 		if (this.sql.includes("SET cookie_header = ?, cookie_hash = ?")) {
-			const [cookie, hash, refreshed, updated, id] = this.values;
+			const [cookie, hash, refreshed, attempted, succeeded, updated, id] =
+				this.values;
 			const row = this.db.rows.get(id);
 			if (!row) return 0;
 			Object.assign(row, {
 				cookie_header: cookie,
 				cookie_hash: hash,
-				issue: null,
-				cooldown_until_ms: null,
-				last_issue_at_ms: null,
 				last_refresh_at_ms: refreshed,
+				last_refresh_attempt_at_ms: attempted,
+				last_refresh_success_at_ms: succeeded,
 				updated_at_ms: updated,
 			});
 			return 1;
 		}
 		if (this.sql.includes("last_refresh_at_ms = ?")) {
-			const [refreshed, updated, id] = this.values;
+			const [refreshed, attempted, succeeded, updated, id] = this.values;
 			const row = this.db.rows.get(id);
 			if (!row) return 0;
 			Object.assign(row, {
-				issue: null,
-				cooldown_until_ms: null,
-				last_issue_at_ms: null,
 				last_refresh_at_ms: refreshed,
+				last_refresh_attempt_at_ms: attempted,
+				last_refresh_success_at_ms: succeeded,
+				updated_at_ms: updated,
+			});
+			return 1;
+		}
+		if (this.sql.includes("SET account_status_code = ?")) {
+			const [status, checked, updated, id] = this.values;
+			const row = this.db.rows.get(id);
+			if (!row) return 0;
+			Object.assign(row, {
+				account_status_code: status,
+				status_checked_at_ms: checked,
 				updated_at_ms: updated,
 			});
 			return 1;
@@ -979,6 +1199,8 @@ function summary(row) {
 		last_issue_at_ms: row.last_issue_at_ms,
 		last_used_at_ms: row.last_used_at_ms,
 		last_refresh_at_ms: row.last_refresh_at_ms,
+		status_checked_at_ms: row.status_checked_at_ms,
+		last_refresh_success_at_ms: row.last_refresh_success_at_ms,
 		created_at_ms: row.created_at_ms,
 		updated_at_ms: row.updated_at_ms,
 	};

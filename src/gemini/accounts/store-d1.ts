@@ -5,6 +5,7 @@ import {
 } from "./domain";
 import {
 	changedRows,
+	identityHashFromCookie,
 	normalizeGeminiCookieHeader,
 	sha256Hex,
 } from "./normalize";
@@ -24,8 +25,10 @@ import type {
 	GeminiAccountAdminStats,
 	GeminiAccountBulkCreateEntry,
 	GeminiAccountBulkCreateResult,
+	GeminiAccountCapabilityRow,
 	GeminiAccountCreateInput,
 	GeminiAccountOutcome,
+	GeminiAccountProbe,
 	GeminiAccountRow,
 	GeminiAccountSecretRow,
 	GeminiAccountSnapshotRow,
@@ -47,11 +50,16 @@ const ACCOUNT_INSERT_COLUMNS = [
 	"enabled",
 	"cookie_header",
 	"cookie_hash",
+	"identity_hash",
 	"issue",
 	"cooldown_until_ms",
 	"last_issue_at_ms",
 	"last_used_at_ms",
 	"last_refresh_at_ms",
+	"account_status_code",
+	"status_checked_at_ms",
+	"last_refresh_attempt_at_ms",
+	"last_refresh_success_at_ms",
 	"created_at_ms",
 	"updated_at_ms",
 ] as const satisfies readonly (keyof GeminiAccountRow)[];
@@ -59,8 +67,12 @@ const ACCOUNT_INSERT_SQL = `
   INSERT INTO gemini_accounts (${ACCOUNT_INSERT_COLUMNS.join(", ")})
   VALUES (${ACCOUNT_INSERT_COLUMNS.map(() => "?").join(", ")})
 `;
-const ACCOUNT_INSERT_IGNORE_COOKIE_CONFLICT_SQL = `${ACCOUNT_INSERT_SQL}
-  ON CONFLICT(cookie_hash) DO NOTHING
+const ACCOUNT_UPSERT_IDENTITY_SQL = `${ACCOUNT_INSERT_SQL}
+	ON CONFLICT(identity_hash) DO UPDATE SET
+		label = excluded.label,
+		cookie_header = excluded.cookie_header,
+		cookie_hash = excluded.cookie_hash,
+		updated_at_ms = excluded.updated_at_ms
 `;
 
 export class D1GeminiAccountStore implements GeminiAccountStore {
@@ -82,7 +94,8 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		const result = await this.db
 			.prepare(`
       SELECT id, enabled, cookie_header, cookie_hash, issue,
-             cooldown_until_ms, last_used_at_ms
+				 cooldown_until_ms, last_used_at_ms, status_checked_at_ms,
+				 last_refresh_success_at_ms
       FROM gemini_accounts
       WHERE enabled = 1
         AND (cooldown_until_ms IS NULL OR cooldown_until_ms <= ?)
@@ -141,15 +154,36 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		return row ? summaryFromSql(row, nowMs) : null;
 	}
 
+	async findAccountByIdentityHash(
+		identityHash: string,
+		nowMs: number,
+	): Promise<GeminiAccountSummary | null> {
+		const row = await this.db
+			.prepare(`
+      SELECT ${ADMIN_ACCOUNT_SELECT}
+      FROM gemini_accounts
+      WHERE identity_hash = ?
+      LIMIT 1
+    `)
+			.bind(identityHash)
+			.first<GeminiAccountSummarySqlRow>();
+		return row ? summaryFromSql(row, nowMs) : null;
+	}
+
 	async createAccount(
 		input: GeminiAccountCreateInput,
 	): Promise<GeminiAccountSummary> {
 		const row = await buildAccountInsertRow(input);
 		await this.runMutationWithPoolVersion(
-			this.db.prepare(ACCOUNT_INSERT_SQL).bind(...accountRowValues(row)),
+			this.db
+				.prepare(ACCOUNT_UPSERT_IDENTITY_SQL)
+				.bind(...accountRowValues(row)),
 			input.nowMs,
 		);
-		return summaryFromSql(row, input.nowMs);
+		return (
+			(await this.findAccountByIdentityHash(row.identity_hash, input.nowMs)) ||
+			summaryFromSql(row, input.nowMs)
+		);
 	}
 
 	async createAccountsBulk(
@@ -165,6 +199,9 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 				buildAccountInsertRow(entry.input, entry.cookieHash),
 			),
 		);
+		const previousCookieByIdentity = await this.findCookieHashesByIdentity(
+			rows.map((row) => row.identity_hash),
+		);
 		for (
 			let offset = 0;
 			offset < rows.length;
@@ -176,7 +213,7 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 			);
 			const statements = chunk.map((row) =>
 				this.db
-					.prepare(ACCOUNT_INSERT_IGNORE_COOKIE_CONFLICT_SQL)
+					.prepare(ACCOUNT_UPSERT_IDENTITY_SQL)
 					.bind(...accountRowValues(row)),
 			);
 			statements.push(
@@ -204,7 +241,10 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		const requestedRows = new Map(rows.map((row) => [row.cookie_hash, row]));
 		const addedCookieHashes = new Set<string>();
 		for (const [cookieHash, row] of requestedRows) {
-			if (itemsByCookieHash.get(cookieHash)?.id === row.id)
+			if (
+				itemsByCookieHash.has(cookieHash) &&
+				previousCookieByIdentity.get(row.identity_hash) !== cookieHash
+			)
 				addedCookieHashes.add(cookieHash);
 		}
 		return { itemsByCookieHash, addedCookieHashes };
@@ -342,11 +382,17 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 				this.db
 					.prepare(`
           UPDATE gemini_accounts
-          SET issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL,
-              last_refresh_at_ms = ?, updated_at_ms = ?
-          WHERE id = ?
-        `)
-					.bind(update.refreshedAtMs, update.nowMs, accountId),
+					SET last_refresh_at_ms = ?, last_refresh_attempt_at_ms = ?,
+						last_refresh_success_at_ms = ?, updated_at_ms = ?
+					WHERE id = ?
+				`)
+					.bind(
+						update.refreshedAtMs,
+						update.nowMs,
+						update.refreshedAtMs,
+						update.nowMs,
+						accountId,
+					),
 				update.nowMs,
 			);
 			return { changed: false };
@@ -359,14 +405,16 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 				this.db
 					.prepare(`
           UPDATE gemini_accounts
-          SET cookie_header = ?, cookie_hash = ?, issue = NULL,
-              cooldown_until_ms = NULL, last_issue_at_ms = NULL,
-              last_refresh_at_ms = ?, updated_at_ms = ?
+					SET cookie_header = ?, cookie_hash = ?,
+						last_refresh_at_ms = ?, last_refresh_attempt_at_ms = ?,
+						last_refresh_success_at_ms = ?, updated_at_ms = ?
           WHERE id = ?
         `)
 					.bind(
 						cookieHeader,
 						cookieHash,
+						update.refreshedAtMs,
+						update.nowMs,
 						update.refreshedAtMs,
 						update.nowMs,
 						accountId,
@@ -380,6 +428,72 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 			return { changed: false, reason: "duplicate_cookie" };
 		}
 		return { changed: true };
+	}
+
+	async writeAccountProbe(
+		accountId: string,
+		probe: GeminiAccountProbe,
+		checkedAtMs: number,
+	): Promise<void> {
+		const updateStatus = this.db
+			.prepare(`
+        UPDATE gemini_accounts
+        SET account_status_code = ?, status_checked_at_ms = ?, updated_at_ms = ?
+        WHERE id = ?
+      `)
+			.bind(probe.statusCode, checkedAtMs, checkedAtMs, accountId);
+		const deleteModels = this.db
+			.prepare("DELETE FROM gemini_account_models WHERE account_id = ?")
+			.bind(accountId);
+		const insertModels = probe.models.map((model) =>
+			this.db
+				.prepare(`
+          INSERT INTO gemini_account_models (
+            account_id, model_id, available, capacity, capacity_field, checked_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `)
+				.bind(
+					accountId,
+					model.modelId,
+					model.available ? 1 : 0,
+					model.capacity ?? null,
+					model.capacityField ?? null,
+					checkedAtMs,
+				),
+		);
+		if (this.db.batch) {
+			await this.db.batch([
+				updateStatus,
+				deleteModels,
+				...insertModels,
+				this.poolVersionIncrementStatement(checkedAtMs),
+			]);
+			return;
+		}
+		await updateStatus.run();
+		await deleteModels.run();
+		for (const statement of insertModels) await statement.run();
+		await this.bumpPoolVersion(checkedAtMs);
+	}
+
+	async listAccountCapabilities(
+		accountIds: readonly string[],
+	): Promise<GeminiAccountCapabilityRow[]> {
+		if (!accountIds.length) return [];
+		const uniqueIds = [...new Set(accountIds)].slice(
+			0,
+			MAX_D1_BOUND_PARAMETERS,
+		);
+		const placeholders = uniqueIds.map(() => "?").join(", ");
+		const result = await this.db
+			.prepare(`
+        SELECT account_id, model_id, available, capacity, capacity_field, checked_at_ms
+        FROM gemini_account_models
+        WHERE account_id IN (${placeholders})
+      `)
+			.bind(...uniqueIds)
+			.all<GeminiAccountCapabilityRow>();
+		return result.results || [];
 	}
 
 	async writeAccountOutcome(
@@ -530,6 +644,33 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 			.first<string>("id");
 	}
 
+	private async findCookieHashesByIdentity(
+		identityHashes: readonly string[],
+	): Promise<Map<string, string>> {
+		const unique = [...new Set(identityHashes)];
+		const out = new Map<string, string>();
+		for (
+			let offset = 0;
+			offset < unique.length;
+			offset += MAX_D1_BOUND_PARAMETERS
+		) {
+			const chunk = unique.slice(offset, offset + MAX_D1_BOUND_PARAMETERS);
+			if (!chunk.length) continue;
+			const placeholders = chunk.map(() => "?").join(", ");
+			const result = await this.db
+				.prepare(`
+          SELECT identity_hash, cookie_hash
+          FROM gemini_accounts
+          WHERE identity_hash IN (${placeholders})
+        `)
+				.bind(...chunk)
+				.all<{ identity_hash: string; cookie_hash: string }>();
+			for (const row of result.results || [])
+				out.set(row.identity_hash, row.cookie_hash);
+		}
+		return out;
+	}
+
 	private async findAccountsByCookieHashes(
 		requestedCookieHashes: string[],
 		nowMs: number,
@@ -667,11 +808,17 @@ async function buildAccountInsertRow(
 		enabled: 1,
 		cookie_header: cookieHeader,
 		cookie_hash: cookieHash || (await sha256Hex(cookieHeader)),
+		identity_hash:
+			input.identityHash || (await identityHashFromCookie(cookieHeader)),
 		issue: null,
 		cooldown_until_ms: null,
 		last_issue_at_ms: null,
 		last_used_at_ms: null,
 		last_refresh_at_ms: null,
+		account_status_code: null,
+		status_checked_at_ms: null,
+		last_refresh_attempt_at_ms: null,
+		last_refresh_success_at_ms: null,
 		created_at_ms: input.nowMs,
 		updated_at_ms: input.nowMs,
 	};

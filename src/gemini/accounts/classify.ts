@@ -44,13 +44,81 @@ export function classifyGeminiAccountOutcome(
 	const code = stringField(error, "code");
 	const text = safeErrorText(error);
 	const lower = text.toLowerCase();
+	const semanticSource = stringField(error, "geminiSource");
+	const semanticCode = stringField(error, "geminiCode");
+	if (semanticSource === "account_status") {
+		if (semanticCode === "1014")
+			return {
+				kind: "failure",
+				issue: "transient",
+				cooldownUntilMs: nowMs + 60 * 1000,
+				recoveryScope: "none",
+				nowMs,
+			};
+		if (semanticCode === "1016")
+			return {
+				kind: "failure",
+				issue: "auth",
+				recoveryScope: "none",
+				nowMs,
+			};
+		if (["1021", "1033", "1040", "1042", "1054", "1057"].includes(semanticCode))
+			return {
+				kind: "failure",
+				issue: "user_action",
+				recoveryScope: "none",
+				nowMs,
+			};
+		if (semanticCode === "1060")
+			return {
+				kind: "failure",
+				issue: "location",
+				recoveryScope: "none",
+				nowMs,
+			};
+	}
+
+	if (semanticSource === "stream_generate") {
+		switch (semanticCode) {
+			case "1013":
+				return {
+					kind: "failure",
+					issue: "transient",
+					cooldownUntilMs: nowMs + 60 * 1000,
+					recoveryScope: "try_next_account",
+					nowMs,
+				};
+			case "1037":
+				return {
+					kind: "failure",
+					issue: "rate_limit",
+					cooldownUntilMs: nowMs + 5 * 60 * 1000,
+					recoveryScope: "try_next_account",
+					nowMs,
+				};
+			case "1050":
+				return {
+					kind: "failure",
+					recoveryScope: "try_next_account",
+					nowMs,
+				};
+			case "1052":
+			case "1060":
+				return { kind: "failure", recoveryScope: "none", nowMs };
+		}
+	}
 
 	if (
 		AUTH_STATUSES.has(Number(upstreamStatus)) ||
 		code === "invalid_gemini_cookie" ||
 		hasMarker(lower, AUTH_MARKERS)
 	) {
-		return { kind: "failure", issue: "auth", nowMs };
+		return {
+			kind: "failure",
+			issue: "auth",
+			recoveryScope: "try_next_account",
+			nowMs,
+		};
 	}
 
 	if (
@@ -61,29 +129,41 @@ export function classifyGeminiAccountOutcome(
 			kind: "failure",
 			issue: "rate_limit",
 			cooldownUntilMs: nowMs + 5 * 60 * 1000,
+			recoveryScope: "try_next_account",
 			nowMs,
 		};
 	}
 
 	if (hasMarker(lower, USER_ACTION_MARKERS)) {
-		return { kind: "failure", issue: "user_action", nowMs };
+		return {
+			kind: "failure",
+			issue: "user_action",
+			recoveryScope: "try_next_account",
+			nowMs,
+		};
 	}
 
 	if (hasMarker(lower, LOCATION_BLOCK_MARKERS) || /\b1060\b/.test(text)) {
-		return { kind: "failure", issue: "location", nowMs };
+		return {
+			kind: "failure",
+			issue: "location",
+			recoveryScope: "try_next_account",
+			nowMs,
+		};
 	}
 
 	if (
 		/\b(1050|1052)\b/.test(text) ||
 		hasMarker(lower, REQUEST_SCOPED_MARKERS)
 	) {
-		return { kind: "failure", nowMs };
+		return { kind: "failure", recoveryScope: "none", nowMs };
 	}
 
 	return {
 		kind: "failure",
 		issue: "transient",
 		cooldownUntilMs: nowMs + 60 * 1000,
+		recoveryScope: "try_next_account",
 		nowMs,
 	};
 }

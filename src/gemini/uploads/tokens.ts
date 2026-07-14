@@ -61,24 +61,10 @@ export async function getPageTokensForConfig(
 	if (_pageTokensPending.promise && _pageTokensPending.key === cacheKey)
 		return _pageTokensPending.promise;
 	const promise = (async () => {
-		const headers: Record<string, string> = {
-			"User-Agent": GEMINI_UPLOAD_USER_AGENT,
-			"Accept-Language": "en-US,en;q=0.9",
-		};
-		if (activeCfg.cookie) headers.Cookie = activeCfg.cookie;
 		const tokens: PageTokens = {};
 		let shouldCache = true;
 		try {
-			const resp = await httpFetch(
-				`${activeCfg.gemini_origin || "https://gemini.google.com"}/app`,
-				{
-					headers,
-					timeoutMs: 30000,
-					socket: activeCfg.upstream_socket,
-					cfg: activeCfg,
-				},
-			);
-			Object.assign(tokens, await extractGeminiAppPageTokens(resp));
+			Object.assign(tokens, await getFreshPageTokensForConfig(activeCfg));
 			if (!hasAnyPageToken(tokens)) {
 				log(
 					activeCfg,
@@ -102,6 +88,26 @@ export async function getPageTokensForConfig(
 		if (_pageTokensPending.promise === promise)
 			_pageTokensPending = { key: "", promise: null };
 	}
+}
+
+export async function getFreshPageTokensForConfig(
+	activeCfg: RuntimeConfig,
+): Promise<PageTokens> {
+	const headers: Record<string, string> = {
+		"User-Agent": GEMINI_UPLOAD_USER_AGENT,
+		"Accept-Language": "en-US,en;q=0.9",
+	};
+	if (activeCfg.cookie) headers.Cookie = activeCfg.cookie;
+	const resp = await httpFetch(
+		`${activeCfg.gemini_origin || "https://gemini.google.com"}/app`,
+		{
+			headers,
+			timeoutMs: 30000,
+			socket: activeCfg.upstream_socket,
+			cfg: activeCfg,
+		},
+	);
+	return extractGeminiAppPageTokens(resp);
 }
 
 async function pageTokenCacheKey(cfg: RuntimeConfig): Promise<string> {

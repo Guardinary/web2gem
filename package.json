@@ -65,6 +65,18 @@
 			"RETRY_ATTEMPTS": {
 				"description": "Upstream retry attempts. Minimum runtime value is `1`."
 			},
+			"GEMINI_ACCOUNT_MAX_ATTEMPTS": {
+				"description": "Maximum distinct Gemini accounts attempted per logical request. Defaults to 10 and is naturally capped by the eligible pool."
+			},
+			"GEMINI_ACCOUNT_REFRESH_INTERVAL_SEC": {
+				"description": "Successful-account session maintenance interval in seconds. Set 0 to disable."
+			},
+			"GEMINI_ACCOUNT_CAPABILITY_TTL_SEC": {
+				"description": "Freshness window for account model capability snapshots."
+			},
+			"GEMINI_ACCOUNT_CAPABILITY_MODE": {
+				"description": "Account capability routing mode: off, prefer, or strict."
+			},
 			"RETRY_DELAY_SEC": {
 				"description": "Delay between upstream retry attempts in seconds."
 			},

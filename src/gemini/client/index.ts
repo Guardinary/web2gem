@@ -9,16 +9,20 @@ import {
 	isDataAnalysisEmptyResponseError,
 	isInvalidGeminiCookieError,
 	isLargePromptEmptyResponseError,
+	isGeminiSemanticError,
 	largePromptEmptyResponseError,
 	largePromptEmptyResponseThreshold,
 	upstreamImageGenerationEmptyError,
 	upstreamImageProviderError,
 	upstreamEmptyResponseError,
 	unverifiedGeminiCookieError,
+	geminiSemanticError,
+	shouldRetryGeminiSemanticErrorOnSameAccount,
 } from "./errors";
 import { buildHeaders, buildPayload, getUrl } from "./protocol";
 import {
 	createStreamTextExtractor,
+	extractResponseFatalCode,
 	extractResponseParts,
 	extractResponseText,
 	richResponseShapeSummary,
@@ -65,6 +69,7 @@ export type GeminiRichOutput = {
 
 export {
 	cleanText,
+	extractResponseFatalCode,
 	extractResponseParts,
 	extractResponseText,
 	extractTextsFromLine,
@@ -147,6 +152,8 @@ export async function generate(
 			const cookieErr = invalidGeminiCookieError(cfg, resp.status);
 			if (cookieErr) throw cookieErr;
 			const raw = await resp.text();
+			const fatalCode = extractResponseFatalCode(raw);
+			if (fatalCode) throw geminiSemanticError("stream_generate", fatalCode);
 			const text = extractResponseText(raw);
 			if (!resp.ok || !text) {
 				const shape =
@@ -195,7 +202,9 @@ export async function generate(
 			if (
 				isLargePromptEmptyResponseError(e) ||
 				isDataAnalysisEmptyResponseError(e) ||
-				isInvalidGeminiCookieError(e)
+				isInvalidGeminiCookieError(e) ||
+				(isGeminiSemanticError(e) &&
+					!shouldRetryGeminiSemanticErrorOnSameAccount(e))
 			)
 				throw e;
 			lastErr = e;
@@ -301,7 +310,9 @@ export async function generateRich(
 			if (
 				isLargePromptEmptyResponseError(e) ||
 				isDataAnalysisEmptyResponseError(e) ||
-				isInvalidGeminiCookieError(e)
+				isInvalidGeminiCookieError(e) ||
+				(isGeminiSemanticError(e) &&
+					!shouldRetryGeminiSemanticErrorOnSameAccount(e))
 			)
 				throw e;
 			lastErr = e;
@@ -354,6 +365,8 @@ export async function* generateStream(
 			if (cookieErr) throw cookieErr;
 			if (!resp.body) {
 				const raw = await resp.text();
+				const fatalCode = extractResponseFatalCode(raw);
+				if (fatalCode) throw geminiSemanticError("stream_generate", fatalCode);
 				const text = extractResponseText(raw);
 				if (text) {
 					yielded = true;
@@ -418,12 +431,17 @@ export async function* generateStream(
 				lineChunks.push(piece);
 				lineLength += piece.length;
 			};
+			const consumeLine = function* (line: string): Generator<string> {
+				const fatalCode = extractResponseFatalCode(line);
+				if (fatalCode) throw geminiSemanticError("stream_generate", fatalCode);
+				for (const delta of extractor.consumeLine(line)) yield delta;
+			};
 			const consumeDecoded = function* (decoded: string): Generator<string> {
 				let lineStart = 0;
 				let idx = decoded.indexOf("\n", lineStart);
 				while (idx >= 0) {
 					const line = takeLine(decoded.slice(lineStart, idx));
-					for (const delta of extractor.consumeLine(line)) yield delta;
+					for (const delta of consumeLine(line)) yield delta;
 					lineStart = idx + 1;
 					idx = decoded.indexOf("\n", lineStart);
 				}
@@ -454,7 +472,7 @@ export async function* generateStream(
 				}
 			}
 			if (lineLength > 0) {
-				for (const delta of extractor.consumeLine(takeLine(""))) {
+				for (const delta of consumeLine(takeLine(""))) {
 					yielded = true;
 					yield delta;
 				}
@@ -509,7 +527,9 @@ export async function* generateStream(
 			if (
 				isLargePromptEmptyResponseError(e) ||
 				isDataAnalysisEmptyResponseError(e) ||
-				isInvalidGeminiCookieError(e)
+				isInvalidGeminiCookieError(e) ||
+				(isGeminiSemanticError(e) &&
+					!shouldRetryGeminiSemanticErrorOnSameAccount(e))
 			)
 				throw e;
 			lastErr = e;

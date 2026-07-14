@@ -1,5 +1,6 @@
 import type { ErrorWithMetadata } from "../../shared/types";
 import { promptByteLength } from "../../shared/tokens";
+import type { GeminiFatalCode } from "./parser";
 
 export const LARGE_PROMPT_EMPTY_RESPONSE_MIN_BYTES = 95000;
 export const LARGE_PROMPT_EMPTY_RESPONSE_CODE = "large_prompt_empty_response";
@@ -11,6 +12,64 @@ export const UPSTREAM_IMAGE_GENERATION_EMPTY_CODE =
 export const UPSTREAM_IMAGE_FETCH_FAILED_CODE = "upstream_image_fetch_failed";
 export const UPSTREAM_IMAGE_PROVIDER_ERROR_CODE =
 	"upstream_image_provider_error";
+export const GEMINI_SEMANTIC_ERROR_CODE = "gemini_semantic_error";
+
+export type GeminiSemanticSource = "stream_generate" | "account_status";
+
+type GeminiSemanticError = ErrorWithMetadata & {
+	geminiSource: GeminiSemanticSource;
+	geminiCode: GeminiFatalCode;
+};
+
+const GEMINI_FATAL_REASONS: Record<GeminiFatalCode, string> = {
+	"1013": "temporary_model_error",
+	"1037": "usage_limit_exceeded",
+	"1050": "model_conversation_inconsistent",
+	"1052": "model_header_invalid",
+	"1060": "temporary_egress_block",
+};
+
+const GEMINI_FATAL_MESSAGES: Record<GeminiFatalCode, string> = {
+	"1013": "Gemini returned a temporary model error.",
+	"1037": "The selected Gemini account reached an upstream usage limit.",
+	"1050":
+		"The requested model is inconsistent with the current Gemini conversation context.",
+	"1052": "Gemini rejected the selected model header or request shape.",
+	"1060": "Gemini temporarily blocked the current network egress.",
+};
+
+export function geminiSemanticError(
+	source: GeminiSemanticSource,
+	code: GeminiFatalCode,
+	publicCode = GEMINI_SEMANTIC_ERROR_CODE,
+): GeminiSemanticError {
+	const err = new Error(GEMINI_FATAL_MESSAGES[code]) as GeminiSemanticError;
+	err.code = publicCode;
+	err.status = code === "1037" ? 429 : 502;
+	err.reason = GEMINI_FATAL_REASONS[code];
+	err.geminiSource = source;
+	err.geminiCode = code;
+	return err;
+}
+
+export function isGeminiSemanticError(
+	error: unknown,
+): error is GeminiSemanticError {
+	if (!error || typeof error !== "object") return false;
+	const record = error as Partial<GeminiSemanticError>;
+	return (
+		(record.code === GEMINI_SEMANTIC_ERROR_CODE ||
+			record.code === UPSTREAM_IMAGE_PROVIDER_ERROR_CODE) &&
+		record.geminiSource !== undefined &&
+		record.geminiCode !== undefined
+	);
+}
+
+export function shouldRetryGeminiSemanticErrorOnSameAccount(
+	error: unknown,
+): boolean {
+	return isGeminiSemanticError(error) && error.geminiCode === "1013";
+}
 
 const AUTH_FAILURE_STATUSES = new Set([401, 403]);
 
@@ -151,8 +210,21 @@ export function upstreamImageFetchFailedError(
 }
 
 export function upstreamImageProviderError(code: unknown): ErrorWithMetadata {
+	const normalized = String(code || "") as GeminiFatalCode;
+	if (
+		normalized === "1013" ||
+		normalized === "1037" ||
+		normalized === "1050" ||
+		normalized === "1052" ||
+		normalized === "1060"
+	)
+		return geminiSemanticError(
+			"stream_generate",
+			normalized,
+			UPSTREAM_IMAGE_PROVIDER_ERROR_CODE,
+		);
 	const err: ErrorWithMetadata = new Error(
-		`Gemini returned image generation provider error code ${String(code || "unknown")}`,
+		"Gemini returned an unknown image generation provider error.",
 	);
 	err.code = UPSTREAM_IMAGE_PROVIDER_ERROR_CODE;
 	err.status = 502;

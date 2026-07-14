@@ -17,6 +17,7 @@ The root package is a Cloudflare Worker that adapts Gemini Web behavior to OpenA
 - Read [Error Handling](./error-handling.md) before changing request parsing, SSE, or upstream error paths.
 - Read [Logging Guidelines](./logging-guidelines.md) before adding logs.
 - Read [Runtime Performance And Transport](./runtime-performance.md) before changing socket transport, config caching, bounded JSON reads, or stream delta coalescing.
+- Read [Gemini Account Protocol](./gemini-account-protocol.md) before changing account identity, refresh/status probing, capability storage/routing, failover budgets, or session freshness.
 - Read [Release Workflows](./release-workflows.md) before changing GitHub Actions release, Docker image, or release asset behavior.
 
 ---
@@ -51,6 +52,7 @@ hot-path changes.
 | [Quality Guidelines](./quality-guidelines.md) | Strict TypeScript and `any` reduction rules | Filled |
 | [Logging Guidelines](./logging-guidelines.md) | Runtime logging conventions | Filled |
 | [Runtime Performance And Transport](./runtime-performance.md) | Socket transport, config/body hot paths, and streaming coalescing contracts | Filled |
+| [Gemini Account Protocol](./gemini-account-protocol.md) | Stable identity, verified probing, capability routing, failover, and session freshness | Filled |
 | [Release Workflows](./release-workflows.md) | GitHub Actions quality gates, release assets, and Docker registry publishing | Filled |
 
 ---

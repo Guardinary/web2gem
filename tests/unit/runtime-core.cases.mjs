@@ -522,6 +522,10 @@ export const cases = [
 				{ GEMINI_ORIGIN: "not a URL" },
 				{ LOG_REQUESTS: "yes" },
 				{ RETRY_ATTEMPTS: "0" },
+				{ GEMINI_ACCOUNT_MAX_ATTEMPTS: "0" },
+				{ GEMINI_ACCOUNT_REFRESH_INTERVAL_SEC: "1" },
+				{ GEMINI_ACCOUNT_CAPABILITY_TTL_SEC: "59" },
+				{ GEMINI_ACCOUNT_CAPABILITY_MODE: "invalid" },
 				{ RETRY_DELAY_SEC: "-1" },
 				{ REQUEST_TIMEOUT_SEC: "3601" },
 				{ REQUEST_BODY_MAX_BYTES: "0" },
@@ -540,6 +544,10 @@ export const cases = [
 			}
 			const cfg = mod.getConfig({
 				RETRY_ATTEMPTS: "10",
+				GEMINI_ACCOUNT_MAX_ATTEMPTS: "999999",
+				GEMINI_ACCOUNT_REFRESH_INTERVAL_SEC: "0",
+				GEMINI_ACCOUNT_CAPABILITY_TTL_SEC: "604800",
+				GEMINI_ACCOUNT_CAPABILITY_MODE: "strict",
 				RETRY_DELAY_SEC: "0",
 				REQUEST_TIMEOUT_SEC: "3600",
 				REQUEST_BODY_MAX_BYTES: "104857600",
@@ -547,6 +555,10 @@ export const cases = [
 				GENERIC_FILE_UPLOAD_MAX_BYTES: "104857600",
 			});
 			assert.equal(cfg.retry_attempts, 10);
+			assert.equal(cfg.gemini_account_max_attempts, 999999);
+			assert.equal(cfg.gemini_account_refresh_interval_sec, 0);
+			assert.equal(cfg.gemini_account_capability_ttl_sec, 604800);
+			assert.equal(cfg.gemini_account_capability_mode, "strict");
 			assert.equal(cfg.retry_delay_sec, 0);
 			assert.equal(cfg.request_timeout_sec, 3600);
 			assert.equal(cfg.request_body_max_bytes, 104857600);

@@ -28,6 +28,8 @@ export const accountSchema = v.strictObject({
 	last_issue_at_ms: nullableNumber,
 	last_used_at_ms: nullableNumber,
 	last_refresh_at_ms: nullableNumber,
+	status_checked_at_ms: nullableNumber,
+	last_refresh_success_at_ms: nullableNumber,
 	created_at_ms: v.number(),
 	updated_at_ms: v.number(),
 });

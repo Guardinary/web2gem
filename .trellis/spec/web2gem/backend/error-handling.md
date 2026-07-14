@@ -91,6 +91,129 @@ When selected account credentials are present, generation requests must also ver
 
 When Gemini WRB response parsing yields no text, logs under `LOG_REQUESTS` should include safe response-shape diagnostics such as WRB line count, parsed-envelope count, parsed-inner count, text-part count, and a reason class. Do not log raw WRB payload snippets or response text as diagnostics.
 
+## Scenario: Gemini StreamGenerate Semantic Failures
+
+### 1. Scope / Trigger
+
+Use this contract when changing Gemini text, stream, or rich WRB parsing, same-account retries, or account failover classification.
+
+### 2. Signatures
+
+- `extractResponseFatalCode(raw)` returns known fatal code `1013|1037|1050|1052|1060` or `undefined`.
+- Semantic errors carry internal `geminiSource: "stream_generate"`, `geminiCode`, and a stable sanitized `reason`.
+- `GeminiAccountOutcome.recoveryScope` is `none|retry_same_account|try_next_account` and is independent from the optional durable account `issue`.
+
+### 3. Contracts
+
+- Inspect `[5,2,0,1,0]` on both WRB envelopes and decoded inner payloads before classifying a response as empty.
+- Text, stream, and rich generation must use the same fatal-code semantics. Streaming checks each complete WRB line before emitting its text delta.
+- `1013` is a temporary model error: client transport policy may retry the same account, then account recovery may cool and switch before output.
+- `1037` is an account usage limit: do not keep retrying the same account; mark rate-limit cooldown and permit an untried account before output.
+- `1050` is model/conversation inconsistency: permit another account/context without marking credentials unhealthy.
+- `1052` is a model-header/request-shape failure: do not blindly traverse accounts when the header context is unchanged.
+- StreamGenerate `1060` is a temporary egress/IP block, not the account-status location code; do not persist a durable location issue or blindly churn the pool.
+
+### 4. Validation & Error Matrix
+
+- Fatal code before any delta -> typed semantic error; account recovery follows `recoveryScope`.
+- Fatal code after a visible delta -> preserve stream pinning and surface the existing partial-output failure behavior; never switch accounts.
+- Unknown fatal code -> safe upstream failure/empty handling; never infer authentication or durable location failure.
+- Caller abort -> propagate abort with no semantic classification, account mutation, or failover.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `1050` retires the attempt and tries an untried compatible account without setting an account issue.
+- Base: successful WRB parts continue through existing text/rich parsing.
+- Bad: search error message text for `1060` and permanently mark the account as location-blocked.
+
+### 6. Tests Required
+
+- Parser fixtures for inner and envelope fatal locations.
+- Text and stream tests proving fatal detection happens before empty-response handling.
+- Classification tests for every known code and source.
+- Provider tests for `1050` alternate-account recovery, `1052` no blind switching, post-delta pinning, attachment replay guards, and abort behavior.
+- Run focused Gemini client/account tests, static checks, typecheck, and architecture checks.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+if (!text) throw upstreamEmptyResponseError(status, raw.length);
+```
+
+#### Correct
+
+```typescript
+const fatalCode = extractResponseFatalCode(raw);
+if (fatalCode) throw geminiSemanticError("stream_generate", fatalCode);
+if (!text) throw upstreamEmptyResponseError(status, raw.length);
+```
+
+## Scenario: Verified Gemini Account Refresh And Status Probe
+
+### 1. Scope / Trigger
+
+Use this contract when changing managed-account Cookie rotation, `/app` token fetching, admin refresh, or `GetUserStatus` probing.
+
+### 2. Signatures
+
+- `getFreshPageTokensForConfig(cfg)` always fetches `/app`; it never reads the ten-minute page-token cache.
+- Account verification level is `session|status`.
+- `verifyGeminiAccount({ config, level })` returns fresh `at` and optionally a bounded `GeminiAccountProbe`.
+- `GeminiAccountProbe` contains derived `statusCode`, mapped `issue`, `selectable`, and bounded normalized model capability rows.
+
+### 3. Contracts
+
+- Refresh order is RotateCookies, merge candidate Cookie, force fresh `/app`, require non-empty `SNlM0e`/`at`, optionally call minimal `GetUserStatus`, then write the Cookie and health result.
+- RotateCookies HTTP 200, a changed PSIDTS, or a same-Cookie response is not sufficient to clear account health.
+- Request-time auth recovery uses `session` verification and relies on successful generation to clear health.
+- Admin refresh uses `status` verification. Known status `1000` clears health; known restricted statuses update the mapped issue after Cookie writeback.
+- Use only `otAQ7b` with payload `[]`; do not reproduce Gemini-API settings, activity, recent-chat, or persistent-client initialization calls.
+- Probe response reads are bounded. Persist or expose only normalized derived fields, never raw batchexecute arrays, localized descriptions, Cookie values, or response snippets.
+- Unknown, missing, malformed, empty, or failed status probes never mark an account healthy and never replace capability data with an empty snapshot.
+
+### 4. Validation & Error Matrix
+
+- Fresh `/app` lacks `at` -> `missing_page_at_token`, no candidate Cookie writeback, authentication issue may be recorded.
+- Status probe transport/HTTP/decode failure -> `status_probe_failed`, no health clearing or capability replacement.
+- Status `1000` -> verified success and health clearing.
+- Status `1014` -> transient issue; `1016` -> auth; `1021|1033|1040|1042|1054|1057` -> user action; account-status `1060` -> location.
+- Unknown numeric status -> conservative probe failure, not automatic account rejection or health success.
+
+### 5. Good/Base/Bad Cases
+
+- Good: unchanged Cookie plus fresh `/app` and status `1000` reports verified unchanged success and clears a prior issue.
+- Base: changed Cookie plus session verification is available for generation retry; later generation success clears health.
+- Bad: call `writeRefreshedCookie` immediately after RotateCookies and clear issue before fetching `/app`.
+
+### 6. Tests Required
+
+- Prove cached page tokens are ignored by forced verification.
+- Cover missing `at`, same/changed Cookie, duplicate Cookie, status success/restriction, unknown/malformed status, and bounded models/capacity.
+- Assert request-time recovery never runs the status RPC and admin refresh does.
+- Assert raw probe content and numeric status are absent from public/admin DTOs and logs.
+- Run upload, Gemini client, account runtime/admin, Docker adapter, static, type, and architecture checks.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+if (rotateResponse.ok) await store.writeRefreshedCookie(accountId, candidate);
+```
+
+#### Correct
+
+```typescript
+const verification = await verifyGeminiAccount({
+  config: candidateConfig,
+  level: "status",
+});
+if (!verification.ok) return verification;
+await store.writeRefreshedCookie(accountId, candidate);
+```
+
 ## Scenario: Gemini Rich Response Parsing
 
 ### 1. Scope / Trigger
@@ -442,9 +565,9 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
   needs attention, disabled.
 - Filters are search plus derived state only. Search covers label/ID; no advanced
   filter disclosure exists.
-- Desktop table has seven columns: selection, account, state, last used, current
-  issue/cooldown, last refresh, actions. Mobile cards expose the same facts and
-  no hidden diagnostic expansion.
+- Desktop table has eight columns: selection, account, state, last used, current
+  issue/cooldown, last successful refresh, status checked, actions. Mobile cards
+  expose the same facts and no hidden diagnostic expansion.
 - Edit changes label only. Enable/disable remains an explicit action.
 - Mutation feedback is a transient toast summarizing processed/changed/
   unchanged/failed. Do not store or render a persistent diagnostics result.
@@ -487,7 +610,7 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
 ### 6. Tests Required
 
 - Strict schema accepts the slim DTO and rejects old/extra fields.
-- Generated HTML contains five metrics, simple filters, seven-column facts,
+- Generated HTML contains five metrics, simple filters, eight-column facts,
   pagination, and supported actions; removed controls/labels are absent.
 - Import fallback, non-limit failure, compact result merging, load verification,
   cursor navigation, display helpers, confirmation copy, and bare-cookie

@@ -15,6 +15,10 @@ export type StaticRuntimeConfig = Readonly<{
 	upstream_socket: boolean;
 	default_model: string;
 	retry_attempts: number;
+	gemini_account_max_attempts: number;
+	gemini_account_refresh_interval_sec: number;
+	gemini_account_capability_ttl_sec: number;
+	gemini_account_capability_mode: "off" | "prefer" | "strict";
 	retry_delay_sec: number;
 	request_timeout_sec: number;
 	request_body_max_bytes: number;
@@ -64,6 +68,10 @@ const DEFAULT_CONFIG = Object.freeze({
 	UPSTREAM_SOCKET: true,
 	DEFAULT_MODEL: "gemini-3.5-flash",
 	RETRY_ATTEMPTS: 3,
+	GEMINI_ACCOUNT_MAX_ATTEMPTS: 10,
+	GEMINI_ACCOUNT_REFRESH_INTERVAL_SEC: 600,
+	GEMINI_ACCOUNT_CAPABILITY_TTL_SEC: 3600,
+	GEMINI_ACCOUNT_CAPABILITY_MODE: "prefer",
 	RETRY_DELAY_SEC: 2,
 	REQUEST_TIMEOUT_SEC: 180,
 	REQUEST_BODY_MAX_BYTES: 16 * 1024 * 1024,
@@ -95,6 +103,10 @@ export const CONFIG_ENV_KEYS = [
 	"UPSTREAM_SOCKET",
 	"DEFAULT_MODEL",
 	"RETRY_ATTEMPTS",
+	"GEMINI_ACCOUNT_MAX_ATTEMPTS",
+	"GEMINI_ACCOUNT_REFRESH_INTERVAL_SEC",
+	"GEMINI_ACCOUNT_CAPABILITY_TTL_SEC",
+	"GEMINI_ACCOUNT_CAPABILITY_MODE",
 	"RETRY_DELAY_SEC",
 	"REQUEST_TIMEOUT_SEC",
 	"REQUEST_BODY_MAX_BYTES",
@@ -171,6 +183,43 @@ export function getConfig(env: WorkerEnv = DEFAULT_ENV): StaticRuntimeConfig {
 			configValue(activeEnv, "RETRY_ATTEMPTS", DEFAULT_CONFIG.RETRY_ATTEMPTS),
 			1,
 			10,
+		),
+		gemini_account_max_attempts: parseStrictInteger(
+			"GEMINI_ACCOUNT_MAX_ATTEMPTS",
+			configValue(
+				activeEnv,
+				"GEMINI_ACCOUNT_MAX_ATTEMPTS",
+				DEFAULT_CONFIG.GEMINI_ACCOUNT_MAX_ATTEMPTS,
+			),
+			1,
+			Number.MAX_SAFE_INTEGER,
+		),
+		gemini_account_refresh_interval_sec: parseZeroOrBoundedInteger(
+			"GEMINI_ACCOUNT_REFRESH_INTERVAL_SEC",
+			configValue(
+				activeEnv,
+				"GEMINI_ACCOUNT_REFRESH_INTERVAL_SEC",
+				DEFAULT_CONFIG.GEMINI_ACCOUNT_REFRESH_INTERVAL_SEC,
+			),
+			60,
+			7 * 24 * 60 * 60,
+		),
+		gemini_account_capability_ttl_sec: parseStrictInteger(
+			"GEMINI_ACCOUNT_CAPABILITY_TTL_SEC",
+			configValue(
+				activeEnv,
+				"GEMINI_ACCOUNT_CAPABILITY_TTL_SEC",
+				DEFAULT_CONFIG.GEMINI_ACCOUNT_CAPABILITY_TTL_SEC,
+			),
+			60,
+			7 * 24 * 60 * 60,
+		),
+		gemini_account_capability_mode: parseCapabilityMode(
+			configValue(
+				activeEnv,
+				"GEMINI_ACCOUNT_CAPABILITY_MODE",
+				DEFAULT_CONFIG.GEMINI_ACCOUNT_CAPABILITY_MODE,
+			),
 		),
 		retry_delay_sec: parseStrictInteger(
 			"RETRY_DELAY_SEC",
@@ -317,6 +366,24 @@ function parseStrictInteger(
 		);
 	}
 	return parsed;
+}
+
+function parseZeroOrBoundedInteger(
+	setting: string,
+	value: unknown,
+	min: number,
+	max: number,
+): number {
+	if (value === 0 || value === "0") return 0;
+	return parseStrictInteger(setting, value, min, max);
+}
+
+function parseCapabilityMode(value: unknown): "off" | "prefer" | "strict" {
+	if (value === "off" || value === "prefer" || value === "strict") return value;
+	throw new RuntimeConfigError(
+		"GEMINI_ACCOUNT_CAPABILITY_MODE",
+		"must be off, prefer, or strict",
+	);
 }
 
 function parseNonEmptyString(

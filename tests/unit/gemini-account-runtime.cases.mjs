@@ -44,11 +44,13 @@ export const cases = [
 				kind: "failure",
 				issue: "rate_limit",
 				cooldownUntilMs: 301000,
+				recoveryScope: "try_next_account",
 				nowMs: 1000,
 			});
 			await lease.markFailure(new Error("invalid model"), 2000);
 			assert.deepEqual(store.outcomes.at(-1), {
 				kind: "failure",
+				recoveryScope: "none",
 				nowMs: 2000,
 			});
 			await lease.markSuccess(3000);
@@ -88,6 +90,7 @@ export const cases = [
 						headers: { "set-cookie": "__Secure-1PSIDTS=rotated" },
 					});
 				},
+				verifyAccount: async () => ({ ok: true, at: "fresh-at" }),
 			});
 			const lease = await pool.acquireLease(baseConfig());
 			const [first, second] = await Promise.all([
@@ -115,6 +118,7 @@ export const cases = [
 						status: 200,
 						headers: { "set-cookie": "__Secure-1PSIDTS=duplicate" },
 					}),
+				verifyAccount: async () => ({ ok: true, at: "fresh-at" }),
 			});
 			const lease = await pool.acquireLease(baseConfig());
 			const originalCookie = lease.config.cookie;
@@ -147,8 +151,134 @@ export const cases = [
 			assert.deepEqual(store.outcomes.at(-1), {
 				kind: "failure",
 				issue: "auth",
+				recoveryScope: "try_next_account",
 				nowMs: 120000,
 			});
+		},
+	],
+	[
+		"requires fresh bootstrap and applies structured admin status after rotation",
+		async () => {
+			const missingStore = new FakeStore([account("missing-at")]);
+			const missingPool = new mod.AccountPoolService(missingStore, {
+				nowMs: () => 120000,
+				rotateCookie: async () =>
+					new Response(null, {
+						status: 200,
+						headers: { "set-cookie": "__Secure-1PSIDTS=rotated" },
+					}),
+				verifyAccount: async () => ({
+					ok: false,
+					reason: "missing_page_at_token",
+				}),
+			});
+			const missingLease = await missingPool.acquireLease(baseConfig());
+			const originalCookie = missingLease.config.cookie;
+			assert.deepEqual(await missingLease.refreshForRetry("auth"), {
+				changed: false,
+				reason: "missing_page_at_token",
+			});
+			assert.equal(missingStore.writes.length, 0);
+			assert.equal(missingLease.config.cookie, originalCookie);
+
+			const restrictedStore = new FakeStore([account("restricted")]);
+			const restrictedPool = new mod.AccountPoolService(restrictedStore, {
+				nowMs: () => 120000,
+				rotateCookie: async () =>
+					new Response(null, {
+						status: 200,
+						headers: { "set-cookie": "__Secure-1PSIDTS=rotated" },
+					}),
+				verifyAccount: async ({ level }) => {
+					assert.equal(level, "status");
+					return {
+						ok: true,
+						at: "fresh-at",
+						probe: {
+							statusCode: 1060,
+							issue: "location",
+							selectable: false,
+							models: [],
+						},
+					};
+				},
+			});
+			assert.deepEqual(
+				await restrictedPool.refreshAccountForAdmin(
+					baseConfig(),
+					account("restricted"),
+				),
+				{
+					changed: true,
+					reason: "status_restricted",
+					statusCode: 1060,
+				},
+			);
+			assert.equal(restrictedStore.writes.length, 1);
+			assert.deepEqual(restrictedStore.outcomes.at(-1), {
+				kind: "failure",
+				issue: "location",
+				recoveryScope: "none",
+				nowMs: 120000,
+			});
+		},
+	],
+	[
+		"prefers fresh known-capable accounts and keeps unknown fallback configurable",
+		async () => {
+			const nowMs = 100000;
+			const rows = [
+				account("incapable", { status_checked_at_ms: nowMs }),
+				account("unknown", { status_checked_at_ms: null }),
+				account("capable", { status_checked_at_ms: nowMs }),
+			];
+			const store = new FakeStore(rows);
+			store.listAccountCapabilities = async () => [
+				{
+					account_id: "capable",
+					model_id: "model-pro",
+					available: 1,
+					capacity: null,
+					capacity_field: null,
+					checked_at_ms: nowMs,
+				},
+			];
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => nowMs,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			const capable = await pool.acquireLease(baseConfig(), {
+				providerModelId: "model-pro",
+				capabilityMode: "prefer",
+				capabilityFreshAfterMs: nowMs - 1000,
+			});
+			assert.equal(capable.accountId, "capable");
+			capable.release();
+
+			const fallbackStore = new FakeStore([
+				account("known-no", { status_checked_at_ms: nowMs }),
+				account("unknown-only", { status_checked_at_ms: null }),
+			]);
+			fallbackStore.listAccountCapabilities = async () => [];
+			const fallbackPool = new mod.AccountPoolService(fallbackStore, {
+				nowMs: () => nowMs,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			const preferred = await fallbackPool.acquireLease(baseConfig(), {
+				providerModelId: "model-pro",
+				capabilityMode: "prefer",
+				capabilityFreshAfterMs: nowMs - 1000,
+			});
+			assert.equal(preferred.accountId, "unknown-only");
+			preferred.release();
+			assert.equal(
+				await fallbackPool.acquireLease(baseConfig(), {
+					providerModelId: "model-pro",
+					capabilityMode: "strict",
+					capabilityFreshAfterMs: nowMs - 1000,
+				}),
+				null,
+			);
 		},
 	],
 	[
@@ -181,6 +311,8 @@ function account(id, overrides = {}) {
 		last_issue_at_ms: null,
 		last_used_at_ms: null,
 		last_refresh_at_ms: null,
+		status_checked_at_ms: null,
+		last_refresh_success_at_ms: null,
 		created_at_ms: 1000,
 		updated_at_ms: 1000,
 		...overrides,
@@ -213,6 +345,8 @@ class FakeStore {
 				issue: row.issue,
 				cooldown_until_ms: row.cooldown_until_ms,
 				last_used_at_ms: row.last_used_at_ms,
+				status_checked_at_ms: row.status_checked_at_ms,
+				last_refresh_success_at_ms: row.last_refresh_success_at_ms,
 			}));
 	}
 	async getAccountForRefresh(id) {

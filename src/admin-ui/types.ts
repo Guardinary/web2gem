@@ -21,6 +21,8 @@ export type GeminiAccount = {
 	last_issue_at_ms: number | null;
 	last_used_at_ms: number | null;
 	last_refresh_at_ms: number | null;
+	status_checked_at_ms: number | null;
+	last_refresh_success_at_ms: number | null;
 	created_at_ms: number;
 	updated_at_ms: number;
 };

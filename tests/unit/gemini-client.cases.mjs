@@ -461,9 +461,55 @@ export const cases = [
 				mod.extractResponseParts(fatalWrbLine(1052, "envelope")).fatalCode,
 				"1052",
 			);
+			assert.equal(mod.extractResponseFatalCode(fatalWrbLine(1037)), "1037");
 			assert.match(
 				mod.richResponseShapeSummary(fatalWrbLine(1060)),
 				/fatalCode=1060/,
+			);
+		},
+	],
+	[
+		"surfaces fatal semantics before text and stream empty-response handling",
+		async () => {
+			const cfg = baseGeminiClientConfig();
+			await withFetch(
+				async () => new Response(fatalWrbLine(1037), { status: 200 }),
+				async () => {
+					try {
+						await mod.generate(cfg, "limited", 1, 4, null, null);
+					} catch (err) {
+						assert.equal(err.code, "gemini_semantic_error");
+						assert.equal(err.reason, "usage_limit_exceeded");
+						assert.equal(err.geminiSource, "stream_generate");
+						assert.equal(err.geminiCode, "1037");
+						return;
+					}
+					throw new Error("expected semantic text-generation rejection");
+				},
+			);
+
+			await withFetch(
+				async () => new Response(`${fatalWrbLine(1052)}\n`, { status: 200 }),
+				async () => {
+					try {
+						for await (const _delta of mod.generateStream(
+							cfg,
+							"invalid header",
+							1,
+							4,
+							null,
+							null,
+						)) {
+							throw new Error("fatal response must not emit text");
+						}
+					} catch (err) {
+						assert.equal(err.code, "gemini_semantic_error");
+						assert.equal(err.reason, "model_header_invalid");
+						assert.equal(err.geminiCode, "1052");
+						return;
+					}
+					throw new Error("expected semantic stream rejection");
+				},
 			);
 		},
 	],
@@ -3337,6 +3383,100 @@ export const cases = [
 		},
 	],
 	[
+		"schedules stale account session maintenance after successful output",
+		async () => {
+			const background = [];
+			const lease = fakeLease(accountCfg("maintenance", "hash"), {
+				maintenanceCalls: 0,
+				async maintainSessionIfStale(intervalMs) {
+					this.maintenanceCalls += 1;
+					assert.equal(intervalMs, 60000);
+				},
+			});
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig({
+					gemini_account_refresh_interval_sec: 60,
+					execution_ctx: {
+						waitUntil(promise) {
+							background.push(promise);
+						},
+					},
+				}),
+				{
+					accountRuntime: fakeRuntime([lease]),
+					client: {
+						async generate() {
+							return "success";
+						},
+					},
+				},
+			);
+			assert.equal(
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				}),
+				"success",
+			);
+			assert.equal(background.length, 1);
+			await Promise.all(background);
+			assert.equal(lease.maintenanceCalls, 1);
+			assert.equal(lease.successCalls, 1);
+		},
+	],
+	[
+		"isolates opportunistic session maintenance failures from successful output",
+		async () => {
+			const background = [];
+			const logs = [];
+			const lease = fakeLease(accountCfg("maintenance-failure", "hash"), {
+				async maintainSessionIfStale() {
+					throw new Error("maintenance failed");
+				},
+			});
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig({
+					log_requests: true,
+					gemini_account_refresh_interval_sec: 60,
+					execution_ctx: {
+						waitUntil(promise) {
+							background.push(promise);
+						},
+					},
+				}),
+				{
+					accountRuntime: fakeRuntime([lease]),
+					client: {
+						async generate() {
+							return "success";
+						},
+					},
+				},
+			);
+			await withConsoleLog(
+				(line) => logs.push(String(line)),
+				async () => {
+					assert.equal(
+						await provider.generateText({
+							prompt: "prompt",
+							rm: providerProModel(),
+							fileRefs: null,
+						}),
+						"success",
+					);
+					await Promise.all(background);
+				},
+			);
+			assert.equal(
+				logs.some((line) =>
+					line.includes("opportunistic account refresh failed"),
+				),
+				true,
+			);
+		},
+	],
+	[
 		"keeps account results when waitUntil registration throws",
 		async () => {
 			const lease = fakeLease(accountCfg("wait-until-fail", "hash"));
@@ -3458,6 +3598,151 @@ export const cases = [
 		},
 	],
 	[
+		"rejects a runtime that returns an already-attempted account",
+		async () => {
+			const repeated = fakeLease(accountCfg("repeated", "hash"));
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: fakeRuntime([repeated, repeated]),
+					client: {
+						async generate() {
+							throw Object.assign(new Error("rate limited"), { status: 429 });
+						},
+					},
+				},
+			);
+			await assert.rejects(
+				provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				}),
+				/rate limited/,
+			);
+			assert.equal(repeated.failureCalls, 1);
+			assert.equal(repeated.releaseCalls, 2);
+		},
+	],
+	[
+		"stops account failover at the configured distinct-account budget",
+		async () => {
+			const runtime = fakeRuntime([
+				fakeLease(accountCfg("budget-one", "hash-one")),
+				fakeLease(accountCfg("budget-two", "hash-two")),
+			]);
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig({ gemini_account_max_attempts: 1 }),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate() {
+							throw Object.assign(new Error("rate limited"), { status: 429 });
+						},
+					},
+				},
+			);
+			await assert.rejects(
+				provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				}),
+				/rate limited/,
+			);
+			assert.equal(runtime.acquireCalls, 1);
+		},
+	],
+	[
+		"rejects account acquisition after the provider is disposed",
+		async () => {
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{ accountRuntime: fakeRuntime([]) },
+			);
+			await provider.dispose();
+			await assert.rejects(
+				provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				}),
+				/provider is disposed/,
+			);
+		},
+	],
+	[
+		"switches accounts for model inconsistency without switching for static header errors",
+		async () => {
+			const semanticError = (geminiCode, reason) =>
+				Object.assign(new Error(reason), {
+					code: "gemini_semantic_error",
+					geminiSource: "stream_generate",
+					geminiCode,
+					reason,
+				});
+
+			const first = fakeLease(accountCfg("semantic-a", "hash-a"));
+			const second = fakeLease(accountCfg("semantic-b", "hash-b"));
+			const runtime = fakeRuntime([first, second]);
+			const seen = [];
+			const provider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: runtime,
+					client: {
+						async generate(activeCfg) {
+							seen.push(activeCfg.gemini_account.accountId);
+							if (seen.length === 1)
+								throw semanticError("1050", "model_conversation_inconsistent");
+							return "compatible account";
+						},
+					},
+				},
+			);
+			assert.equal(
+				await provider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				}),
+				"compatible account",
+			);
+			assert.deepEqual(seen, ["semantic-a", "semantic-b"]);
+			assert.equal(first.failureCalls, 1);
+
+			const headerFirst = fakeLease(accountCfg("header-a", "header-hash-a"));
+			const headerSecond = fakeLease(accountCfg("header-b", "header-hash-b"));
+			const headerRuntime = fakeRuntime([headerFirst, headerSecond]);
+			const headerError = semanticError("1052", "model_header_invalid");
+			const headerProvider = mod.createGeminiCompletionProvider(
+				baseGeminiClientConfig(),
+				{
+					accountRuntime: headerRuntime,
+					client: {
+						async generate() {
+							throw headerError;
+						},
+					},
+				},
+			);
+			let seenHeaderError;
+			try {
+				await headerProvider.generateText({
+					prompt: "prompt",
+					rm: providerProModel(),
+					fileRefs: null,
+				});
+			} catch (error) {
+				seenHeaderError = error;
+			}
+			assert.equal(seenHeaderError, headerError);
+			assert.equal(headerRuntime.acquireCalls, 1);
+			assert.equal(headerFirst.failureCalls, 1);
+			assert.equal(headerSecond.failureCalls, 0);
+		},
+	],
+	[
 		"returns the third account error after exhausting the request budget",
 		async () => {
 			const leases = ["a", "b", "c"].map((id) =>
@@ -3491,11 +3776,12 @@ export const cases = [
 				seenError = error;
 			}
 			assert.equal(seenError, errors[2]);
-			assert.equal(runtime.acquireCalls, 3);
+			assert.equal(runtime.acquireCalls, 4);
 			assert.deepEqual(runtime.acquireOptions, [
 				[],
 				["exhaust-a"],
 				["exhaust-a", "exhaust-b"],
+				["exhaust-a", "exhaust-b", "exhaust-c"],
 			]);
 			for (const lease of leases) {
 				assert.equal(lease.failureCalls, 1);
@@ -4159,6 +4445,7 @@ function fakeLease(config, overrides = {}) {
 		async markFailure() {
 			this.failureCalls += 1;
 		},
+		async maintainSessionIfStale() {},
 		release() {
 			this.releaseCalls += 1;
 		},

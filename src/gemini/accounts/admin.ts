@@ -14,7 +14,12 @@ import {
 	WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS,
 } from "./admin-input";
 import { rotateGeminiAccountCookie } from "./cookie-rotator";
-import { normalizeGeminiCookieHeader, sha256Hex } from "./normalize";
+import { verifyGeminiAccount } from "./probe";
+import {
+	identityHashFromCookie,
+	normalizeGeminiCookieHeader,
+	sha256Hex,
+} from "./normalize";
 import { AccountPoolService } from "./pool";
 import { d1BindingFromEnv } from "./runtime";
 import { D1GeminiAccountStore, isD1UniqueConstraintError } from "./store-d1";
@@ -25,6 +30,7 @@ import type {
 	GeminiAccountBulkCreateEntry,
 	GeminiAccountBulkCreateResult,
 	GeminiAccountCookieRotator,
+	GeminiAccountVerifier,
 	GeminiAccountMutationError,
 	GeminiAccountMutationResult,
 	GeminiAccountRefreshReason,
@@ -41,6 +47,7 @@ export type GeminiAccountAdminServiceOptions = {
 	cfg: RuntimeConfig;
 	nowMs?: () => number;
 	rotateCookie?: GeminiAccountCookieRotator;
+	verifyAccount?: GeminiAccountVerifier;
 	maxCreateAccounts?: number | null;
 };
 
@@ -84,6 +91,7 @@ export class GeminiAccountAdminService {
 			versionProbeTtlMs: 1,
 			selectableLimit: 200,
 			rotateCookie: options.rotateCookie || rotateGeminiAccountCookie,
+			verifyAccount: options.verifyAccount || verifyGeminiAccount,
 		});
 	}
 
@@ -106,9 +114,10 @@ export class GeminiAccountAdminService {
 			const cookieHash = await sha256Hex(
 				normalizeGeminiCookieHeader(input.cookieHeader),
 			);
+			const identityHash = await identityHashFromCookie(input.cookieHeader);
+			input.identityHash = identityHash;
 			orderedCookieHashes.push(cookieHash);
-			if (!uniqueEntries.has(cookieHash))
-				uniqueEntries.set(cookieHash, { cookieHash, input });
+			uniqueEntries.set(identityHash, { cookieHash, identityHash, input });
 		}
 
 		const entries = Array.from(uniqueEntries.values());
@@ -211,10 +220,9 @@ async function createAccountsOneByOne(
 	const itemsByCookieHash = new Map();
 	const addedCookieHashes = new Set<string>();
 	for (const entry of entries) {
-		const existing = await store.findAccountByCookieHash(
-			entry.cookieHash,
-			nowMs,
-		);
+		const existing = store.findAccountByIdentityHash
+			? await store.findAccountByIdentityHash(entry.identityHash, nowMs)
+			: await store.findAccountByCookieHash(entry.cookieHash, nowMs);
 		if (existing) {
 			itemsByCookieHash.set(entry.cookieHash, existing);
 			continue;
@@ -301,7 +309,10 @@ function isRefreshFailure(reason: GeminiAccountRefreshReason): boolean {
 		reason === "account_missing" ||
 		reason === "rotation_rejected" ||
 		reason === "rotation_failed" ||
-		reason === "rotation_duplicate"
+		reason === "rotation_duplicate" ||
+		reason === "missing_page_at_token" ||
+		reason === "status_probe_failed" ||
+		reason === "status_restricted"
 	);
 }
 
@@ -311,6 +322,12 @@ function refreshFailureMessage(reason: GeminiAccountRefreshReason): string {
 	if (reason === "rotation_rejected") return "account refresh was rejected";
 	if (reason === "rotation_duplicate")
 		return "refreshed cookie belongs to another account";
+	if (reason === "missing_page_at_token")
+		return "Gemini session bootstrap did not return an auth token";
+	if (reason === "status_probe_failed")
+		return "Gemini account status probe failed";
+	if (reason === "status_restricted")
+		return "Gemini account status restricts access";
 	return "account refresh failed";
 }
 

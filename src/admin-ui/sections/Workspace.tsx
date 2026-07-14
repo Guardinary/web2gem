@@ -74,6 +74,7 @@ export function Workspace(): JSX.Element {
 							<th>{tr("Last used")}</th>
 							<th>{tr("Current issue")}</th>
 							<th>{tr("Last refresh")}</th>
+							<th>{tr("Status checked")}</th>
 							<th>{tr("Actions")}</th>
 						</tr>
 					</thead>

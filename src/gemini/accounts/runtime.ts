@@ -1,5 +1,6 @@
 import type { RuntimeConfig, WorkerEnv } from "../../config";
 import { rotateGeminiAccountCookie } from "./cookie-rotator";
+import { verifyGeminiAccount } from "./probe";
 import { AccountPoolService } from "./pool";
 import { D1GeminiAccountStore } from "./store-d1";
 import type {
@@ -32,10 +33,12 @@ export function createGeminiAccountRuntimeFromEnv(
 	const db = d1BindingFromEnv(env);
 	if (!db) return null;
 	const rotateCookie = options.rotateCookie || rotateGeminiAccountCookie;
+	const verifyAccount = options.verifyAccount || verifyGeminiAccount;
 	return new GeminiAccountRuntime(
 		new AccountPoolService(new D1GeminiAccountStore(db), {
 			...options,
 			rotateCookie,
+			verifyAccount,
 		}),
 	);
 }
