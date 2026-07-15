@@ -5,17 +5,18 @@ import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
 import { prepareGoogleCompletion } from "../../completion/google-request";
 import { finalizeGoogleCompletionResult } from "../../completion/google-turn";
-import { elapsedMs, log, logStage, nowMs } from "../../shared/logging";
-import {
-	errorLogSummary,
-	upstreamErrorCode,
-	upstreamErrorMessage,
-	upstreamErrorReason,
-	upstreamErrorStatus,
-} from "../../shared/errors";
+import { upstreamErrorCode } from "../../shared/errors";
+import { log } from "../../shared/logging";
 import { tokenEst } from "../../shared/tokens";
 import type { UnknownRecord } from "../../shared/types";
 import {
+	generateTextLogged,
+	type PreparedOk,
+	runPreparedCompletion,
+	type StageLog,
+} from "../generation";
+import {
+	GOOGLE_GENERATION_PROTOCOL,
 	googleErrorResponseBody,
 	googleGenerateContentResponse,
 	writeGoogleStreamError,
@@ -32,26 +33,36 @@ export async function handleGoogleGenerate(
 	const route = parseGoogleGenerationPath(path);
 	if (!route) throw new Error("invalid Google generation path");
 	const { modelName, stream } = route;
-	const logRequests = !!cfg.log_requests;
-	const prepareStart = logRequests ? nowMs() : 0;
-	const prepared = await prepareGoogleCompletion(cfg, provider, req, modelName);
-	if ("error" in prepared) {
-		await provider.dispose?.();
-		if (logRequests)
-			logStage(cfg, "google_prepare", {
-				ms: elapsedMs(prepareStart),
-				status: prepared.error.status,
-				code: prepared.error.code,
-			});
-		return jsonResponse(
-			googleErrorResponseBody(
-				prepared.error.message,
-				prepared.error.code,
-				prepared.error.reason,
-			),
-			prepared.error.status,
-		);
-	}
+	return runPreparedCompletion({
+		cfg,
+		provider,
+		stage: "google",
+		protocol: GOOGLE_GENERATION_PROTOCOL,
+		prepare: () => prepareGoogleCompletion(cfg, provider, req, modelName),
+		prepareLogFields: (prepared) => ({
+			model: prepared.rm.name,
+			stream,
+			tools: prepared.hasTools,
+			promptChars: prepared.prompt.length,
+			promptTokens: prepared.promptTokens,
+			fileRefs: prepared.fileRefs ? prepared.fileRefs.length : 0,
+			contextFiles: !!prepared.contextFiles,
+			contextRefs: prepared.contextFiles
+				? prepared.contextFiles.fileRefs.length
+				: 0,
+		}),
+		run: (prepared, stageLog) =>
+			runGoogleGeneration(cfg, provider, prepared, stream, stageLog),
+	});
+}
+
+async function runGoogleGeneration(
+	cfg: RuntimeConfig,
+	provider: CompletionProvider,
+	prepared: PreparedOk<Awaited<ReturnType<typeof prepareGoogleCompletion>>>,
+	stream: boolean,
+	stageLog: StageLog,
+): Promise<Response> {
 	const {
 		rm,
 		effectiveReq,
@@ -60,28 +71,12 @@ export async function handleGoogleGenerate(
 		prompt,
 		fileRefs,
 		promptTokens,
-		contextFiles,
 	} = prepared;
-
-	if (logRequests) {
-		logStage(cfg, "google_prepare", {
-			ms: elapsedMs(prepareStart),
-			status: 200,
-			model: rm.name,
-			stream,
-			tools: hasTools,
-			promptChars: prompt.length,
-			promptTokens,
-			fileRefs: fileRefs ? fileRefs.length : 0,
-			contextFiles: !!contextFiles,
-			contextRefs: contextFiles ? contextFiles.fileRefs.length : 0,
-		});
-	}
 
 	if (stream && !hasTools) {
 		return sseResponse(
 			async (write, signal) => {
-				const generationStart = logRequests ? nowMs() : 0;
+				const generationStart = stageLog.now();
 				await streamGooglePlain(write, cfg, {
 					provider,
 					prompt,
@@ -90,13 +85,11 @@ export async function handleGoogleGenerate(
 					promptTokens,
 					signal,
 				});
-				if (logRequests)
-					logStage(cfg, "google_stream_generate", {
-						ms: elapsedMs(generationStart),
-						model: rm.name,
-						promptTokens,
-						fileRefs: fileRefs ? fileRefs.length : 0,
-					});
+				stageLog.log("google_stream_generate", generationStart, {
+					model: rm.name,
+					promptTokens,
+					fileRefs: fileRefs ? fileRefs.length : 0,
+				});
 			},
 			{ onError: (write, e) => writeGoogleStreamError(write, rm.name, e) },
 		);
@@ -105,7 +98,7 @@ export async function handleGoogleGenerate(
 	if (stream && hasTools) {
 		return sseResponse(
 			async (write, signal) => {
-				const generationStart = logRequests ? nowMs() : 0;
+				const generationStart = stageLog.now();
 				await streamGoogleTools(write, cfg, {
 					provider,
 					prompt,
@@ -116,53 +109,36 @@ export async function handleGoogleGenerate(
 					promptTokens,
 					signal,
 				});
-				if (logRequests)
-					logStage(cfg, "google_stream_generate", {
-						ms: elapsedMs(generationStart),
-						model: rm.name,
-						promptTokens,
-						fileRefs: fileRefs ? fileRefs.length : 0,
-						tools: effectiveGoogleTools ? effectiveGoogleTools.length : 0,
-					});
+				stageLog.log("google_stream_generate", generationStart, {
+					model: rm.name,
+					promptTokens,
+					fileRefs: fileRefs ? fileRefs.length : 0,
+					tools: effectiveGoogleTools ? effectiveGoogleTools.length : 0,
+				});
 			},
 			{ onError: (write, e) => writeGoogleStreamError(write, rm.name, e) },
 		);
 	}
 
-	let text: string;
-	const generationStart = logRequests ? nowMs() : 0;
-	try {
-		text = await provider.generateText({ prompt, rm, fileRefs });
-	} catch (e) {
-		if (logRequests)
-			logStage(cfg, "google_generate", {
-				ms: elapsedMs(generationStart),
-				status: "error",
-				model: rm.name,
-				code: upstreamErrorCode(e) || "upstream_error",
-			});
-		log(
-			cfg,
-			`google generate failed model=${rm.name} code=${upstreamErrorCode(e) || "upstream_error"} error=${errorLogSummary(e)}`,
-		);
-		return jsonResponse(
-			googleErrorResponseBody(
-				`upstream error: ${upstreamErrorMessage(e)}`,
-				upstreamErrorCode(e) || "upstream_error",
-				upstreamErrorReason(e),
-			),
-			upstreamErrorStatus(e) || 502,
-		);
-	}
-	if (logRequests)
-		logStage(cfg, "google_generate", {
-			ms: elapsedMs(generationStart),
-			status: "ok",
-			model: rm.name,
-			completionChars: text.length,
+	const generated = await generateTextLogged({
+		cfg,
+		provider,
+		stage: "google",
+		logLabel: "google",
+		protocol: GOOGLE_GENERATION_PROTOCOL,
+		stageLog,
+		input: { prompt, rm, fileRefs },
+		errorLogFields: (e) => ({
+			code: upstreamErrorCode(e) || "upstream_error",
+		}),
+		okLogFields: (out) => ({
+			completionChars: out.length,
 			promptTokens,
 			fileRefs: fileRefs ? fileRefs.length : 0,
-		});
+		}),
+	});
+	if (generated.response) return generated.response;
+	const text = generated.text;
 	const upstreamEmpty = !text;
 	if (upstreamEmpty) {
 		log(cfg, `google generate produced no content model=${rm.name}`);

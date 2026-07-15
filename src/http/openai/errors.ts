@@ -1,4 +1,5 @@
 import { jsonResponse } from "../core/json";
+import type { GenerationProtocol } from "../generation";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
@@ -47,3 +48,9 @@ export function openAIUpstreamErrorResponse(e: unknown): Response {
 		upstreamErrorReason(e),
 	);
 }
+
+export const OPENAI_GENERATION_PROTOCOL: GenerationProtocol = {
+	errorResponse: (error) =>
+		openAIErrorResponse(error.message, error.status, error.code, error.reason),
+	upstreamErrorResponse: openAIUpstreamErrorResponse,
+};

@@ -4,7 +4,10 @@ import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
 	upstreamErrorReason,
+	upstreamErrorStatus,
 } from "../../shared/errors";
+import { jsonResponse } from "../core/json";
+import type { GenerationProtocol } from "../generation";
 import type { GoogleResponsePart } from "../../completion/google-turn";
 
 export function googleErrorResponseBody(
@@ -116,3 +119,20 @@ export function googleStreamDonePayload(
 		donePayload.promptFeedback = { warning: streamWarningObject(streamErr) };
 	return donePayload;
 }
+
+export const GOOGLE_GENERATION_PROTOCOL: GenerationProtocol = {
+	errorResponse: (error) =>
+		jsonResponse(
+			googleErrorResponseBody(error.message, error.code, error.reason),
+			error.status,
+		),
+	upstreamErrorResponse: (e) =>
+		jsonResponse(
+			googleErrorResponseBody(
+				`upstream error: ${upstreamErrorMessage(e)}`,
+				upstreamErrorCode(e) || "upstream_error",
+				upstreamErrorReason(e),
+			),
+			upstreamErrorStatus(e) || 502,
+		),
+};

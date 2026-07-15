@@ -1,29 +1,33 @@
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
 import { EMPTY_UPSTREAM_MSG } from "../../completion";
-import type {
-	CompletionProvider,
-	CompletionRichOutput,
-} from "../../completion";
-import { prepareOpenAIImageGenerationCompletion } from "../../completion/image-generation";
+import type { CompletionProvider } from "../../completion";
 import { prepareOpenAICompletion } from "../../completion/openai";
 import { normalizeResponsesInputAsMessagesStrict } from "../../promptcompat/responses-input";
-import { elapsedMs, log, logStage, nowMs, nowSec } from "../../shared/logging";
+import { log, nowSec } from "../../shared/logging";
 import {
-	errorLogSummary,
 	upstreamErrorCode,
 	upstreamErrorMessage,
 	upstreamErrorReason,
 } from "../../shared/errors";
 import { randHex } from "../../shared/crypto";
-import { openAIErrorResponse, openAIUpstreamErrorResponse } from "./errors";
+import {
+	generateTextLogged,
+	type PreparedOk,
+	runPreparedCompletion,
+	type StageLog,
+} from "../generation";
+import { OPENAI_GENERATION_PROTOCOL, openAIErrorResponse } from "./errors";
 import {
 	buildImageResponsesOutput,
 	buildResponsesOutput,
 	finalizeOpenAICompletionResult,
 	openAIResponsesUsage,
 } from "./format";
-import { imageGenerationMode } from "./image-generation";
+import {
+	imageGenerationMode,
+	runImageGenerationCompletion,
+} from "./image-generation";
 import {
 	streamResponsesWithToolSieve,
 	writeResponsesEvent,
@@ -50,31 +54,39 @@ export async function handleResponses(
 		);
 	const messages = normalized.messages;
 
-	const logRequests = !!cfg.log_requests;
-	const prepareStart = logRequests ? nowMs() : 0;
-	const prepared = await prepareOpenAICompletion(
+	return runPreparedCompletion({
 		cfg,
 		provider,
-		req,
-		messages,
-		req.tools,
-		{ emptyPromptMessage: "empty input" },
-	);
-	if ("error" in prepared) {
-		await provider.dispose?.();
-		if (logRequests)
-			logStage(cfg, "openai_responses_prepare", {
-				ms: elapsedMs(prepareStart),
-				status: prepared.error.status,
-				code: prepared.error.code,
-			});
-		return openAIErrorResponse(
-			prepared.error.message,
-			prepared.error.status,
-			prepared.error.code,
-			prepared.error.reason,
-		);
-	}
+		stage: "openai_responses",
+		protocol: OPENAI_GENERATION_PROTOCOL,
+		prepare: () =>
+			prepareOpenAICompletion(cfg, provider, req, messages, req.tools, {
+				emptyPromptMessage: "empty input",
+			}),
+		prepareLogFields: (prepared) => ({
+			model: prepared.rm.name,
+			promptChars: prepared.prompt.length,
+			promptTokens: prepared.promptTokens,
+			fileRefs: prepared.fileRefs ? prepared.fileRefs.length : 0,
+			contextFiles: !!prepared.contextFiles,
+			contextRefs: prepared.contextFiles
+				? prepared.contextFiles.fileRefs.length
+				: 0,
+			rawTools: prepared.allTools.length,
+			filteredTools: Array.isArray(prepared.tools) ? prepared.tools.length : 0,
+		}),
+		run: (prepared, stageLog) =>
+			runResponsesGeneration(req, cfg, provider, prepared, stageLog),
+	});
+}
+
+async function runResponsesGeneration(
+	req: Record<string, unknown>,
+	cfg: RuntimeConfig,
+	provider: CompletionProvider,
+	prepared: PreparedOk<Awaited<ReturnType<typeof prepareOpenAICompletion>>>,
+	stageLog: StageLog,
+): Promise<Response> {
 	const {
 		rm,
 		structured,
@@ -85,22 +97,7 @@ export async function handleResponses(
 		prompt,
 		fileRefs,
 		promptTokens,
-		contextFiles,
 	} = prepared;
-	if (logRequests) {
-		logStage(cfg, "openai_responses_prepare", {
-			ms: elapsedMs(prepareStart),
-			status: 200,
-			model: rm.name,
-			promptChars: prompt.length,
-			promptTokens,
-			fileRefs: fileRefs ? fileRefs.length : 0,
-			contextFiles: !!contextFiles,
-			contextRefs: contextFiles ? contextFiles.fileRefs.length : 0,
-			rawTools: allTools.length,
-			filteredTools: Array.isArray(filteredTools) ? filteredTools.length : 0,
-		});
-	}
 	const tools = filteredTools;
 
 	if (req.stream && structured) {
@@ -118,7 +115,7 @@ export async function handleResponses(
 		else if (promptToolChoice === "none") streamTools = allTools;
 		return sseResponse(
 			async (write, signal) => {
-				const generationStart = logRequests ? nowMs() : 0;
+				const generationStart = stageLog.now();
 				await streamResponsesWithToolSieve(write, cfg, {
 					provider,
 					rid,
@@ -130,14 +127,12 @@ export async function handleResponses(
 					promptTokens,
 					signal,
 				});
-				if (logRequests)
-					logStage(cfg, "openai_responses_stream_generate", {
-						ms: elapsedMs(generationStart),
-						model: rm.name,
-						promptTokens,
-						fileRefs: fileRefs ? fileRefs.length : 0,
-						tools: Array.isArray(streamTools) ? streamTools.length : 0,
-					});
+				stageLog.log("openai_responses_stream_generate", generationStart, {
+					model: rm.name,
+					promptTokens,
+					fileRefs: fileRefs ? fileRefs.length : 0,
+					tools: Array.isArray(streamTools) ? streamTools.length : 0,
+				});
 			},
 			{
 				onError: (write, e) =>
@@ -161,32 +156,22 @@ export async function handleResponses(
 		);
 	}
 
-	let text: string;
-	const generationStart = logRequests ? nowMs() : 0;
-	try {
-		text = await provider.generateText({ prompt, rm, fileRefs });
-	} catch (e) {
-		if (logRequests)
-			logStage(cfg, "openai_responses_generate", {
-				ms: elapsedMs(generationStart),
-				status: "error",
-				model: rm.name,
-			});
-		log(
-			cfg,
-			`openai responses generate failed model=${rm.name} code=${upstreamErrorCode(e) || "upstream_error"} error=${errorLogSummary(e)}`,
-		);
-		return openAIUpstreamErrorResponse(e);
-	}
-	if (logRequests)
-		logStage(cfg, "openai_responses_generate", {
-			ms: elapsedMs(generationStart),
-			status: "ok",
-			model: rm.name,
-			completionChars: text.length,
+	const generated = await generateTextLogged({
+		cfg,
+		provider,
+		stage: "openai_responses",
+		logLabel: "openai responses",
+		protocol: OPENAI_GENERATION_PROTOCOL,
+		stageLog,
+		input: { prompt, rm, fileRefs },
+		okLogFields: (out) => ({
+			completionChars: out.length,
 			promptTokens,
 			fileRefs: fileRefs ? fileRefs.length : 0,
-		});
+		}),
+	});
+	if (generated.response) return generated.response;
+	let text = generated.text;
 
 	const finalized = finalizeOpenAICompletionResult(text, {
 		tools,
@@ -232,115 +217,33 @@ async function handleImageGenerationResponses(
 	provider: CompletionProvider,
 	forced: boolean,
 ): Promise<Response> {
-	if (req.stream)
-		return openAIErrorResponse(
-			"streaming image generation is not supported by this worker",
-			400,
-			"unsupported_image_generation_stream",
-		);
-	if (!provider.generateRich) {
-		return openAIErrorResponse(
-			"configured completion provider does not support image generation",
-			502,
-			"image_generation_provider_unsupported",
-		);
-	}
-
-	const logRequests = !!cfg.log_requests;
-	const prepareStart = logRequests ? nowMs() : 0;
-	const prepared = await prepareOpenAIImageGenerationCompletion(
+	return runImageGenerationCompletion({
+		req,
 		cfg,
 		provider,
-		req,
-		"responses",
+		route: "responses",
 		forced,
-	);
-	if ("error" in prepared) {
-		await provider.dispose?.();
-		if (logRequests)
-			logStage(cfg, "openai_responses_image_prepare", {
-				ms: elapsedMs(prepareStart),
-				status: prepared.error.status,
-				code: prepared.error.code,
-			});
-		return openAIErrorResponse(
-			prepared.error.message,
-			prepared.error.status,
-			prepared.error.code,
-			prepared.error.reason,
-		);
-	}
-	const { rm, prompt, fileRefs, promptTokens } = prepared;
-	if (logRequests) {
-		logStage(cfg, "openai_responses_image_prepare", {
-			ms: elapsedMs(prepareStart),
-			status: 200,
-			model: rm.name,
-			promptChars: prompt.length,
-			promptTokens,
-			fileRefs: fileRefs ? fileRefs.length : 0,
-		});
-	}
-
-	const generationStart = logRequests ? nowMs() : 0;
-	let rich: CompletionRichOutput;
-	try {
-		rich = await provider.generateRich({ prompt, rm, fileRefs });
-	} catch (e) {
-		if (logRequests)
-			logStage(cfg, "openai_responses_image_generate", {
-				ms: elapsedMs(generationStart),
-				status: "error",
+		stage: "openai_responses_image",
+		logLabel: "openai responses image",
+		format: (rich, promptTokens, rm) => {
+			const rid = `resp_${randHex(16)}`;
+			const mid = `msg_${randHex(12)}`;
+			const output = buildImageResponsesOutput(
+				rich.text,
+				rich.images,
+				mid,
+				() => `ig_${randHex(12)}`,
+			);
+			return jsonResponse({
+				id: rid,
+				object: "response",
+				created_at: nowSec(),
+				status: "completed",
 				model: rm.name,
+				output,
+				usage: openAIResponsesUsage(promptTokens, rich.text),
 			});
-		log(
-			cfg,
-			`openai responses image generate failed model=${rm.name} code=${upstreamErrorCode(e) || "upstream_error"} error=${errorLogSummary(e)}`,
-		);
-		return openAIUpstreamErrorResponse(e);
-	}
-	if (!String(rich.text || "").trim() && !rich.images.length) {
-		return openAIErrorResponse(
-			"Gemini returned empty image generation output",
-			502,
-			"upstream_image_generation_empty",
-		);
-	}
-	if (forced && !rich.images.some((image) => image.source === "generated")) {
-		return openAIErrorResponse(
-			"Gemini returned no usable generated image",
-			502,
-			"upstream_image_generation_empty",
-		);
-	}
-	if (logRequests) {
-		logStage(cfg, "openai_responses_image_generate", {
-			ms: elapsedMs(generationStart),
-			status: "ok",
-			model: rm.name,
-			completionChars: rich.text.length,
-			images: rich.images.length,
-			promptTokens,
-			fileRefs: fileRefs ? fileRefs.length : 0,
-		});
-	}
-
-	const rid = `resp_${randHex(16)}`;
-	const mid = `msg_${randHex(12)}`;
-	const output = buildImageResponsesOutput(
-		rich.text,
-		rich.images,
-		mid,
-		() => `ig_${randHex(12)}`,
-	);
-	return jsonResponse({
-		id: rid,
-		object: "response",
-		created_at: nowSec(),
-		status: "completed",
-		model: rm.name,
-		output,
-		usage: openAIResponsesUsage(promptTokens, rich.text),
+		},
 	});
 }
 

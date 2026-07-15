@@ -1,7 +1,6 @@
 import { jsonResponse } from "../core/json";
 import type {
 	CompletionProvider,
-	CompletionRichOutput,
 	GeneratedImage,
 } from "../../completion/ports";
 import {
@@ -9,10 +8,10 @@ import {
 	prepareOpenAIImageGenerationFromUserInput,
 } from "../../completion/image-generation";
 import type { RuntimeConfig } from "../../config";
-import { elapsedMs, log, logStage, nowMs, nowSec } from "../../shared/logging";
-import { errorLogSummary, upstreamErrorCode } from "../../shared/errors";
+import { nowSec } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
-import { openAIErrorResponse, openAIUpstreamErrorResponse } from "./errors";
+import { generateRichLogged, runPreparedCompletion } from "../generation";
+import { OPENAI_GENERATION_PROTOCOL, openAIErrorResponse } from "./errors";
 import {
 	buildOpenAIImagesResponse,
 	type OpenAIImagesResponseFormat,
@@ -239,102 +238,78 @@ async function handlePreparedForcedImageEndpoint(
 		);
 	}
 
-	const logRequests = !!cfg.log_requests;
-	const prepareStart = logRequests ? nowMs() : 0;
-	const prepared = await prepare();
-	if ("error" in prepared) {
-		await provider.dispose?.();
-		if (logRequests)
-			logStage(cfg, `${stagePrefix}_prepare`, {
-				ms: elapsedMs(prepareStart),
-				status: prepared.error.status,
-				code: prepared.error.code,
-			});
-		return openAIErrorResponse(
-			prepared.error.message,
-			prepared.error.status,
-			prepared.error.code,
-			prepared.error.reason,
-		);
-	}
-
-	const { rm, prompt, fileRefs, promptTokens } = prepared;
-	if (logRequests) {
-		logStage(cfg, `${stagePrefix}_prepare`, {
-			ms: elapsedMs(prepareStart),
-			status: 200,
-			model: rm.name,
-			promptChars: prompt.length,
-			promptTokens,
-			fileRefs: fileRefs ? fileRefs.length : 0,
-		});
-	}
-
-	const generationStart = logRequests ? nowMs() : 0;
-	let rich: CompletionRichOutput;
-	try {
-		rich = await provider.generateRich(
-			{ prompt, rm, fileRefs },
-			{
-				hydrateGeneratedImageBytes: responseFormat === "b64_json",
-			},
-		);
-	} catch (e) {
-		if (logRequests)
-			logStage(cfg, `${stagePrefix}_generate`, {
-				ms: elapsedMs(generationStart),
-				status: "error",
-				model: rm.name,
-			});
-		log(
-			cfg,
-			`${stagePrefix} generate failed model=${rm.name} code=${upstreamErrorCode(e) || "upstream_error"} error=${errorLogSummary(e)}`,
-		);
-		return openAIUpstreamErrorResponse(e);
-	}
-
-	if (logRequests) {
-		logStage(cfg, `${stagePrefix}_generate`, {
-			ms: elapsedMs(generationStart),
-			status: "ok",
-			model: rm.name,
-			completionChars: rich.text.length,
-			images: rich.images.length,
-			promptTokens,
-			fileRefs: fileRefs ? fileRefs.length : 0,
-		});
-	}
-
-	const generatedImages = rich.images.filter(
-		(image) => image.source === "generated",
-	);
-	if (!generatedImages.length) {
-		return openAIErrorResponse(
-			"Gemini returned no usable generated image",
-			502,
-			"upstream_image_generation_empty",
-		);
-	}
-
-	const usableImages = usableEndpointImages(generatedImages, responseFormat);
-	if (!usableImages.length) {
-		const code =
-			responseFormat === "b64_json"
-				? "upstream_image_fetch_failed"
-				: "upstream_image_generation_empty";
-		const message =
-			responseFormat === "b64_json"
-				? "Gemini returned generated image metadata but no validated image bytes"
-				: "Gemini returned generated images without usable URLs";
-		return openAIErrorResponse(message, 502, code);
-	}
-
-	return jsonResponse(
-		buildOpenAIImagesResponse(usableImages, {
-			created: nowSec(),
-			responseFormat,
+	return runPreparedCompletion({
+		cfg,
+		provider,
+		stage: stagePrefix,
+		protocol: OPENAI_GENERATION_PROTOCOL,
+		prepare,
+		prepareLogFields: (prepared) => ({
+			model: prepared.rm.name,
+			promptChars: prepared.prompt.length,
+			promptTokens: prepared.promptTokens,
+			fileRefs: prepared.fileRefs ? prepared.fileRefs.length : 0,
 		}),
-	);
+		run: async (prepared, stageLog) => {
+			const { rm, prompt, fileRefs, promptTokens } = prepared;
+			const generated = await generateRichLogged({
+				cfg,
+				provider,
+				stage: stagePrefix,
+				logLabel: stagePrefix,
+				protocol: OPENAI_GENERATION_PROTOCOL,
+				stageLog,
+				input: { prompt, rm, fileRefs },
+				richOptions: {
+					hydrateGeneratedImageBytes: responseFormat === "b64_json",
+				},
+				forced: true,
+				validate: "none",
+				okLogFields: (out) => ({
+					completionChars: out.text.length,
+					images: out.images.length,
+					promptTokens,
+					fileRefs: fileRefs ? fileRefs.length : 0,
+				}),
+			});
+			if (generated.response) return generated.response;
+			const rich = generated.rich;
+
+			const generatedImages = rich.images.filter(
+				(image) => image.source === "generated",
+			);
+			if (!generatedImages.length) {
+				return openAIErrorResponse(
+					"Gemini returned no usable generated image",
+					502,
+					"upstream_image_generation_empty",
+				);
+			}
+
+			const usableImages = usableEndpointImages(
+				generatedImages,
+				responseFormat,
+			);
+			if (!usableImages.length) {
+				const code =
+					responseFormat === "b64_json"
+						? "upstream_image_fetch_failed"
+						: "upstream_image_generation_empty";
+				const message =
+					responseFormat === "b64_json"
+						? "Gemini returned generated image metadata but no validated image bytes"
+						: "Gemini returned generated images without usable URLs";
+				return openAIErrorResponse(message, 502, code);
+			}
+
+			return jsonResponse(
+				buildOpenAIImagesResponse(usableImages, {
+					created: nowSec(),
+					responseFormat,
+				}),
+			);
+		},
+	});
 }
 
 function usableEndpointImages(
