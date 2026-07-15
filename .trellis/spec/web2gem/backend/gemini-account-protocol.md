@@ -75,9 +75,11 @@ Use this contract when changing account lease selection, model-header resolution
 - `GEMINI_ACCOUNT_CAPABILITY_TTL_SEC`: `60..604800`, default `3600`.
 - `GEMINI_ACCOUNT_MAX_ATTEMPTS`: any positive safe integer, default `10`.
 - `GEMINI_ACCOUNT_REFRESH_INTERVAL_SEC`: `0` or `60..604800`, default `600`.
-- Lease requirements carry ordered exact
-  `(providerModelId, capacity, capacityField, modelNumber)` candidates and a
-  freshness cutoff; a successful lease returns `selectedRoute`.
+- Lease route requirements carry ordered exact
+  `(providerModelId, capacity, capacityField, modelNumber)` candidates plus an
+  optional known-family Basic fallback. Acquisition separately carries the
+  capability mode and freshness cutoff; a successful lease returns the route
+  validated or safely assigned for that exact account as `selectedRoute`.
 
 ### 3. Contracts
 
@@ -88,10 +90,24 @@ Use this contract when changing account lease selection, model-header resolution
   order. Standard and `-extended` names share candidates.
 - Evaluate exact candidates in priority order before least-local-in-flight and
   round-robin account selection within a candidate.
-- `prefer`: choose fresh known-capable accounts first; use unknown/stale accounts only when no known-capable account exists. Fresh known-incapable accounts are skipped.
-- `strict`: return no account unless a fresh known-capable account exists. `off`: preserve ordinary pool selection.
-- Unknown dynamic IDs never invent a Basic or stale/unprobed route fallback.
+- Route binding happens after final account selection. Never attach the first
+  global candidate to an independently selected account.
+- `prefer`: choose fresh known-capable accounts first; use unknown/stale accounts
+  only when no known-capable account exists, and bind the known family's Basic
+  fallback. Fresh known-incapable accounts are skipped.
+- A capability snapshot is fresh when at least one valid capability row for the
+  account meets the freshness cutoff. Do not use the account status timestamp
+  as a substitute for capability-snapshot freshness.
+- `strict`: return no account unless a fresh known-capable account exists.
+  `off`: preserve ordinary pool selection, then bind the first fresh candidate
+  actually supported by that selected account or the known-family Basic
+  fallback.
+- Unknown dynamic IDs have no fallback route and require a fresh exact-capable
+  account in `off`, `prefer`, and `strict` modes.
 - Preserve least-local-in-flight and round-robin ordering within a capability tier.
+- Load selected-account capabilities through the selected account IDs. Keep the
+  bounded global capability query separate for persisted catalog fallback so
+  unrelated accounts cannot displace runtime selection data.
 - Cross-account budget counts distinct account IDs, not same-account transport retries. Never retry one ID solely to spend the budget; eligible pool size is the natural ceiling.
 - Semantic recovery scope, abort, stream output, and attachment replay safety remain stronger gates than numeric budget.
 - Successful Worker requests may schedule session-only maintenance through the bound `execution_ctx.waitUntil(promise)`. It must not block/change the response or run the full status/capability probe.
@@ -99,8 +115,15 @@ Use this contract when changing account lease selection, model-header resolution
 ### 4. Validation & Error Matrix
 
 - Prefer + known capable -> select known capable.
-- Prefer + only unknown/stale -> compatibility fallback.
+- Prefer + only unknown/stale known-family accounts -> select one with the Basic
+  fallback route.
+- Prefer + fresh snapshot without the requested route -> skip that account as
+  known-incapable.
 - Strict + no fresh known capable -> `no_available_gemini_account`.
+- Dynamic model + no fresh exact-capable account in any mode ->
+  `no_available_gemini_account`.
+- Off-mode failover to a different account -> recompute route binding for the
+  second account; never reuse the first account's route.
 - Static/global `1052`, StreamGenerate `1060`, abort, post-delta failure, or opaque refs -> no blind pool traversal.
 - Refresh interval `0` or fresh session -> no background refresh.
 - `waitUntil` registration/background failure -> safe log only; completed response remains successful.
@@ -110,11 +133,17 @@ Use this contract when changing account lease selection, model-header resolution
 - Good: Pro request selects the first configured exact tuple that has a fresh
   eligible account, and payload/header use the lease's same tuple.
 - Base: an unprobed pool remains usable in `prefer` mode.
+- Base: `off` selects an account in ordinary pool order and uses its own exact
+  route or the family Basic fallback.
+- Bad: use `status_checked_at_ms` to classify capability freshness or bind
+  `candidates[0]` to an arbitrary/fallback account.
 - Bad: query capability rows once per candidate on every request or destructure `waitUntil` from the execution context.
 
 ### 6. Tests Required
 
-- Off/prefer/strict tier selection, fresh/stale/unknown/incapable snapshots, and bounded D1 reads.
+- Off/prefer/strict tier selection, fresh/stale/unknown/incapable snapshots,
+  account-bound failover routes, dynamic exact-only behavior, selected-versus-
+  global capability loading, and bounded D1 reads.
 - Default ten attempts, configured large value, natural pool exhaustion, and transport-retry separation.
 - Abort/post-delta/attachment/static-error guards.
 - `waitUntil` registration, interval disable/freshness, lock/dedupe reuse, and background failure isolation.
@@ -235,8 +264,16 @@ await store.writeRefreshedCookie(accountId, mergeCookies(response.headers));
 
 ```typescript
 const resolved = await runtime.resolveModel(name, defaultName, freshAfterMs);
-const routes = await runtime.routeCandidatesForModel(resolved, freshAfterMs, mode);
-const lease = await runtime.acquireLease(cfg, { routeCandidates: routes });
+const routes = await runtime.routeCandidatesForModel(resolved, freshAfterMs);
+const routeRequirement = {
+  candidates: routes,
+  fallbackRoute: resolved.family ? basicRouteForFamily(resolved.family) : null,
+};
+const lease = await runtime.acquireLease(cfg, {
+  routeRequirement,
+  capabilityMode: mode,
+  capabilityFreshAfterMs: freshAfterMs,
+});
 const headers = buildGeminiModelHeaders(lease.selectedRoute, resolved.extended, sessionId);
 ```
 

@@ -2593,7 +2593,10 @@ export const cases = [
 				/modelFamily=dynamic.*dynamicProvider=true/,
 			);
 			assert.deepEqual(candidateModel, resolved);
-			assert.deepEqual(acquireOptions.routeCandidates, [exactRoute]);
+			assert.deepEqual(acquireOptions.routeRequirement, {
+				candidates: [exactRoute],
+				fallbackRoute: null,
+			});
 			assert.equal(acquireOptions.capabilityMode, "prefer");
 			assert.equal(lease.successCalls, 1);
 			assert.equal(lease.releaseCalls, 1);

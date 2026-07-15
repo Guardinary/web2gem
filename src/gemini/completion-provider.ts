@@ -29,7 +29,10 @@ import { promptByteLengthGreaterThan } from "../shared/tokens";
 import type { ErrorWithMetadata } from "../shared/types";
 import { classifyGeminiAccountOutcome } from "./accounts/classify";
 import type { GeminiAccountRuntime } from "./accounts/runtime";
-import type { GeminiAccountLease } from "./accounts/types";
+import type {
+	GeminiAccountLease,
+	GeminiAccountRouteRequirement,
+} from "./accounts/types";
 import {
 	generate,
 	generateRich as generateGeminiRich,
@@ -94,7 +97,7 @@ export function createGeminiCompletionProvider(
 	let accountAttempts = 0;
 	let disposed = false;
 	let uploadQueue: Promise<void> = Promise.resolve();
-	let activeRouteCandidates: GeminiRouteTuple[] = [];
+	let activeRouteRequirement: GeminiAccountRouteRequirement | null = null;
 	let activeResolvedModelName = "";
 	let activeResolvedModel: ResolvedModelOK | null = null;
 	let activeRoutingPrepared = false;
@@ -109,15 +112,15 @@ export function createGeminiCompletionProvider(
 		if (!runtime) throw geminiAuthenticatedSessionRequiredError(reason);
 		if (disposed) throw new Error("Gemini completion provider is disposed");
 		if (activeResolvedModel && !activeRoutingPrepared)
-			await ensureModelRouting(activeResolvedModel);
+			await ensureModelRouting(activeResolvedModel, runtime);
 		if (!leasePromise) {
 			if (accountAttempts >= accountAttemptLimit(cfg))
 				throw noAvailableAccountError();
 			leasePromise = runtime
 				.acquireLease(cfg, {
 					excludeAccountIds: attemptedAccountIds,
-					...(activeRoutingPrepared
-						? { routeCandidates: activeRouteCandidates }
+					...(activeRouteRequirement
+						? { routeRequirement: activeRouteRequirement }
 						: {}),
 					capabilityMode: cfg.gemini_account_capability_mode || "prefer",
 					capabilityFreshAfterMs: capabilityFreshAfterMs(cfg),
@@ -156,7 +159,7 @@ export function createGeminiCompletionProvider(
 		refreshedAccountIds.clear();
 		uploadRecipes.length = 0;
 		refAliases.clear();
-		activeRouteCandidates = [];
+		activeRouteRequirement = null;
 		activeResolvedModelName = "";
 		activeResolvedModel = null;
 		activeRoutingPrepared = false;
@@ -170,16 +173,19 @@ export function createGeminiCompletionProvider(
 			);
 		});
 
-	const ensureModelRouting = async (model: ResolvedModelOK): Promise<void> => {
+	const ensureModelRouting = async (
+		model: ResolvedModelOK,
+		accountRuntime: GeminiAccountRuntime,
+	): Promise<void> => {
 		if (activeRoutingPrepared && activeResolvedModelName === model.name) return;
-		const mode = cfg.gemini_account_capability_mode || "prefer";
-		activeRouteCandidates = runtime
-			? await runtime.routeCandidatesForModel(
-					model,
-					capabilityFreshAfterMs(cfg),
-					mode,
-				)
-			: [routeForModel(model)];
+		const candidates = await accountRuntime.routeCandidatesForModel(
+			model,
+			capabilityFreshAfterMs(cfg),
+		);
+		activeRouteRequirement = {
+			candidates,
+			fallbackRoute: model.family ? basicRouteForFamily(model.family) : null,
+		};
 		activeResolvedModelName = model.name;
 		activeResolvedModel = model;
 		activeRoutingPrepared = true;
@@ -506,7 +512,7 @@ export function createGeminiCompletionProvider(
 				activeResolvedModel = resolved;
 				activeResolvedModelName = resolved.name;
 				activeRoutingPrepared = false;
-				activeRouteCandidates = [];
+				activeRouteRequirement = null;
 			}
 			return resolved;
 		},

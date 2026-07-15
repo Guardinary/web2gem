@@ -56,13 +56,8 @@ export class GeminiAccountRuntime {
 	routeCandidatesForModel(
 		model: Extract<ResolvedModel, { name: string }>,
 		capabilityFreshAfterMs: number,
-		capabilityMode: "off" | "prefer" | "strict",
 	): Promise<GeminiRouteTuple[]> {
-		return this.pool.routeCandidatesForModel(
-			model,
-			capabilityFreshAfterMs,
-			capabilityMode,
-		);
+		return this.pool.routeCandidatesForModel(model, capabilityFreshAfterMs);
 	}
 }
 

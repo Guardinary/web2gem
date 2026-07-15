@@ -1,6 +1,5 @@
 import type { RuntimeConfig } from "../../config";
 import {
-	basicRouteForFamily,
 	buildGeminiModelCatalog,
 	familyForProviderModelId,
 	type GeminiCatalogRoute,
@@ -210,7 +209,6 @@ export class AccountPoolService {
 	async routeCandidatesForModel(
 		model: Extract<ResolvedModel, { name: string }>,
 		capabilityFreshAfterMs: number,
-		capabilityMode: "off" | "prefer" | "strict",
 	): Promise<GeminiRouteTuple[]> {
 		await this.selectableSnapshot(this.nowMs());
 		const fresh = this.freshSelectableRoutes(capabilityFreshAfterMs);
@@ -226,8 +224,7 @@ export class AccountPoolService {
 			this.routePriorities.get(model.family) || [],
 			discovered,
 		);
-		if (reconciled.length || capabilityMode === "strict") return reconciled;
-		return [basicRouteForFamily(model.family)];
+		return reconciled;
 	}
 
 	async refreshAccountForAdmin(
@@ -274,12 +271,23 @@ export class AccountPoolService {
 			this.selectableLimit,
 		);
 		this.snapshotRows = rows;
-		const [capabilityRows, priorities] = await Promise.all([
-			this.loadCapabilityRows(rows),
-			this.store.listModelRoutePriorities?.() || Promise.resolve([]),
-		]);
-		this.persistedCapabilities = capabilityRows;
-		this.capabilitiesByAccount = capabilitiesByAccount(capabilityRows);
+		const globalCapabilityRowsPromise = this.store.listAllAccountCapabilities
+			? this.store.listAllAccountCapabilities(
+					Math.min(this.selectableLimit * 128, 12800),
+				)
+			: null;
+		const selectedCapabilityRowsPromise = this.loadSelectedCapabilityRows(
+			rows,
+			globalCapabilityRowsPromise,
+		);
+		const [selectedCapabilityRows, persistedCapabilityRows, priorities] =
+			await Promise.all([
+				selectedCapabilityRowsPromise,
+				globalCapabilityRowsPromise || selectedCapabilityRowsPromise,
+				this.store.listModelRoutePriorities?.() || Promise.resolve([]),
+			]);
+		this.persistedCapabilities = persistedCapabilityRows;
+		this.capabilitiesByAccount = capabilitiesByAccount(selectedCapabilityRows);
 		this.routePriorities = routePrioritiesByFamily(priorities);
 		this.snapshotVersion = version;
 		this.snapshotExpiresAtMs = nowMs + this.snapshotTtlMs;
@@ -622,60 +630,110 @@ export class AccountPoolService {
 			);
 		if (!selectable.length) return null;
 		const mode = options.capabilityMode || "off";
-		const candidates = options.routeCandidates || [];
+		const requirement = options.routeRequirement;
 		const freshAfter = Number(options.capabilityFreshAfterMs) || 0;
-		if (mode !== "off" && options.routeCandidates && !candidates.length)
-			return null;
-		if (mode !== "off" && candidates.length) {
-			for (const route of candidates) {
-				const capableRows = selectable.filter((candidateRow) => {
-					const capability = this.capabilitiesByAccount
-						.get(candidateRow.id)
-						?.get(route.providerModelId);
-					return (
-						capability?.available === true &&
-						capability.checkedAtMs >= freshAfter &&
-						capabilityMatchesRoute(capability, route)
-					);
-				});
-				const row = this.chooseLeastInFlight(capableRows);
-				if (!row) continue;
-				return {
-					row,
-					capability:
-						this.capabilitiesByAccount
-							.get(row.id)
-							?.get(route.providerModelId) || null,
-					route,
-				};
-			}
-			if (mode === "strict") return null;
+		if (!requirement) return this.unroutedSelection(selectable);
+
+		const requiresExact = requirement.fallbackRoute === null;
+		if (mode !== "off" || requiresExact) {
+			const exact = this.chooseExactRoute(
+				selectable,
+				requirement.candidates,
+				freshAfter,
+			);
+			if (exact) return exact;
+			if (mode === "strict" || requiresExact) return null;
 			const unknownOrStale = selectable.filter(
-				(row) => (Number(row.status_checked_at_ms) || 0) < freshAfter,
+				(row) => !this.hasFreshCapabilitySnapshot(row.id, freshAfter),
 			);
 			const fallback = this.chooseLeastInFlight(unknownOrStale);
-			return fallback
+			return fallback && requirement.fallbackRoute
 				? {
 						row: fallback,
 						capability: null,
-						route: candidates[0] || null,
+						route: requirement.fallbackRoute,
 					}
 				: null;
 		}
+
 		const best = this.chooseLeastInFlight(selectable);
 		if (!best) return null;
-		const route = candidates[0] || null;
-		const capability = route
-			? this.capabilitiesByAccount.get(best.id)?.get(route.providerModelId)
-			: undefined;
+		const matched = this.exactRouteForAccount(
+			best.id,
+			requirement.candidates,
+			freshAfter,
+		);
 		return {
 			row: best,
-			capability:
-				capability?.available && capability.checkedAtMs >= freshAfter
-					? capability
-					: null,
-			route,
+			capability: matched?.capability || null,
+			route: matched?.route || requirement.fallbackRoute,
 		};
+	}
+
+	private unroutedSelection(selectable: readonly GeminiAccountSnapshotRow[]): {
+		row: GeminiAccountSnapshotRow;
+		capability: null;
+		route: null;
+	} | null {
+		const row = this.chooseLeastInFlight(selectable);
+		return row ? { row, capability: null, route: null } : null;
+	}
+
+	private chooseExactRoute(
+		selectable: readonly GeminiAccountSnapshotRow[],
+		candidates: readonly GeminiRouteTuple[],
+		freshAfterMs: number,
+	): {
+		row: GeminiAccountSnapshotRow;
+		capability: GeminiAccountModelCapability;
+		route: GeminiRouteTuple;
+	} | null {
+		for (const route of candidates) {
+			const capableRows = selectable.filter(
+				(candidate) =>
+					this.exactRouteForAccount(candidate.id, [route], freshAfterMs) !==
+					null,
+			);
+			const row = this.chooseLeastInFlight(capableRows);
+			if (!row) continue;
+			const matched = this.exactRouteForAccount(row.id, [route], freshAfterMs);
+			if (matched) return { row, ...matched };
+		}
+		return null;
+	}
+
+	private exactRouteForAccount(
+		accountId: string,
+		candidates: readonly GeminiRouteTuple[],
+		freshAfterMs: number,
+	): {
+		capability: GeminiAccountModelCapability;
+		route: GeminiRouteTuple;
+	} | null {
+		for (const route of candidates) {
+			const capability = this.capabilitiesByAccount
+				.get(accountId)
+				?.get(route.providerModelId);
+			if (
+				capability?.available === true &&
+				capability.checkedAtMs >= freshAfterMs &&
+				capabilityMatchesRoute(capability, route)
+			)
+				return { capability, route };
+		}
+		return null;
+	}
+
+	private hasFreshCapabilitySnapshot(
+		accountId: string,
+		freshAfterMs: number,
+	): boolean {
+		const capabilities = this.capabilitiesByAccount.get(accountId);
+		if (!capabilities) return false;
+		for (const capability of capabilities.values()) {
+			if (capability.checkedAtMs >= freshAfterMs) return true;
+		}
+		return false;
 	}
 
 	private chooseLeastInFlight(
@@ -700,15 +758,19 @@ export class AccountPoolService {
 		return best;
 	}
 
-	private async loadCapabilityRows(
+	private async loadSelectedCapabilityRows(
 		rows: readonly GeminiAccountSnapshotRow[],
+		globalRowsPromise: Promise<GeminiAccountCapabilityRow[]> | null,
 	): Promise<GeminiAccountCapabilityRow[]> {
-		if (this.store.listAllAccountCapabilities)
-			return this.store.listAllAccountCapabilities(
-				Math.min(this.selectableLimit * 128, 12800),
-			);
-		if (!this.store.listAccountCapabilities || !rows.length) return [];
-		return this.store.listAccountCapabilities(rows.map((row) => row.id));
+		if (!rows.length) return [];
+		const accountIds = rows.map((row) => row.id);
+		if (this.store.listAccountCapabilities)
+			return this.store.listAccountCapabilities(accountIds);
+		if (!globalRowsPromise) return [];
+		const selectedIds = new Set(accountIds);
+		return (await globalRowsPromise).filter((row) =>
+			selectedIds.has(row.account_id),
+		);
 	}
 
 	private freshSelectableRoutes(freshAfterMs: number): GeminiCatalogRoute[] {

@@ -313,9 +313,14 @@ export type GeminiAccountRuntimeOptions = {
 	verifyAccount?: GeminiAccountVerifier;
 };
 
+export type GeminiAccountRouteRequirement = {
+	candidates: readonly GeminiRouteTuple[];
+	fallbackRoute: GeminiRouteTuple | null;
+};
+
 export type GeminiAccountAcquireOptions = {
 	excludeAccountIds?: ReadonlySet<string> | readonly string[];
-	routeCandidates?: readonly GeminiRouteTuple[];
+	routeRequirement?: GeminiAccountRouteRequirement;
 	capabilityMode?: "off" | "prefer" | "strict";
 	capabilityFreshAfterMs?: number;
 };

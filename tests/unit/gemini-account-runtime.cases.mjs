@@ -264,7 +264,10 @@ export const cases = [
 				modelNumber: 1,
 			};
 			const capable = await pool.acquireLease(baseConfig(), {
-				routeCandidates: [route],
+				routeRequirement: {
+					candidates: [route],
+					fallbackRoute: mod.basicRouteForFamily("pro"),
+				},
 				capabilityMode: "prefer",
 				capabilityFreshAfterMs: nowMs - 1000,
 			});
@@ -287,27 +290,190 @@ export const cases = [
 				account("known-no", { status_checked_at_ms: nowMs }),
 				account("unknown-only", { status_checked_at_ms: null }),
 			]);
-			fallbackStore.listAccountCapabilities = async () => [];
+			fallbackStore.listAccountCapabilities = async () => [
+				capabilityRow("known-no", "different-model", 1, 12, 1, 0, nowMs),
+			];
 			const fallbackPool = new mod.AccountPoolService(fallbackStore, {
 				nowMs: () => nowMs,
 				rotateCookie: async () => new Response(null, { status: 200 }),
 			});
 			const preferred = await fallbackPool.acquireLease(baseConfig(), {
-				routeCandidates: [route],
+				routeRequirement: {
+					candidates: [route],
+					fallbackRoute: mod.basicRouteForFamily("pro"),
+				},
 				capabilityMode: "prefer",
 				capabilityFreshAfterMs: nowMs - 1000,
 			});
 			assert.equal(preferred.accountId, "unknown-only");
 			assert.equal(preferred.modelCapability, null);
+			assert.deepEqual(preferred.selectedRoute, mod.basicRouteForFamily("pro"));
 			preferred.release();
 			assert.equal(
 				await fallbackPool.acquireLease(baseConfig(), {
-					routeCandidates: [route],
+					routeRequirement: {
+						candidates: [route],
+						fallbackRoute: mod.basicRouteForFamily("pro"),
+					},
 					capabilityMode: "strict",
 					capabilityFreshAfterMs: nowMs - 1000,
 				}),
 				null,
 			);
+		},
+	],
+	[
+		"uses Basic for stale known-family fallback and forbids dynamic fallback",
+		async () => {
+			const nowMs = 100000;
+			const staleRoute = {
+				providerModelId: "e6fa609c3fa255c0",
+				capacity: 4,
+				capacityField: 12,
+				modelNumber: 3,
+			};
+			const store = new FakeStore([
+				account("stale", { status_checked_at_ms: nowMs }),
+			]);
+			store.listAccountCapabilities = async () => [
+				capabilityRow(
+					"stale",
+					staleRoute.providerModelId,
+					staleRoute.capacity,
+					staleRoute.capacityField,
+					staleRoute.modelNumber,
+					0,
+					nowMs - 5000,
+				),
+			];
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => nowMs,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			const knownLease = await pool.acquireLease(baseConfig(), {
+				routeRequirement: {
+					candidates: [staleRoute],
+					fallbackRoute: mod.basicRouteForFamily("pro"),
+				},
+				capabilityMode: "prefer",
+				capabilityFreshAfterMs: nowMs - 1000,
+			});
+			assert.equal(knownLease.accountId, "stale");
+			assert.equal(knownLease.modelCapability, null);
+			assert.deepEqual(
+				knownLease.selectedRoute,
+				mod.basicRouteForFamily("pro"),
+			);
+			knownLease.release();
+
+			for (const capabilityMode of ["off", "prefer", "strict"]) {
+				assert.equal(
+					await pool.acquireLease(baseConfig(), {
+						routeRequirement: {
+							candidates: [staleRoute],
+							fallbackRoute: null,
+						},
+						capabilityMode,
+						capabilityFreshAfterMs: nowMs - 1000,
+					}),
+					null,
+				);
+			}
+		},
+	],
+	[
+		"binds off-mode failover to the selected account's own exact route",
+		async () => {
+			const nowMs = 100000;
+			const plusRoute = {
+				providerModelId: "e6fa609c3fa255c0",
+				capacity: 4,
+				capacityField: 12,
+				modelNumber: 3,
+			};
+			const basicRoute = mod.basicRouteForFamily("pro");
+			const store = new FakeStore([account("a-plus"), account("b-basic")]);
+			store.listAccountCapabilities = async () => [
+				capabilityRow("a-plus", plusRoute.providerModelId, 4, 12, 3, 0, nowMs),
+				capabilityRow(
+					"b-basic",
+					basicRoute.providerModelId,
+					basicRoute.capacity,
+					basicRoute.capacityField,
+					basicRoute.modelNumber,
+					0,
+					nowMs,
+				),
+			];
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => nowMs,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			const options = {
+				routeRequirement: {
+					candidates: [plusRoute, basicRoute],
+					fallbackRoute: basicRoute,
+				},
+				capabilityMode: "off",
+				capabilityFreshAfterMs: nowMs - 1000,
+			};
+			const first = await pool.acquireLease(baseConfig(), options);
+			assert.equal(first.accountId, "a-plus");
+			assert.deepEqual(first.selectedRoute, plusRoute);
+			first.release();
+
+			const second = await pool.acquireLease(baseConfig(), {
+				...options,
+				excludeAccountIds: new Set(["a-plus"]),
+			});
+			assert.equal(second.accountId, "b-basic");
+			assert.deepEqual(second.selectedRoute, basicRoute);
+			assert.equal(second.modelCapability.modelId, basicRoute.providerModelId);
+			second.release();
+		},
+	],
+	[
+		"loads selected-account capabilities independently from the global catalog",
+		async () => {
+			const nowMs = 100000;
+			const route = mod.basicRouteForFamily("pro");
+			const store = new FakeStore([account("selected")]);
+			let selectedIds = null;
+			let globalLoads = 0;
+			store.listAccountCapabilities = async (accountIds) => {
+				selectedIds = accountIds;
+				return [
+					capabilityRow(
+						"selected",
+						route.providerModelId,
+						route.capacity,
+						route.capacityField,
+						route.modelNumber,
+						0,
+						nowMs,
+					),
+				];
+			};
+			store.listAllAccountCapabilities = async () => {
+				globalLoads += 1;
+				return [
+					capabilityRow("not-selected", "future-model", 3, 13, 7, 0, nowMs),
+				];
+			};
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => nowMs,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			const lease = await pool.acquireLease(baseConfig(), {
+				routeRequirement: { candidates: [route], fallbackRoute: route },
+				capabilityMode: "strict",
+				capabilityFreshAfterMs: nowMs - 1000,
+			});
+			assert.deepEqual(selectedIds, ["selected"]);
+			assert.equal(globalLoads, 1);
+			assert.equal(lease.accountId, "selected");
+			assert.deepEqual(lease.selectedRoute, route);
+			lease.release();
 		},
 	],
 	[
@@ -394,7 +560,6 @@ export const cases = [
 			const candidates = await pool.routeCandidatesForModel(
 				resolvedPro,
 				nowMs - 1000,
-				"prefer",
 			);
 			assert.deepEqual(
 				candidates.map((route) => route.providerModelId),
@@ -449,7 +614,10 @@ export const cases = [
 				],
 			);
 			const lease = await pool.acquireLease(baseConfig(), {
-				routeCandidates: candidates,
+				routeRequirement: {
+					candidates,
+					fallbackRoute: mod.basicRouteForFamily("pro"),
+				},
 				capabilityMode: "prefer",
 				capabilityFreshAfterMs: nowMs - 1000,
 			});
@@ -474,7 +642,6 @@ export const cases = [
 					await rediscoveredPool.routeCandidatesForModel(
 						resolvedPro,
 						nowMs - 1000,
-						"prefer",
 					)
 				).map((route) => [route.providerModelId, route.capacity]),
 				[
