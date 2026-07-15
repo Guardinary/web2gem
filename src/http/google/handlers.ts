@@ -22,16 +22,14 @@ import {
 	writeGoogleStreamError,
 } from "./format";
 import { streamGooglePlain, streamGoogleTools } from "./stream";
-import { parseGoogleGenerationPath } from "./model-path";
+import type { GoogleGenerationRoute } from "./model-path";
 
 export async function handleGoogleGenerate(
 	req: UnknownRecord,
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
-	path: string,
+	route: GoogleGenerationRoute,
 ) {
-	const route = parseGoogleGenerationPath(path);
-	if (!route) throw new Error("invalid Google generation path");
 	const { modelName, stream } = route;
 	return runPreparedCompletion({
 		cfg,

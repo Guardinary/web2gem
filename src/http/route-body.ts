@@ -57,19 +57,6 @@ export async function readRouteJsonPost(
 	return { value: parsed.value };
 }
 
-export function googleJsonError(
-	message: string,
-	code?: string,
-	reason?: string,
-): { error: { message: string; code?: string; reason?: string } } {
-	const error: { message: string; code?: string; reason?: string } = {
-		message,
-	};
-	if (code) error.code = code;
-	if (reason) error.reason = reason;
-	return { error };
-}
-
 function oversizedInlineBodyRejection(
 	request: Request,
 	cfg: RouteJsonConfig,

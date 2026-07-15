@@ -108,7 +108,7 @@ describe("google http", () => {
 				log_requests: false,
 			},
 			provider,
-			"/v1beta/models/future:model:generateContent",
+			parseGoogleGenerationPath("/v1beta/models/future:model:generateContent"),
 		);
 		assert.equal(response.status, 200);
 		assert.equal(resolvedName, "future:model");
@@ -144,7 +144,7 @@ describe("google http", () => {
 				log_requests: false,
 			},
 			provider,
-			"/v1beta/models/not-a-model:generateContent",
+			parseGoogleGenerationPath("/v1beta/models/not-a-model:generateContent"),
 			false,
 		);
 		assert.equal(resp.status, 400);
@@ -198,7 +198,9 @@ describe("google http", () => {
 				log_requests: false,
 			},
 			provider,
-			"/v1beta/models/gemini-3.5-flash:generateContent",
+			parseGoogleGenerationPath(
+				"/v1beta/models/gemini-3.5-flash:generateContent",
+			),
 			false,
 		);
 		assert.equal(resp.status, 200);
@@ -251,7 +253,9 @@ describe("google http", () => {
 				log_requests: false,
 			},
 			provider,
-			"/v1beta/models/gemini-3.5-flash:generateContent",
+			parseGoogleGenerationPath(
+				"/v1beta/models/gemini-3.5-flash:generateContent",
+			),
 			false,
 		);
 		assert.equal(resp.status, 200);
@@ -848,7 +852,9 @@ describe("google http", () => {
 				log_requests: false,
 			},
 			provider,
-			"/v1beta/models/gemini-3.5-flash:generateContent",
+			parseGoogleGenerationPath(
+				"/v1beta/models/gemini-3.5-flash:generateContent",
+			),
 			false,
 		);
 		assert.equal(resp.status, 200);
@@ -904,7 +910,9 @@ describe("google http", () => {
 				log_requests: false,
 			},
 			provider,
-			"/v1beta/models/gemini-3.5-flash:generateContent",
+			parseGoogleGenerationPath(
+				"/v1beta/models/gemini-3.5-flash:generateContent",
+			),
 			false,
 		);
 		assert.equal(resp.status, 200);
@@ -963,7 +971,9 @@ describe("google http", () => {
 				log_requests: false,
 			},
 			provider,
-			"/v1beta/models/gemini-3.5-flash:generateContent",
+			parseGoogleGenerationPath(
+				"/v1beta/models/gemini-3.5-flash:generateContent",
+			),
 			false,
 		);
 		assert.equal(resp.status, 200);
@@ -1006,7 +1016,9 @@ describe("google http", () => {
 				log_requests: false,
 			},
 			provider,
-			"/v1beta/models/gemini-3.5-flash:generateContent",
+			parseGoogleGenerationPath(
+				"/v1beta/models/gemini-3.5-flash:generateContent",
+			),
 			false,
 		);
 		assert.equal(resp.status, 401);
@@ -1038,7 +1050,9 @@ describe("google http", () => {
 							throw err;
 						},
 					}),
-					"/v1beta/models/gemini-3.5-flash:generateContent",
+					parseGoogleGenerationPath(
+						"/v1beta/models/gemini-3.5-flash:generateContent",
+					),
 					false,
 				),
 		);
@@ -1077,7 +1091,9 @@ describe("google http", () => {
 					return "";
 				},
 			}),
-			"/v1beta/models/gemini-3.5-flash:generateContent",
+			parseGoogleGenerationPath(
+				"/v1beta/models/gemini-3.5-flash:generateContent",
+			),
 			false,
 		);
 		assert.equal(resp.status, 502);
@@ -1107,7 +1123,9 @@ describe("google http", () => {
 						log_requests: true,
 					},
 					fakeStreamProvider(["he", "llo"]),
-					"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
+					parseGoogleGenerationPath(
+						"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
+					),
 					true,
 				);
 				body = await resp.text();
@@ -1145,7 +1163,9 @@ describe("google http", () => {
 					throw streamError("handler upstream down", "handler_down");
 				},
 			}),
-			"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
+			parseGoogleGenerationPath(
+				"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
+			),
 			true,
 		);
 		assert.equal(resp.status, 200);
@@ -1186,7 +1206,9 @@ describe("google http", () => {
 					fakeStreamProvider([
 						'<tool_calls><invoke name="Read"><parameter name="path">README.md</parameter></invoke></tool_calls>',
 					]),
-					"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
+					parseGoogleGenerationPath(
+						"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
+					),
 					true,
 				);
 				body = await resp.text();
