@@ -270,7 +270,7 @@ Use this contract when changing `src/gemini/transport/http.ts`, `src/gemini/tran
 - `resolveConnect()` lazily resolves `cloudflare:sockets` and returns `SocketConnect | null`.
 - `socketHttp(connect, url, options)` performs one HTTP/1.1 request over a socket and returns `SocketHttpResponse`.
 - `createSocketPool()`, `getDefaultSocketPool()`, and `closeIdleSocketPool(pool?)` own keep-alive pool lifecycle.
-- `_setConnectForTest(connect)` resets socket state for unit tests and must remain local-test only through `src/test-exports.ts`.
+- `_setConnectForTest(connect)` resets socket state for unit tests; tests import it directly from `src/gemini/transport/socket.ts` and it must never be re-exported from `src/index.ts` or `src/public-exports.ts`.
 
 ### 3. Contracts
 
@@ -285,7 +285,7 @@ Use this contract when changing `src/gemini/transport/http.ts`, `src/gemini/tran
   - optional gzip decompression when `DecompressionStream` supports it.
   - keep-alive reuse only when the response framing makes reuse safe.
 - Timeout and abort cleanup must close the socket and release stream locks where applicable.
-- `socket.ts` is the compatibility facade. Splitting implementation into `byte-queue.ts`, `pool.ts`, `timeout.ts`, `http-parse.ts`, `body-stream.ts`, or `decompression.ts` must not require callers to change imports outside `src/gemini/transport/` and `src/test-exports.ts`.
+- `socket.ts` is the compatibility facade. Splitting implementation into `byte-queue.ts`, `pool.ts`, `timeout.ts`, `http-parse.ts`, `body-stream.ts`, or `decompression.ts` must not require callers to change imports outside `src/gemini/transport/`.
 - New socket submodules must stay inside `src/gemini/transport/` and must not import HTTP adapters, completion modules, prompt compatibility, tool-call modules, or uploads unless a spec update first defines a new boundary.
 
 ### 4. Validation & Error Matrix
@@ -358,33 +358,32 @@ import { socketHttp } from "../../gemini/transport/socket";
 import { streamPlainCompletionEvents } from "../../completion";
 ```
 
-## Scenario: Production And Test Bundles
+## Scenario: Production Bundle And Test Seam
 
 ### 1. Scope / Trigger
 
-Use this contract when changing build outputs, public exports, smoke tests, or local unit tests. Production deployments must not expose local-only test helpers.
+Use this contract when changing build outputs, public exports, smoke/bench harness, or local unit tests. Production deployments must not expose local-only test helpers, and unit tests must import authored source directly.
 
 ### 2. Signatures
 
 - `src/index.ts` is the production Worker entrypoint and exports only stable public helpers from `src/public-exports.ts`.
-- `src/test-index.ts` is the local test entrypoint and may re-export `src/test-exports.ts`.
+- `src/harness-exports.ts` is the smoke/bench harness entrypoint. It re-exports the Worker default plus only the internal helpers `scripts/smoke.mjs` and `scripts/bench.mjs` consume; it is never imported by `src/index.ts`, unit tests, or production code.
 - `scripts/build.mjs` emits:
-  - `dist/worker.js` from `src/index.ts`
-  - `dist/worker.test.js` from `src/test-index.ts`
+  - `dist/worker.js` from `src/index.ts` (always)
+  - `dist/harness.js` from `src/harness-exports.ts` (only with `--harness-bundle` or `BUILD_HARNESS_BUNDLE`)
 - `pnpm check:size` builds `dist/worker.js` and gates its level-9 gzip size
   through `scripts/check-bundle-size.mjs`; the default gzip ceiling is 3 MiB and
   `BUNDLE_GZIP_SIZE_LIMIT_BYTES` may override it.
 - `wrangler.jsonc` deploys `dist/worker.js`.
-- `tests/unit/*.test.mjs` are Vitest-discovered wrapper files; unit modules import `dist/worker.test.js` by default.
-- `tests/unit/*.cases.mjs` own reusable case lists imported by the Vitest wrapper files.
-- `tests/unit/assertions.js` provides Vitest-backed assertion helpers for shared case modules.
+- `tests/unit/*.test.mjs` are Vitest-discovered files that import authored `src/**` modules directly (owner modules, bypassing compatibility barrels) plus shared fakes from `tests/unit/helpers.js`.
+- `tests/unit/assertions.js` provides Vitest-backed assertion helpers.
 
 ### 3. Contracts
 
-- Internal helpers such as `buildPayload`, route handlers, stream adapters, and socket helpers belong in `src/test-exports.ts` when local tests need them.
-- Do not add `export * from "./test-exports"` to `src/index.ts`.
-- Smoke tests should import the production bundle for public exports and health checks.
-- Smoke tests may import the test bundle for internal compatibility checks, but must also assert that representative internal helpers are absent from the production bundle.
+- Unit tests import internal helpers straight from their owner module (e.g. `import { buildPayload } from "../../src/gemini/client/protocol"`); there is no hand-maintained internal-export barrel. `pnpm unit` is plain `vitest run` with no pre-build.
+- A helper that only smoke/bench needs is added to `src/harness-exports.ts`, not to `src/public-exports.ts`. Keep that list minimal — it exists only so the two Node harness scripts can load one bundle.
+- Do not add `export * from "./harness-exports"` (or any test/harness surface) to `src/index.ts`.
+- Smoke tests import the production bundle for public exports and health checks, and the harness bundle for internal compatibility checks, and must assert that representative internal helpers are absent from the production bundle.
 - Bundle-size output reports raw bytes, gzip bytes, the configured gzip ceiling,
   and remaining headroom. Raw bundle bytes are observational and are not the
   release gate.
@@ -392,27 +391,27 @@ Use this contract when changing build outputs, public exports, smoke tests, or l
 ### 4. Validation & Error Matrix
 
 - `dist/worker.js` exports `buildPayload` -> fail smoke; test helpers leaked into production.
-- `dist/worker.test.js` misses a helper required by `tests/unit/*` -> fail unit tests.
-- `wrangler.jsonc` points to `dist/worker.test.js` -> invalid deployment config.
-- `scripts/build.mjs` only emits one bundle -> unit or smoke should fail before deploy.
+- A unit test imports a symbol the owner module does not export -> fail typecheck/unit; fix the import or the export, do not add a barrel.
+- `wrangler.jsonc` points to `dist/harness.js` -> invalid deployment config.
 - Missing/empty production bundle -> `pnpm check:size` fails.
 - Level-9 gzip bytes exceed `BUNDLE_GZIP_SIZE_LIMIT_BYTES` (or the 3 MiB
   default) -> `pnpm check:size` fails even when raw size is otherwise readable.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: add a local-only helper export to `src/test-exports.ts` and use it from focused `tests/unit/*.test.mjs` files.
+- Good: a unit test imports the helper it needs directly from the owner module under `src/`.
 - Base: add a stable user-facing helper to `src/public-exports.ts` only when it is intentionally part of the package surface.
-- Bad: import `src/test-exports.ts` from `src/index.ts` to make a unit test pass.
-- Bad: make smoke validate only `dist/worker.test.js`; that misses production export leaks and route wiring regressions.
+- Bad: recreate a catch-all internal-export barrel so tests can import everything from one module.
+- Bad: import a harness/test surface from `src/index.ts` to make a test pass.
+- Bad: make smoke validate only the harness bundle; that misses production export leaks and route wiring regressions.
 - Bad: gate raw bundle bytes with the legacy `BUNDLE_SIZE_LIMIT_BYTES`; release
   size is the compressed artifact budget.
 
 ### 6. Tests Required
 
 - Run `pnpm build` after changing build entrypoints.
-- Run `pnpm unit` after changing `src/test-exports.ts`, `src/test-index.ts`, or `tests/unit/*`.
-- Run `pnpm smoke` after changing `src/index.ts`, `src/public-exports.ts`, `scripts/build.mjs`, or `scripts/smoke.mjs`.
+- Run `pnpm unit` after changing `tests/unit/*` or a helper's exports.
+- Run `pnpm smoke` after changing `src/index.ts`, `src/public-exports.ts`, `src/harness-exports.ts`, `scripts/build.mjs`, or `scripts/smoke.mjs`.
 - Run `pnpm check:arch` after adding imports between source layers.
 - Run `pnpm check:size` after changing build inputs or runtime dependencies.
 
@@ -422,101 +421,80 @@ Use this contract when changing build outputs, public exports, smoke tests, or l
 
 ```typescript
 // src/index.ts
-export * from "./test-exports";
+export * from "./harness-exports";
 ```
 
 #### Correct
 
-```typescript
-// src/test-index.ts
-import worker from "./index";
-
-export default worker;
-export * from "./public-exports";
-export * from "./test-exports";
+```javascript
+// tests/unit/gemini-client.test.mjs
+import { buildPayload } from "../../src/gemini/client/protocol";
 ```
 
-## Scenario: Coverage Build And Reports
+## Scenario: Coverage Reports
 
 ### 1. Scope / Trigger
 
-Use this contract when changing test coverage commands, build sourcemap behavior, CI quality gates, or the local unit runner. Coverage must report authored `src/**/*.ts` locations where possible while preserving normal production/test build output.
+Use this contract when changing test coverage commands, CI quality gates, or the local unit runner. Coverage must report authored `src/**/*.ts(x)` locations directly.
 
 ### 2. Signatures
 
-- `pnpm unit` runs `pnpm build` and then executes unit tests through Vitest.
-- `pnpm coverage` runs `COVERAGE=1 pnpm build` and then `TEST_BUNDLE=../../dist-coverage/worker.test.js vitest run --coverage`.
-- `pnpm coverage:ci` uses the same Vitest V8 coverage execution path, then runs `node scripts/check-coverage.mjs`.
-- `scripts/build.mjs` reads `process.env.COVERAGE`; truthy values are `1`, `true`, `yes`, and `on`.
-- Coverage builds default to `dist-coverage/`; normal builds default to `dist/`.
+- `pnpm unit` and `pnpm unit:quick` both run `vitest run` over authored sources (no build step).
+- `pnpm coverage` runs `vitest run --coverage` via `scripts/coverage.mjs`.
+- `pnpm coverage:ci` uses the same execution path, then runs `node scripts/check-coverage.mjs`.
 - `vitest.config.mjs` owns the V8 coverage provider, report formats, and
-  include/exclude paths; percentage thresholds belong to
-  `scripts/check-coverage.mjs`.
-- `scripts/check-coverage.mjs` owns aggregate source thresholds plus directory-
-  and file-level source gates using `coverage/coverage-summary.json`.
+  include/exclude paths (`all: true`, `include: ["src/**/*.ts", "src/**/*.tsx"]`);
+  percentage thresholds belong to `scripts/check-coverage.mjs`.
+- `scripts/check-coverage.mjs` owns aggregate source thresholds plus a small set of
+  critical-path directory/file gates using `coverage/coverage-summary.json`.
 
 ### 3. Contracts
 
-- Normal `pnpm build` must not emit sourcemaps and should remove stale `dist/worker.js.map` / `dist/worker.test.js.map`.
-- Coverage builds emit linked sourcemaps with `sourcesContent` into `dist-coverage/` so Vitest V8 coverage can remap `dist-coverage/worker.test.js` coverage back to `src/`.
-- Coverage includes the isolated test bundle entry (`dist-coverage/worker.test.js`) because unit tests import the bundle rather than raw TypeScript.
-- Unit helpers read `process.env.TEST_BUNDLE` when set and default to `../../dist/worker.test.js` for the normal workflow.
-- Vitest V8 coverage is the collector and remapper; it does not own regression
-  thresholds. `scripts/check-coverage.mjs` aggregates only remapped `src/`
-  entries, excluding bundled third-party rows, and applies source-wide,
-  directory, and file gates.
-- Coverage thresholds are regression floors, not aspirational 100% targets. No directory or aggregate threshold should be 100%; stable areas should normally retain 3–5 percentage points of measured headroom so one defensive branch does not block unrelated work.
-- Global thresholds must remain representative of the repository baseline, and newer high-risk owners such as `src/admin-ui`, `src/attachments`, `src/gemini/accounts`, and `src/http/admin` require explicit line and branch gates instead of relying only on broad parent-directory aggregation. Browser UI coverage is sourced from browser-independent logic exported through the test bundle; generated embedded HTML is validated separately by route/smoke assertions.
-- Generated coverage output belongs under `coverage/` and coverage build output belongs under `dist-coverage/`; both must stay git-ignored.
+- Coverage instruments authored `src/**` directly; there is no coverage build and no sourcemap remapping.
+- The coverage `exclude` list covers `src/generated/**`, the pure re-export barrels (`src/harness-exports.ts`, `src/public-exports.ts`), and the browser-only admin-ui view modules (`main.tsx`, `app.tsx`, `components/**`, `sections/**`, `icons.tsx`) whose behavior is validated by route/smoke assertions rather than the Node unit suite. Admin-ui logic modules (`logic.ts`, `state.ts`, `schemas.ts`, `api.ts`, `selectors.ts`) stay covered.
+- Coverage thresholds are regression floors, not aspirational 100% targets. No directory or aggregate threshold should be 100%; stable areas should normally retain 2–5 percentage points of measured headroom.
+- The gate ledger is intentionally small: four global gates plus critical-path gates for high-risk owners (`src/completion`, `src/gemini/accounts`, `src/gemini/completion-provider.ts`, `src/gemini/transport`, `src/http/openai`, `src/http/google`, `src/promptcompat`, `src/toolcall`). Do not reintroduce a per-file gate for every module; the global gate is the default floor.
+- Generated coverage output belongs under `coverage/` and must stay git-ignored.
 - Do not change `src/index.ts`, `src/public-exports.ts`, or `wrangler.jsonc` to make coverage work.
 
 ### 4. Validation & Error Matrix
 
-- `pnpm coverage` reports test wrappers or generated bundle paths only -> Vitest coverage include/exclude paths or sourcemap output are wrong; fix `vitest.config.mjs` and the coverage build sourcemaps.
-- `pnpm coverage:ci` reports zero files -> coverage filtering is invalid; do not rely on a passing exit code until the report includes `src/` rows.
-- Normal `pnpm build` leaves sourcemaps after a prior coverage run -> clean stale map files in the non-coverage build path.
+- `pnpm coverage:ci` reports zero `src/` files -> coverage include/exclude is wrong; fix `vitest.config.mjs`.
 - `pnpm coverage:ci` collects a report but `scripts/check-coverage.mjs` fails ->
-  an aggregate source, protected directory, or protected file gate regressed;
-  add focused tests or intentionally ratchet the gate with evidence.
-- A zero-coverage `node_modules` row changes aggregate source percentages -> the
-  gate is aggregating third-party coverage incorrectly; restrict source gates
-  to normalized `src/` paths.
-- A new authored source owner has no explicit gate -> add one when the owner handles external input, credentials, persistence, protocol adaptation, or other high-risk behavior; use the measured baseline with maintenance headroom.
-- Coverage commands import `dist/worker.test.js` instead of `dist-coverage/worker.test.js` -> normal builds can overwrite coverage sourcemaps and produce stale or misleading reports.
-- Production bundle exports test helpers -> smoke must fail; restore the production/test entrypoint split.
+  a global or critical-path gate regressed; add focused tests or intentionally
+  ratchet the gate with evidence.
+- A zero-coverage `node_modules` row changes aggregate percentages -> restrict
+  source gates to normalized `src/` paths.
+- A brittle 100% floor blocks unrelated work -> lower to the measured baseline with headroom.
+- Production bundle exports test helpers -> smoke must fail; restore the production entrypoint boundary.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: add a coverage-only build flag that writes to `dist-coverage/` and preserves normal build output.
-- Good: use a 92% line floor for a directory measured near 95% instead of a brittle 100% floor.
-- Base: use Vitest V8 coverage over `dist-coverage/worker.test.js` with `json-summary` output and directory gates.
-- Bad: change Vitest coverage include/exclude paths without verifying the report still contains covered `src/` files.
-- Bad: enable sourcemaps unconditionally for deploy builds.
-- Bad: share `dist/worker.test.js` between normal unit tests and coverage runs.
-- Bad: use `exclude-after-remap` without verifying the report still contains covered `src/` files.
-- Bad: lower a gate only until the current command turns green without recording the measured baseline and risk-specific rationale.
+- Good: instrument `src/**` directly and keep browser-only view modules excluded.
+- Good: use an 80% line floor for a directory measured near 83% instead of a brittle 100% floor.
+- Base: Vitest V8 coverage over sources with `json-summary` output plus a few critical-path gates.
+- Bad: reintroduce a coverage-only build bundle and sourcemap remapping.
+- Bad: add a per-file gate for every module so the ledger has to be re-tuned on every refactor.
+- Bad: lower a gate only until the current command turns green without recording the measured baseline.
 
 ### 6. Tests Required
 
-- Run `pnpm coverage` after changing Vitest coverage config, build sourcemaps, or the unit runner.
-- Run `pnpm coverage:ci` after changing aggregate, directory, or file thresholds.
-- Architecture/coverage script fixture summaries must include every required target so missing-data failures remain tested.
+- Run `pnpm coverage` after changing Vitest coverage config or the unit runner.
+- Run `pnpm coverage:ci` after changing aggregate or critical-path thresholds.
+- Coverage script fixture summaries must include every gated target so missing-data failures remain tested.
 - Run `pnpm unit` to confirm the non-coverage test workflow still passes.
-- Run `pnpm smoke` after changing `scripts/build.mjs` because production/test bundle separation is part of smoke coverage.
+- Run `pnpm smoke` after changing `scripts/build.mjs` because production/harness bundle separation is part of smoke coverage.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
-```json
-{
-  "scripts": {
-    "coverage": "vitest run --coverage"
-  }
-}
+```javascript
+// vitest.config.mjs
+coverage: { include: ["dist-coverage/worker.test.js"] };
 ```
 
-This can import the normal test bundle and miss the isolated coverage sourcemaps.
+This instruments a build artifact and needs sourcemap remapping to be readable.
 
 ```javascript
 const lineGates = [["src/http/stream", 100]];
@@ -526,19 +504,16 @@ This makes a single uncovered defensive line fail unrelated development.
 
 #### Correct
 
-```json
-{
-  "scripts": {
-    "coverage": "COVERAGE=1 pnpm build && TEST_BUNDLE=../../dist-coverage/worker.test.js vitest run --coverage"
-  }
-}
+```javascript
+// vitest.config.mjs
+coverage: { all: true, include: ["src/**/*.ts", "src/**/*.tsx"] };
 ```
 
 ```javascript
-const lineGates = [["src/http/stream", 94]];
+const lineGates = [["src/toolcall", 90]];
 ```
 
-This remains a meaningful regression floor for a directory measured near 98% while preserving maintenance headroom.
+This remains a meaningful regression floor for a directory measured near 93% while preserving maintenance headroom.
 
 ## Scenario: Tool Syntax Probing And Stream Sieve CPU
 

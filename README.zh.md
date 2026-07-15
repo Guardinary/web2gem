@@ -470,12 +470,12 @@ pnpm unit
 pnpm smoke
 ```
 
-构建脚本会输出两个 bundle：
+构建脚本输出生产 bundle 和可选的 harness bundle：
 
 | Bundle                | 来源                | 用途                              |
 | --------------------- | ------------------- | --------------------------------- |
 | `dist/worker.js`      | `src/index.ts`      | 由 Wrangler 部署的生产 Worker。   |
-| `dist/worker.test.js` | `src/test-index.ts` | 带内部辅助导出的本地测试 bundle。 |
+| `dist/harness.js` | `src/harness-exports.ts` | smoke/bench harness bundle（用 `--harness-bundle` 构建）。 |
 
 ## 测试
 
@@ -485,16 +485,16 @@ pnpm smoke
 | `pnpm check:worker-types` | 检查生成的 Cloudflare Worker binding 类型是否为最新。                               |
 | `pnpm typecheck`    | 使用严格编译器设置运行 TypeScript 检查。                                                   |
 | `pnpm check:arch`   | 强制导入边界，并检测源码依赖环。                                                           |
-| `pnpm unit:quick`   | 在需要时重建过期测试 bundle，然后用 Vitest 运行 `tests/unit/` 下的本地单元检查。           |
-| `pnpm unit`         | 构建两个 bundle，并用 Vitest 运行 `tests/unit/` 下的本地单元检查。                         |
-| `pnpm coverage`     | 构建隔离 coverage bundle，并将 Vitest V8 lcov 和 JSON summary 报告写入 `coverage/`。       |
-| `pnpm coverage:ci`  | 运行带全局阈值、源码行覆盖率和分支覆盖率门禁的 Vitest V8 coverage。                        |
+| `pnpm unit:quick`   | 用 Vitest 运行 `tests/unit/` 下的本地单元检查（`pnpm unit` 的别名）。                      |
+| `pnpm unit`         | 用 Vitest 直接针对 `src/` 源码运行 `tests/unit/` 下的本地单元检查，无需构建。              |
+| `pnpm coverage`     | 将 `src/**` 的 Vitest V8 lcov 和 JSON summary 报告写入 `coverage/`。                       |
+| `pnpm coverage:ci`  | 运行带全局阈值和关键路径行/分支覆盖率门禁的 Vitest V8 coverage。                           |
 | `pnpm smoke`        | 构建两个 bundle，验证 public exports、请求级路由、健康检查路由和 DSML 工具调用解析。       |
-| `pnpm check:bench`  | 针对代表性热路径运行性能回归门禁。                                                         |
+| `pnpm check:bench`  | 按需针对代表性热路径运行性能回归检查。                                                     |
 | `pnpm check:size`   | 构建生产 Worker，并检查 gzip bundle 体积预算。                                             |
 | `pnpm docker:smoke` | 构建 Docker 镜像，运行临时容器，并通过 Node adapter 验证健康检查、认证和 OpenAI 路由行为。 |
 
-Coverage 构建会把带 sourcemap 的测试 bundle 写入 `dist-coverage/`，避免普通 `dist/` 构建与 coverage 运行共享生成产物。Vitest 会发现 `tests/unit/*.test.mjs` wrapper 供 `pnpm unit` 使用；共享 case list 位于 `tests/unit/*.cases.mjs`，使用 Vitest-backed assertions；coverage 使用 Vitest 的 V8 provider 作用于隔离测试 bundle。`pnpm coverage` 和 `pnpm coverage:ci` 使用 Node runner，因此环境变量在 Windows 和 Unix shell 下处理一致。`pnpm coverage:ci` 还会通过 `scripts/check-coverage.mjs` 读取 `coverage/coverage-summary.json`，以捕获关键源码目录和选定高风险分支路径中的回归。
+Vitest 会发现 `tests/unit/*.test.mjs`，它们直接 import `src/**` 模块，因此 watch 模式与 coverage 都无需构建。coverage 使用 Vitest 的 V8 provider 直接作用于源码（lcov 与 JSON summary 报告）。`pnpm coverage` 和 `pnpm coverage:ci` 使用 Node runner，因此环境变量在 Windows 和 Unix shell 下处理一致。`pnpm coverage:ci` 还会通过 `scripts/check-coverage.mjs` 读取 `coverage/coverage-summary.json`，以捕获关键源码目录和选定高风险分支路径中的回归。
 
 推荐 pre-commit gate：
 
