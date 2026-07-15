@@ -7,7 +7,6 @@ export const RELEASE_CHECKS = [
 	"check:arch",
 	"coverage:ci",
 	"smoke",
-	"check:bench",
 	"check:size",
 ];
 

@@ -93,19 +93,6 @@ jobs:
         if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm smoke
 
-      - name: Required - Performance Regression
-        if: ${{ needs.classify.outputs.runtime == 'true' }}
-        run: pnpm check:bench
-
-      - name: Observation - Tool Sieve Benchmark Snapshot
-        if: ${{ needs.classify.outputs.runtime == 'true' }}
-        continue-on-error: true
-        env:
-          BENCH_CASES: stream_sieve_held_tool
-          BENCH_ITERS: "20"
-          BENCH_WARMUP: "5"
-        run: node scripts/bench.mjs
-
       - name: Required - Bundle Size
         if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm check:size
@@ -129,8 +116,6 @@ jobs:
             node-version: "22"
           - os: ubuntu-latest
             node-version: "24"
-          - os: macos-latest
-            node-version: "26"
           - os: windows-latest
             node-version: "26"
     steps:

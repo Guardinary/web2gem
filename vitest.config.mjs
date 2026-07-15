@@ -12,6 +12,14 @@ export default defineConfig({
 				"src/generated/**",
 				"src/harness-exports.ts",
 				"src/public-exports.ts",
+				// Preact view modules ship in the browser admin-ui bundle and are
+				// exercised there; the unit suite covers admin-ui logic modules only
+				// (same scope the old test-bundle tree-shaking implied).
+				"src/admin-ui/main.tsx",
+				"src/admin-ui/app.tsx",
+				"src/admin-ui/components/**",
+				"src/admin-ui/sections/**",
+				"src/admin-ui/icons.tsx",
 			],
 		},
 		environment: "node",

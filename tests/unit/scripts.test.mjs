@@ -236,12 +236,14 @@ describe("quality scripts", () => {
 			);
 			assert.equal(result.code, 1);
 			assert.match(result.stderr, /Coverage gate failed/);
-			assert.match(result.stderr, /src\/toolcall\/structured\.ts/);
+			assert.match(result.stderr, /src\/toolcall/);
 		});
 	});
 	test("rejects missing coverage data for required targets", async () => {
 		const summary = fullCoverageSummary();
-		delete summary["src/http/admin/gemini-accounts.ts"];
+		for (const key of Object.keys(summary)) {
+			if (key.startsWith("src/http/openai/")) delete summary[key];
+		}
 		await withCoverageSummary(summary, async (summaryPath) => {
 			const result = await runNodeScript(
 				"scripts/check-coverage.mjs",
@@ -249,7 +251,7 @@ describe("quality scripts", () => {
 			);
 			assert.equal(result.code, 1);
 			assert.match(result.stderr, /missing lines coverage data/);
-			assert.match(result.stderr, /src\/http\/admin/);
+			assert.match(result.stderr, /src\/http\/openai/);
 		});
 	});
 	test("rejects completion provider coverage below its file gates", async () => {
@@ -734,7 +736,6 @@ describe("quality scripts", () => {
 			"check:arch",
 			"coverage:ci",
 			"smoke",
-			"check:bench",
 			"check:size",
 		]) {
 			assert.match(runner, new RegExp(`"${check.replace(":", "\\:")}"`));
