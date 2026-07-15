@@ -5,7 +5,7 @@ import { errorLine, outputLine } from "./io.mjs";
 
 const benchmarkBundlePath = resolve(
 	process.cwd(),
-	process.env.BENCH_TEST_BUNDLE || "dist/worker.test.js",
+	process.env.BENCH_HARNESS_BUNDLE || "dist/harness.js",
 );
 let mod;
 try {
@@ -736,9 +736,9 @@ async function runGeminiStreamLongLineChunks() {
 			CFG,
 			"bench",
 			1,
-			0,
+			false,
 			null,
-			null,
+			{},
 		)) {
 			chunks += 1;
 			chars += delta.length;

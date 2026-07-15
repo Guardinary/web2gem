@@ -53,7 +53,11 @@
 			}
 		},
 		{
-			"includes": ["src/index.ts", "src/test-index.ts", "vitest.config.mjs"],
+			"includes": [
+				"src/index.ts",
+				"src/harness-exports.ts",
+				"vitest.config.mjs"
+			],
 			"linter": {
 				"rules": {
 					"style": {

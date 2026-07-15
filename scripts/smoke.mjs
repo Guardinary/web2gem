@@ -1,5 +1,5 @@
 const prod = await import("../dist/worker.js");
-const testMod = await import("../dist/worker.test.js");
+const testMod = await import("../dist/harness.js");
 const { readFile } = await import("node:fs/promises");
 const { errorLine, outputLine } = await import("./io.mjs");
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));

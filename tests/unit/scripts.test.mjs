@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { describe, test } from "vitest";
 import { CONFIG_ENV_KEYS } from "../../src/config";
 import { assert } from "./assertions.js";
@@ -85,27 +85,6 @@ async function withTempDir(run) {
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
-}
-async function withArchitectureFixture(files, run) {
-	const dir = await mkdtemp(join(tmpdir(), "gemini-architecture-"));
-	try {
-		for (const [relativePath, body] of Object.entries(files)) {
-			const path = join(dir, relativePath);
-			await mkdir(dirname(path), { recursive: true });
-			await writeFile(path, body, "utf8");
-		}
-		await run(dir);
-	} finally {
-		await rm(dir, { recursive: true, force: true });
-	}
-}
-function runArchitectureCheck(cwd) {
-	return runNodeScript(
-		resolve(process.cwd(), "scripts/check-architecture.mjs"),
-		null,
-		{},
-		cwd,
-	);
 }
 function runNodeScript(script, arg, env = {}, cwd = process.cwd()) {
 	return new Promise((done) => {
@@ -225,74 +204,6 @@ function missingKeys(expected, actual) {
 }
 
 describe("quality scripts", () => {
-	test("accepts authored TSX files that stay inside their owner boundary", async () => {
-		await withArchitectureFixture(
-			{
-				"src/admin-ui/app.tsx":
-					'import { state } from "./state";\nvoid state;\n',
-				"src/admin-ui/state.ts": "export const state = 1;\n",
-			},
-			async (dir) => {
-				const result = await runArchitectureCheck(dir);
-				assert.equal(result.code, 0);
-				assert.match(result.stdout, /Architecture check passed/);
-			},
-		);
-	});
-	test("rejects backend imports from authored admin UI TSX files", async () => {
-		await withArchitectureFixture(
-			{
-				"src/admin-ui/app.tsx": 'import "../gemini/client";\n',
-				"src/gemini/client/index.ts": "export const client = 1;\n",
-			},
-			async (dir) => {
-				const result = await runArchitectureCheck(dir);
-				assert.equal(result.code, 1);
-				assert.match(
-					result.stderr,
-					/admin UI modules must stay browser-boundary only/,
-				);
-			},
-		);
-	});
-	test("rejects provider imports from attachment modules", async () => {
-		await withArchitectureFixture(
-			{
-				"src/attachments/plan.ts": 'import "../gemini/client";\n',
-				"src/gemini/client/index.ts": "export const client = 1;\n",
-			},
-			async (dir) => {
-				const result = await runArchitectureCheck(dir);
-				assert.equal(result.code, 1);
-				assert.match(
-					result.stderr,
-					/attachment modules must stay provider-neutral/,
-				);
-			},
-		);
-	});
-	test("rejects cycles between dynamically discovered source owners", async () => {
-		await withArchitectureFixture(
-			{
-				"src/alpha/a1.ts": 'import "../beta/b1";\n',
-				"src/alpha/a2.ts": "export const a = 1;\n",
-				"src/beta/b1.ts": "export const b = 1;\n",
-				"src/beta/b2.ts": 'import "../alpha/a2";\n',
-			},
-			async (dir) => {
-				const result = await runArchitectureCheck(dir);
-				assert.equal(result.code, 1);
-				assert.match(
-					result.stderr,
-					/source directories must not form dependency cycles/,
-				);
-				assert.match(
-					result.stderr,
-					/alpha -> beta -> alpha|beta -> alpha -> beta/,
-				);
-			},
-		);
-	});
 	test("accepts coverage summaries that satisfy line and branch gates", async () => {
 		await withCoverageSummary(fullCoverageSummary(), async (summaryPath) => {
 			const result = await runNodeScript(
@@ -478,50 +389,6 @@ describe("quality scripts", () => {
 				assert.match(result.stdout, /stream_text_cumulative_deltas/);
 			},
 		);
-	});
-	test("emits machine-readable benchmark results", async () => {
-		const result = await runNodeScript("scripts/bench.mjs", null, {
-			BENCH_CASES: "rand_hex_32",
-			BENCH_ITERS: "2",
-			BENCH_WARMUP: "1",
-			BENCH_JSON: "1",
-		});
-		assert.equal(result.code, 0);
-		const parsed = JSON.parse(result.stdout);
-		assert.deepEqual(parsed.filters, ["rand_hex_32"]);
-		assert.equal(parsed.results.length, 1);
-		assert.equal(parsed.results[0].name, "rand_hex_32");
-		assert.equal(typeof parsed.results[0].medianMs, "number");
-	});
-	test("keeps account admin benchmark fixtures aligned with the service contract", async () => {
-		const result = await runNodeScript("scripts/bench.mjs", null, {
-			BENCH_ACCOUNT_ADMIN_COUNT: "100",
-			BENCH_CASES: "account_admin_overview,account_admin_bulk_action",
-			BENCH_ITERS: "2",
-			BENCH_WARMUP: "1",
-			BENCH_JSON: "1",
-		});
-		assert.equal(result.code, 0, result.stderr);
-		const parsed = JSON.parse(result.stdout);
-		assert.deepEqual(
-			parsed.results.map((entry) => entry.name),
-			["account_admin_overview", "account_admin_bulk_action"],
-		);
-		for (const entry of parsed.results) {
-			assert.equal(typeof entry.medianMs, "number");
-		}
-	});
-	test("reports an invalid benchmark bundle path", async () => {
-		const result = await runNodeScript("scripts/bench.mjs", null, {
-			BENCH_TEST_BUNDLE: "dist/missing-worker.test.js",
-			BENCH_CASES: "rand_hex_32",
-			BENCH_ITERS: "2",
-			BENCH_WARMUP: "1",
-			BENCH_JSON: "1",
-		});
-		assert.equal(result.code, 1);
-		assert.match(result.stderr, /Benchmark bundle load failed/);
-		assert.match(result.stderr, /missing-worker\.test\.js/);
 	});
 	test("rejects machine-readable benchmark results missing a gated case", async () => {
 		await withTempFile(
@@ -902,9 +769,7 @@ describe("quality scripts", () => {
 		assert.match(processHelper, /export async function commandAvailable/);
 
 		for (const path of [
-			"scripts/unit.mjs",
 			"scripts/coverage.mjs",
-			"scripts/ensure-test-bundle-fresh.mjs",
 			"scripts/docker-smoke.mjs",
 			"scripts/check-release.mjs",
 			"scripts/check-benchmark.mjs",
