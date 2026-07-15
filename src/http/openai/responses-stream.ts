@@ -7,7 +7,7 @@ import {
 } from "../../completion";
 import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
-import type { ResolvedModel } from "../../models";
+import type { ResolvedModelOk } from "../../models";
 import type { FileRef } from "../../completion/types";
 import {
 	errorLogSummary,
@@ -37,7 +37,7 @@ type ResponseOutputItem = Record<string, unknown> & {
 type StreamResponsesParams = {
 	provider: CompletionProvider;
 	rid: string;
-	rm: Extract<ResolvedModel, { name: string }>;
+	rm: ResolvedModelOk;
 	prompt: string;
 	fileRefs: FileRef[] | null;
 	tools: unknown;

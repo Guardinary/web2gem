@@ -1,3 +1,5 @@
+import { timingSafeStringEqual } from "../../shared/crypto";
+
 type AuthConfig = { api_keys?: readonly string[] | null | undefined };
 
 // Accept the caller key from Bearer, x-api-key, x-goog-api-key, or ?key=.
@@ -28,13 +30,4 @@ export function authorized(
 		if (matched) return true;
 	}
 	return false;
-}
-
-function timingSafeStringEqual(a: string, b: string): boolean {
-	const max = Math.max(a.length, b.length);
-	let diff = a.length ^ b.length;
-	for (let i = 0; i < max; i++) {
-		diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
-	}
-	return diff === 0;
 }

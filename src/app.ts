@@ -1,12 +1,8 @@
 import { createRuntimeConfig, getConfig, RuntimeConfigError } from "./config";
-import {
-	authorized,
-	corsHeaders,
-	jsonResponse,
-	jsonTextResponse,
-	openAIErrorResponse,
-	withCORS,
-} from "./http";
+import { authorized } from "./http/core/auth";
+import { corsHeaders, withCORS, withHeaders } from "./http/core/cors";
+import { jsonResponse, jsonTextResponse } from "./http/core/json";
+import { openAIErrorResponse } from "./http/openai/errors";
 import {
 	handleChat,
 	handleImageEdits,
@@ -84,11 +80,7 @@ export async function handleApplicationRequest(
 	let requestStartMs = 0;
 	const respond = (response: Response) => {
 		const corsResponse = withCORS(response, request);
-		const completed = withResponseHeader(
-			corsResponse,
-			"x-request-id",
-			requestId,
-		);
+		const completed = withHeaders(corsResponse, [["x-request-id", requestId]]);
 		if (activeConfig?.log_requests) {
 			logStage(activeConfig, "request_complete", {
 				requestId,
@@ -167,25 +159,6 @@ export async function handleApplicationRequest(
 				500,
 			),
 		);
-	}
-}
-
-function withResponseHeader(
-	response: Response,
-	name: string,
-	value: string,
-): Response {
-	try {
-		response.headers.set(name, value);
-		return response;
-	} catch (_) {
-		const headers = new Headers(response.headers);
-		headers.set(name, value);
-		return new Response(response.body, {
-			status: response.status,
-			statusText: response.statusText,
-			headers,
-		});
 	}
 }
 

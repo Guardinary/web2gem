@@ -75,17 +75,21 @@ export function isValidCORSHeaderToken(v: unknown): boolean {
 }
 
 export function withCORS(response: Response, request: Request): Response {
-	const cors = corsHeaders(request);
+	return withHeaders(response, Object.entries(corsHeaders(request)));
+}
+
+// Set headers in place; clone the response when the platform hands us one
+// with immutable headers.
+export function withHeaders(
+	response: Response,
+	entries: readonly (readonly [string, string])[],
+): Response {
 	try {
-		for (const [key, value] of Object.entries(cors))
-			response.headers.set(key, value);
+		for (const [key, value] of entries) response.headers.set(key, value);
 		return response;
-	} catch (_) {
-		// Some platform-created responses expose immutable headers; keep the old
-		// wrapping path for those rare cases.
-	}
+	} catch (_) {}
 	const headers = new Headers(response.headers);
-	for (const [key, value] of Object.entries(cors)) headers.set(key, value);
+	for (const [key, value] of entries) headers.set(key, value);
 	return new Response(response.body, {
 		status: response.status,
 		statusText: response.statusText,

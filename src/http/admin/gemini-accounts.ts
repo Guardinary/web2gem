@@ -1,4 +1,5 @@
 import type { RuntimeConfig, WorkerEnv } from "../../config";
+import { timingSafeStringEqual } from "../../shared/crypto";
 import {
 	createGeminiAccountAdminServiceFromEnv,
 	GeminiAccountAdminError,
@@ -192,13 +193,4 @@ export function assertAdminBodyAbsent(request: Request): void {
 		"admin_request_body_not_allowed",
 		"request body is not allowed for this admin route",
 	);
-}
-
-function timingSafeStringEqual(a: string, b: string): boolean {
-	const max = Math.max(a.length, b.length);
-	let diff = a.length ^ b.length;
-	for (let i = 0; i < max; i++) {
-		diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
-	}
-	return diff === 0;
 }

@@ -17,7 +17,7 @@ import type {
 	CompletionStreamEvent,
 } from "../../completion";
 import type { RuntimeConfig } from "../../config";
-import type { ResolvedModel } from "../../models";
+import type { ResolvedModelOk } from "../../models";
 import type { FileRef } from "../../completion/types";
 import { errorLogSummary, upstreamErrorCode } from "../../shared/errors";
 import { log } from "../../shared/logging";
@@ -36,7 +36,6 @@ type StreamIssue = Extract<
 	CompletionStreamEvent,
 	{ type: "warning" } | { type: "stream_error" }
 >;
-type ResolvedCompletionModel = Extract<ResolvedModel, { name: string }>;
 type OpenAIChatChunkWriter = (
 	delta: Record<string, unknown>,
 	finish: string | null,
@@ -47,7 +46,7 @@ type OpenAIChatPlainStreamParams = {
 	id: string;
 	model: string;
 	prompt: string;
-	rm: ResolvedCompletionModel;
+	rm: ResolvedModelOk;
 	fileRefs: FileRef[] | null;
 	includeUsage: boolean;
 	promptTokens: number;
@@ -258,7 +257,7 @@ async function finishOpenAIChatStream(
 async function writeOpenAIChatInterrupted(
 	write: SSEWrite,
 	cfg: RuntimeConfig,
-	rm: ResolvedCompletionModel,
+	rm: ResolvedModelOk,
 	issue: StreamIssue,
 ): Promise<void> {
 	const warning = `\n\n${streamInterruptedWarningText(issue.error)}`;

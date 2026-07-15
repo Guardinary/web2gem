@@ -5,7 +5,7 @@ import {
 } from "../../completion";
 import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
-import type { ResolvedModel } from "../../models";
+import type { ResolvedModelOk } from "../../models";
 import type { FileRef, LooseRequest } from "../../completion/types";
 import { streamGoogleToolCompletionEvents } from "../../completion/google";
 import { tokenCountFromCounts } from "../../shared/tokens";
@@ -24,11 +24,10 @@ import {
 	writeGoogleStreamError,
 } from "./format";
 
-type ResolvedCompletionModel = Extract<ResolvedModel, { name: string }>;
 type GooglePlainStreamParams = {
 	provider: CompletionProvider;
 	prompt: string;
-	rm: ResolvedCompletionModel;
+	rm: ResolvedModelOk;
 	fileRefs: FileRef[] | null;
 	promptTokens: number;
 	signal: AbortSignal;

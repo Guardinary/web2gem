@@ -22,6 +22,8 @@ export type ResolvedModel =
 			dynamicProviderId?: undefined;
 	  };
 
+export type ResolvedModelOk = Extract<ResolvedModel, { name: string }>;
+
 export type GeminiRouteTuple = {
 	providerModelId: string;
 	capacity: 1 | 2 | 3 | 4;
