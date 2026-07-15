@@ -45,21 +45,17 @@ export async function prepareGoogleCompletion(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
 	req: LooseRequest,
-	path: string,
+	modelName: string,
 ): Promise<PreparedGoogleCompletion | { error: GoogleCompletionPrepareError }> {
-	const m = /\/v(?:1beta|1)\/models\/([^:?/]+)/.exec(path);
-	const modelFromPath = m?.[1]
-		? decodeURIComponent(m[1]).replace(/^models\//, "")
-		: undefined;
 	const rm = await resolveCompletionModel(
 		provider,
-		modelFromPath,
+		modelName,
 		cfg.default_model,
 	);
 	if (rm.name === undefined) {
 		log(
 			cfg,
-			`google completion model rejected model=${String(modelFromPath ?? "(default)")}`,
+			`google completion model rejected model=${modelName || "(empty)"}`,
 		);
 		return {
 			error: { message: rm.error, status: 400, code: "model_not_found" },

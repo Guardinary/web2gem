@@ -1,5 +1,10 @@
 import type { JSX } from "preact";
-import { clearAdminKey, loadAccounts, saveAdminKey } from "../actions";
+import {
+	clearAdminKey,
+	loadAccounts,
+	saveAdminKey,
+	updateAdminKey,
+} from "../actions";
 import { Icon } from "../icons";
 import { tr } from "../i18n";
 import {
@@ -70,10 +75,7 @@ export function AuthPanel(): JSX.Element {
 							placeholder="ADMIN_KEY"
 							value={adminKey.value}
 							onInput={(event) => {
-								adminKey.value = (
-									event.currentTarget as HTMLInputElement
-								).value;
-								connectionVerified.value = false;
+								updateAdminKey((event.currentTarget as HTMLInputElement).value);
 							}}
 						/>
 					</label>

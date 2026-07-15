@@ -556,6 +556,20 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
   mutation schemas from the admin API.
 - Shared UI state contains search, derived-state filter, pagination, selection,
   import/edit drafts, scoped busy flags, confirmation, and transient toasts.
+- `updateAdminKey(value)` is the sole browser credential-draft mutation action.
+  Credential restore/save/change/clear invalidates the current admin session
+  generation and every server-derived account/model-routing state.
+- `loadAccounts(direction, verifyConnection)` captures an account-load
+  generation plus the requested query, state, cursor stack, and page index; it
+  commits that page as one snapshot only while it remains the newest load.
+- `runAdminSessionOperation(session, operation, options)` is the sole async
+  execution boundary for browser Admin API reads and mutations. It returns an
+  explicit success/failure result after checking the captured session.
+- `AdminApiSession` is `{ adminKey: string, signal: AbortSignal }`. Every Admin
+  API helper accepts this context instead of a bare key, and every fetch in one
+  logical operation, including limit-fallback chunks, reuses its signal.
+- Model-routing overview `version` is the decimal, monotonically increasing D1
+  `pool_version`; the UI uses it as the authoritative snapshot order.
 - Row actions: refresh, rename, enable/disable, delete. Bulk actions: refresh,
   enable, disable, delete.
 
@@ -579,13 +593,54 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
 - The strict browser decoder rejects old wide DTOs and unknown protocol fields.
 - Admin credentials stay in browser storage/header use only; never place them in
   query strings or logs. All UI text remains English/Simplified Chinese.
+- Async admin reads and mutations capture the current credential plus session
+  generation before the request. A response from an invalidated generation must
+  not update protected state, busy flags, connection state, or feedback.
+- One `AbortController` owns each admin session generation. Invalidating the
+  generation aborts the controller before publishing a new one; the Admin API
+  request owner checks the signal immediately before every fetch and passes it
+  through `RequestInit.signal`.
+- Every browser Admin API call goes through `runAdminSessionOperation`. A current
+  `AdminApiError` with status `401` invalidates the complete protected session
+  before feedback is shown; non-auth failures retain the verified session and
+  may update only operation-scoped error state.
+- Model-routing responses commit through one version-aware state transition.
+  Older snapshots never replace newer state; a completed mutation still settles
+  its own family from the newest accepted snapshot, while unrelated dirty/busy
+  family drafts remain intact.
+- Account rows, stats, selection, pagination, model-routing overview/drafts,
+  edit/confirmation state, and scoped busy flags are one protected session
+  boundary. Clear them together when the credential changes or verification
+  fails; protected panels also gate rendering on `connectionVerified`.
+- Account/model mutations require the same currently verified session even when
+  called outside the rendered controls. A non-empty key alone does not authorize
+  browser-side mutation flow.
+- Concurrent account reads use latest-request-wins ordering inside one credential
+  generation. Rows, stats, next cursor, cursor stack, page index, and selection
+  commit together; an older response and its `finally` block are ignored.
 - Keep the desktop/mobile split, accessible dialogs, scoped busy states, visible
   focus, zoom support, and reduced-motion behavior.
 
 ### 4. Validation & Error Matrix
 
 - Missing admin key -> local error and no fetch; invalid key -> sanitized API
-  error and connection remains unverified.
+  error, connection remains unverified, and all protected state is empty.
+- Previously verified session receives 401 from an account read or mutation ->
+  invalidate the session generation, clear all protected state and busy flags,
+  expand connection settings, and ignore later responses from that generation.
+- Credential changes while an admin request is in flight -> invalidate the old
+  generation immediately, abort its active fetches, prevent any later fallback
+  chunks, and ignore its eventual success/error in UI state.
+- Session invalidation between two 40-account import or 100-account action
+  chunks -> the next chunk fails locally with `AbortError`; zero further fetches.
+- Concurrent model-family saves returned out of order -> retain the overview
+  with the greatest decimal `pool_version`, settle both saved family drafts, and
+  never restore routes from the older response.
+- Concurrent account reads returned out of order -> retain the newest requested
+  page and its matching stats/cursors; an older response never clears the newer
+  loading state or replaces its data.
+- Non-empty draft ADMIN_KEY without successful verification -> protected panels
+  are absent and import/update/delete/model-routing actions perform no request.
 - Old wide account DTO, old stats, or old mutation shape -> decoder failure.
 - Empty batch textarea -> single-account form remains authoritative; malformed
   non-empty row -> client validation error.
@@ -600,12 +655,26 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
 
 - Good: reload the overview after mutation and show one concise toast.
 - Good: table and cards consume the same `GeminiAccount` summary type.
+- Good: route all credential input through `updateAdminKey` and compare the
+  captured session generation before committing an async response.
+- Good: pass one `AdminApiSession` from the action boundary through every API
+  helper and fallback request in the logical operation.
+- Good: use the server `pool_version` to order overview snapshots and reconcile
+  mutation completion against the newest accepted overview.
+- Good: construct a requested account page without mutating live pagination,
+  then atomically commit it only if its load generation is still current.
 - Base: issue is `-` for healthy accounts and shows issue plus remaining
   cooldown for cooling accounts.
 - Bad: mirroring D1 columns in `admin-ui/types.ts`.
 - Bad: CSV export, diagnostics panel, Check, advanced filters, duplicate enabled
   badge, or editable health state.
 - Bad: deriving secret presence or previews from raw Cookie material.
+- Bad: only flip `connectionVerified` on credential change while leaving old
+  account/model-routing state or allowing an old request to repopulate it.
+- Bad: let every response matching only the credential generation overwrite the
+  account page, or allow import because the draft key is merely non-empty.
+- Bad: pass a captured key string into a batching helper, because it can keep
+  issuing writes after its owning browser session has been invalidated.
 
 ### 6. Tests Required
 
@@ -615,6 +684,20 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
 - Import fallback, non-limit failure, compact result merging, load verification,
   cursor navigation, display helpers, confirmation copy, and bare-cookie
   validation.
+- Credential-change tests must assert all protected state clears together.
+  Deferred-request tests must resolve an old successful verification after a
+  key change and assert it cannot repopulate accounts, stats, routing, or
+  connection state.
+- Return 401 from both a normal account read and a model-routing mutation after
+  verification; assert the complete protected session is invalidated in both
+  cases.
+- Resolve concurrent family-save responses in reverse version order and assert
+  that the newest overview plus all settled drafts remain visible.
+- Resolve concurrent account-overview responses in reverse request order and
+  assert rows/stats/pagination remain from the newest request.
+- Attempt import with a non-empty but unverified key and assert zero fetches.
+- Start a fallback import, invalidate the session during its first chunk, and
+  assert the active fetch signal aborts and no remaining chunks are requested.
 - UI route headers/zero-D1 behavior, non-GET 404, no external assets, and no
   credential examples or query-string admin key.
 - Rebuild `src/generated/admin-ui.ts` through `pnpm build`; never hand-edit it.
@@ -636,6 +719,76 @@ type GeminiAccount = GeminiAccountSummary;
 showToast(resultSummary(action, mutation));
 await loadAccounts();
 ```
+
+#### Wrong
+
+```typescript
+adminKey.value = nextKey;
+connectionVerified.value = false;
+```
+
+#### Correct
+
+```typescript
+updateAdminKey(nextKey); // Invalidates protected state and old async commits.
+```
+
+#### Wrong
+
+```typescript
+if (isCurrentAdminSession(session)) accounts.value = overview.items;
+await createAccount(adminKey.value, input); // Key has not been verified.
+```
+
+#### Correct
+
+```typescript
+if (isCurrentAccountLoad(session, loadGeneration)) {
+  commitAccountPage(requestedPage, overview);
+}
+const session = currentVerifiedAdminSession();
+if (!session) return;
+```
+
+#### Wrong
+
+```typescript
+try {
+  await runAccountAction(adminKey.value, action, identifiers);
+} catch (error) {
+  showToast(error.message, "error"); // Leaves a rejected session verified.
+}
+```
+
+#### Correct
+
+```typescript
+const session = currentVerifiedAdminSession();
+if (!session) return;
+const result = await runAdminSessionOperation(
+  session,
+  () => runAccountAction(session, action, identifiers),
+  { fallbackMessage: `${action} failed` },
+);
+if (!result.ok) return;
+```
+
+#### Wrong
+
+```typescript
+await createAccountsWithLimitFallback(session.adminKey, input);
+```
+
+The fallback loop can keep issuing requests after the captured key's session is
+no longer current.
+
+#### Correct
+
+```typescript
+await createAccountsWithLimitFallback(session, input);
+```
+
+Each request checks and forwards the session's shared abort signal.
 
 ## Scenario: Oversized Inline Long Context
 

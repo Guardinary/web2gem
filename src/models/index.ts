@@ -182,10 +182,21 @@ export function buildGeminiModelCatalog(
 		},
 	];
 	const seen = new Set(entries.map((entry) => entry.id));
+	const exactDynamicIds = new Set<string>();
+	for (const route of routes) {
+		if (
+			route.available &&
+			!route.family &&
+			!familyForProviderModelId(route.providerModelId) &&
+			!isKnownPublicModelName(route.providerModelId)
+		)
+			exactDynamicIds.add(route.providerModelId);
+	}
 	for (const route of routes) {
 		if (!route.available) continue;
 		const family =
 			route.family || familyForProviderModelId(route.providerModelId);
+		if (!family && isKnownPublicModelName(route.providerModelId)) continue;
 		const [standardId, extendedId] = family
 			? FAMILY_PUBLIC_NAMES[family]
 			: [route.providerModelId, `${route.providerModelId}${EXTENDED_SUFFIX}`];
@@ -193,6 +204,7 @@ export function buildGeminiModelCatalog(
 			[standardId, false],
 			[extendedId, true],
 		] as const) {
+			if (extended && exactDynamicIds.has(id)) continue;
 			if (seen.has(id)) continue;
 			seen.add(id);
 			entries.push({
@@ -247,6 +259,10 @@ export function familyForProviderModelId(
 		KNOWN_PROVIDER_MODELS[providerModelId as keyof typeof KNOWN_PROVIDER_MODELS]
 			?.family ?? null
 	);
+}
+
+function isKnownPublicModelName(value: string): boolean {
+	return Object.hasOwn(MODELS, value);
 }
 
 export function modelNumberForProviderModelId(providerModelId: string): number {

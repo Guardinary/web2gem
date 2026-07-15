@@ -33,8 +33,12 @@ export class AdminApiError extends Error {
 	}
 }
 
-export type ListOptions = {
+export type AdminApiSession = {
 	adminKey: string;
+	signal: AbortSignal;
+};
+
+export type ListOptions = {
 	cursor?: string;
 	q?: string;
 	state?: GeminiAccountState | "";
@@ -56,14 +60,16 @@ function headers(adminKey: string, json: boolean): HeadersInit {
 }
 
 async function request(
-	adminKey: string,
+	session: AdminApiSession,
 	path: string,
 	init: { method?: string; body?: unknown } = {},
 ): Promise<unknown> {
+	assertAdminApiSessionActive(session);
 	const hasBody = Object.hasOwn(init, "body");
 	const requestInit: RequestInit = {
 		method: init.method || "GET",
-		headers: headers(adminKey, hasBody),
+		headers: headers(session.adminKey, hasBody),
+		signal: session.signal,
 	};
 	if (hasBody) requestInit.body = JSON.stringify(init.body ?? {});
 	const response = await fetch(path, requestInit);
@@ -80,6 +86,13 @@ async function request(
 		);
 	}
 	return body;
+}
+
+function assertAdminApiSessionActive(session: AdminApiSession): void {
+	if (!session.signal.aborted) return;
+	const error = new Error("Admin session is no longer active");
+	error.name = "AbortError";
+	throw error;
 }
 
 function responseError(body: unknown): {
@@ -100,6 +113,7 @@ function responseError(body: unknown): {
 }
 
 export async function getAccountOverview(
+	session: AdminApiSession,
 	options: ListOptions,
 ): Promise<AccountOverview> {
 	const params = new URLSearchParams({ limit: "200" });
@@ -107,25 +121,25 @@ export async function getAccountOverview(
 	if (options.q) params.set("q", options.q);
 	if (options.state) params.set("state", options.state);
 	return parseOverview(
-		await request(options.adminKey, `${API_PATH}?${params.toString()}`),
+		await request(session, `${API_PATH}?${params.toString()}`),
 	);
 }
 
 export async function getModelRoutingOverview(
-	adminKey: string,
+	session: AdminApiSession,
 ): Promise<ModelRoutingOverview> {
 	return parseModelRoutingOverview(
-		await request(adminKey, MODEL_ROUTING_API_PATH),
+		await request(session, MODEL_ROUTING_API_PATH),
 	);
 }
 
 export async function replaceModelRoutePriority(
-	adminKey: string,
+	session: AdminApiSession,
 	family: ModelFamily,
 	routes: readonly ModelRouteTuple[],
 ): Promise<ModelRoutingOverview> {
 	return parseModelRoutingOverview(
-		await request(adminKey, `${MODEL_ROUTING_API_PATH}/${family}`, {
+		await request(session, `${MODEL_ROUTING_API_PATH}/${family}`, {
 			method: "PUT",
 			body: { routes },
 		}),
@@ -133,18 +147,18 @@ export async function replaceModelRoutePriority(
 }
 
 export async function resetModelRoutePriority(
-	adminKey: string,
+	session: AdminApiSession,
 	family: ModelFamily,
 ): Promise<ModelRoutingOverview> {
 	return parseModelRoutingOverview(
-		await request(adminKey, `${MODEL_ROUTING_API_PATH}/${family}`, {
+		await request(session, `${MODEL_ROUTING_API_PATH}/${family}`, {
 			method: "DELETE",
 		}),
 	);
 }
 
 export async function createAccount(
-	adminKey: string,
+	session: AdminApiSession,
 	input: CreateInput,
 ): Promise<MutationResult> {
 	const payload: Record<string, string> = {
@@ -154,16 +168,16 @@ export async function createAccount(
 	};
 	if (input.label) payload.label = input.label;
 	return parseMutation(
-		await request(adminKey, API_PATH, { method: "POST", body: payload }),
+		await request(session, API_PATH, { method: "POST", body: payload }),
 	);
 }
 
 export async function createAccounts(
-	adminKey: string,
+	session: AdminApiSession,
 	input: CreateBatchInput,
 ): Promise<MutationResult> {
 	return parseMutation(
-		await request(adminKey, API_PATH, {
+		await request(session, API_PATH, {
 			method: "POST",
 			body: {
 				provider: "gemini",
@@ -179,11 +193,11 @@ export async function createAccounts(
 }
 
 export async function createAccountsWithLimitFallback(
-	adminKey: string,
+	session: AdminApiSession,
 	input: CreateBatchInput,
 ): Promise<MutationResult> {
 	try {
-		return await createAccounts(adminKey, input);
+		return await createAccounts(session, input);
 	} catch (error) {
 		if (
 			!(error instanceof AdminApiError) ||
@@ -200,7 +214,7 @@ export async function createAccountsWithLimitFallback(
 		offset += WORKER_ACCOUNT_IMPORT_BATCH_SIZE
 	)
 		results.push(
-			await createAccounts(adminKey, {
+			await createAccounts(session, {
 				accounts: input.accounts.slice(
 					offset,
 					offset + WORKER_ACCOUNT_IMPORT_BATCH_SIZE,
@@ -211,11 +225,11 @@ export async function createAccountsWithLimitFallback(
 }
 
 export async function updateAccount(
-	adminKey: string,
+	session: AdminApiSession,
 	input: UpdateInput,
 ): Promise<MutationResult> {
 	return parseMutation(
-		await request(adminKey, accountResourcePath(input.id), {
+		await request(session, accountResourcePath(input.id), {
 			method: "PATCH",
 			body: { label: input.label },
 		}),
@@ -223,14 +237,14 @@ export async function updateAccount(
 }
 
 export async function runAccountAction(
-	adminKey: string,
+	session: AdminApiSession,
 	action: AccountAction,
 	identifiers: AccountIdentifier[],
 ): Promise<MutationResult> {
 	if (!identifiers.length)
 		return { processed: 0, changed: 0, unchanged: 0, failed: 0 };
 	try {
-		return await requestBulkAccountAction(adminKey, action, identifiers);
+		return await requestBulkAccountAction(session, action, identifiers);
 	} catch (error) {
 		if (
 			!(error instanceof AdminApiError) ||
@@ -248,7 +262,7 @@ export async function runAccountAction(
 	)
 		results.push(
 			await requestBulkAccountAction(
-				adminKey,
+				session,
 				action,
 				identifiers.slice(offset, offset + BULK_ACTION_BATCH_SIZE),
 			),
@@ -257,12 +271,12 @@ export async function runAccountAction(
 }
 
 async function requestBulkAccountAction(
-	adminKey: string,
+	session: AdminApiSession,
 	action: AccountAction,
 	identifiers: AccountIdentifier[],
 ): Promise<MutationResult> {
 	return parseMutation(
-		await request(adminKey, `${API_PATH}/actions`, {
+		await request(session, `${API_PATH}/actions`, {
 			method: "POST",
 			body: { action, ids: identifiers.map(({ id }) => id) },
 		}),

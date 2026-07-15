@@ -675,6 +675,111 @@ export const cases = [
 		},
 	],
 	[
+		"keeps exact dynamic provider IDs ahead of synthesized extended aliases",
+		async () => {
+			const nowMs = 100000;
+			const store = new FakeStore([account("dynamic")]);
+			store.listAccountCapabilities = async () => [
+				capabilityRow("dynamic", "future-model", 3, 13, 7, 0, nowMs),
+				capabilityRow("dynamic", "future-model-extended", 3, 13, 8, 1, nowMs),
+			];
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => nowMs,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+
+			const catalog = await pool.modelCatalog(nowMs - 1000);
+			assert.deepEqual(
+				catalog.entries.map((entry) => entry.id),
+				[
+					"gemini-3.5-flash",
+					"gemini-3.5-flash-extended",
+					"future-model",
+					"future-model-extended",
+					"future-model-extended-extended",
+				],
+			);
+			assert.deepEqual(
+				await pool.resolveModel(
+					"future-model-extended",
+					"gemini-3.5-flash",
+					nowMs - 1000,
+				),
+				{
+					name: "future-model-extended",
+					family: null,
+					extended: false,
+					dynamicProviderId: "future-model-extended",
+				},
+			);
+			assert.deepEqual(
+				await pool.resolveModel(
+					"future-model-extended-extended",
+					"gemini-3.5-flash",
+					nowMs - 1000,
+				),
+				{
+					name: "future-model-extended-extended",
+					family: null,
+					extended: true,
+					dynamicProviderId: "future-model-extended",
+				},
+			);
+		},
+	],
+	[
+		"reserves known public names for their static model families",
+		async () => {
+			const nowMs = 100000;
+			const store = new FakeStore([account("collision"), account("known-pro")]);
+			store.listAccountCapabilities = async () => [
+				capabilityRow("collision", "gemini-3.1-pro", 3, 13, 7, 0, nowMs),
+				capabilityRow("known-pro", "9d8ca3786ebdfbea", 1, 12, 3, 0, nowMs),
+			];
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => nowMs,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+
+			const catalog = await pool.modelCatalog(nowMs - 1000);
+			const proEntry = catalog.entries.find(
+				(entry) => entry.id === "gemini-3.1-pro",
+			);
+			assert.deepEqual(proEntry, {
+				id: "gemini-3.1-pro",
+				family: "pro",
+				providerModelId: "9d8ca3786ebdfbea",
+				displayName: "9d8ca3786ebdfbea",
+				description: "9d8ca3786ebdfbea description",
+				extended: false,
+			});
+
+			const resolved = await pool.resolveModel(
+				"gemini-3.1-pro",
+				"gemini-3.5-flash",
+				nowMs - 1000,
+			);
+			const candidates = await pool.routeCandidatesForModel(
+				resolved,
+				nowMs - 1000,
+			);
+			assert.deepEqual(
+				candidates.map((route) => route.providerModelId),
+				["9d8ca3786ebdfbea"],
+			);
+			const lease = await pool.acquireLease(baseConfig(), {
+				routeRequirement: {
+					candidates,
+					fallbackRoute: mod.basicRouteForFamily("pro"),
+				},
+				capabilityMode: "prefer",
+				capabilityFreshAfterMs: nowMs - 1000,
+			});
+			assert.equal(lease.accountId, "known-pro");
+			lease.release();
+		},
+	],
+	[
 		"writes observed response cookies only after filtering and identity checks",
 		async () => {
 			const row = account("passive");

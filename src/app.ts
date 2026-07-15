@@ -15,6 +15,7 @@ import {
 	handleResponses,
 } from "./http/openai";
 import { handleGoogleGenerate } from "./http/google/handlers";
+import { parseGoogleGenerationPath } from "./http/google/model-path";
 import {
 	googleModelDetailJson,
 	googleModelListJson,
@@ -54,11 +55,6 @@ import { buildGeminiModelCatalog, type GeminiModelCatalog } from "./models";
 import type { RuntimeConfig, WorkerEnv } from "./config";
 import type { GeminiAccountRuntime } from "./gemini/accounts/runtime";
 import type { RouteJsonPostResult } from "./http/core/route-json";
-
-const GOOGLE_GENERATE_PATH_RE =
-	/^\/v(?:1beta|1)\/models\/[^/?#]+:generateContent$/;
-const GOOGLE_STREAM_GENERATE_PATH_RE =
-	/^\/v(?:1beta|1)\/models\/[^/?#]+:streamGenerateContent$/;
 
 export type ApplicationExecutionContext = Pick<
 	ExecutionContext,
@@ -327,7 +323,8 @@ async function handlePostRoute(
 			"image",
 		);
 	}
-	if (GOOGLE_GENERATE_PATH_RE.test(path)) {
+	const googleRoute = parseGoogleGenerationPath(path);
+	if (googleRoute) {
 		return handleGoogleGenerationJsonPost(
 			request,
 			cfg,
@@ -339,23 +336,6 @@ async function handlePostRoute(
 					cfg,
 					createProvider(cfg, accountRuntime),
 					path,
-					false,
-				),
-		);
-	}
-	if (GOOGLE_STREAM_GENERATE_PATH_RE.test(path)) {
-		return handleGoogleGenerationJsonPost(
-			request,
-			cfg,
-			env,
-			path,
-			(body, accountRuntime) =>
-				handleGoogleGenerate(
-					body,
-					cfg,
-					createProvider(cfg, accountRuntime),
-					path,
-					true,
 				),
 		);
 	}

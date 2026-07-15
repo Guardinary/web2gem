@@ -16,7 +16,7 @@ import type { ModelFamily, ModelRoutingFamily } from "../types";
 const FAMILY_ORDER = ["pro", "flash", "flash_lite"] as const;
 
 export function ModelRoutingSection(): JSX.Element {
-	const overview = modelRouting.value;
+	const overview = connectionVerified.value ? modelRouting.value : null;
 	return (
 		<section class="section-block" aria-labelledby="model-routing-title">
 			<div class="section-heading">

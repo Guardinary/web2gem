@@ -118,16 +118,25 @@ export const cases = [
 					}),
 				/admin model routing response is invalid/,
 			);
+			assert.throws(
+				() =>
+					mod.parseModelRoutingOverview({
+						...overview,
+						version: "not-a-pool-version",
+					}),
+				/admin model routing response is invalid/,
+			);
 
 			const originalFetch = globalThis.fetch;
 			const requests = [];
+			const session = uiAdminApiSession();
 			try {
 				globalThis.fetch = async (path, init = {}) => {
 					requests.push({ path, init });
 					return Response.json(overview);
 				};
-				await mod.getModelRoutingOverview("admin-secret");
-				await mod.replaceModelRoutePriority("admin-secret", "pro", [
+				await mod.getModelRoutingOverview(session);
+				await mod.replaceModelRoutePriority(session, "pro", [
 					{
 						providerModelId: "9d8ca3786ebdfbea",
 						capacity: 3,
@@ -135,7 +144,7 @@ export const cases = [
 						modelNumber: 3,
 					},
 				]);
-				await mod.resetModelRoutePriority("admin-secret", "pro");
+				await mod.resetModelRoutePriority(session, "pro");
 				assert.deepEqual(
 					requests.map((item) => [item.path, item.init.method || "GET"]),
 					[
@@ -154,6 +163,10 @@ export const cases = [
 						},
 					],
 				});
+				assert.equal(
+					requests.every((item) => item.init.signal === session.signal),
+					true,
+				);
 			} finally {
 				globalThis.fetch = originalFetch;
 			}
@@ -163,6 +176,8 @@ export const cases = [
 		"keeps model routing draft order separate from the saved overview",
 		async () => {
 			const overview = uiModelRouting();
+			mod.updateAdminKey("admin-secret");
+			mod.connectionVerified.value = true;
 			mod.modelRouting.value = overview;
 			mod.modelRoutingDrafts.value = {
 				pro: {
@@ -213,7 +228,6 @@ export const cases = [
 			try {
 				globalThis.window = { setTimeout: () => 0 };
 				globalThis.fetch = async () => Response.json(overview);
-				mod.adminKey.value = "admin-secret";
 				await mod.saveModelRoutePriority("pro");
 				assert.equal(
 					mod.modelRoutingDrafts.value.flash.routes[0].providerModelId,
@@ -225,7 +239,352 @@ export const cases = [
 				globalThis.fetch = originalFetch;
 				if (originalWindow === undefined) delete globalThis.window;
 				else globalThis.window = originalWindow;
-				mod.adminKey.value = "";
+				mod.updateAdminKey("");
+			}
+		},
+	],
+	[
+		"keeps the newest model routing snapshot across out-of-order family saves",
+		async () => {
+			const originalFetch = globalThis.fetch;
+			const originalWindow = globalThis.window;
+			const base = uiModelRouting();
+			const baseRoute = base.families[0].routes[0];
+			const proOld = { ...baseRoute, providerModelId: "pro-old" };
+			const proNew = { ...baseRoute, providerModelId: "pro-new" };
+			const flashOld = {
+				...baseRoute,
+				providerModelId: "flash-old",
+				modelNumber: 1,
+			};
+			const flashNew = { ...flashOld, providerModelId: "flash-new" };
+			const overview = (version, proRoute, flashRoute) => ({
+				...base,
+				version,
+				families: base.families.map((family) => {
+					if (family.family === "pro")
+						return { ...family, configured: true, routes: [proRoute] };
+					if (family.family === "flash")
+						return { ...family, configured: true, routes: [flashRoute] };
+					return family;
+				}),
+			});
+			const pending = new Map();
+			try {
+				globalThis.window = { setTimeout: () => 0 };
+				globalThis.fetch = async (path) =>
+					new Promise((resolve) => pending.set(String(path), resolve));
+				mod.updateAdminKey("admin-secret");
+				mod.connectionVerified.value = true;
+				mod.modelRouting.value = overview("8", proOld, flashOld);
+				mod.modelRoutingDrafts.value = {
+					pro: {
+						routes: [proNew],
+						busy: false,
+						error: null,
+						dirty: true,
+					},
+					flash: {
+						routes: [flashNew],
+						busy: false,
+						error: null,
+						dirty: true,
+					},
+					flash_lite: {
+						routes: [],
+						busy: false,
+						error: null,
+						dirty: false,
+					},
+				};
+
+				const proSave = mod.saveModelRoutePriority("pro");
+				const flashSave = mod.saveModelRoutePriority("flash");
+				pending.get("/admin/model-routing/flash")?.(
+					Response.json(overview("10", proNew, flashNew)),
+				);
+				await flashSave;
+				pending.get("/admin/model-routing/pro")?.(
+					Response.json(overview("9", proNew, flashOld)),
+				);
+				await proSave;
+
+				assert.equal(mod.modelRouting.value.version, "10");
+				assert.equal(
+					mod.modelRouting.value.families.find(
+						(family) => family.family === "flash",
+					).routes[0].providerModelId,
+					"flash-new",
+				);
+				assert.equal(
+					mod.modelRoutingDrafts.value.pro.routes[0].providerModelId,
+					"pro-new",
+				);
+				assert.equal(
+					mod.modelRoutingDrafts.value.flash.routes[0].providerModelId,
+					"flash-new",
+				);
+				assert.equal(mod.modelRoutingDrafts.value.pro.busy, false);
+				assert.equal(mod.modelRoutingDrafts.value.pro.dirty, false);
+				assert.equal(mod.modelRoutingDrafts.value.flash.busy, false);
+				assert.equal(mod.modelRoutingDrafts.value.flash.dirty, false);
+			} finally {
+				globalThis.fetch = originalFetch;
+				if (originalWindow === undefined) delete globalThis.window;
+				else globalThis.window = originalWindow;
+				mod.updateAdminKey("");
+			}
+		},
+	],
+	[
+		"invalidates all protected admin state when the credential changes",
+		() => {
+			const overview = uiModelRouting();
+			mod.adminKey.value = "old-admin-key";
+			mod.connectionVerified.value = true;
+			mod.authExpanded.value = false;
+			mod.accounts.value = [uiAccount()];
+			mod.accountStats.value = emptyStats({ total: 1, available: 1 });
+			mod.modelRouting.value = overview;
+			mod.modelRoutingDrafts.value = {
+				pro: {
+					routes: overview.families[0].routes,
+					busy: true,
+					error: null,
+					dirty: true,
+				},
+				flash: { routes: [], busy: false, error: null, dirty: false },
+				flash_lite: { routes: [], busy: false, error: null, dirty: false },
+			};
+
+			mod.updateAdminKey("new-admin-key");
+
+			assert.equal(mod.adminKey.value, "new-admin-key");
+			assert.equal(mod.connectionVerified.value, false);
+			assert.equal(mod.authExpanded.value, true);
+			assert.deepEqual(mod.accounts.value, []);
+			assert.equal(mod.accountStats.value, null);
+			assert.equal(mod.modelRouting.value, null);
+			assert.deepEqual(mod.modelRoutingDrafts.value, {
+				pro: { routes: [], busy: false, error: null, dirty: false },
+				flash: { routes: [], busy: false, error: null, dirty: false },
+				flash_lite: { routes: [], busy: false, error: null, dirty: false },
+			});
+		},
+	],
+	[
+		"discards an in-flight verification response after the credential changes",
+		async () => {
+			const originalFetch = globalThis.fetch;
+			const originalWindow = globalThis.window;
+			let resolveOverview;
+			const pendingOverview = new Promise((resolve) => {
+				resolveOverview = resolve;
+			});
+			try {
+				globalThis.window = { setTimeout: () => 0 };
+				globalThis.fetch = async () => pendingOverview;
+				mod.updateAdminKey("old-admin-key");
+				const verification = mod.loadAccounts("reset", true);
+				await Promise.resolve();
+
+				mod.updateAdminKey("new-admin-key");
+				resolveOverview(
+					Response.json({
+						items: [uiAccount()],
+						nextCursor: null,
+						limit: 200,
+						stats: emptyStats({ total: 1, available: 1 }),
+					}),
+				);
+				await verification;
+
+				assert.equal(mod.adminKey.value, "new-admin-key");
+				assert.equal(mod.connectionVerified.value, false);
+				assert.deepEqual(mod.accounts.value, []);
+				assert.equal(mod.accountStats.value, null);
+				assert.equal(mod.modelRouting.value, null);
+			} finally {
+				globalThis.fetch = originalFetch;
+				if (originalWindow === undefined) delete globalThis.window;
+				else globalThis.window = originalWindow;
+				mod.updateAdminKey("");
+			}
+		},
+	],
+	[
+		"commits only the newest account overview within one admin session",
+		async () => {
+			const originalFetch = globalThis.fetch;
+			const originalWindow = globalThis.window;
+			const pending = [];
+			const overview = (total) =>
+				Response.json({
+					items: [],
+					nextCursor: null,
+					limit: 200,
+					stats: emptyStats({ total, available: total }),
+				});
+			try {
+				globalThis.window = { setTimeout: () => 0 };
+				globalThis.fetch = async () =>
+					new Promise((resolve) => pending.push(resolve));
+				mod.updateAdminKey("admin-secret");
+				mod.connectionVerified.value = true;
+
+				const first = mod.loadAccounts();
+				await Promise.resolve();
+				const second = mod.loadAccounts();
+				await Promise.resolve();
+				pending[1]?.(overview(2));
+				await second;
+				pending[0]?.(overview(1));
+				await first;
+
+				assert.equal(mod.accountStats.value.total, 2);
+				assert.equal(mod.connectionVerified.value, true);
+			} finally {
+				globalThis.fetch = originalFetch;
+				if (originalWindow === undefined) delete globalThis.window;
+				else globalThis.window = originalWindow;
+				mod.updateAdminKey("");
+			}
+		},
+	],
+	[
+		"invalidates the verified admin session when credentials are rejected",
+		async () => {
+			const originalFetch = globalThis.fetch;
+			const originalWindow = globalThis.window;
+			try {
+				globalThis.window = { setTimeout: () => 0 };
+				globalThis.fetch = async () =>
+					Response.json(
+						{
+							error: {
+								code: "invalid_admin_key",
+								message: "invalid admin key",
+							},
+						},
+						{ status: 401 },
+					);
+				const overview = uiModelRouting();
+				mod.updateAdminKey("admin-secret");
+				mod.connectionVerified.value = true;
+				mod.authExpanded.value = false;
+				mod.accounts.value = [uiAccount()];
+				mod.accountStats.value = emptyStats({ total: 1, available: 1 });
+				mod.modelRouting.value = overview;
+				mod.modelRoutingDrafts.value = {
+					pro: {
+						routes: overview.families[0].routes,
+						busy: false,
+						error: null,
+						dirty: true,
+					},
+					flash: { routes: [], busy: false, error: null, dirty: false },
+					flash_lite: { routes: [], busy: false, error: null, dirty: false },
+				};
+
+				await mod.loadAccounts();
+
+				assert.equal(mod.connectionVerified.value, false);
+				assert.equal(mod.authExpanded.value, true);
+				assert.deepEqual(mod.accounts.value, []);
+				assert.equal(mod.accountStats.value, null);
+				assert.equal(mod.modelRouting.value, null);
+				assert.deepEqual(mod.modelRoutingDrafts.value, {
+					pro: { routes: [], busy: false, error: null, dirty: false },
+					flash: { routes: [], busy: false, error: null, dirty: false },
+					flash_lite: { routes: [], busy: false, error: null, dirty: false },
+				});
+			} finally {
+				globalThis.fetch = originalFetch;
+				if (originalWindow === undefined) delete globalThis.window;
+				else globalThis.window = originalWindow;
+				mod.updateAdminKey("");
+			}
+		},
+	],
+	[
+		"invalidates the verified admin session when a mutation is rejected",
+		async () => {
+			const originalFetch = globalThis.fetch;
+			const originalWindow = globalThis.window;
+			try {
+				globalThis.window = { setTimeout: () => 0 };
+				globalThis.fetch = async () =>
+					Response.json(
+						{
+							error: {
+								code: "invalid_admin_key",
+								message: "invalid admin key",
+							},
+						},
+						{ status: 401 },
+					);
+				const overview = uiModelRouting();
+				mod.updateAdminKey("admin-secret");
+				mod.connectionVerified.value = true;
+				mod.modelRouting.value = overview;
+				mod.modelRoutingDrafts.value = {
+					pro: {
+						routes: overview.families[0].routes,
+						busy: false,
+						error: null,
+						dirty: true,
+					},
+					flash: { routes: [], busy: false, error: null, dirty: false },
+					flash_lite: { routes: [], busy: false, error: null, dirty: false },
+				};
+
+				await mod.saveModelRoutePriority("pro");
+
+				assert.equal(mod.connectionVerified.value, false);
+				assert.equal(mod.modelRouting.value, null);
+				assert.deepEqual(mod.modelRoutingDrafts.value.pro, {
+					routes: [],
+					busy: false,
+					error: null,
+					dirty: false,
+				});
+			} finally {
+				globalThis.fetch = originalFetch;
+				if (originalWindow === undefined) delete globalThis.window;
+				else globalThis.window = originalWindow;
+				mod.updateAdminKey("");
+			}
+		},
+	],
+	[
+		"blocks account import until the admin session is verified",
+		async () => {
+			const originalFetch = globalThis.fetch;
+			let requests = 0;
+			try {
+				globalThis.fetch = async () => {
+					requests++;
+					return Response.json({
+						processed: 1,
+						changed: 1,
+						unchanged: 0,
+						failed: 0,
+					});
+				};
+				mod.updateAdminKey("admin-secret");
+				mod.connectionVerified.value = false;
+				mod.importPsid.value = "psid-value";
+				mod.importPsidts.value = "psidts-value";
+
+				await mod.submitImport({ preventDefault() {} });
+
+				assert.equal(requests, 0);
+			} finally {
+				globalThis.fetch = originalFetch;
+				mod.importPsid.value = "";
+				mod.importPsidts.value = "";
+				mod.importBatch.value = "";
+				mod.updateAdminKey("");
 			}
 		},
 	],
@@ -256,7 +615,7 @@ export const cases = [
 					});
 				};
 				const result = await mod.createAccountsWithLimitFallback(
-					"admin-secret",
+					uiAdminApiSession(),
 					{ accounts: uiImportBatch(81) },
 				);
 				assert.deepEqual(requestSizes, [81, 40, 40, 1]);
@@ -283,7 +642,7 @@ export const cases = [
 				};
 				await assert.rejects(
 					() =>
-						mod.createAccountsWithLimitFallback("admin-secret", {
+						mod.createAccountsWithLimitFallback(uiAdminApiSession(), {
 							accounts: uiImportBatch(81),
 						}),
 					/Request failed with status 500/,
@@ -291,6 +650,71 @@ export const cases = [
 				assert.equal(requests, 1);
 			} finally {
 				globalThis.fetch = originalFetch;
+			}
+		},
+	],
+	[
+		"aborts the full import request tree when the admin session changes",
+		async () => {
+			const originalFetch = globalThis.fetch;
+			const originalWindow = globalThis.window;
+			const requestSizes = [];
+			let activeChunkSignal;
+			let notifyChunkStarted;
+			const chunkStarted = new Promise((resolve) => {
+				notifyChunkStarted = resolve;
+			});
+			try {
+				globalThis.window = { setTimeout: () => 0 };
+				globalThis.fetch = async (_path, init = {}) => {
+					const payload = JSON.parse(String(init.body || "{}"));
+					requestSizes.push(payload.accounts.length);
+					if (requestSizes.length === 1)
+						return Response.json(
+							{
+								error: {
+									message: "Worker import limit exceeded",
+									code: "gemini_import_account_limit_exceeded",
+								},
+							},
+							{ status: 413 },
+						);
+					activeChunkSignal = init.signal;
+					notifyChunkStarted();
+					return new Promise((resolve) => {
+						init.signal.addEventListener(
+							"abort",
+							() =>
+								resolve(
+									Response.json({
+										processed: payload.accounts.length,
+										changed: payload.accounts.length,
+										unchanged: 0,
+										failed: 0,
+									}),
+								),
+							{ once: true },
+						);
+					});
+				};
+				mod.updateAdminKey("old-admin-key");
+				mod.connectionVerified.value = true;
+				mod.importBatch.value = uiImportBatchText(81);
+
+				const importing = mod.submitImport({ preventDefault() {} });
+				await chunkStarted;
+				mod.updateAdminKey("new-admin-key");
+				await importing;
+
+				assert.deepEqual(requestSizes, [81, 40]);
+				assert.equal(activeChunkSignal.aborted, true);
+				assert.equal(mod.connectionVerified.value, false);
+			} finally {
+				globalThis.fetch = originalFetch;
+				if (originalWindow === undefined) delete globalThis.window;
+				else globalThis.window = originalWindow;
+				mod.importBatch.value = "";
+				mod.updateAdminKey("");
 			}
 		},
 	],
@@ -319,9 +743,12 @@ export const cases = [
 
 				globalThis.fetch = async () =>
 					Response.json({ items: [], nextCursor: null, limit: 200 });
+				mod.modelRouting.value = uiModelRouting();
 				await mod.loadAccounts("reset", true);
 				assert.equal(mod.connectionVerified.value, false);
 				assert.equal(mod.authExpanded.value, true);
+				assert.equal(mod.modelRouting.value, null);
+				assert.deepEqual(mod.modelRoutingDrafts.value.pro.routes, []);
 				mod.adminKey.value = "";
 				await mod.loadAccounts("reset", true);
 			} finally {
@@ -491,4 +918,15 @@ function uiImportBatch(count) {
 		psidts: `psidts-${index}`,
 		label: `account-${index}`,
 	}));
+}
+
+function uiImportBatchText(count) {
+	return uiImportBatch(count)
+		.map((account) => `${account.psid} ${account.psidts} ${account.label}`)
+		.join("\n");
+}
+
+function uiAdminApiSession(adminKey = "admin-secret") {
+	const controller = new AbortController();
+	return { adminKey, signal: controller.signal };
 }

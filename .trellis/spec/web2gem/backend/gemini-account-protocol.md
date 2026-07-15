@@ -288,16 +288,30 @@ resolution, model-routing Admin API/WebUI, or route-priority persistence.
 
 - Known public names are exactly `gemini-3.1-pro`, `gemini-3.5-flash`,
   `gemini-3.1-flash-lite`, and their `-extended` variants.
-- Unknown discovered IDs project to `<id>` and `<id>-extended`.
+- Unknown discovered IDs that do not collide with a known public name project
+  to `<id>` and, when that synthesized name does not collide with another exact
+  provider ID, `<id>-extended`.
 - Admin endpoints are `GET /admin/model-routing`, `PUT
   /admin/model-routing/{family}`, and `DELETE /admin/model-routing/{family}`.
 - PUT body is `{ routes: GeminiRouteTuple[] }`, maximum 128 unique tuples.
+- `parseGoogleGenerationPath(path)` removes the final
+  `:generateContent|:streamGenerateContent` action before decoding and returns
+  `{ modelName, stream }`; completion preparation accepts that normalized model
+  name rather than an HTTP path.
 
 ### 3. Contracts
 
 - Build one ordered catalog: anonymous Flash pair first, then fresh available
   account records in pool/discovery order with first-public-ID wins. If no fresh
   catalog is usable, use the last complete persisted model snapshot.
+- Reserve every available unknown provider ID as an exact standard public name
+  before synthesizing `-extended` aliases. An exact provider ID always wins a
+  collision; suppress the conflicting synthesized alias so resolution can never
+  route an exact request to a different provider model.
+- `MODELS` owns all six known public names. Dynamic provider IDs that equal any
+  known standard or extended public name are not projected into the catalog;
+  only a discovered route belonging to the corresponding known family may add
+  that public entry.
 - OpenAI and Google lists/details project the same IDs/order; health stays fixed
   to six known names and never reads D1 or exposes dynamic IDs.
 - Ordinary public auth happens before catalog D1 access. Catalog D1 failure
@@ -307,29 +321,55 @@ resolution, model-routing Admin API/WebUI, or route-priority persistence.
 - Admin overview retains saved missing routes, appends new discovery routes, and
   exposes only bounded tuple facts, known label, availability, configured flag,
   and account count.
+- `src/http/google/model-path.ts` is the sole owner of Google generation path
+  grammar. Provider IDs may contain `:`, so parsing must remove the exact final
+  action suffix instead of stopping at the first colon.
 
 ### 4. Validation & Error Matrix
 
 - Removed alias or `@think=N` -> protocol-specific model-not-found.
 - Unknown dynamic ID absent from current/fallback catalog -> model-not-found.
+- Discovered `foo` plus exact provider ID `foo-extended` ->
+  `foo-extended` resolves the exact provider model with standard thinking;
+  `foo-extended-extended` resolves its extended variant, and no catalog entry
+  maps `foo-extended` to provider `foo`.
+- Dynamic provider ID `gemini-3.1-pro` -> suppress the dynamic projection. If a
+  real Pro-family route is also discovered, the public entry belongs to that
+  known route and resolves through Pro capability selection.
 - Invalid family, extra body key, malformed/duplicate/oversized tuple array ->
   sanitized 4xx; policy and `pool_version` unchanged.
 - Submitted tuple absent from persisted discovery and saved policy ->
   `unknown_model_route`; policy unchanged.
 - Missing/invalid ADMIN_KEY -> 401 before routing-policy D1 access.
+- Raw or percent-encoded provider ID `future:model` -> normalize to the exact
+  model name for both Google generation actions; embedded or decoded `/`, empty
+  names, malformed escapes, and unknown actions -> not a generation route.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: reorder Pro routes in WebUI; the next Worker and Docker request use the
   new order without deployment, while Flash and Flash Lite stay unchanged.
 - Base: no D1 returns exactly the Flash standard/extended pair in both APIs.
+- Base: a synthesized extended alias is omitted when it would shadow another
+  exact dynamic provider ID.
+- Base: a dynamic provider ID cannot claim a known standard or extended public
+  name.
+- Base: `/v1beta/models/future:model:generateContent` resolves provider ID
+  `future:model`, not `future`.
 - Bad: serialize module-load model constants, expose provider tuples publicly,
-  delete missing saved routes, or accept arbitrary custom model IDs.
+  delete missing saved routes, accept arbitrary custom model IDs, or let a
+  synthesized suffix alias shadow an exact provider ID.
 
 ### 6. Tests Required
 
 - Assert no-D1 Flash pair, live/persisted dynamic IDs, OpenAI/Google ID-order
   parity, known/unknown details, health D1 absence, and auth-before-D1 ordering.
+- Assert simultaneous `<id>` and `<id>-extended` provider records preserve exact
+  standard resolution before synthesized suffix parsing.
+- Assert dynamic provider IDs colliding with known public names are suppressed
+  and cannot displace the corresponding static family route.
+- Assert raw and percent-encoded colon-bearing IDs survive Google route parsing
+  and reach `CompletionProvider.resolveModel` unchanged.
 - Assert three-family independence, capacity-3/field-13 round trip, missing/new
   reconciliation, invalid mutation atomicity, save/reset cache invalidation, and
   strict browser DTO validation.
@@ -351,4 +391,17 @@ await store.replaceModelRoutePriority(family, unvalidatedRoutes, nowMs);
 const catalog = await runtime.modelCatalog(freshAfterMs);
 const routes = normalizeModelRoutePriority(body);
 await service.replaceModelRoutePriority(family, routes);
+```
+
+#### Wrong
+
+```typescript
+const modelName = /\/models\/([^:]+)/.exec(path)?.[1];
+```
+
+#### Correct
+
+```typescript
+const route = parseGoogleGenerationPath(path);
+const prepared = await prepareGoogleCompletion(cfg, provider, req, route.modelName);
 ```

@@ -197,11 +197,13 @@ and an `-extended` name; extended names enable Gemini's extended-thinking flag.
 
 `GET /v1/models` and `GET /v1beta/models` build one ordered catalog from the
 anonymous Flash baseline plus account discovery. A valid unknown provider model
-ID is temporarily exposed as both `<id>` and `<id>-extended` and can be requested
-through the account that discovered it. If no live catalog is usable, the last
-complete persisted discovery snapshot is used. Without D1, both APIs still list
-the two Flash names. Basic, Plus, Advanced, provider IDs, capacity fields, and
-model numbers are internal routing data and are not public tier names.
+ID is temporarily exposed as `<id>` and, when that alias does not collide with
+another exact ID, `<id>-extended`; IDs that collide with the six known public
+names are not projected. Dynamic IDs can be requested through the account that
+discovered them. If no live catalog is usable, the last complete persisted
+discovery snapshot is used. Without D1, both APIs still list the two Flash
+names. Basic, Plus, Advanced, provider IDs, capacity fields, and model numbers
+are internal routing data and are not public tier names.
 
 Legacy aliases and `@think=N` are not supported. Custom model configuration is
 also intentionally unsupported; only discovered upstream IDs can extend the

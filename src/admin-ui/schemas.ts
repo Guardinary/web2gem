@@ -86,7 +86,7 @@ const modelRouteSchema = v.strictObject({
 	accountCount: v.number(),
 });
 const modelRoutingSchema = v.strictObject({
-	version: v.string(),
+	version: v.pipe(v.string(), v.regex(/^\d+$/)),
 	families: v.array(
 		v.strictObject({
 			family: modelFamilySchema,

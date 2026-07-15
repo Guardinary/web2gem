@@ -10,26 +10,33 @@ import { Toasts } from "./sections/Toasts";
 import { Topbar } from "./sections/Topbar";
 import { Workspace } from "./sections/Workspace";
 import { tr } from "./i18n";
-import { adminKey } from "./state";
+import { adminKey, connectionVerified } from "./state";
 
 export function App(): JSX.Element {
 	useEffect(() => {
 		restoreAdminKey();
 		if (adminKey.value) void loadAccounts("reset", true);
 	}, []);
+	const connected = connectionVerified.value;
 
 	return (
 		<>
-			<a class="skip-link" href="#accounts-workspace">
-				{tr("Skip to accounts")}
-			</a>
+			{connected ? (
+				<a class="skip-link" href="#accounts-workspace">
+					{tr("Skip to accounts")}
+				</a>
+			) : null}
 			<Topbar />
 			<main class="shell">
 				<AuthPanel />
-				<OverviewSection />
-				<ModelRoutingSection />
-				<ImportPanel />
-				<Workspace />
+				{connected ? (
+					<>
+						<OverviewSection />
+						<ModelRoutingSection />
+						<ImportPanel />
+						<Workspace />
+					</>
+				) : null}
 			</main>
 			<EditModal />
 			<ConfirmationModal />

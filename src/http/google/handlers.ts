@@ -21,17 +21,20 @@ import {
 	writeGoogleStreamError,
 } from "./format";
 import { streamGooglePlain, streamGoogleTools } from "./stream";
+import { parseGoogleGenerationPath } from "./model-path";
 
 export async function handleGoogleGenerate(
 	req: UnknownRecord,
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
 	path: string,
-	stream: boolean,
 ) {
+	const route = parseGoogleGenerationPath(path);
+	if (!route) throw new Error("invalid Google generation path");
+	const { modelName, stream } = route;
 	const logRequests = !!cfg.log_requests;
 	const prepareStart = logRequests ? nowMs() : 0;
-	const prepared = await prepareGoogleCompletion(cfg, provider, req, path);
+	const prepared = await prepareGoogleCompletion(cfg, provider, req, modelName);
 	if ("error" in prepared) {
 		await provider.dispose?.();
 		if (logRequests)

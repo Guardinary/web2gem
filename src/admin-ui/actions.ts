@@ -1,4 +1,6 @@
 import {
+	AdminApiError,
+	type AdminApiSession,
 	createAccount,
 	createAccountsWithLimitFallback,
 	getAccountOverview,
@@ -59,6 +61,101 @@ import type {
 
 let toastId = 0;
 let confirmationResolver: ((confirmed: boolean) => void) | null = null;
+let adminSessionGeneration = 0;
+let accountLoadGeneration = 0;
+let adminSessionAbortController = new AbortController();
+
+type AdminSession = AdminApiSession & {
+	generation: number;
+};
+
+type AdminSessionOperationResult<T> = { ok: true; value: T } | { ok: false };
+
+type AdminSessionOperationOptions = {
+	fallbackMessage: string;
+	isCurrent?: () => boolean;
+	invalidateOnError?: boolean;
+	onError?: (message: string) => void;
+};
+
+function currentAdminSession(): AdminSession {
+	return {
+		generation: adminSessionGeneration,
+		adminKey: adminKey.value.trim(),
+		signal: adminSessionAbortController.signal,
+	};
+}
+
+function isCurrentAdminSession(session: AdminSession): boolean {
+	return (
+		session.generation === adminSessionGeneration &&
+		session.signal === adminSessionAbortController.signal &&
+		!session.signal.aborted &&
+		session.adminKey === adminKey.value.trim()
+	);
+}
+
+function currentVerifiedAdminSession(): AdminSession | null {
+	const session = currentAdminSession();
+	return session.adminKey && connectionVerified.value ? session : null;
+}
+
+function isCurrentAccountLoad(
+	session: AdminSession,
+	generation: number,
+): boolean {
+	return generation === accountLoadGeneration && isCurrentAdminSession(session);
+}
+
+function invalidateAdminSession(): void {
+	adminSessionGeneration += 1;
+	accountLoadGeneration += 1;
+	adminSessionAbortController.abort();
+	adminSessionAbortController = new AbortController();
+	confirmationResolver?.(false);
+	confirmationResolver = null;
+	connectionVerified.value = false;
+	accounts.value = [];
+	accountStats.value = null;
+	modelRouting.value = null;
+	modelRoutingDrafts.value = emptyModelRoutingDrafts();
+	selected.value = new Set();
+	cursorStack.value = [""];
+	pageIndex.value = 0;
+	nextCursor.value = null;
+	editDraft.value = null;
+	confirmationDraft.value = null;
+	loading.value = false;
+	modelRoutingLoading.value = false;
+	importBusy.value = false;
+	editBusy.value = false;
+	batchBusy.value = "";
+	rowBusy.value = {};
+	authExpanded.value = true;
+}
+
+async function runAdminSessionOperation<T>(
+	session: AdminSession,
+	operation: () => Promise<T>,
+	options: AdminSessionOperationOptions,
+): Promise<AdminSessionOperationResult<T>> {
+	const isCurrent = options.isCurrent || (() => isCurrentAdminSession(session));
+	try {
+		const value = await operation();
+		return isCurrent() ? { ok: true, value } : { ok: false };
+	} catch (error) {
+		if (!isCurrent()) return { ok: false };
+		const message =
+			error instanceof Error ? error.message : options.fallbackMessage;
+		const authenticationFailed =
+			error instanceof AdminApiError && error.status === 401;
+		if (authenticationFailed || options.invalidateOnError)
+			invalidateAdminSession();
+		else options.onError?.(message);
+		showToast(message, "error");
+		return { ok: false };
+	}
+}
 
 export function showToast(message: string, kind?: "error"): void {
 	const id = ++toastId;
@@ -85,8 +182,13 @@ export function restoreAdminKey(): void {
 		window.sessionStorage.getItem(KEY_STORAGE) ||
 		window.localStorage.getItem(KEY_STORAGE) ||
 		"";
-	connectionVerified.value = false;
-	authExpanded.value = true;
+	invalidateAdminSession();
+}
+
+export function updateAdminKey(value: string): void {
+	if (value === adminKey.value) return;
+	adminKey.value = value;
+	invalidateAdminSession();
 }
 
 export function saveAdminKey(): void {
@@ -97,9 +199,9 @@ export function saveAdminKey(): void {
 		keyStorageMode.value === "local"
 			? window.localStorage
 			: window.sessionStorage;
-	storage.setItem(KEY_STORAGE, adminKey.value.trim());
-	connectionVerified.value = false;
-	authExpanded.value = true;
+	adminKey.value = adminKey.value.trim();
+	storage.setItem(KEY_STORAGE, adminKey.value);
+	invalidateAdminSession();
 	showToast(tr("Admin key saved"));
 }
 
@@ -107,13 +209,7 @@ export function clearAdminKey(): void {
 	window.sessionStorage.removeItem(KEY_STORAGE);
 	window.localStorage.removeItem(KEY_STORAGE);
 	adminKey.value = "";
-	connectionVerified.value = false;
-	accounts.value = [];
-	accountStats.value = null;
-	modelRouting.value = null;
-	modelRoutingDrafts.value = emptyModelRoutingDrafts();
-	selected.value = new Set();
-	authExpanded.value = true;
+	invalidateAdminSession();
 	showToast(tr("Admin key cleared"));
 }
 
@@ -121,87 +217,127 @@ export async function loadAccounts(
 	direction: "current" | "reset" | "next" | "prev" = "current",
 	verifyConnection = false,
 ): Promise<void> {
-	if (!adminKey.value.trim()) {
-		if (verifyConnection) {
-			connectionVerified.value = false;
-			authExpanded.value = true;
-		}
+	if (verifyConnection) invalidateAdminSession();
+	const session = currentAdminSession();
+	if (!session.adminKey) {
 		showToast(tr("Admin key is required"), "error");
 		return;
 	}
-	if (direction === "reset") {
-		cursorStack.value = [""];
-		pageIndex.value = 0;
-		nextCursor.value = null;
-		selected.value = new Set();
-		if (verifyConnection) {
-			accounts.value = [];
-			accountStats.value = null;
-		}
-	} else if (direction === "next") {
-		if (!nextCursor.value) return;
-		const nextStack = [...cursorStack.value];
-		nextStack[pageIndex.value + 1] = nextCursor.value;
-		cursorStack.value = nextStack;
-		pageIndex.value += 1;
-	} else if (direction === "prev") {
-		if (pageIndex.value <= 0) return;
-		pageIndex.value -= 1;
-	}
+	if (!verifyConnection && !connectionVerified.value) return;
+	const page = requestedAccountPage(direction);
+	if (!page) return;
+	const generation = ++accountLoadGeneration;
+	const requestedQuery = query.value.trim();
+	const requestedState = stateFilter.value;
 	loading.value = true;
 	try {
-		const overview = await getAccountOverview({
-			adminKey: adminKey.value,
-			cursor: cursorStack.value[pageIndex.value] || "",
-			q: query.value.trim(),
-			state: stateFilter.value,
-		});
-		accounts.value = overview.items;
-		accountStats.value = overview.stats;
-		nextCursor.value = overview.nextCursor;
-		selected.value = new Set(
-			[...selected.value].filter((key) =>
-				overview.items.some((account) => identifierKey(account) === key),
-			),
+		const result = await runAdminSessionOperation(
+			session,
+			() =>
+				getAccountOverview(session, {
+					cursor: page.cursor,
+					q: requestedQuery,
+					state: requestedState,
+				}),
+			{
+				fallbackMessage: tr("Failed to load accounts"),
+				isCurrent: () => isCurrentAccountLoad(session, generation),
+				invalidateOnError: verifyConnection,
+			},
 		);
+		if (!result.ok) return;
+		const overview = result.value;
+		commitAccountPage(page, overview);
 		if (verifyConnection) {
 			connectionVerified.value = true;
 			authExpanded.value = false;
-			await loadModelRouting();
+			await loadModelRoutingForSession(session);
 		}
+		if (!isCurrentAccountLoad(session, generation)) return;
 		showToast(
 			language.value === "zh-CN"
 				? `已加载 ${overview.items.length} 个账号`
 				: `Loaded ${overview.items.length} accounts`,
 		);
-	} catch (error) {
-		if (verifyConnection) {
-			connectionVerified.value = false;
-			authExpanded.value = true;
-		}
-		showToast(
-			error instanceof Error ? error.message : tr("Failed to load accounts"),
-			"error",
-		);
 	} finally {
-		loading.value = false;
+		if (isCurrentAccountLoad(session, generation)) loading.value = false;
 	}
 }
 
-export async function loadModelRouting(): Promise<void> {
-	if (!adminKey.value.trim()) return;
+type RequestedAccountPage = {
+	cursor: string;
+	cursorStack: string[];
+	pageIndex: number;
+	resetSelection: boolean;
+};
+
+type AccountOverviewResult = Awaited<ReturnType<typeof getAccountOverview>>;
+
+function commitAccountPage(
+	page: RequestedAccountPage,
+	overview: AccountOverviewResult,
+): void {
+	cursorStack.value = page.cursorStack;
+	pageIndex.value = page.pageIndex;
+	accounts.value = overview.items;
+	accountStats.value = overview.stats;
+	nextCursor.value = overview.nextCursor;
+	const currentSelection = page.resetSelection ? [] : [...selected.value];
+	selected.value = new Set(
+		currentSelection.filter((key) =>
+			overview.items.some((account) => identifierKey(account) === key),
+		),
+	);
+}
+
+function requestedAccountPage(
+	direction: "current" | "reset" | "next" | "prev",
+): RequestedAccountPage | null {
+	let nextStack = [...cursorStack.value];
+	let nextPageIndex = pageIndex.value;
+	if (direction === "reset") {
+		nextStack = [""];
+		nextPageIndex = 0;
+	} else if (direction === "next") {
+		if (!nextCursor.value) return null;
+		nextPageIndex += 1;
+		nextStack[nextPageIndex] = nextCursor.value;
+	} else if (direction === "prev") {
+		if (nextPageIndex <= 0) return null;
+		nextPageIndex -= 1;
+	}
+	return {
+		cursor: nextStack[nextPageIndex] || "",
+		cursorStack: nextStack,
+		pageIndex: nextPageIndex,
+		resetSelection: direction === "reset",
+	};
+}
+
+export function loadModelRouting(): Promise<void> {
+	const session = currentVerifiedAdminSession();
+	return session ? loadModelRoutingForSession(session) : Promise.resolve();
+}
+
+async function loadModelRoutingForSession(
+	session: AdminSession,
+): Promise<void> {
+	if (
+		!session.adminKey ||
+		!connectionVerified.value ||
+		!isCurrentAdminSession(session)
+	)
+		return;
 	modelRoutingLoading.value = true;
 	try {
-		applyModelRoutingOverview(await getModelRoutingOverview(adminKey.value));
-	} catch (error) {
-		showToast(
-			error instanceof Error
-				? error.message
-				: tr("Failed to load model routing"),
-			"error",
+		const result = await runAdminSessionOperation(
+			session,
+			() => getModelRoutingOverview(session),
+			{ fallbackMessage: tr("Failed to load model routing") },
 		);
+		if (result.ok) applyModelRoutingOverview(result.value);
 	} finally {
-		modelRoutingLoading.value = false;
+		if (isCurrentAdminSession(session)) modelRoutingLoading.value = false;
 	}
 }
 
@@ -228,66 +364,66 @@ export function moveModelRoute(
 export async function saveModelRoutePriority(
 	family: ModelFamily,
 ): Promise<void> {
+	const session = currentVerifiedAdminSession();
+	if (!session) return;
 	const draft = modelRoutingDrafts.value[family];
 	setModelRoutingDraft(family, { busy: true, error: null });
-	try {
-		const routes = draft.routes.map(
-			({ providerModelId, capacity, capacityField, modelNumber }) => ({
-				providerModelId,
-				capacity,
-				capacityField,
-				modelNumber,
-			}),
-		);
-		applyModelRoutingOverview(
-			await replaceModelRoutePriority(adminKey.value, family, routes),
-			family,
-		);
-		showToast(tr("Model routing saved"));
-	} catch (error) {
-		const message =
-			error instanceof Error
-				? error.message
-				: tr("Failed to save model routing");
-		setModelRoutingDraft(family, { busy: false, error: message });
-		showToast(message, "error");
-	}
+	const routes = draft.routes.map(
+		({ providerModelId, capacity, capacityField, modelNumber }) => ({
+			providerModelId,
+			capacity,
+			capacityField,
+			modelNumber,
+		}),
+	);
+	const result = await runAdminSessionOperation(
+		session,
+		() => replaceModelRoutePriority(session, family, routes),
+		{
+			fallbackMessage: tr("Failed to save model routing"),
+			onError: (message) =>
+				setModelRoutingDraft(family, { busy: false, error: message }),
+		},
+	);
+	if (!result.ok) return;
+	applyModelRoutingOverview(result.value, family);
+	showToast(tr("Model routing saved"));
 }
 
 export async function resetModelRoutePriorityAction(
 	family: ModelFamily,
 ): Promise<void> {
+	const session = currentVerifiedAdminSession();
+	if (!session) return;
 	setModelRoutingDraft(family, { busy: true, error: null });
-	try {
-		applyModelRoutingOverview(
-			await resetModelRoutePriority(adminKey.value, family),
-			family,
-		);
-		showToast(tr("Model routing reset"));
-	} catch (error) {
-		const message =
-			error instanceof Error
-				? error.message
-				: tr("Failed to reset model routing");
-		setModelRoutingDraft(family, { busy: false, error: message });
-		showToast(message, "error");
-	}
+	const result = await runAdminSessionOperation(
+		session,
+		() => resetModelRoutePriority(session, family),
+		{
+			fallbackMessage: tr("Failed to reset model routing"),
+			onError: (message) =>
+				setModelRoutingDraft(family, { busy: false, error: message }),
+		},
+	);
+	if (!result.ok) return;
+	applyModelRoutingOverview(result.value, family);
+	showToast(tr("Model routing reset"));
 }
 
 function applyModelRoutingOverview(
 	overview: ModelRoutingOverview,
 	changedFamily?: ModelFamily,
 ): void {
-	modelRouting.value = overview;
+	const acceptedOverview = newerModelRoutingOverview(
+		modelRouting.value,
+		overview,
+	);
+	modelRouting.value = acceptedOverview;
 	const current = modelRoutingDrafts.value;
 	const next = emptyModelRoutingDrafts();
-	for (const family of overview.families) {
+	for (const family of acceptedOverview.families) {
 		const existing = current[family.family];
-		if (
-			changedFamily &&
-			family.family !== changedFamily &&
-			(existing.dirty || existing.busy)
-		) {
+		if (family.family !== changedFamily && (existing.dirty || existing.busy)) {
 			next[family.family] = existing;
 			continue;
 		}
@@ -299,6 +435,29 @@ function applyModelRoutingOverview(
 		};
 	}
 	modelRoutingDrafts.value = next;
+}
+
+function newerModelRoutingOverview(
+	current: ModelRoutingOverview | null,
+	incoming: ModelRoutingOverview,
+): ModelRoutingOverview {
+	if (!current) return incoming;
+	return compareDecimalVersions(incoming.version, current.version) < 0
+		? current
+		: incoming;
+}
+
+function compareDecimalVersions(left: string, right: string): number {
+	const normalizedLeft = normalizeDecimalVersion(left);
+	const normalizedRight = normalizeDecimalVersion(right);
+	if (normalizedLeft.length !== normalizedRight.length)
+		return normalizedLeft.length - normalizedRight.length;
+	if (normalizedLeft === normalizedRight) return 0;
+	return normalizedLeft < normalizedRight ? -1 : 1;
+}
+
+function normalizeDecimalVersion(value: string): string {
+	return value.replace(/^0+(?=\d)/, "");
 }
 
 function setModelRoutingDraft(
@@ -315,31 +474,37 @@ function setModelRoutingDraft(
 
 export async function submitImport(event: Event): Promise<void> {
 	event.preventDefault();
+	const session = currentVerifiedAdminSession();
+	if (!session) return;
 	try {
 		importBusy.value = true;
-		const batch = parseBatchImport(importBatch.value);
-		const result = batch.length
-			? await createAccountsWithLimitFallback(adminKey.value, {
-					accounts: batch,
-				})
-			: await createAccount(adminKey.value, {
-					label: importLabel.value.trim(),
-					psid: validateCookieValue(importPsid.value, "__Secure-1PSID"),
-					psidts: validateCookieValue(importPsidts.value, "__Secure-1PSIDTS"),
-				});
+		const operation = await runAdminSessionOperation(
+			session,
+			async () => {
+				const batch = parseBatchImport(importBatch.value);
+				return batch.length
+					? createAccountsWithLimitFallback(session, { accounts: batch })
+					: createAccount(session, {
+							label: importLabel.value.trim(),
+							psid: validateCookieValue(importPsid.value, "__Secure-1PSID"),
+							psidts: validateCookieValue(
+								importPsidts.value,
+								"__Secure-1PSIDTS",
+							),
+						});
+			},
+			{ fallbackMessage: tr("Import failed") },
+		);
+		if (!operation.ok) return;
+		const result = operation.value;
 		showToast(
 			resultSummary("import", result),
 			result.failed ? "error" : undefined,
 		);
 		resetImport();
 		await loadAccounts("reset");
-	} catch (error) {
-		showToast(
-			error instanceof Error ? error.message : tr("Import failed"),
-			"error",
-		);
 	} finally {
-		importBusy.value = false;
+		if (isCurrentAdminSession(session)) importBusy.value = false;
 	}
 }
 
@@ -374,34 +539,41 @@ export async function runAction(
 		const confirmed = await confirmDeletion(identifiers.length, targetLabel);
 		if (!confirmed) return;
 	}
+	const session = currentVerifiedAdminSession();
+	if (!session) return;
 	const keys = identifiers.map((item) => item.id);
 	const rowScoped = options.scope === "row" && keys.length === 1;
 	try {
 		if (rowScoped)
 			rowBusy.value = { ...rowBusy.value, [keys[0] || ""]: action };
 		else batchBusy.value = action;
-		const result = await runAccountAction(adminKey.value, action, identifiers);
+		const operation = await runAdminSessionOperation(
+			session,
+			() => runAccountAction(session, action, identifiers),
+			{ fallbackMessage: `${action} failed` },
+		);
+		if (!operation.ok) return;
+		const result = operation.value;
 		showToast(
 			resultSummary(action, result),
 			result.failed ? "error" : undefined,
 		);
 		await loadAccounts();
-	} catch (error) {
-		showToast(
-			error instanceof Error ? error.message : `${action} failed`,
-			"error",
-		);
 	} finally {
-		if (rowScoped) {
-			const next = { ...rowBusy.value };
-			delete next[keys[0] || ""];
-			rowBusy.value = next;
-		} else batchBusy.value = "";
+		if (isCurrentAdminSession(session)) {
+			if (rowScoped) {
+				const next = { ...rowBusy.value };
+				delete next[keys[0] || ""];
+				rowBusy.value = next;
+			} else batchBusy.value = "";
+		}
 	}
 }
 
 export async function submitEdit(event: Event): Promise<void> {
 	event.preventDefault();
+	const session = currentVerifiedAdminSession();
+	if (!session) return;
 	const draft = editDraft.value;
 	if (!draft) return;
 	const account = accounts.value.find(
@@ -413,23 +585,25 @@ export async function submitEdit(event: Event): Promise<void> {
 	}
 	try {
 		editBusy.value = true;
-		const result = await updateAccount(adminKey.value, {
-			...identifier(account),
-			label: draft.label.trim() || null,
-		});
+		const operation = await runAdminSessionOperation(
+			session,
+			() =>
+				updateAccount(session, {
+					...identifier(account),
+					label: draft.label.trim() || null,
+				}),
+			{ fallbackMessage: tr("Update failed") },
+		);
+		if (!operation.ok) return;
+		const result = operation.value;
 		showToast(
 			resultSummary("update", result),
 			result.failed ? "error" : undefined,
 		);
 		editDraft.value = null;
 		await loadAccounts();
-	} catch (error) {
-		showToast(
-			error instanceof Error ? error.message : tr("Update failed"),
-			"error",
-		);
 	} finally {
-		editBusy.value = false;
+		if (isCurrentAdminSession(session)) editBusy.value = false;
 	}
 }
 

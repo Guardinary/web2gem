@@ -197,10 +197,11 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 `GET /v1/models` 和 `GET /v1beta/models` 使用同一个有序目录：先加入匿名
 Flash 基线，再合并账号发现结果。有效但未知的 provider model ID 会临时以
-`<id>` 和 `<id>-extended` 两个名称公开，并可通过发现它的账号请求。没有可用的
-实时目录时会使用最后一次完整持久化快照；没有 D1 时两个接口仍返回 Flash
-pair。Basic、Plus、Advanced、provider ID、capacity field 和 model number
-都只是内部路由信息，不是公开层级名称。
+`<id>` 公开；仅当别名不与另一个精确 ID 冲突时才同时公开 `<id>-extended`。
+与六个已知公开名称冲突的动态 ID 不会进入目录。动态 ID 可通过发现它的账号
+请求。没有可用的实时目录时会使用最后一次完整持久化快照；没有 D1 时两个接口
+仍返回 Flash pair。Basic、Plus、Advanced、provider ID、capacity field 和
+model number 都只是内部路由信息，不是公开层级名称。
 
 旧别名和 `@think=N` 不再支持。本项目也不提供自定义模型配置；目录只能由已知
 公开名称和上游实际发现的动态 ID 组成。

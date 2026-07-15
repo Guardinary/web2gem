@@ -15,6 +15,94 @@ import {
 export const suiteName = "google http";
 export const cases = [
 	[
+		"parses the final Google generation action without truncating model IDs",
+		async () => {
+			assert.deepEqual(
+				mod.parseGoogleGenerationPath(
+					"/v1beta/models/future:model:generateContent",
+				),
+				{ modelName: "future:model", stream: false },
+			);
+			assert.deepEqual(
+				mod.parseGoogleGenerationPath(
+					"/v1/models/future%3Amodel:streamGenerateContent",
+				),
+				{ modelName: "future:model", stream: true },
+			);
+			assert.equal(
+				mod.parseGoogleGenerationPath(
+					"/v1beta/models/future/model:generateContent",
+				),
+				null,
+			);
+			assert.equal(
+				mod.parseGoogleGenerationPath(
+					"/v1beta/models/future%2Fmodel:generateContent",
+				),
+				null,
+			);
+			assert.equal(
+				mod.parseGoogleGenerationPath("/v1beta/models/:generateContent"),
+				null,
+			);
+			assert.equal(
+				mod.parseGoogleGenerationPath(
+					"/v1beta/models/future%ZZmodel:generateContent",
+				),
+				null,
+			);
+			assert.equal(
+				mod.parseGoogleGenerationPath(
+					"/v1beta/models/future:model:countTokens",
+				),
+				null,
+			);
+
+			let resolvedName = "";
+			const provider = {
+				async resolveModel(name) {
+					resolvedName = name;
+					return {
+						name,
+						family: null,
+						extended: false,
+						dynamicProviderId: name,
+					};
+				},
+				async generateText() {
+					return "done";
+				},
+				streamText() {
+					return chunks([]);
+				},
+				async resolveAttachments() {
+					return attachmentResult();
+				},
+				async uploadTextFile(_text, filename) {
+					return { ref: `/uploaded/${filename}`, name: filename };
+				},
+			};
+			const response = await mod.handleGoogleGenerate(
+				{
+					contents: [{ role: "user", parts: [{ text: "plain request" }] }],
+				},
+				{
+					default_model: "gemini-3.5-flash",
+					current_input_file_enabled: false,
+					current_input_file_min_bytes: 1000000,
+					current_input_file_name: "message.txt",
+					current_tools_file_name: "tools.txt",
+					cookie: "",
+					log_requests: false,
+				},
+				provider,
+				"/v1beta/models/future:model:generateContent",
+			);
+			assert.equal(response.status, 200);
+			assert.equal(resolvedName, "future:model");
+		},
+	],
+	[
 		"rejects invalid Google model before provider generation",
 		async () => {
 			let generated = false;
