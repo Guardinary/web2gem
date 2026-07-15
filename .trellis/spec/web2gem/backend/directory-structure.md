@@ -3,11 +3,11 @@
 ## Source Layout
 
 - The root `package.json` / `src/` tree is the default `web2gem` package. The Cloudflare Worker build and architecture guard are scoped to this root package unless a task explicitly expands the scope.
-- `src/app.ts` is the application composition root. It owns route matching, CORS wrapping, public/admin auth policy ordering, request parsing before account-runtime acquisition, provider composition, and top-level error conversion using Web-standard `Request` / `Response` types.
+- `src/app.ts` is the application composition root. It owns the declarative `APP_ROUTES` table (route matching, admin-exempt vs public ordering, per-route JSON body policy and error envelope, session requirements), CORS wrapping, the public auth gate, provider composition, and top-level error conversion using Web-standard `Request` / `Response` types. Adding a route means adding one table entry, not a new dispatch branch.
 - `src/index.ts` is the thin Cloudflare Worker entrypoint. It delegates `fetch` to `handleApplicationRequest` and exports only stable public helpers; protocol route branches must not be added there.
-- `src/http/` owns HTTP boundary concerns only. Generic CORS/auth/JSON/SSE helpers live under `http/core/`, stream framing helpers under `http/stream/`, and protocol adapters under `http/openai/` and `http/google/`.
+- `src/http/` owns HTTP boundary concerns. Generic, protocol- and completion-neutral helpers live under `http/core/` (enforced by check:arch), stream framing helpers under `http/stream/`, protocol adapters under `http/openai/` and `http/google/`, and business-aware shared modules at the `src/http/` root: `route-body.ts` (completion-aware JSON body policy) and `generation.ts` (shared prepare/generate orchestration, stage logging, and the `GenerationProtocol` strategy consumed by both adapters).
 - `src/http/openai/images.ts` owns OpenAI image route orchestration and generation response flow. JSON and multipart image-edit input normalization, upload-size enforcement, and image-part coercion belong in `src/http/openai/images-input.ts`; keep provider calls and response formatting out of that input owner.
-- HTTP protocol adapters should import `http/core/*` and `http/stream/*` owner modules directly. `src/http/index.ts` is a public/top-level barrel for the Worker entrypoint and compatibility exports, not an internal dependency for protocol adapters.
+- HTTP protocol adapters import `http/core/*`, `http/stream/*`, and `src/http/*` owner modules directly. There is no `src/http/index.ts` barrel; `src/app.ts` also imports owner modules directly. New generation endpoints run through `runPreparedCompletion`/`generateTextLogged`/`generateRichLogged` with their protocol's `*_GENERATION_PROTOCOL` constant instead of hand-rolling prepare/generate/log/error pipelines.
 - `src/completion/` owns provider-neutral completion contracts and shared business behavior: prompt/context preparation, provider text-generation ports, empty-output handling, stream/tool-sieve event generation, one `CompletionStreamLifecycle` reducer, and completion turn finalization. Protocol adapters must not mirror reducer-owned issue/empty/tool-call/policy/count state, and callback-style stream consumption APIs are not part of the contract.
 - `src/promptcompat/` converts OpenAI Responses, OpenAI chat, and Google content shapes into prompt text and file references.
 - `src/toolcall/` owns tool-call prompt formatting, parsing, policy validation, and schema normalization.
@@ -58,7 +58,7 @@ Use this contract when adding or moving routes, changing route-level authenticat
 
 ### 5. Good/Base/Bad Cases
 
-- Good: add a route branch or matcher in `src/app.ts` and cover its method/path/auth/body/account policy in route tests.
+- Good: add one `APP_ROUTES` entry in `src/app.ts` and cover its method/path/auth/body/account policy in route tests.
 - Base: Cloudflare and Docker both delegate to the same Worker/application handler and return equivalent status, protocol headers, and body.
 - Bad: add a Docker-only route, auth shortcut, protocol handler, or error envelope.
 
