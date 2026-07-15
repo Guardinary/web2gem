@@ -1,20 +1,8 @@
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-
-const testBundle = process.env.TEST_BUNDLE || "../../dist/worker.test.js";
-export const mod = await importTestBundle(testBundle);
-
-async function importTestBundle(bundle) {
-	if (bundle === "../../dist/worker.test.js")
-		return import(workspaceFileUrl("dist/worker.test.js"));
-	if (bundle === "../../dist-coverage/worker.test.js")
-		return import(workspaceFileUrl("dist-coverage/worker.test.js"));
-	return import(new URL(bundle, import.meta.url).href);
-}
-
-function workspaceFileUrl(path) {
-	return pathToFileURL(resolve(process.cwd(), path)).href;
-}
+import { resetGeminiBuildLabelCacheForTest } from "../../src/gemini/client/retry";
+import { resetActiveGeminiCookieForTest } from "../../src/gemini/cookies";
+import { _joinByteChunks } from "../../src/gemini/transport/byte-queue";
+import { _setConnectForTest } from "../../src/gemini/transport/socket";
+import { resetGeminiUploadCachesForTest } from "../../src/gemini/uploads/tokens";
 
 export async function* chunks(items, throwAfter = null) {
 	for (let i = 0; i < items.length; i++) {
@@ -177,14 +165,10 @@ export async function withConsoleLog(fn, run) {
 }
 
 export function resetTestState() {
-	if (typeof mod.resetActiveGeminiCookieForTest === "function")
-		mod.resetActiveGeminiCookieForTest();
-	if (typeof mod.resetGeminiBuildLabelCacheForTest === "function")
-		mod.resetGeminiBuildLabelCacheForTest();
-	if (typeof mod.resetGeminiUploadCachesForTest === "function")
-		mod.resetGeminiUploadCachesForTest();
-	if (typeof mod._setConnectForTest === "function")
-		mod._setConnectForTest(null);
+	resetActiveGeminiCookieForTest();
+	resetGeminiBuildLabelCacheForTest();
+	resetGeminiUploadCachesForTest();
+	_setConnectForTest(null);
 }
 
 export function fakeSocketConnect(responseChunks, state = {}) {
@@ -263,5 +247,5 @@ export function fakePersistentSocketConnect(
 
 export function joinedWriteText(state) {
 	const total = state.writes.reduce((sum, chunk) => sum + chunk.length, 0);
-	return new TextDecoder().decode(mod._joinByteChunks(state.writes, total));
+	return new TextDecoder().decode(_joinByteChunks(state.writes, total));
 }
