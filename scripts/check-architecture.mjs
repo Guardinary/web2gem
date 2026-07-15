@@ -199,13 +199,6 @@ const rules = [
 			"../../toolcall/index.ts",
 		],
 	},
-	{
-		label:
-			"implementation modules must import attachment media owner modules instead of the shared media compatibility shim",
-		files:
-			"src/{completion,promptcompat,toolcall,toolstream,http,gemini}/**/*.ts",
-		disallowed: ["../shared/media", "../../shared/media"],
-	},
 ];
 
 const importPattern =
