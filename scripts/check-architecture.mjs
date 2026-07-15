@@ -33,6 +33,23 @@ const rules = [
 		],
 	},
 	{
+		label:
+			"HTTP core helpers must stay protocol- and completion-neutral (business policy belongs to src/http root or adapters)",
+		files: "src/http/core/**/*.ts",
+		disallowed: [
+			"../../completion",
+			"../../completion/",
+			"../../promptcompat",
+			"../../promptcompat/",
+			"../../toolcall",
+			"../../toolcall/",
+			"../../models",
+			"../../models/",
+			"../../gemini",
+			"../../gemini/",
+		],
+	},
+	{
 		label: "gemini client must not depend on prompt compatibility",
 		files: "src/gemini/client/**/*.ts",
 		disallowed: ["../../promptcompat/", "../promptcompat/"],

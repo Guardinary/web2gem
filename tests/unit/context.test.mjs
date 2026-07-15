@@ -13,7 +13,7 @@ import {
 	shouldUseContextFiles,
 } from "../../src/completion/context-files";
 import { ensureInlineToolPrompt } from "../../src/completion/tool-prompt-guard";
-import { readRouteJsonPost } from "../../src/http/core/route-json";
+import { readRouteJsonPost } from "../../src/http/route-body";
 import {
 	googleGenerateContentResponse,
 	googleStreamDonePayload,

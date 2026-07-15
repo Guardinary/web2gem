@@ -15,12 +15,12 @@ import { parseGoogleGenerationPath } from "./http/google/model-path";
 import {
 	googleModelDetailJson,
 	googleModelListJson,
-	HEALTH_JSON,
-	NOT_FOUND_JSON,
+} from "./http/google/models";
+import {
 	openAIModelDetailJson,
 	openAIModelListJson,
-} from "./http/core/model-routes";
-import { googleJsonError, readRouteJsonPost } from "./http/core/route-json";
+} from "./http/openai/models";
+import { googleJsonError, readRouteJsonPost } from "./http/route-body";
 import {
 	handleGeminiAccountAdminRequest,
 	isGeminiAccountAdminPath,
@@ -50,7 +50,16 @@ import { uuid } from "./shared/crypto";
 import { buildGeminiModelCatalog, type GeminiModelCatalog } from "./models";
 import type { RuntimeConfig, WorkerEnv } from "./config";
 import type { GeminiAccountRuntime } from "./gemini/accounts/runtime";
-import type { RouteJsonPostResult } from "./http/core/route-json";
+import type { RouteJsonPostResult } from "./http/route-body";
+import { MODELS } from "./models";
+import { VERSION } from "./config";
+
+const HEALTH_JSON = JSON.stringify({
+	status: "ok",
+	version: VERSION,
+	models: Object.keys(MODELS),
+});
+const NOT_FOUND_JSON = JSON.stringify({ error: "not found" });
 
 export type ApplicationExecutionContext = Pick<
 	ExecutionContext,

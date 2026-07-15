@@ -2,12 +2,12 @@ import {
 	GEMINI_AUTHENTICATED_SESSION_REQUIRED_CODE,
 	GEMINI_AUTHENTICATED_SESSION_REQUIRED_STATUS,
 	geminiAuthenticatedSessionRequiredMessage,
-} from "../../shared/errors";
-import { contextFileThreshold } from "../../completion/context-files";
-import { elapsedMs, logStage, nowMs } from "../../shared/logging";
-import type { UnknownRecord } from "../../shared/types";
-import { readJsonRequest, requestContentLength } from "./json";
-import type { ReadJsonRequestOptions } from "./json";
+} from "../shared/errors";
+import { contextFileThreshold } from "../completion/context-files";
+import { elapsedMs, logStage, nowMs } from "../shared/logging";
+import type { UnknownRecord } from "../shared/types";
+import { readJsonRequest, requestContentLength } from "./core/json";
+import type { ReadJsonRequestOptions } from "./core/json";
 
 const LARGE_CONTEXT_INLINE_UNSUPPORTED = "large_context_inline_unsupported";
 
