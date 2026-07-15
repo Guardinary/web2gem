@@ -29,13 +29,12 @@ export async function writeGoogleStreamError(
 	};
 	const reason = upstreamErrorReason(e);
 	if (reason) error.reason = reason;
-	const result = write(
+	await write(
 		`data: ${JSON.stringify({
 			error,
 			modelVersion: model,
 		})}\n\n`,
 	);
-	if (isPromiseLike(result)) await result;
 }
 
 export async function writeGoogleCandidate(
@@ -48,10 +47,9 @@ export async function writeGoogleCandidate(
 	if (Array.isArray(parts) && parts.length)
 		candidate.content = { parts, role: "model" };
 	if (finishReason) candidate.finishReason = finishReason;
-	const result = write(
+	await write(
 		`data: ${JSON.stringify({ candidates: [candidate], modelVersion: model })}\n\n`,
 	);
-	if (isPromiseLike(result)) await result;
 }
 
 export async function writeGoogleDone(
@@ -59,14 +57,13 @@ export async function writeGoogleDone(
 	model: unknown,
 	usageMetadata: unknown,
 ): Promise<void> {
-	const result = write(
+	await write(
 		`data: ${JSON.stringify({
 			candidates: [{ finishReason: "STOP", index: 0 }],
 			usageMetadata,
 			modelVersion: model,
 		})}\n\n`,
 	);
-	if (isPromiseLike(result)) await result;
 }
 
 export function googleGenerateContentResponse(params: {
@@ -118,8 +115,4 @@ export function googleStreamDonePayload(
 	if (streamErr)
 		donePayload.promptFeedback = { warning: streamWarningObject(streamErr) };
 	return donePayload;
-}
-
-function isPromiseLike(value: unknown): value is Promise<void> {
-	return !!value && typeof (value as Promise<void>).then === "function";
 }

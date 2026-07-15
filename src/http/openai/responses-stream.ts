@@ -51,10 +51,9 @@ export async function writeResponsesEvent(
 	event: string,
 	payload: Record<string, unknown> | null | undefined,
 ): Promise<void> {
-	const result = write(
+	await write(
 		`event: ${event}\ndata: ${JSON.stringify({ type: event, ...(payload || {}) })}\n\n`,
 	);
-	if (isPromiseLike(result)) await result;
 }
 
 export async function streamResponsesWithToolSieve(
@@ -146,13 +145,11 @@ export async function streamResponsesWithToolSieve(
 		const textPiece = String(piece);
 		await startMessage();
 		textParts.push(textPiece);
-		const appended = textDeltaCoalescer.append("output_text", textPiece);
-		if (appended) await appended;
+		await textDeltaCoalescer.append("output_text", textPiece);
 	};
 	const finishMessage = async () => {
 		if (!messageStarted) return;
-		const flushed = textDeltaCoalescer.flush();
-		if (flushed) await flushed;
+		await textDeltaCoalescer.flush();
 		const item = output.find((it) => it.id === mid);
 		const text =
 			textParts.length === 1 ? textParts[0] || "" : textParts.join("");
@@ -347,8 +344,4 @@ export async function streamResponsesWithToolSieve(
 			usage,
 		},
 	});
-}
-
-function isPromiseLike(value: unknown): value is Promise<void> {
-	return !!value && typeof (value as Promise<void>).then === "function";
 }

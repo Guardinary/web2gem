@@ -60,7 +60,7 @@ export async function writeOpenAIChatUsageTokenChunk(
 	promptTokens: unknown,
 	completionTokens: unknown,
 ): Promise<void> {
-	const result = write(
+	await write(
 		`data: ${JSON.stringify({
 			id,
 			object: "chat.completion.chunk",
@@ -73,7 +73,6 @@ export async function writeOpenAIChatUsageTokenChunk(
 			),
 		})}\n\n`,
 	);
-	if (isPromiseLike(result)) await result;
 }
 
 export async function writeOpenAIChatStreamError(
@@ -90,12 +89,10 @@ export async function writeOpenAIChatStreamError(
 	};
 	const reason = upstreamErrorReason(e);
 	if (reason) error.reason = reason;
-	let result = write(
+	await write(
 		`event: error\ndata: ${JSON.stringify({ error, id, model: String(model || "") })}\n\n`,
 	);
-	if (isPromiseLike(result)) await result;
-	result = write("data: [DONE]\n\n");
-	if (isPromiseLike(result)) await result;
+	await write("data: [DONE]\n\n");
 }
 
 export function openAIResponsesUsage(
@@ -230,8 +227,4 @@ function isOpenAIToolCall(value: unknown): value is OpenAIToolCall {
 		typeof value.function.name === "string" &&
 		typeof value.function.arguments === "string"
 	);
-}
-
-function isPromiseLike(value: unknown): value is Promise<void> {
-	return !!value && typeof (value as Promise<void>).then === "function";
 }

@@ -32,9 +32,7 @@ export async function writeStreamWarningEvent(
 	e: unknown,
 	message: unknown = undefined,
 ): Promise<void> {
-	const result = write(
+	await write(
 		`event: warning\ndata: ${JSON.stringify({ warning: streamWarningObject(e, message) })}\n\n`,
 	);
-	if (result && typeof (result as Promise<void>).then === "function")
-		await result;
 }

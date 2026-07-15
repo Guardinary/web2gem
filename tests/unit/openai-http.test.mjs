@@ -3024,8 +3024,10 @@ describe("openai http", () => {
 		});
 
 		const errorWrites = [];
-		writeOpenAIChatStreamError(
-			(chunk) => errorWrites.push(chunk),
+		await writeOpenAIChatStreamError(
+			(chunk) => {
+				errorWrites.push(chunk);
+			},
 			"chatcmpl_error",
 			"gemini-3.5-flash",
 			upstream,

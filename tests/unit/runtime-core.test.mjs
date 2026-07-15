@@ -2595,14 +2595,14 @@ describe("runtime core", () => {
 	test("coalesces stream deltas by field and flush threshold", async () => {
 		const frames = [];
 		const coalescer = createDeltaCoalescer((delta) => frames.push(delta), 5, 0);
-		coalescer.append("content", "hi");
+		await coalescer.append("content", "hi");
 		assert.deepEqual(frames, []);
-		coalescer.append("content", "!");
-		coalescer.append("tool_calls", "x");
+		await coalescer.append("content", "!");
+		await coalescer.append("tool_calls", "x");
 		assert.deepEqual(frames, [{ content: "hi!" }]);
-		coalescer.append("tool_calls", "yzabc");
+		await coalescer.append("tool_calls", "yzabc");
 		assert.deepEqual(frames, [{ content: "hi!" }, { tool_calls: "xyzabc" }]);
-		coalescer.flush();
+		await coalescer.flush();
 		assert.deepEqual(frames, [{ content: "hi!" }, { tool_calls: "xyzabc" }]);
 	});
 	test("can emit the first stream delta immediately before throttling", async () => {

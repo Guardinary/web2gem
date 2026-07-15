@@ -13,8 +13,8 @@ export function createDeltaCoalescer(
 	maxFlushWaitMs: number = MAX_DELTA_FLUSH_WAIT_MS,
 	options: DeltaCoalescerOptions = {},
 ): {
-	append: (field: string, text: unknown) => void | Promise<void>;
-	flush: () => void | Promise<void>;
+	append: (field: string, text: unknown) => Promise<void>;
+	flush: () => Promise<void>;
 } {
 	let pendingField = "";
 	let pendingText = "";
@@ -28,25 +28,24 @@ export function createDeltaCoalescer(
 		}
 	};
 
-	const flush = () => {
+	const flush = (): Promise<void> => {
 		clearFlushTimer();
-		if (!pendingField || !pendingText) return;
+		if (!pendingField || !pendingText) return Promise.resolve();
 		const delta = { [pendingField]: pendingText };
 		pendingField = "";
 		pendingText = "";
 		emitted = true;
-		return sendDeltaFrame(delta);
+		return Promise.resolve(sendDeltaFrame(delta));
 	};
 
 	const scheduleFlush = () => {
 		if (flushTimer || maxFlushWaitMs <= 0) return;
 		flushTimer = setTimeout(() => {
-			const result = flush();
-			if (isPromiseLike(result)) result.catch(() => {});
+			flush().catch(() => {});
 		}, maxFlushWaitMs);
 	};
 
-	const appendBuffered = (field: string, piece: string) => {
+	const appendBuffered = (field: string, piece: string): Promise<void> => {
 		if (
 			options.emitFirstImmediately &&
 			!emitted &&
@@ -54,29 +53,23 @@ export function createDeltaCoalescer(
 			!pendingText
 		) {
 			emitted = true;
-			return sendDeltaFrame({ [field]: piece });
+			return Promise.resolve(sendDeltaFrame({ [field]: piece }));
 		}
 		pendingField = field;
 		pendingText += piece;
 		if (codePointLengthAtLeast(pendingText, minFlushChars)) return flush();
 		scheduleFlush();
-		return;
+		return Promise.resolve();
 	};
 
-	const append = (field: string, text: unknown) => {
+	const append = (field: string, text: unknown): Promise<void> => {
 		const piece = String(text || "");
-		if (!field || !piece) return;
+		if (!field || !piece) return Promise.resolve();
 		if (pendingField && pendingField !== field) {
-			const result = flush();
-			if (isPromiseLike(result))
-				return result.then(() => appendBuffered(field, piece));
+			return flush().then(() => appendBuffered(field, piece));
 		}
 		return appendBuffered(field, piece);
 	};
 
 	return { append, flush };
-}
-
-function isPromiseLike(value: unknown): value is Promise<void> {
-	return !!value && typeof (value as Promise<void>).then === "function";
 }

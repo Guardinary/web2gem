@@ -94,8 +94,7 @@ export async function streamOpenAIChatPlain(
 	)) {
 		recordCompletionStreamEvent(lifecycle, event);
 		if (event.type === "text_delta") {
-			const appended = deltaCoalescer.append("content", event.text);
-			if (appended) await appended;
+			await deltaCoalescer.append("content", event.text);
 		}
 	}
 	await flushOpenAIChatDeltas(deltaCoalescer);
@@ -169,8 +168,7 @@ export async function streamOpenAIChatWithToolSieve(
 	)) {
 		recordCompletionStreamEvent(toolLifecycle, event);
 		if (event.type === "text_delta") {
-			const appended = deltaCoalescer.append("content", event.text);
-			if (appended) await appended;
+			await deltaCoalescer.append("content", event.text);
 		}
 	}
 	await flushOpenAIChatDeltas(deltaCoalescer);
@@ -233,8 +231,7 @@ export async function streamOpenAIChatWithToolSieve(
 async function flushOpenAIChatDeltas(
 	coalescer: OpenAIChatDeltaCoalescer,
 ): Promise<void> {
-	const flushed = coalescer.flush();
-	if (flushed) await flushed;
+	await coalescer.flush();
 }
 
 async function finishOpenAIChatStream(

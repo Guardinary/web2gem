@@ -63,12 +63,10 @@ export async function streamGooglePlain(
 	)) {
 		recordCompletionStreamEvent(lifecycle, event);
 		if (event.type === "text_delta") {
-			const appended = textCoalescer.append("text", event.text);
-			if (appended) await appended;
+			await textCoalescer.append("text", event.text);
 		}
 	}
-	const flushed = textCoalescer.flush();
-	if (flushed) await flushed;
+	await textCoalescer.flush();
 	if (lifecycle.issue) {
 		if (!lifecycle.emittedText) {
 			log(

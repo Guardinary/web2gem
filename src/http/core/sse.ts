@@ -6,7 +6,7 @@ import {
 	upstreamErrorReason,
 } from "../../shared/errors";
 
-export type SSEWrite = (chunk: string) => void | Promise<void>;
+export type SSEWrite = (chunk: string) => Promise<void>;
 export type SSEProducer = (
 	write: SSEWrite,
 	signal: AbortSignal,
@@ -37,7 +37,7 @@ export function sseResponse(
 	};
 
 	const write: SSEWrite = (chunk) => {
-		if (closed || ac.signal.aborted) return;
+		if (closed || ac.signal.aborted) return Promise.resolve();
 		const bytes = sseFrameBytes(chunk);
 		try {
 			return writer.write(bytes).catch(() => {
@@ -47,7 +47,7 @@ export function sseResponse(
 		} catch (_) {
 			closed = true;
 			abort("stream closed");
-			return;
+			return Promise.resolve();
 		}
 	};
 
