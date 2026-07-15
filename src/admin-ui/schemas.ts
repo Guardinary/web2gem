@@ -1,5 +1,10 @@
 import * as v from "valibot";
-import type { AccountOverview, GeminiAccount, MutationResult } from "./types";
+import type {
+	AccountOverview,
+	GeminiAccount,
+	ModelRoutingOverview,
+	MutationResult,
+} from "./types";
 
 const issueSchema = v.union([
 	v.literal("auth"),
@@ -63,6 +68,35 @@ const overviewSchema = v.strictObject({
 	stats: statsSchema,
 });
 
+const modelFamilySchema = v.union([
+	v.literal("pro"),
+	v.literal("flash"),
+	v.literal("flash_lite"),
+]);
+const modelRouteSchema = v.strictObject({
+	providerModelId: v.string(),
+	capacity: v.union([v.literal(1), v.literal(2), v.literal(3), v.literal(4)]),
+	capacityField: v.union([v.literal(12), v.literal(13)]),
+	modelNumber: v.number(),
+	label: v.nullable(
+		v.union([v.literal("Basic"), v.literal("Plus"), v.literal("Advanced")]),
+	),
+	available: v.boolean(),
+	configured: v.boolean(),
+	accountCount: v.number(),
+});
+const modelRoutingSchema = v.strictObject({
+	version: v.string(),
+	families: v.array(
+		v.strictObject({
+			family: modelFamilySchema,
+			publicNames: v.tuple([v.string(), v.string()]),
+			configured: v.boolean(),
+			routes: v.array(modelRouteSchema),
+		}),
+	),
+});
+
 export function parseMutation(value: unknown): MutationResult {
 	const parsed = v.safeParse(mutationSchema, value);
 	if (!parsed.success) throw new Error("admin mutation response is invalid");
@@ -78,4 +112,13 @@ export function parseOverview(value: unknown): AccountOverview {
 
 export function isAccount(value: unknown): value is GeminiAccount {
 	return v.safeParse(accountSchema, value).success;
+}
+
+export function parseModelRoutingOverview(
+	value: unknown,
+): ModelRoutingOverview {
+	const parsed = v.safeParse(modelRoutingSchema, value);
+	if (!parsed.success)
+		throw new Error("admin model routing response is invalid");
+	return parsed.output as ModelRoutingOverview;
 }

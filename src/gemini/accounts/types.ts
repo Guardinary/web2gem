@@ -1,3 +1,8 @@
+import type {
+	GeminiKnownTierLabel,
+	GeminiPublicFamily,
+	GeminiRouteTuple,
+} from "../../models";
 import type { GeminiAccountIssue, GeminiAccountState } from "./domain";
 
 export type D1Result<T = unknown> = {
@@ -129,18 +134,55 @@ export type GeminiAccountBulkCreateEntry = {
 export type GeminiAccountCapabilityRow = {
 	account_id: string;
 	model_id: string;
+	display_name: string;
+	description: string;
 	available: number;
-	capacity: number | null;
-	capacity_field: number | null;
+	capacity: number;
+	capacity_field: number;
+	model_number: number;
+	discovery_order: number;
 	checked_at_ms: number;
 };
 
 export type GeminiAccountModelCapability = {
 	modelId: string;
+	displayName: string;
+	description: string;
 	available: boolean;
-	capacity: number | null;
-	capacityField: number | null;
+	capacity: 1 | 2 | 3 | 4;
+	capacityField: 12 | 13;
+	modelNumber: number;
+	discoveryOrder: number;
 	checkedAtMs: number;
+};
+
+export type GeminiModelRoutePriorityRow = {
+	family: GeminiPublicFamily;
+	provider_model_id: string;
+	capacity: number;
+	capacity_field: number;
+	model_number: number;
+	priority: number;
+	updated_at_ms: number;
+};
+
+export type GeminiModelRoutingRoute = GeminiRouteTuple & {
+	label: GeminiKnownTierLabel | null;
+	available: boolean;
+	configured: boolean;
+	accountCount: number;
+};
+
+export type GeminiModelRoutingFamily = {
+	family: GeminiPublicFamily;
+	publicNames: readonly [string, string];
+	configured: boolean;
+	routes: readonly GeminiModelRoutingRoute[];
+};
+
+export type GeminiModelRoutingOverview = {
+	version: string;
+	families: readonly GeminiModelRoutingFamily[];
 };
 
 export type GeminiAccountBulkCreateResult = {
@@ -210,6 +252,19 @@ export type GeminiAccountRuntimeStore = {
 	listAccountCapabilities?(
 		accountIds: readonly string[],
 	): Promise<GeminiAccountCapabilityRow[]>;
+	listAllAccountCapabilities?(
+		limit: number,
+	): Promise<GeminiAccountCapabilityRow[]>;
+	listModelRoutePriorities?(): Promise<GeminiModelRoutePriorityRow[]>;
+	replaceModelRoutePriority?(
+		family: GeminiPublicFamily,
+		routes: readonly GeminiRouteTuple[],
+		nowMs: number,
+	): Promise<void>;
+	clearModelRoutePriority?(
+		family: GeminiPublicFamily,
+		nowMs: number,
+	): Promise<void>;
 };
 
 export type GeminiAccountAdminStore = {
@@ -260,7 +315,7 @@ export type GeminiAccountRuntimeOptions = {
 
 export type GeminiAccountAcquireOptions = {
 	excludeAccountIds?: ReadonlySet<string> | readonly string[];
-	providerModelId?: string;
+	routeCandidates?: readonly GeminiRouteTuple[];
 	capabilityMode?: "off" | "prefer" | "strict";
 	capabilityFreshAfterMs?: number;
 };
@@ -278,9 +333,13 @@ export type GeminiAccountProbe = {
 	selectable: boolean;
 	models: {
 		modelId: string;
+		displayName: string;
+		description: string;
 		available: boolean;
-		capacity?: number;
-		capacityField?: number;
+		capacity: number;
+		capacityField: number;
+		modelNumber: number;
+		discoveryOrder: number;
 	}[];
 };
 
@@ -305,6 +364,7 @@ export type GeminiAccountRotateResponse = {
 export type GeminiAccountLease = {
 	accountId: string;
 	selectedCookieHash: string;
+	selectedRoute: GeminiRouteTuple | null;
 	modelCapability: GeminiAccountModelCapability | null;
 	config: import("../../config").RuntimeConfig;
 	refreshForRetry(reason?: string): Promise<GeminiAccountRefreshResult>;

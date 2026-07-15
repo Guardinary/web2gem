@@ -1,25 +1,33 @@
-import { getPageTokens } from "../uploads/index";
-import { httpFetch } from "../transport";
+import type { RuntimeConfig } from "../../config";
 import { abortError, isAbortError, throwIfAborted } from "../../shared/abort";
-import { log } from "../../shared/logging";
 import { uuid } from "../../shared/crypto";
+import { log } from "../../shared/logging";
+import type { ErrorWithMetadata } from "../../shared/types";
+import {
+	configWithFreshGeminiCookie,
+	observeGeminiAccountResponseCookies,
+	rotateGeminiCookieForRetryWithReason,
+} from "../cookies";
+import { httpFetch } from "../transport";
+import { getPageTokens } from "../uploads/index";
 import {
 	dataAnalysisEmptyResponseError,
+	geminiSemanticError,
 	invalidGeminiCookieError,
 	isDataAnalysisEmptyResponseError,
+	isGeminiSemanticError,
 	isInvalidGeminiCookieError,
 	isLargePromptEmptyResponseError,
-	isGeminiSemanticError,
 	largePromptEmptyResponseError,
 	largePromptEmptyResponseThreshold,
+	shouldRetryGeminiSemanticErrorOnSameAccount,
+	unverifiedGeminiCookieError,
+	upstreamEmptyResponseError,
 	upstreamImageGenerationEmptyError,
 	upstreamImageProviderError,
-	upstreamEmptyResponseError,
-	unverifiedGeminiCookieError,
-	geminiSemanticError,
-	shouldRetryGeminiSemanticErrorOnSameAccount,
 } from "./errors";
-import { buildHeaders, buildPayload, getUrl } from "./protocol";
+import type { GeminiRichImage } from "./generated-images";
+import { hydrateGeneratedImages } from "./generated-images";
 import {
 	createStreamTextExtractor,
 	extractResponseFatalCode,
@@ -28,20 +36,12 @@ import {
 	richResponseShapeSummary,
 	wrbResponseShapeSummary,
 } from "./parser";
-import { hydrateGeneratedImages } from "./generated-images";
-import type { GeminiRichImage } from "./generated-images";
+import { buildHeaders, buildPayload, getUrl } from "./protocol";
 import {
 	configWithCachedGeminiBuildLabel,
 	refreshGeminiBuildLabelForRetry,
 	waitBeforeRetry,
 } from "./retry";
-import {
-	configWithFreshGeminiCookie,
-	observeGeminiAccountResponseCookies,
-	rotateGeminiCookieForRetryWithReason,
-} from "../cookies";
-import type { RuntimeConfig } from "../../config";
-import type { ErrorWithMetadata } from "../../shared/types";
 
 type GeminiFileRef =
 	| string
@@ -121,9 +121,8 @@ async function fetchGeminiStreamGenerate(
 export async function generate(
 	cfg: RuntimeConfig,
 	prompt: string,
-	modelId: number,
-	thinkMode: number,
-	extra: Record<number, unknown> | null,
+	modelNumber: number,
+	extended: boolean,
 	fileRefs: GeminiFileRef[] | null | undefined,
 	modelHeaders: Record<string, string> | null = null,
 ): Promise<string> {
@@ -136,10 +135,9 @@ export async function generate(
 	const requestId = uuid().toUpperCase();
 	const body = buildPayload(
 		prompt,
-		modelId,
-		thinkMode,
+		modelNumber,
+		extended,
 		fileRefs || null,
-		extra,
 		requestId,
 	);
 	for (let attempt = 0; attempt < cfg.retry_attempts; attempt++) {
@@ -220,9 +218,8 @@ export async function generate(
 export async function generateRich(
 	cfg: RuntimeConfig,
 	prompt: string,
-	modelId: number,
-	thinkMode: number,
-	extra: Record<number, unknown> | null,
+	modelNumber: number,
+	extended: boolean,
 	fileRefs: GeminiFileRef[] | null | undefined,
 	modelHeaders: Record<string, string> | null = null,
 	options: GeminiRichOptions = {},
@@ -236,10 +233,9 @@ export async function generateRich(
 	const requestId = uuid().toUpperCase();
 	const body = buildPayload(
 		prompt,
-		modelId,
-		thinkMode,
+		modelNumber,
+		extended,
 		fileRefs || null,
-		extra,
 		requestId,
 	);
 	for (let attempt = 0; attempt < cfg.retry_attempts; attempt++) {
@@ -328,9 +324,8 @@ export async function generateRich(
 export async function* generateStream(
 	cfg: RuntimeConfig,
 	prompt: string,
-	modelId: number,
-	thinkMode: number,
-	extra: Record<number, unknown> | null,
+	modelNumber: number,
+	extended: boolean,
 	fileRefs: GeminiFileRef[] | null | undefined,
 	options: GeminiStreamOptions = {},
 	modelHeaders: Record<string, string> | null = null,
@@ -345,10 +340,9 @@ export async function* generateStream(
 	const requestId = uuid().toUpperCase();
 	const body = buildPayload(
 		prompt,
-		modelId,
-		thinkMode,
+		modelNumber,
+		extended,
 		fileRefs || null,
-		extra,
 		requestId,
 	);
 	const signal = options?.signal;

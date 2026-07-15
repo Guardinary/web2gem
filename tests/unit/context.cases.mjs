@@ -26,6 +26,36 @@ export const cases = [
 		},
 	],
 	[
+		"round-trips exact Gemini routes and preserves dynamic suffix ambiguity",
+		async () => {
+			const route = {
+				providerModelId: "future-model-extended",
+				capacity: 3,
+				capacityField: 13,
+				modelNumber: 7,
+			};
+			assert.deepEqual(
+				mod.parseGeminiRouteKey(mod.geminiRouteKey(route)),
+				route,
+			);
+			assert.deepEqual(
+				mod.dynamicProviderModelCandidates("future-model-extended"),
+				[
+					{ providerModelId: "future-model-extended", extended: false },
+					{ providerModelId: "future-model", extended: true },
+				],
+			);
+			assert.equal(
+				mod.knownTierLabel({
+					providerModelId: "56fdd199312815e2",
+					capacity: 4,
+					capacityField: 12,
+				}),
+				"Plus",
+			);
+		},
+	],
+	[
 		"logs context-file metadata without leaking latest user text",
 		async () => {
 			const cfg = {

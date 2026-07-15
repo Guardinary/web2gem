@@ -2,6 +2,11 @@ import type { RuntimeConfig, WorkerEnv } from "../../config";
 import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
+import {
+	type GeminiPublicFamily,
+	type GeminiRouteTuple,
+	geminiRouteKey,
+} from "../../models";
 import type { GeminiAccountAdminFilterInput } from "./admin-input";
 import {
 	createInputFromAccount,
@@ -10,6 +15,7 @@ import {
 	normalizeBulkAction,
 	normalizeCreateAccounts,
 	normalizeListFilter,
+	normalizeModelRoutePriority,
 	updateFromBody,
 	WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS,
 } from "./admin-input";
@@ -36,6 +42,7 @@ import type {
 	GeminiAccountRefreshReason,
 	GeminiAccountRuntimeStore,
 	GeminiAccountStore,
+	GeminiModelRoutingOverview,
 } from "./types";
 
 export { GeminiAccountAdminError } from "./admin-input";
@@ -102,6 +109,45 @@ export class GeminiAccountAdminService {
 			normalizeListFilter(filter),
 			this.nowMs(),
 		);
+	}
+
+	modelRoutingOverview(): Promise<GeminiModelRoutingOverview> {
+		return this.pool.modelRoutingOverview(this.capabilityFreshAfterMs());
+	}
+
+	async replaceModelRoutePriority(
+		family: GeminiPublicFamily,
+		body: UnknownRecord,
+	): Promise<GeminiModelRoutingOverview> {
+		const routes = normalizeModelRoutePriority(body);
+		await this.assertKnownModelRoutes(family, routes);
+		if (!this.runtimeStore.replaceModelRoutePriority)
+			throw new GeminiAccountAdminError(
+				503,
+				"model_routing_store_unavailable",
+				"model routing store is unavailable",
+			);
+		await this.runtimeStore.replaceModelRoutePriority(
+			family,
+			routes,
+			this.nowMs(),
+		);
+		this.pool.invalidateSnapshot();
+		return this.modelRoutingOverview();
+	}
+
+	async clearModelRoutePriority(
+		family: GeminiPublicFamily,
+	): Promise<GeminiModelRoutingOverview> {
+		if (!this.runtimeStore.clearModelRoutePriority)
+			throw new GeminiAccountAdminError(
+				503,
+				"model_routing_store_unavailable",
+				"model routing store is unavailable",
+			);
+		await this.runtimeStore.clearModelRoutePriority(family, this.nowMs());
+		this.pool.invalidateSnapshot();
+		return this.modelRoutingOverview();
 	}
 
 	async create(body: UnknownRecord): Promise<GeminiAccountMutationResult> {
@@ -215,6 +261,31 @@ export class GeminiAccountAdminService {
 					message: "account refresh failed",
 				},
 			};
+		}
+	}
+
+	private capabilityFreshAfterMs(): number {
+		return (
+			this.nowMs() -
+			Math.max(Number(this.cfg.gemini_account_capability_ttl_sec) || 3600, 60) *
+				1000
+		);
+	}
+
+	private async assertKnownModelRoutes(
+		family: GeminiPublicFamily,
+		routes: readonly GeminiRouteTuple[],
+	): Promise<void> {
+		const overview = await this.modelRoutingOverview();
+		const known = overview.families.find((item) => item.family === family);
+		const knownKeys = new Set((known?.routes || []).map(geminiRouteKey));
+		for (const route of routes) {
+			if (knownKeys.has(geminiRouteKey(route))) continue;
+			throw new GeminiAccountAdminError(
+				400,
+				"unknown_model_route",
+				"model routing policy contains an undiscovered route",
+			);
 		}
 	}
 

@@ -183,19 +183,27 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 ## 模型
 
-`web2gem` 在 `src/models/index.ts` 中暴露固定模型映射。
+`web2gem` 对外暴露三个模型族。每个模型族都有标准名称和
+`-extended` 名称；后者会启用 Gemini 的扩展思考标志。
 
-| 模型 ID                          | 说明                                       |
-| -------------------------------- | ------------------------------------------ |
-| `gemini-3.5-flash`               | 快速通用模型。                             |
-| `gemini-3.5-flash-thinking`      | 深度思考模式，输出更长。                   |
-| `gemini-3.1-pro`                 | Pro 路由；需要账号池中存在可用账号。       |
-| `gemini-3.1-pro-enhanced`        | 实验性的增强 Pro 输出模式。                |
-| `gemini-auto`                    | Gemini Web 自动模型选择。                  |
-| `gemini-3.5-flash-thinking-lite` | 动态思考，自适应深度。                     |
-| `gemini-flash-lite`              | 轻量快速模型。                             |
+| 模型 ID | 说明 |
+| --- | --- |
+| `gemini-3.1-pro` | 通过认证账号路由使用 Pro 模型族。 |
+| `gemini-3.1-pro-extended` | 启用扩展思考的 Pro 模型族。 |
+| `gemini-3.5-flash` | 默认快速模型；符合条件的文本请求先尝试匿名 Gemini。 |
+| `gemini-3.5-flash-extended` | 使用相同 Flash 路由并启用扩展思考。 |
+| `gemini-3.1-flash-lite` | 通过认证账号路由使用 Flash Lite 模型族。 |
+| `gemini-3.1-flash-lite-extended` | 启用扩展思考的 Flash Lite 模型族。 |
 
-可以在请求模型 ID 后追加 `@think=N` 覆盖思考深度，例如 `gemini-3.5-flash@think=0`。支持的覆盖值为 `0`、`1`、`2`、`3`、`4`。
+`GET /v1/models` 和 `GET /v1beta/models` 使用同一个有序目录：先加入匿名
+Flash 基线，再合并账号发现结果。有效但未知的 provider model ID 会临时以
+`<id>` 和 `<id>-extended` 两个名称公开，并可通过发现它的账号请求。没有可用的
+实时目录时会使用最后一次完整持久化快照；没有 D1 时两个接口仍返回 Flash
+pair。Basic、Plus、Advanced、provider ID、capacity field 和 model number
+都只是内部路由信息，不是公开层级名称。
+
+旧别名和 `@think=N` 不再支持。本项目也不提供自定义模型配置；目录只能由已知
+公开名称和上游实际发现的动态 ID 组成。
 
 ## 快速开始
 
@@ -363,13 +371,15 @@ wrangler secret put ADMIN_KEY
 2. 输入配置好的 `ADMIN_KEY`，并选择使用 session storage 或 local storage 保存到浏览器。
 3. 导入 `__Secure-1PSID` 和 `__Secure-1PSIDTS` 的纯值。
 4. 确认账号显示为已启用且可用。
-5. 通过任意受支持的 API 路由发送生成请求。
+5. 可选：在模型路由卡片中分别调整 Pro、Flash 和 Flash Lite 的内部顺序；
+   标准名称与 `-extended` 名称共享顺序。
+6. 通过任意受支持的 API 路由发送生成请求。
 
 建议使用新的或专门的 Gemini 浏览器会话。不要粘贴完整 Cookie header、浏览器 Cookie 导出、Cookie 名称、等号、分号或无关的 access token。管理响应和账号列表均已脱敏，不会返回保存的会话凭据。
 
 当前分支使用混合上游路由。符合条件的短文本请求会先走 Gemini Web 上游无鉴权模式，并且不会读取 D1；如果匿名生成在输出前失败，Provider 会按照 `GEMINI_ACCOUNT_MAX_ATTEMPTS`（默认 `10`，并自然受账号池规模限制）继续尝试不同账号。Pro、长上下文、附件、生图和图片编辑直接走能力感知账号池。部署缺少认证会话能力时返回 HTTP 422、错误码 `gemini_authenticated_session_required` 和机器可读的 `reason`；已配置账号池但暂时没有可用账号时返回 HTTP 503 与 `no_available_gemini_account`，而匿名请求失败且没有回退账号时保留原始匿名上游错误。
 
-Worker 部署时，创建 D1 数据库，执行 [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql)，并在 `wrangler.jsonc` 或 Cloudflare 控制台配置中把它绑定为 `GEMINI_DB`。最终开发期 schema 会直接创建账号、模型能力、元数据和协调锁表；稳定 PSID 身份从首次写入起必填且唯一。
+Worker 部署时，创建 D1 数据库，执行 [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql)，并在 `wrangler.jsonc` 或 Cloudflare 控制台配置中把它绑定为 `GEMINI_DB`。最终开发期 schema 会直接创建账号、发现模型能力、精确路由优先级、元数据和协调锁表；稳定 PSID 身份从首次写入起必填且唯一。
 
 新建 D1 数据库时，执行一次迁移：
 
@@ -403,6 +413,12 @@ curl "https://your-worker.example/admin/accounts?state=attention&q=primary" \
 
 四种 UI 状态均由运行数据派生而不是持久化：人工禁用为 `disabled`，有效冷却为 `cooling`，持久的认证/人工操作/地区问题为 `attention`，其他可选账号为 `available`。运行时问题只使用 `auth`、`rate_limit`、`user_action`、`location` 或 `transient`。请求成功或认证刷新成功会清除问题与冷却；模型或能力错误只属于当前请求，不会污染整个账号的健康状态。
 
+模型路由自动化接口包括 `GET /admin/model-routing`、`PUT
+/admin/model-routing/{pro|flash|flash_lite}`，以及在相同 family 路径上使用
+`DELETE` 恢复发现顺序。PUT 的 `routes` 数组必须由已发现或当前已保存的精确
+`providerModelId`、`capacity`、`capacityField`、`modelNumber` 元组组成。无效替换
+不会改变原策略或 pool version。
+
 显式刷新接口只对 admin 开放：
 
 ```sh
@@ -410,7 +426,7 @@ curl -X POST "https://your-worker.example/admin/accounts/<account-id>/refresh" \
   -H "Authorization: Bearer $ADMIN_KEY"
 ```
 
-所有 mutation 都返回同一个紧凑结构：`processed`、`changed`、`unchanged`、`failed`，以及可选的脱敏 `errors`；mutation 不会回显账号行。WebUI 只保留导入、搜索/状态筛选、刷新、重命名、启用/禁用、删除、选择和分页，不再提供可编辑运行状态、Check、CSV 导出或持久诊断面板。启动、健康检查和公开模型列表不会选择账号、调用 `/app`、刷新 cookie 或探测 Google。
+所有账号 mutation 都返回同一个紧凑结构：`processed`、`changed`、`unchanged`、`failed`，以及可选的脱敏 `errors`；mutation 不会回显账号行。WebUI 额外只展示排序所需的已发现精确模型路线，不会暴露凭据或原始 RPC 数据。健康检查始终不读取 D1；公开模型列表可以读取持久化模型目录，但不会 lease 账号、调用 `/app`、刷新 cookie 或探测 Google。
 
 导入账号时，只使用当前支持的最短凭据形式：`__Secure-1PSID` 和 `__Secure-1PSIDTS`。用新的无痕浏览器 Gemini 登录，提取这些值后关闭浏览器，通常比复制日常浏览器的完整 cookie header 更稳定。
 

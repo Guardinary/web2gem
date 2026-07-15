@@ -2,6 +2,9 @@ import {
 	createAccount,
 	createAccountsWithLimitFallback,
 	getAccountOverview,
+	getModelRoutingOverview,
+	replaceModelRoutePriority,
+	resetModelRoutePriority,
 	runAccountAction,
 	updateAccount,
 } from "./api";
@@ -34,6 +37,9 @@ import {
 	KEY_STORAGE_MODE,
 	keyStorageMode,
 	loading,
+	modelRouting,
+	modelRoutingDrafts,
+	modelRoutingLoading,
 	nextCursor,
 	pageIndex,
 	query,
@@ -42,7 +48,14 @@ import {
 	stateFilter,
 	toastItems,
 } from "./state";
-import type { AccountAction, AccountIdentifier, GeminiAccount } from "./types";
+import { emptyModelRoutingDrafts } from "./state";
+import type {
+	AccountAction,
+	AccountIdentifier,
+	GeminiAccount,
+	ModelFamily,
+	ModelRoutingOverview,
+} from "./types";
 
 let toastId = 0;
 let confirmationResolver: ((confirmed: boolean) => void) | null = null;
@@ -97,6 +110,8 @@ export function clearAdminKey(): void {
 	connectionVerified.value = false;
 	accounts.value = [];
 	accountStats.value = null;
+	modelRouting.value = null;
+	modelRoutingDrafts.value = emptyModelRoutingDrafts();
 	selected.value = new Set();
 	authExpanded.value = true;
 	showToast(tr("Admin key cleared"));
@@ -152,6 +167,7 @@ export async function loadAccounts(
 		if (verifyConnection) {
 			connectionVerified.value = true;
 			authExpanded.value = false;
+			await loadModelRouting();
 		}
 		showToast(
 			language.value === "zh-CN"
@@ -170,6 +186,131 @@ export async function loadAccounts(
 	} finally {
 		loading.value = false;
 	}
+}
+
+export async function loadModelRouting(): Promise<void> {
+	if (!adminKey.value.trim()) return;
+	modelRoutingLoading.value = true;
+	try {
+		applyModelRoutingOverview(await getModelRoutingOverview(adminKey.value));
+	} catch (error) {
+		showToast(
+			error instanceof Error
+				? error.message
+				: tr("Failed to load model routing"),
+			"error",
+		);
+	} finally {
+		modelRoutingLoading.value = false;
+	}
+}
+
+export function moveModelRoute(
+	family: ModelFamily,
+	index: number,
+	direction: -1 | 1,
+): void {
+	const draft = modelRoutingDrafts.value[family];
+	const target = index + direction;
+	if (draft.busy || target < 0 || target >= draft.routes.length) return;
+	const routes = [...draft.routes];
+	const current = routes[index];
+	const adjacent = routes[target];
+	if (!current || !adjacent) return;
+	routes[index] = adjacent;
+	routes[target] = current;
+	modelRoutingDrafts.value = {
+		...modelRoutingDrafts.value,
+		[family]: { ...draft, routes, dirty: true, error: null },
+	};
+}
+
+export async function saveModelRoutePriority(
+	family: ModelFamily,
+): Promise<void> {
+	const draft = modelRoutingDrafts.value[family];
+	setModelRoutingDraft(family, { busy: true, error: null });
+	try {
+		const routes = draft.routes.map(
+			({ providerModelId, capacity, capacityField, modelNumber }) => ({
+				providerModelId,
+				capacity,
+				capacityField,
+				modelNumber,
+			}),
+		);
+		applyModelRoutingOverview(
+			await replaceModelRoutePriority(adminKey.value, family, routes),
+			family,
+		);
+		showToast(tr("Model routing saved"));
+	} catch (error) {
+		const message =
+			error instanceof Error
+				? error.message
+				: tr("Failed to save model routing");
+		setModelRoutingDraft(family, { busy: false, error: message });
+		showToast(message, "error");
+	}
+}
+
+export async function resetModelRoutePriorityAction(
+	family: ModelFamily,
+): Promise<void> {
+	setModelRoutingDraft(family, { busy: true, error: null });
+	try {
+		applyModelRoutingOverview(
+			await resetModelRoutePriority(adminKey.value, family),
+			family,
+		);
+		showToast(tr("Model routing reset"));
+	} catch (error) {
+		const message =
+			error instanceof Error
+				? error.message
+				: tr("Failed to reset model routing");
+		setModelRoutingDraft(family, { busy: false, error: message });
+		showToast(message, "error");
+	}
+}
+
+function applyModelRoutingOverview(
+	overview: ModelRoutingOverview,
+	changedFamily?: ModelFamily,
+): void {
+	modelRouting.value = overview;
+	const current = modelRoutingDrafts.value;
+	const next = emptyModelRoutingDrafts();
+	for (const family of overview.families) {
+		const existing = current[family.family];
+		if (
+			changedFamily &&
+			family.family !== changedFamily &&
+			(existing.dirty || existing.busy)
+		) {
+			next[family.family] = existing;
+			continue;
+		}
+		next[family.family] = {
+			routes: family.routes,
+			busy: false,
+			error: null,
+			dirty: false,
+		};
+	}
+	modelRoutingDrafts.value = next;
+}
+
+function setModelRoutingDraft(
+	family: ModelFamily,
+	update: Partial<
+		Pick<(typeof modelRoutingDrafts.value)[ModelFamily], "busy" | "error">
+	>,
+): void {
+	modelRoutingDrafts.value = {
+		...modelRoutingDrafts.value,
+		[family]: { ...modelRoutingDrafts.value[family], ...update },
+	};
 }
 
 export async function submitImport(event: Event): Promise<void> {

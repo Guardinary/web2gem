@@ -266,6 +266,52 @@
 	letter-spacing: -0.01em;
 }
 
+/* Model routing */
+.model-routing-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: var(--space-3);
+}
+.model-routing-state {
+	padding: var(--space-6);
+	color: var(--muted);
+	text-align: center;
+}
+.model-routing-card {
+	display: flex;
+	min-width: 0;
+	flex-direction: column;
+}
+.model-routing-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-3);
+	border-bottom: 1px solid var(--line);
+	padding: var(--space-4);
+}
+.model-routing-head h3 {
+	font-size: var(--text-lg);
+}
+.route-public-names {
+	margin-top: 4px;
+	color: var(--muted);
+	font-size: var(--text-xs);
+	overflow-wrap: anywhere;
+}
+.model-routing-actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: var(--space-2);
+	margin-top: auto;
+	border-top: 1px solid var(--line);
+	padding: var(--space-3) var(--space-4);
+}
+.model-routing-actions > span:first-child {
+	margin-right: auto;
+}
+
 /* Disclosure + import */
 .disclosure {
 	margin-bottom: var(--space-4);

@@ -16,12 +16,12 @@ import {
 } from "./http/openai";
 import { handleGoogleGenerate } from "./http/google/handlers";
 import {
-	GOOGLE_MODEL_JSON_BY_ID,
-	GOOGLE_MODEL_LIST_JSON,
+	googleModelDetailJson,
+	googleModelListJson,
 	HEALTH_JSON,
 	NOT_FOUND_JSON,
-	OPENAI_MODEL_JSON_BY_ID,
-	OPENAI_MODEL_LIST_JSON,
+	openAIModelDetailJson,
+	openAIModelListJson,
 } from "./http/core/model-routes";
 import { googleJsonError, readRouteJsonPost } from "./http/core/route-json";
 import {
@@ -32,6 +32,10 @@ import {
 	handleGeminiAccountAdminUiRequest,
 	isGeminiAccountAdminUiPath,
 } from "./http/admin/gemini-account-webui";
+import {
+	handleGeminiModelRoutingAdminRequest,
+	isGeminiModelRoutingAdminPath,
+} from "./http/admin/gemini-model-routing";
 import { createGeminiCompletionProvider } from "./gemini/completion-provider";
 import {
 	GEMINI_AUTHENTICATED_SESSION_REQUIRED_CODE,
@@ -46,6 +50,7 @@ import {
 import { elapsedMs, log, logStage, nowMs } from "./shared/logging";
 import { errorLogSummary } from "./shared/errors";
 import { uuid } from "./shared/crypto";
+import { buildGeminiModelCatalog, type GeminiModelCatalog } from "./models";
 import type { RuntimeConfig, WorkerEnv } from "./config";
 import type { GeminiAccountRuntime } from "./gemini/accounts/runtime";
 import type { RouteJsonPostResult } from "./http/core/route-json";
@@ -133,6 +138,12 @@ export async function handleApplicationRequest(
 		);
 	}
 
+	if (isGeminiModelRoutingAdminPath(path)) {
+		return respond(
+			await handleGeminiModelRoutingAdminRequest(request, env, cfg, url),
+		);
+	}
+
 	if (path !== "/" && !authorized(request, url, cfg)) {
 		return respond(openAIErrorResponse("invalid api key", 401));
 	}
@@ -186,16 +197,26 @@ async function dispatchApplicationRoute(
 	method: string,
 	context: ApplicationRequestContext,
 ): Promise<Response> {
-	if (method === "GET") return handleGetRoute(context.path);
+	if (method === "GET") return handleGetRoute(context);
 	if (method === "POST") return handlePostRoute(context);
 	return jsonTextResponse(NOT_FOUND_JSON, 404);
 }
 
-function handleGetRoute(path: string): Response {
-	if (path === "/v1/models") return jsonTextResponse(OPENAI_MODEL_LIST_JSON);
+async function handleGetRoute(
+	context: ApplicationRequestContext,
+): Promise<Response> {
+	const { path } = context;
+	if (path === "/") return jsonTextResponse(HEALTH_JSON);
+	if (path === "/v1/models") {
+		const catalog = await applicationModelCatalog(context);
+		return jsonTextResponse(openAIModelListJson(catalog));
+	}
 	if (path.startsWith("/v1/models/")) {
 		const id = decodeURIComponent(path.slice("/v1/models/".length));
-		const modelJson = OPENAI_MODEL_JSON_BY_ID.get(id);
+		const modelJson = openAIModelDetailJson(
+			await applicationModelCatalog(context),
+			id,
+		);
 		if (!modelJson)
 			return openAIErrorResponse(
 				`model ${id} is not available`,
@@ -204,11 +225,16 @@ function handleGetRoute(path: string): Response {
 			);
 		return jsonTextResponse(modelJson);
 	}
-	if (path === "/v1beta/models")
-		return jsonTextResponse(GOOGLE_MODEL_LIST_JSON);
+	if (path === "/v1beta/models") {
+		const catalog = await applicationModelCatalog(context);
+		return jsonTextResponse(googleModelListJson(catalog));
+	}
 	if (path.startsWith("/v1beta/models/")) {
 		const id = decodeURIComponent(path.slice("/v1beta/models/".length));
-		const modelJson = GOOGLE_MODEL_JSON_BY_ID.get(id);
+		const modelJson = googleModelDetailJson(
+			await applicationModelCatalog(context),
+			id,
+		);
 		if (!modelJson)
 			return jsonResponse(
 				{
@@ -221,8 +247,28 @@ function handleGetRoute(path: string): Response {
 			);
 		return jsonTextResponse(modelJson);
 	}
-	if (path === "/") return jsonTextResponse(HEALTH_JSON);
 	return jsonTextResponse(NOT_FOUND_JSON, 404);
+}
+
+async function applicationModelCatalog(
+	context: ApplicationRequestContext,
+): Promise<GeminiModelCatalog> {
+	const fallback = buildGeminiModelCatalog([], Date.now());
+	const runtime = requiredGeminiAccountRuntimeFromEnv(context.env);
+	if (!runtime) return fallback;
+	try {
+		return await runtime.modelCatalog(capabilityFreshAfterMs(context.cfg));
+	} catch (error) {
+		log(context.cfg, `model catalog load failed: ${errorLogSummary(error)}`);
+		return fallback;
+	}
+}
+
+function capabilityFreshAfterMs(cfg: RuntimeConfig): number {
+	return (
+		Date.now() -
+		Math.max(Number(cfg.gemini_account_capability_ttl_sec) || 3600, 60) * 1000
+	);
 }
 
 async function handlePostRoute(

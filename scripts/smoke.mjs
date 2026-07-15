@@ -184,9 +184,27 @@ if (
 	process.exit(1);
 }
 
-const unusedD1 = {
-	prepare() {
-		throw new Error("smoke validation should not read D1");
+const emptyCatalogD1 = {
+	prepare(sql) {
+		return {
+			bind() {
+				return this;
+			},
+			async first(column) {
+				if (sql.includes("FROM gemini_pool_meta") && column === "value")
+					return "0";
+				return null;
+			},
+			async all() {
+				if (
+					sql.includes("FROM gemini_accounts") ||
+					sql.includes("FROM gemini_account_models") ||
+					sql.includes("FROM gemini_model_route_priority")
+				)
+					return { results: [] };
+				throw new Error("unexpected smoke D1 query");
+			},
+		};
 	},
 };
 
@@ -202,7 +220,7 @@ const openAIReject = await prod.default.fetch(
 	{
 		API_KEYS: "",
 		CURRENT_INPUT_FILE_ENABLED: "false",
-		GEMINI_DB: unusedD1,
+		GEMINI_DB: emptyCatalogD1,
 	},
 	{},
 );
@@ -231,7 +249,7 @@ const googleReject = await prod.default.fetch(
 	{
 		API_KEYS: "",
 		CURRENT_INPUT_FILE_ENABLED: "false",
-		GEMINI_DB: unusedD1,
+		GEMINI_DB: emptyCatalogD1,
 	},
 	{},
 );

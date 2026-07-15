@@ -1,46 +1,65 @@
 import { VERSION } from "../../config";
+import type { GeminiModelCatalog, GeminiModelCatalogEntry } from "../../models";
 import { MODELS } from "../../models";
 
-const OPENAI_MODEL_LIST = Object.entries(MODELS).map(([n, c]) => ({
-	id: n,
-	object: "model",
-	created: 1700000000,
-	owned_by: "google",
-	description: c.desc,
-}));
-const GOOGLE_MODEL_LIST = Object.entries(MODELS).map(([n, c]) => ({
-	name: `models/${n}`,
-	displayName: n,
-	description: c.desc,
-	supportedGenerationMethods: ["generateContent", "streamGenerateContent"],
-}));
-const HEALTH_MODEL_IDS = Object.keys(MODELS);
+const SUPPORTED_GENERATION_METHODS = [
+	"generateContent",
+	"streamGenerateContent",
+] as const;
 
-export const OPENAI_MODEL_LIST_JSON = JSON.stringify({
-	object: "list",
-	data: OPENAI_MODEL_LIST,
-});
-export const OPENAI_MODEL_JSON_BY_ID = new Map(
-	Object.entries(MODELS).map(([id, cfg]) => [
-		id,
-		JSON.stringify({
-			id,
-			object: "model",
-			created: 1700000000,
-			owned_by: "google",
-			description: cfg.desc,
-		}),
-	]),
-);
-export const GOOGLE_MODEL_LIST_JSON = JSON.stringify({
-	models: GOOGLE_MODEL_LIST,
-});
-export const GOOGLE_MODEL_JSON_BY_ID = new Map(
-	GOOGLE_MODEL_LIST.map((model) => [model.displayName, JSON.stringify(model)]),
-);
 export const HEALTH_JSON = JSON.stringify({
 	status: "ok",
 	version: VERSION,
-	models: HEALTH_MODEL_IDS,
+	models: Object.keys(MODELS),
 });
 export const NOT_FOUND_JSON = JSON.stringify({ error: "not found" });
+
+export function openAIModelListJson(catalog: GeminiModelCatalog): string {
+	return JSON.stringify({
+		object: "list",
+		data: catalog.entries.map((entry) => openAIModel(entry, catalog)),
+	});
+}
+
+export function openAIModelDetailJson(
+	catalog: GeminiModelCatalog,
+	id: string,
+): string | null {
+	const entry = catalog.entries.find((candidate) => candidate.id === id);
+	return entry ? JSON.stringify(openAIModel(entry, catalog)) : null;
+}
+
+export function googleModelListJson(catalog: GeminiModelCatalog): string {
+	return JSON.stringify({
+		models: catalog.entries.map(googleModel),
+	});
+}
+
+export function googleModelDetailJson(
+	catalog: GeminiModelCatalog,
+	id: string,
+): string | null {
+	const entry = catalog.entries.find((candidate) => candidate.id === id);
+	return entry ? JSON.stringify(googleModel(entry)) : null;
+}
+
+function openAIModel(
+	entry: GeminiModelCatalogEntry,
+	catalog: GeminiModelCatalog,
+) {
+	return {
+		id: entry.id,
+		object: "model",
+		created: catalog.createdAtSec,
+		owned_by: "google",
+	};
+}
+
+function googleModel(entry: GeminiModelCatalogEntry) {
+	return {
+		name: `models/${entry.id}`,
+		displayName: entry.displayName,
+		description: entry.description,
+		supportedGenerationMethods: SUPPORTED_GENERATION_METHODS,
+	};
+}

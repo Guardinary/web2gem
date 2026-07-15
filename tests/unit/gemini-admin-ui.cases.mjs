@@ -96,6 +96,140 @@ export const cases = [
 		},
 	],
 	[
+		"validates and requests exact model routing DTOs",
+		async () => {
+			const overview = uiModelRouting();
+			assert.deepEqual(mod.parseModelRoutingOverview(overview), overview);
+			assert.throws(
+				() =>
+					mod.parseModelRoutingOverview({
+						...overview,
+						families: [
+							{
+								...overview.families[0],
+								routes: [
+									{
+										...overview.families[0].routes[0],
+										cookie_hash: "secret",
+									},
+								],
+							},
+						],
+					}),
+				/admin model routing response is invalid/,
+			);
+
+			const originalFetch = globalThis.fetch;
+			const requests = [];
+			try {
+				globalThis.fetch = async (path, init = {}) => {
+					requests.push({ path, init });
+					return Response.json(overview);
+				};
+				await mod.getModelRoutingOverview("admin-secret");
+				await mod.replaceModelRoutePriority("admin-secret", "pro", [
+					{
+						providerModelId: "9d8ca3786ebdfbea",
+						capacity: 3,
+						capacityField: 13,
+						modelNumber: 3,
+					},
+				]);
+				await mod.resetModelRoutePriority("admin-secret", "pro");
+				assert.deepEqual(
+					requests.map((item) => [item.path, item.init.method || "GET"]),
+					[
+						["/admin/model-routing", "GET"],
+						["/admin/model-routing/pro", "PUT"],
+						["/admin/model-routing/pro", "DELETE"],
+					],
+				);
+				assert.deepEqual(JSON.parse(requests[1].init.body), {
+					routes: [
+						{
+							providerModelId: "9d8ca3786ebdfbea",
+							capacity: 3,
+							capacityField: 13,
+							modelNumber: 3,
+						},
+					],
+				});
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		},
+	],
+	[
+		"keeps model routing draft order separate from the saved overview",
+		async () => {
+			const overview = uiModelRouting();
+			mod.modelRouting.value = overview;
+			mod.modelRoutingDrafts.value = {
+				pro: {
+					routes: [
+						overview.families[0].routes[0],
+						{
+							...overview.families[0].routes[0],
+							providerModelId: "e6fa609c3fa255c0",
+							capacity: 4,
+							capacityField: 12,
+						},
+					],
+					busy: false,
+					error: null,
+					dirty: false,
+				},
+				flash: {
+					routes: [
+						{
+							...overview.families[0].routes[0],
+							providerModelId: "56fdd199312815e2",
+							capacity: 4,
+							capacityField: 12,
+							modelNumber: 1,
+						},
+					],
+					busy: false,
+					error: null,
+					dirty: true,
+				},
+				flash_lite: { routes: [], busy: false, error: null, dirty: false },
+			};
+			mod.moveModelRoute("pro", 1, -1);
+			assert.deepEqual(
+				mod.modelRoutingDrafts.value.pro.routes.map(
+					(route) => route.providerModelId,
+				),
+				["e6fa609c3fa255c0", "9d8ca3786ebdfbea"],
+			);
+			assert.equal(mod.modelRoutingDrafts.value.pro.dirty, true);
+			assert.equal(
+				mod.modelRouting.value.families[0].routes[0].providerModelId,
+				"9d8ca3786ebdfbea",
+			);
+
+			const originalFetch = globalThis.fetch;
+			const originalWindow = globalThis.window;
+			try {
+				globalThis.window = { setTimeout: () => 0 };
+				globalThis.fetch = async () => Response.json(overview);
+				mod.adminKey.value = "admin-secret";
+				await mod.saveModelRoutePriority("pro");
+				assert.equal(
+					mod.modelRoutingDrafts.value.flash.routes[0].providerModelId,
+					"56fdd199312815e2",
+				);
+				assert.equal(mod.modelRoutingDrafts.value.flash.dirty, true);
+				assert.equal(mod.modelRoutingDrafts.value.pro.dirty, false);
+			} finally {
+				globalThis.fetch = originalFetch;
+				if (originalWindow === undefined) delete globalThis.window;
+				else globalThis.window = originalWindow;
+				mod.adminKey.value = "";
+			}
+		},
+	],
+	[
 		"retries only Worker-limited imports in ordered 40-account chunks",
 		async () => {
 			const originalFetch = globalThis.fetch;
@@ -228,6 +362,8 @@ export const cases = [
 			assert.match(html, /All states/);
 			assert.match(html, /Current issue/);
 			assert.match(html, /primary-metrics/);
+			assert.match(html, /Model route priority/);
+			assert.match(html, /Reset to discovery order/);
 			assert.doesNotMatch(
 				html,
 				/More filters|secondary-metrics|Export CSV|Diagnostics|Check selected|account_category|success_count/,
@@ -306,6 +442,46 @@ function emptyStats(overrides = {}) {
 		attention: 0,
 		disabled: 0,
 		...overrides,
+	};
+}
+
+function uiModelRouting() {
+	return {
+		version: "1",
+		families: [
+			{
+				family: "pro",
+				publicNames: ["gemini-3.1-pro", "gemini-3.1-pro-extended"],
+				configured: false,
+				routes: [
+					{
+						providerModelId: "9d8ca3786ebdfbea",
+						capacity: 3,
+						capacityField: 13,
+						modelNumber: 3,
+						label: null,
+						available: true,
+						configured: false,
+						accountCount: 1,
+					},
+				],
+			},
+			{
+				family: "flash",
+				publicNames: ["gemini-3.5-flash", "gemini-3.5-flash-extended"],
+				configured: false,
+				routes: [],
+			},
+			{
+				family: "flash_lite",
+				publicNames: [
+					"gemini-3.1-flash-lite",
+					"gemini-3.1-flash-lite-extended",
+				],
+				configured: false,
+				routes: [],
+			},
+		],
 	};
 }
 

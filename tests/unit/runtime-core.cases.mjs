@@ -588,27 +588,36 @@ export const cases = [
 		},
 	],
 	[
-		"resolves model defaults think overrides and invalid model inputs",
+		"resolves the six public models and rejects removed model syntax",
 		async () => {
 			assert.equal(
 				mod.resolveModel(undefined, "gemini-3.5-flash").name,
 				"gemini-3.5-flash",
 			);
-			const enhanced = mod.resolveModel(
-				"gemini-3.1-pro-enhanced@think=4",
+			const extended = mod.resolveModel(
+				"gemini-3.1-pro-extended",
 				"gemini-3.5-flash",
 			);
-			assert.equal(enhanced.name, "gemini-3.1-pro-enhanced");
-			assert.equal(enhanced.thinkMode, 4);
-			assert.deepEqual(enhanced.extra, { 31: 2, 80: 3 });
+			assert.equal(extended.name, "gemini-3.1-pro-extended");
+			assert.equal(extended.family, "pro");
+			assert.equal(extended.extended, true);
+			assert.equal(extended.dynamicProviderId, null);
+			assert.deepEqual(Object.keys(mod.MODELS), [
+				"gemini-3.1-pro",
+				"gemini-3.1-pro-extended",
+				"gemini-3.5-flash",
+				"gemini-3.5-flash-extended",
+				"gemini-3.1-flash-lite",
+				"gemini-3.1-flash-lite-extended",
+			]);
 			assert.match(
 				mod.resolveModel("gemini-3.5-flash@think=fast", "gemini-3.5-flash")
 					.error,
-				/Invalid think level/,
+				/not available/,
 			);
 			assert.match(
-				mod.resolveModel("gemini-3.5-flash@think=9", "gemini-3.5-flash").error,
-				/supported values are 0\.\.4/,
+				mod.resolveModel("gemini-3.1-pro-enhanced", "gemini-3.5-flash").error,
+				/not available/,
 			);
 			assert.match(
 				mod.resolveModel("", "gemini-3.5-flash").error,
@@ -629,6 +638,19 @@ export const cases = [
 				{},
 			);
 			assert.equal(resp.status, 200);
+			assert.deepEqual(
+				(await resp.json()).data.map((model) => model.id),
+				["gemini-3.5-flash", "gemini-3.5-flash-extended"],
+			);
+			const emptyD1 = await mod.default.fetch(
+				new Request("https://worker.example/v1/models"),
+				{ GEMINI_DB: modelCatalogD1(false) },
+				{},
+			);
+			assert.deepEqual(
+				(await emptyD1.json()).data.map((model) => model.id),
+				["gemini-3.5-flash", "gemini-3.5-flash-extended"],
+			);
 		},
 	],
 	[
@@ -735,7 +757,7 @@ export const cases = [
 		},
 	],
 	[
-		"does not initialize or read D1 for health and model-list routes",
+		"keeps health D1-free and degrades model catalogs on D1 failure",
 		async () => {
 			let prepareCalls = 0;
 			const env = {
@@ -753,6 +775,14 @@ export const cases = [
 				{},
 			);
 			assert.equal(health.status, 200);
+			assert.equal(prepareCalls, 0);
+			const unauthorized = await mod.default.fetch(
+				new Request("https://worker.example/v1/models"),
+				env,
+				{},
+			);
+			assert.equal(unauthorized.status, 401);
+			assert.equal(prepareCalls, 0);
 			const openaiModels = await mod.default.fetch(
 				new Request("https://worker.example/v1/models", {
 					headers: { Authorization: "Bearer sk-test" },
@@ -761,6 +791,10 @@ export const cases = [
 				{},
 			);
 			assert.equal(openaiModels.status, 200);
+			assert.deepEqual(
+				(await openaiModels.json()).data.map((model) => model.id),
+				["gemini-3.5-flash", "gemini-3.5-flash-extended"],
+			);
 			const googleModels = await mod.default.fetch(
 				new Request("https://worker.example/v1beta/models", {
 					headers: { Authorization: "Bearer sk-test" },
@@ -769,7 +803,75 @@ export const cases = [
 				{},
 			);
 			assert.equal(googleModels.status, 200);
-			assert.equal(prepareCalls, 0);
+			assert.deepEqual(
+				(await googleModels.json()).models.map((model) =>
+					model.name.slice("models/".length),
+				),
+				["gemini-3.5-flash", "gemini-3.5-flash-extended"],
+			);
+			assert.equal(prepareCalls, 2);
+		},
+	],
+	[
+		"serves one ordered dynamic catalog through OpenAI and Google routes",
+		async () => {
+			const env = { GEMINI_DB: modelCatalogD1() };
+			const openai = await mod.default.fetch(
+				new Request("https://worker.example/v1/models"),
+				env,
+				{},
+			);
+			const openaiBody = await openai.json();
+			const openaiIds = openaiBody.data.map((model) => model.id);
+			assert.deepEqual(openaiIds, [
+				"gemini-3.5-flash",
+				"gemini-3.5-flash-extended",
+				"gemini-3.1-pro",
+				"gemini-3.1-pro-extended",
+				"future-model",
+				"future-model-extended",
+			]);
+			assert.deepEqual(Object.keys(openaiBody.data[0]), [
+				"id",
+				"object",
+				"created",
+				"owned_by",
+			]);
+
+			const google = await mod.default.fetch(
+				new Request("https://worker.example/v1beta/models"),
+				env,
+				{},
+			);
+			const googleIds = (await google.json()).models.map((model) =>
+				model.name.slice("models/".length),
+			);
+			assert.deepEqual(googleIds, openaiIds);
+
+			for (const path of [
+				"/v1/models/future-model-extended",
+				"/v1beta/models/future-model-extended",
+			]) {
+				const detail = await mod.default.fetch(
+					new Request(`https://worker.example${path}`),
+					env,
+					{},
+				);
+				assert.equal(detail.status, 200);
+			}
+			const health = await mod.default.fetch(
+				new Request("https://worker.example/"),
+				env,
+				{},
+			);
+			assert.deepEqual((await health.json()).models, [
+				"gemini-3.1-pro",
+				"gemini-3.1-pro-extended",
+				"gemini-3.5-flash",
+				"gemini-3.5-flash-extended",
+				"gemini-3.1-flash-lite",
+				"gemini-3.1-flash-lite-extended",
+			]);
 		},
 	],
 	[
@@ -791,7 +893,7 @@ export const cases = [
 			assert.equal(modelPathResp.status, 200);
 			const modelPathBody = await modelPathResp.json();
 			assert.equal(modelPathBody.name, "models/gemini-3.5-flash");
-			assert.equal(modelPathBody.displayName, "gemini-3.5-flash");
+			assert.equal(modelPathBody.displayName, "Gemini 3.5 Flash");
 			assert.deepEqual(modelPathBody.supportedGenerationMethods, [
 				"generateContent",
 				"streamGenerateContent",
@@ -2674,6 +2776,72 @@ export const cases = [
 		},
 	],
 ];
+
+function modelCatalogD1(includeModels = true) {
+	const nowMs = Date.now();
+	const account = {
+		id: "catalog-account",
+		enabled: 1,
+		cookie_header: "__Secure-1PSID=catalog; __Secure-1PSIDTS=ts",
+		cookie_hash: "catalog-hash",
+		issue: null,
+		cooldown_until_ms: null,
+		last_used_at_ms: null,
+		status_checked_at_ms: nowMs,
+		last_refresh_success_at_ms: nowMs,
+	};
+	const capabilities = includeModels
+		? [
+				{
+					account_id: account.id,
+					model_id: "9d8ca3786ebdfbea",
+					display_name: "Gemini Pro",
+					description: "Pro model",
+					available: 1,
+					capacity: 1,
+					capacity_field: 12,
+					model_number: 3,
+					discovery_order: 0,
+					checked_at_ms: nowMs,
+				},
+				{
+					account_id: account.id,
+					model_id: "future-model",
+					display_name: "Future Model",
+					description: "Future model description",
+					available: 1,
+					capacity: 3,
+					capacity_field: 13,
+					model_number: 7,
+					discovery_order: 1,
+					checked_at_ms: nowMs,
+				},
+			]
+		: [];
+	return {
+		prepare(sql) {
+			return {
+				bind() {
+					return this;
+				},
+				async first(column) {
+					if (sql.includes("FROM gemini_pool_meta") && column === "value")
+						return "1";
+					return null;
+				},
+				async all() {
+					if (sql.includes("FROM gemini_accounts"))
+						return { results: includeModels ? [account] : [] };
+					if (sql.includes("FROM gemini_account_models"))
+						return { results: capabilities };
+					if (sql.includes("FROM gemini_model_route_priority"))
+						return { results: [] };
+					throw new Error(`unexpected catalog D1 query: ${sql}`);
+				},
+			};
+		},
+	};
+}
 
 function geminiTextResponse(text) {
 	const inner = [null, null, null, null, [[null, [text]]], "x".repeat(160)];

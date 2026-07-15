@@ -59,3 +59,33 @@ export type MutationResult = {
 };
 
 export type AccountAction = "enable" | "disable" | "delete" | "refresh";
+
+export type ModelFamily = "pro" | "flash" | "flash_lite";
+export type ModelRouteTuple = {
+	providerModelId: string;
+	capacity: 1 | 2 | 3 | 4;
+	capacityField: 12 | 13;
+	modelNumber: number;
+};
+export type ModelRoutingRoute = ModelRouteTuple & {
+	label: "Basic" | "Plus" | "Advanced" | null;
+	available: boolean;
+	configured: boolean;
+	accountCount: number;
+};
+export type ModelRoutingFamily = {
+	family: ModelFamily;
+	publicNames: [string, string];
+	configured: boolean;
+	routes: ModelRoutingRoute[];
+};
+export type ModelRoutingOverview = {
+	version: string;
+	families: ModelRoutingFamily[];
+};
+export type ModelRoutingDraft = {
+	routes: ModelRoutingRoute[];
+	busy: boolean;
+	error: string | null;
+	dirty: boolean;
+};

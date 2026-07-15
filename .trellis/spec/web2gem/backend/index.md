@@ -52,7 +52,7 @@ hot-path changes.
 | [Quality Guidelines](./quality-guidelines.md) | Strict TypeScript and `any` reduction rules | Filled |
 | [Logging Guidelines](./logging-guidelines.md) | Runtime logging conventions | Filled |
 | [Runtime Performance And Transport](./runtime-performance.md) | Socket transport, config/body hot paths, and streaming coalescing contracts | Filled |
-| [Gemini Account Protocol](./gemini-account-protocol.md) | Stable identity, verified probing, capability routing, failover, and session freshness | Filled |
+| [Gemini Account Protocol](./gemini-account-protocol.md) | Stable identity, dynamic model catalog, exact route priority, failover, and session freshness | Filled |
 | [Release Workflows](./release-workflows.md) | GitHub Actions quality gates, release assets, and Docker registry publishing | Filled |
 
 ---

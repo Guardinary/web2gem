@@ -1,28 +1,27 @@
 import type { RuntimeConfig } from "../config";
-import type { CompletionProvider } from "./ports";
-import { resolveModel } from "../models";
 import type { ResolvedModel } from "../models";
-import {
-	getStructuredResponseFormat,
-	buildStructuredOutputRequirement,
-} from "../toolcall/structured";
-import {
-	buildToolChoiceInstructionFromPolicy,
-	parseOpenAIToolChoicePolicy,
-} from "../toolcall/policy-openai";
-import type { ToolChoicePolicy } from "../toolcall/policy-openai";
-import {
-	createToolBundle,
-	filterToolBundleByPolicy,
-} from "../toolcall/tool-bundle";
-import { log } from "../shared/logging";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
 	upstreamErrorReason,
 	upstreamErrorStatus,
 } from "../shared/errors";
+import { log } from "../shared/logging";
+import type { ToolChoicePolicy } from "../toolcall/policy-openai";
+import {
+	buildToolChoiceInstructionFromPolicy,
+	parseOpenAIToolChoicePolicy,
+} from "../toolcall/policy-openai";
+import {
+	buildStructuredOutputRequirement,
+	getStructuredResponseFormat,
+} from "../toolcall/structured";
+import {
+	createToolBundle,
+	filterToolBundleByPolicy,
+} from "../toolcall/tool-bundle";
 import { prepareOpenAIGeminiContext } from "./context";
+import { type CompletionProvider, resolveCompletionModel } from "./ports";
 import { ensureInlineToolPrompt } from "./tool-prompt-guard";
 import type { ContextFileResult, FileRef, LooseRequest } from "./types";
 import { hasCompletionError } from "./types";
@@ -59,7 +58,11 @@ export async function prepareOpenAICompletion(
 	toolsRaw: unknown,
 	options: PrepareOpenAICompletionOptions,
 ): Promise<PreparedOpenAICompletion | { error: OpenAICompletionPrepareError }> {
-	const rm = resolveModel(req.model, cfg.default_model);
+	const rm = await resolveCompletionModel(
+		provider,
+		req.model,
+		cfg.default_model,
+	);
 	if (rm.name === undefined) {
 		log(
 			cfg,

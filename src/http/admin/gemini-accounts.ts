@@ -122,7 +122,7 @@ export function adminAuthorized(
 	return { ok: false, code: "invalid_admin_key", message: "invalid admin key" };
 }
 
-async function readAdminJson(request: Request) {
+export async function readAdminJson(request: Request) {
 	const parsed = await readJsonRequest(request, {
 		maxBodyBytes: ADMIN_MAX_BODY_BYTES,
 		oversizedError: {
@@ -148,7 +148,7 @@ async function readAdminJson(request: Request) {
 	return parsed.value;
 }
 
-function adminErrorResponse(error: unknown): Response {
+export function adminErrorResponse(error: unknown): Response {
 	if (error instanceof GeminiAccountAdminError) {
 		return jsonResponse(
 			{ error: { message: error.message, code: error.code } },
@@ -185,7 +185,7 @@ function accountResourceFromPath(path: string): AccountResourceRoute | null {
 	return null;
 }
 
-function assertAdminBodyAbsent(request: Request): void {
+export function assertAdminBodyAbsent(request: Request): void {
 	if (request.body === null) return;
 	throw new GeminiAccountAdminError(
 		400,

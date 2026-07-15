@@ -1,8 +1,8 @@
-import { GEMINI_WEB_USER_AGENT } from "../constants";
-import { makeSapisidHash } from "../auth";
-import { nowSec } from "../../shared/logging";
-import { uuid } from "../../shared/crypto";
 import type { RuntimeConfig } from "../../config";
+import { uuid } from "../../shared/crypto";
+import { nowSec } from "../../shared/logging";
+import { makeSapisidHash } from "../auth";
+import { GEMINI_WEB_USER_AGENT } from "../constants";
 
 type PayloadFileRef =
 	| string
@@ -33,41 +33,39 @@ const GEMINI_PAYLOAD_FIELD = {
 	requestId: 59,
 	toolContext: 61,
 	clientFeature: 68,
-	modelFamily: 79,
-	enhancedRouting: 80,
+	modelNumber: 79,
+	extendedThinking: 80,
 } as const;
-const MODEL_EXTRA_PAYLOAD_FIELDS = new Set<number>([
-	GEMINI_PAYLOAD_FIELD.enhancedMode,
-	GEMINI_PAYLOAD_FIELD.enhancedRouting,
-]);
 
 export function buildPayload(
 	prompt: string,
-	modelId: number,
-	thinkMode: number,
+	modelNumber: number,
+	extended: boolean,
 	fileRefs: readonly PayloadFileRef[] | null,
-	extra: Record<number, unknown> | null,
 	requestId: string = uuid(),
 ): string {
 	const inner = createGeminiPayloadInner(
 		prompt,
-		modelId,
-		thinkMode,
+		modelNumber,
+		extended,
 		fileRefs,
 		requestId.toUpperCase(),
 	);
-	applyModelPayloadExtras(inner, extra);
 	const outer = [null, JSON.stringify(inner)];
 	return new URLSearchParams({ "f.req": JSON.stringify(outer) }).toString();
 }
 
 function createGeminiPayloadInner(
 	prompt: string,
-	modelId: number,
-	thinkMode: number,
+	modelNumber: number,
+	extended: boolean,
 	fileRefs: readonly PayloadFileRef[] | null,
 	requestId: string,
 ): unknown[] {
+	if (!Number.isInteger(modelNumber) || modelNumber < 1 || modelNumber > 64)
+		throw new Error("invalid Gemini model number");
+	if (typeof extended !== "boolean")
+		throw new Error("invalid Gemini extended-thinking flag");
 	const inner = new Array(GEMINI_PAYLOAD_INNER_LENGTH);
 	if (fileRefs?.length) {
 		const files = fileRefs.map((item) => {
@@ -116,7 +114,7 @@ function createGeminiPayloadInner(
 	inner[GEMINI_PAYLOAD_FIELD.requestKind] = 1;
 	inner[GEMINI_PAYLOAD_FIELD.responseMode] = 1;
 	inner[GEMINI_PAYLOAD_FIELD.toolMode] = 0;
-	inner[GEMINI_PAYLOAD_FIELD.thinkingMode] = [[thinkMode]];
+	inner[GEMINI_PAYLOAD_FIELD.thinkingMode] = [[0]];
 	inner[GEMINI_PAYLOAD_FIELD.responseSeed] = 0;
 	inner[GEMINI_PAYLOAD_FIELD.conversationMode] = 1;
 	inner[GEMINI_PAYLOAD_FIELD.responseOptions] = [4];
@@ -125,23 +123,9 @@ function createGeminiPayloadInner(
 	inner[GEMINI_PAYLOAD_FIELD.requestId] = requestId;
 	inner[GEMINI_PAYLOAD_FIELD.toolContext] = [];
 	inner[GEMINI_PAYLOAD_FIELD.clientFeature] = 1;
-	inner[GEMINI_PAYLOAD_FIELD.modelFamily] = modelId;
+	inner[GEMINI_PAYLOAD_FIELD.modelNumber] = modelNumber;
+	inner[GEMINI_PAYLOAD_FIELD.extendedThinking] = extended ? 2 : 1;
 	return inner;
-}
-
-function applyModelPayloadExtras(
-	inner: unknown[],
-	extra: Record<number, unknown> | null,
-): void {
-	if (extra) {
-		for (const k of Object.keys(extra)) {
-			const index = Number(k);
-			if (!Number.isInteger(index) || !MODEL_EXTRA_PAYLOAD_FIELDS.has(index)) {
-				throw new Error(`Unsupported Gemini model extra payload field: ${k}`);
-			}
-			inner[index] = extra[index];
-		}
-	}
 }
 
 export function getUrl(cfg: RuntimeConfig): string {

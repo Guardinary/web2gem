@@ -1,7 +1,13 @@
 import type { RuntimeConfig } from "../config";
-import type { CompletionProvider } from "./ports";
-import { resolveModel } from "../models";
 import type { ResolvedModel } from "../models";
+import { googleToolChoiceInstruction } from "../promptcompat/google";
+import {
+	upstreamErrorCode,
+	upstreamErrorMessage,
+	upstreamErrorReason,
+	upstreamErrorStatus,
+} from "../shared/errors";
+import { log } from "../shared/logging";
 import {
 	googleFunctionCallingConfig,
 	parseGoogleToolChoicePolicy,
@@ -11,15 +17,8 @@ import {
 	createToolBundle,
 	filterToolBundleByPolicy,
 } from "../toolcall/tool-bundle";
-import { googleToolChoiceInstruction } from "../promptcompat/google";
-import { log } from "../shared/logging";
-import {
-	upstreamErrorCode,
-	upstreamErrorMessage,
-	upstreamErrorReason,
-	upstreamErrorStatus,
-} from "../shared/errors";
 import { prepareGoogleGeminiContext } from "./context";
+import { type CompletionProvider, resolveCompletionModel } from "./ports";
 import { ensureInlineToolPrompt } from "./tool-prompt-guard";
 import type { ContextFileResult, FileRef, LooseRequest } from "./types";
 import { hasCompletionError } from "./types";
@@ -52,7 +51,11 @@ export async function prepareGoogleCompletion(
 	const modelFromPath = m?.[1]
 		? decodeURIComponent(m[1]).replace(/^models\//, "")
 		: undefined;
-	const rm = resolveModel(modelFromPath, cfg.default_model);
+	const rm = await resolveCompletionModel(
+		provider,
+		modelFromPath,
+		cfg.default_model,
+	);
 	if (rm.name === undefined) {
 		log(
 			cfg,

@@ -1,4 +1,10 @@
 import { isRecord, type UnknownRecord } from "../../shared/types";
+import {
+	type GeminiPublicFamily,
+	type GeminiRouteTuple,
+	geminiRouteKey,
+	isGeminiRouteTuple,
+} from "../../models";
 import { boundedGeminiAccountPageLimit, isGeminiAccountState } from "./domain";
 import type {
 	GeminiAccountAdminFilter,
@@ -24,6 +30,12 @@ const UNSAFE_CREATE_KEYS = new Set([
 const COOKIE_NAME_RE = /(?:^|[;\s])__Secure-1PSID(?:TS)?\s*=/i;
 const SAFE_UPDATE_KEYS = new Set(["label", "enabled"]);
 const LIST_QUERY_KEYS = new Set(["limit", "cursor", "q", "state"]);
+const MODEL_ROUTE_KEYS = new Set([
+	"providerModelId",
+	"capacity",
+	"capacityField",
+	"modelNumber",
+]);
 
 export class GeminiAccountAdminError extends Error {
 	constructor(
@@ -55,6 +67,69 @@ export function accountIdFromPathSegment(segment: string): string {
 			"invalid account id",
 		);
 	return id;
+}
+
+export function modelFamilyFromPathSegment(
+	segment: string,
+): GeminiPublicFamily {
+	let family: string;
+	try {
+		family = decodeURIComponent(segment).trim();
+	} catch {
+		throw invalidModelFamilyError();
+	}
+	if (family !== "pro" && family !== "flash" && family !== "flash_lite")
+		throw invalidModelFamilyError();
+	return family;
+}
+
+export function normalizeModelRoutePriority(
+	body: UnknownRecord,
+): GeminiRouteTuple[] {
+	for (const key of Object.keys(body)) {
+		if (key !== "routes")
+			throw new GeminiAccountAdminError(
+				400,
+				"unknown_model_routing_field",
+				`unsupported model routing field: ${key}`,
+			);
+	}
+	if (!Array.isArray(body.routes))
+		throw new GeminiAccountAdminError(
+			400,
+			"invalid_model_routes",
+			"routes must be an array",
+		);
+	if (body.routes.length > 128)
+		throw new GeminiAccountAdminError(
+			413,
+			"model_route_limit_exceeded",
+			"model routing policy exceeds the limit of 128 routes",
+		);
+	const seen = new Set<string>();
+	return body.routes.map((value) => {
+		if (
+			!isRecord(value) ||
+			Object.keys(value).some((field) => !MODEL_ROUTE_KEYS.has(field))
+		)
+			throw invalidModelRouteError();
+		const route = {
+			providerModelId: value.providerModelId,
+			capacity: value.capacity,
+			capacityField: value.capacityField,
+			modelNumber: value.modelNumber,
+		};
+		if (!isGeminiRouteTuple(route)) throw invalidModelRouteError();
+		const key = geminiRouteKey(route);
+		if (seen.has(key))
+			throw new GeminiAccountAdminError(
+				400,
+				"duplicate_model_route",
+				"model routing policy contains duplicate routes",
+			);
+		seen.add(key);
+		return route;
+	});
 }
 
 export type GeminiAccountAdminFilterInput = {
@@ -422,4 +497,20 @@ function parsePageLimit(value: string): number {
 			"limit must be an integer between 1 and 200",
 		);
 	return Number(value);
+}
+
+function invalidModelFamilyError(): GeminiAccountAdminError {
+	return new GeminiAccountAdminError(
+		400,
+		"invalid_model_family",
+		"model family must be pro, flash, or flash_lite",
+	);
+}
+
+function invalidModelRouteError(): GeminiAccountAdminError {
+	return new GeminiAccountAdminError(
+		400,
+		"invalid_model_route",
+		"each model route must be one valid exact route tuple",
+	);
 }

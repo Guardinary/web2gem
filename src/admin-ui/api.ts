@@ -1,14 +1,22 @@
 import { accountResourcePath, mergeMutationResults } from "./logic";
-import { parseMutation, parseOverview } from "./schemas";
+import {
+	parseModelRoutingOverview,
+	parseMutation,
+	parseOverview,
+} from "./schemas";
 import type {
 	AccountAction,
 	AccountIdentifier,
 	AccountOverview,
 	GeminiAccountState,
+	ModelFamily,
+	ModelRoutingOverview,
+	ModelRouteTuple,
 	MutationResult,
 } from "./types";
 
 const API_PATH = "/admin/accounts";
+const MODEL_ROUTING_API_PATH = "/admin/model-routing";
 const WORKER_ACCOUNT_IMPORT_BATCH_SIZE = 40;
 const WORKER_ACCOUNT_IMPORT_LIMIT_CODE = "gemini_import_account_limit_exceeded";
 const BULK_ACTION_BATCH_SIZE = 100;
@@ -100,6 +108,38 @@ export async function getAccountOverview(
 	if (options.state) params.set("state", options.state);
 	return parseOverview(
 		await request(options.adminKey, `${API_PATH}?${params.toString()}`),
+	);
+}
+
+export async function getModelRoutingOverview(
+	adminKey: string,
+): Promise<ModelRoutingOverview> {
+	return parseModelRoutingOverview(
+		await request(adminKey, MODEL_ROUTING_API_PATH),
+	);
+}
+
+export async function replaceModelRoutePriority(
+	adminKey: string,
+	family: ModelFamily,
+	routes: readonly ModelRouteTuple[],
+): Promise<ModelRoutingOverview> {
+	return parseModelRoutingOverview(
+		await request(adminKey, `${MODEL_ROUTING_API_PATH}/${family}`, {
+			method: "PUT",
+			body: { routes },
+		}),
+	);
+}
+
+export async function resetModelRoutePriority(
+	adminKey: string,
+	family: ModelFamily,
+): Promise<ModelRoutingOverview> {
+	return parseModelRoutingOverview(
+		await request(adminKey, `${MODEL_ROUTING_API_PATH}/${family}`, {
+			method: "DELETE",
+		}),
 	);
 }
 

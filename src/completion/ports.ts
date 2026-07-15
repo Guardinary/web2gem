@@ -1,5 +1,5 @@
-import type { ResolvedModel } from "../models";
 import type { AttachmentPlan } from "../attachments/types";
+import { type ResolvedModel, resolveModel } from "../models";
 import type { AttachmentResolutionResult, FileRef } from "./types";
 
 export type CompletionTextInput = {
@@ -36,6 +36,7 @@ export type CompletionRichOptions = {
 
 export type CompletionProvider = {
 	supportsAuthenticatedSession?: boolean;
+	resolveModel?(name: unknown, defaultName: unknown): Promise<ResolvedModel>;
 	generateText(input: CompletionTextInput): Promise<string>;
 	generateRich?(
 		input: CompletionTextInput,
@@ -49,3 +50,13 @@ export type CompletionProvider = {
 	uploadTextFile(text: string, filename: string): Promise<FileRef>;
 	dispose?(): void | Promise<void>;
 };
+
+export function resolveCompletionModel(
+	provider: CompletionProvider,
+	name: unknown,
+	defaultName: unknown,
+): Promise<ResolvedModel> {
+	return provider.resolveModel
+		? provider.resolveModel(name, defaultName)
+		: Promise.resolve(resolveModel(name, defaultName));
+}

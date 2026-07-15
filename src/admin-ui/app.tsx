@@ -5,6 +5,7 @@ import { ConfirmationModal, EditModal } from "./components";
 import { AuthPanel } from "./sections/AuthPanel";
 import { ImportPanel } from "./sections/ImportPanel";
 import { OverviewSection } from "./sections/OverviewSection";
+import { ModelRoutingSection } from "./sections/ModelRoutingSection";
 import { Toasts } from "./sections/Toasts";
 import { Topbar } from "./sections/Topbar";
 import { Workspace } from "./sections/Workspace";
@@ -26,6 +27,7 @@ export function App(): JSX.Element {
 			<main class="shell">
 				<AuthPanel />
 				<OverviewSection />
+				<ModelRoutingSection />
 				<ImportPanel />
 				<Workspace />
 			</main>

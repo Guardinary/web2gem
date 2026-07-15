@@ -183,19 +183,29 @@ For streaming, call `:streamGenerateContent` on the same model path.
 
 ## Models
 
-`web2gem` exposes a fixed model map in `src/models/index.ts`.
+`web2gem` exposes three public model families. Each family has a standard name
+and an `-extended` name; extended names enable Gemini's extended-thinking flag.
 
-| Model ID                         | Description                                                 |
-| -------------------------------- | ----------------------------------------------------------- |
-| `gemini-3.5-flash`               | Fast general-purpose model.                                 |
-| `gemini-3.5-flash-thinking`      | Deep thinking mode with longer output.                      |
-| `gemini-3.1-pro`                 | Pro route; requires a usable account in the configured pool. |
-| `gemini-3.1-pro-enhanced`        | Experimental enhanced Pro output mode.                      |
-| `gemini-auto`                    | Gemini Web auto model selection.                            |
-| `gemini-3.5-flash-thinking-lite` | Dynamic thinking with adaptive depth.                       |
-| `gemini-flash-lite`              | Lightweight fast model.                                     |
+| Model ID | Description |
+| --- | --- |
+| `gemini-3.1-pro` | Pro family through an authenticated account route. |
+| `gemini-3.1-pro-extended` | Pro family with extended thinking. |
+| `gemini-3.5-flash` | Default fast model; eligible text requests try anonymous Gemini first. |
+| `gemini-3.5-flash-extended` | The same Flash route with extended thinking. |
+| `gemini-3.1-flash-lite` | Flash Lite family through an authenticated account route. |
+| `gemini-3.1-flash-lite-extended` | Flash Lite family with extended thinking. |
 
-You can override thinking depth per request by appending `@think=N` to a known model ID, for example `gemini-3.5-flash@think=0`. Supported override values are `0`, `1`, `2`, `3`, and `4`.
+`GET /v1/models` and `GET /v1beta/models` build one ordered catalog from the
+anonymous Flash baseline plus account discovery. A valid unknown provider model
+ID is temporarily exposed as both `<id>` and `<id>-extended` and can be requested
+through the account that discovered it. If no live catalog is usable, the last
+complete persisted discovery snapshot is used. Without D1, both APIs still list
+the two Flash names. Basic, Plus, Advanced, provider IDs, capacity fields, and
+model numbers are internal routing data and are not public tier names.
+
+Legacy aliases and `@think=N` are not supported. Custom model configuration is
+also intentionally unsupported; only discovered upstream IDs can extend the
+catalog.
 
 ## Quick Start
 
@@ -363,13 +373,15 @@ The easiest way to get started is the built-in WebUI:
 2. Enter the configured `ADMIN_KEY` and choose session or local browser storage.
 3. Import the bare values of `__Secure-1PSID` and `__Secure-1PSIDTS`.
 4. Confirm the account appears as enabled and available.
-5. Send a generation request through any supported API route.
+5. Optionally reorder the internal Pro, Flash, and Flash Lite routes in the
+   model-routing cards. Standard and `-extended` names share the same order.
+6. Send a generation request through any supported API route.
 
 Use a fresh or dedicated Gemini browser session when possible. Do not paste a full Cookie header, a browser cookie export, cookie names, equals signs, semicolons, or unrelated access tokens. The admin responses and account list are redacted and never return the stored session credentials.
 
 This branch uses hybrid upstream routing. Eligible short text requests try anonymous Gemini Web first without reading D1. If anonymous generation fails before output, the provider can continue through distinct eligible accounts using `GEMINI_ACCOUNT_MAX_ATTEMPTS` (default `10`, naturally capped by the pool). Pro, long-context, attachment, image-generation, and image-edit requests go directly to the same capability-aware failover path. Each account-scoped failure updates health before the failed account is excluded; authentication failures first receive one verified managed-cookie refresh attempt. Request-generated attachment and context refs are recreated under the replacement account, while externally supplied Gemini refs stay pinned to their original account. Streams switch only before the first non-empty delta. Missing authenticated-session capability returns HTTP 422 with `gemini_authenticated_session_required` and a machine-readable `reason`; an empty configured pool returns HTTP 503 with `no_available_gemini_account`, while a failed anonymous request keeps its original error when no fallback account exists.
 
-For Workers, create a D1 database, apply [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql), and bind it as `GEMINI_DB` in `wrangler.jsonc` or through your Cloudflare dashboard configuration. The final pre-release schema creates structured account, capability, metadata, and lock tables; stable PSID identity is required and unique from the first write.
+For Workers, create a D1 database, apply [`migrations/0001_gemini_accounts.sql`](migrations/0001_gemini_accounts.sql), and bind it as `GEMINI_DB` in `wrangler.jsonc` or through your Cloudflare dashboard configuration. The final pre-release schema creates structured account, discovered-model capability, exact route-priority, metadata, and lock tables; stable PSID identity is required and unique from the first write.
 
 For a new D1 database, apply the migration once:
 
@@ -403,6 +415,13 @@ curl "https://your-worker.example/admin/accounts?state=attention&q=primary" \
 
 The four UI states are derived rather than stored: disabled accounts are `disabled`, active cooldowns are `cooling`, durable authentication/user-action/location issues are `attention`, and all other selectable accounts are `available`. Runtime issues use only `auth`, `rate_limit`, `user_action`, `location`, or `transient`. A successful request or authenticated refresh clears the issue and cooldown; model/capability errors remain request-scoped and do not poison account health.
 
+Model routing automation uses `GET /admin/model-routing`, `PUT
+/admin/model-routing/{pro|flash|flash_lite}`, and `DELETE` on the same family
+path to restore discovery order. PUT accepts an ordered `routes` array of exact
+`providerModelId`, `capacity`, `capacityField`, and `modelNumber` tuples already
+known to discovery or the saved policy. Invalid replacements leave the existing
+policy and pool version unchanged.
+
 Explicit refresh is admin-only:
 
 ```sh
@@ -410,7 +429,7 @@ curl -X POST "https://your-worker.example/admin/accounts/<account-id>/refresh" \
   -H "Authorization: Bearer $ADMIN_KEY"
 ```
 
-Every mutation returns the same compact shape: `processed`, `changed`, `unchanged`, `failed`, and optional sanitized `errors`. Mutations never echo account rows. The WebUI exposes only import, search/state filtering, refresh, rename, enable/disable, delete, selection, and pagination; it has no editable runtime status, Check action, CSV export, or persistent diagnostics panel. Startup, health, and public model-list routes do not select accounts, call `/app`, rotate cookies, or probe Google.
+Every account mutation returns the same compact shape: `processed`, `changed`, `unchanged`, `failed`, and optional sanitized `errors`. Mutations never echo account rows. The WebUI also exposes only the discovered exact model routes needed for ordering; it never exposes credentials or raw RPC data. Health remains D1-free. Public model-list routes may read the persisted model catalog, but they never lease accounts, call `/app`, rotate cookies, or probe Google.
 
 When importing accounts, use only the shortest supported credential form: `__Secure-1PSID` and `__Secure-1PSIDTS`. A fresh private-browser Gemini login that is closed after extracting these values tends to be more stable than copying a full everyday-browser cookie header.
 

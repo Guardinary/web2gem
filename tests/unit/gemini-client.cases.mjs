@@ -476,7 +476,7 @@ export const cases = [
 				async () => new Response(fatalWrbLine(1037), { status: 200 }),
 				async () => {
 					try {
-						await mod.generate(cfg, "limited", 1, 4, null, null);
+						await mod.generate(cfg, "limited", 1, false, null);
 					} catch (err) {
 						assert.equal(err.code, "gemini_semantic_error");
 						assert.equal(err.reason, "usage_limit_exceeded");
@@ -496,8 +496,7 @@ export const cases = [
 							cfg,
 							"invalid header",
 							1,
-							4,
-							null,
+							false,
 							null,
 						)) {
 							throw new Error("fatal response must not emit text");
@@ -605,8 +604,7 @@ export const cases = [
 						cfg,
 						"draw image",
 						1,
-						4,
-						null,
+						false,
 						null,
 					);
 					assert.equal(rich.text, "");
@@ -725,8 +723,7 @@ export const cases = [
 						cfg,
 						"draw image",
 						1,
-						4,
-						null,
+						false,
 						null,
 					);
 					assert.equal(rich.images.length, 1);
@@ -778,8 +775,7 @@ export const cases = [
 							cfg,
 							`draw ${item.format}`,
 							1,
-							4,
-							null,
+							false,
 							null,
 						);
 						assert.equal(rich.images.length, 1);
@@ -814,8 +810,7 @@ export const cases = [
 						cfg,
 						"show web image",
 						1,
-						4,
-						null,
+						false,
 						null,
 					);
 					assert.equal(rich.images.length, 1);
@@ -838,7 +833,7 @@ export const cases = [
 				async () => new Response(fatalWrbLine(1013), { status: 200 }),
 				async () => {
 					await assertRejectsWithCode(
-						() => mod.generateRich(cfg, "draw image", 1, 4, null, null),
+						() => mod.generateRich(cfg, "draw image", 1, false, null),
 						"upstream_image_provider_error",
 					);
 				},
@@ -861,7 +856,7 @@ export const cases = [
 				},
 				async () => {
 					await assertRejectsWithCode(
-						() => mod.generateRich(cfg, "draw image", 1, 4, null, null),
+						() => mod.generateRich(cfg, "draw image", 1, false, null),
 						"upstream_image_generation_empty",
 					);
 				},
@@ -906,8 +901,7 @@ export const cases = [
 							cfg,
 							"draw image",
 							1,
-							4,
-							null,
+							false,
 							null,
 						);
 						assert.equal(rich.images.length, 1);
@@ -955,8 +949,7 @@ export const cases = [
 						cfg,
 						"draw image",
 						1,
-						4,
-						null,
+						false,
 						null,
 					);
 					assert.equal(rich.images.length, 1);
@@ -1006,8 +999,7 @@ export const cases = [
 							cfg,
 							"draw image",
 							1,
-							4,
-							null,
+							false,
 							null,
 						);
 						assert.equal(rich.images.length, 1);
@@ -1136,14 +1128,13 @@ export const cases = [
 		},
 	],
 	[
-		"builds Gemini payload with file refs and extra fields",
+		"builds Gemini payload with model number and extended thinking",
 		async () => {
 			const payload = mod.buildPayload(
 				"prompt",
-				123,
-				2,
+				3,
+				true,
 				[{ ref: "file-ref", name: "doc.txt" }],
-				{ 31: 2, 80: 3 },
 				"req-test",
 			);
 			const outer = JSON.parse(new URLSearchParams(payload).get("f.req"));
@@ -1153,13 +1144,18 @@ export const cases = [
 			assert.equal(inner[0][3][0][0][0], "file-ref");
 			assert.equal(inner[0][3][0][1], "doc.txt");
 			assert.equal(inner[3], null);
-			assert.equal(inner[31], 2);
+			assert.deepEqual(inner[17], [[0]]);
+			assert.equal(inner[31], null);
 			assert.equal(inner[59], "REQ-TEST");
-			assert.equal(inner[79], 123);
-			assert.equal(inner[80], 3);
-			await assert.rejects(
-				() => mod.buildPayload("prompt", 123, 2, null, { 79: 999 }),
-				/Unsupported Gemini model extra payload field/,
+			assert.equal(inner[79], 3);
+			assert.equal(inner[80], 2);
+			assert.throws(
+				() => mod.buildPayload("prompt", 123, false, null),
+				/invalid Gemini model number/,
+			);
+			assert.throws(
+				() => mod.buildPayload("prompt", 1, 2, null),
+				/invalid Gemini extended-thinking flag/,
 			);
 		},
 	],
@@ -1686,7 +1682,7 @@ export const cases = [
 				},
 				async () => {
 					assert.equal(
-						await mod.generate(cfg, "prompt", 1, 4, null, null),
+						await mod.generate(cfg, "prompt", 1, false, null),
 						"observed",
 					);
 				},
@@ -1766,7 +1762,7 @@ export const cases = [
 					);
 				},
 				async () => {
-					const text = await mod.generate(cfg, "prompt", 1, 4, null, null);
+					const text = await mod.generate(cfg, "prompt", 1, false, null);
 					assert.equal(text, "hello");
 				},
 			);
@@ -1801,7 +1797,7 @@ export const cases = [
 				},
 				async () => {
 					try {
-						await mod.generate(cfg, "prompt", 1, 4, null, null);
+						await mod.generate(cfg, "prompt", 1, false, null);
 						throw new Error("expected missing page token failure");
 					} catch (err) {
 						assert.equal(err.code, "invalid_gemini_cookie");
@@ -1843,7 +1839,7 @@ export const cases = [
 				},
 				async () => {
 					try {
-						await mod.generate(cfg, "prompt", 1, 4, null, null);
+						await mod.generate(cfg, "prompt", 1, false, null);
 						throw new Error("expected invalid cookie failure");
 					} catch (err) {
 						assert.equal(err.code, "invalid_gemini_cookie");
@@ -1913,7 +1909,7 @@ export const cases = [
 					});
 				},
 				async () => {
-					const text = await mod.generate(cfg, "prompt", 1, 4, null, null);
+					const text = await mod.generate(cfg, "prompt", 1, false, null);
 					assert.equal(text, "after cookie rotation");
 				},
 			);
@@ -1956,7 +1952,7 @@ export const cases = [
 					return new Response(wrbLine(["after refresh"]), { status: 200 });
 				},
 				async () => {
-					const text = await mod.generate(cfg, "prompt", 1, 4, null, null);
+					const text = await mod.generate(cfg, "prompt", 1, false, null);
 					assert.equal(text, "after refresh");
 				},
 			);
@@ -1994,7 +1990,7 @@ export const cases = [
 				},
 				async () => {
 					try {
-						await mod.generate(cfg, "prompt", 1, 4, null, null);
+						await mod.generate(cfg, "prompt", 1, false, null);
 						throw new Error("expected non-stream upstream failure");
 					} catch (err) {
 						assert.match(err.message, /HTTP 502 returned no parseable text/);
@@ -2034,7 +2030,7 @@ export const cases = [
 				},
 				async () => {
 					try {
-						await mod.generate(cfg, "prompt", 1, 4, null, null);
+						await mod.generate(cfg, "prompt", 1, false, null);
 						throw new Error("expected upstream empty response");
 					} catch (err) {
 						assert.equal(err.code, "upstream_empty_response");
@@ -2071,7 +2067,7 @@ export const cases = [
 					}),
 				async () => {
 					try {
-						await mod.generate(cfg, "prompt", 1, 4, null, [
+						await mod.generate(cfg, "prompt", 1, false, [
 							{ ref: "file-ref", name: "data.csv" },
 						]);
 						throw new Error("expected data-analysis empty response");
@@ -2102,7 +2098,7 @@ export const cases = [
 				async () => new Response("no parseable text", { status: 200 }),
 				async () => {
 					try {
-						await mod.generate(cfg, "x".repeat(20), 1, 4, null, null);
+						await mod.generate(cfg, "x".repeat(20), 1, false, null);
 						throw new Error("expected large prompt empty response");
 					} catch (err) {
 						assert.equal(err.code, "large_prompt_empty_response");
@@ -2140,8 +2136,7 @@ export const cases = [
 							cfg,
 							"prompt",
 							1,
-							4,
-							null,
+							false,
 							null,
 							{ signal: ac.signal },
 						)) {
@@ -2180,8 +2175,7 @@ export const cases = [
 							cfg,
 							"prompt",
 							1,
-							4,
-							null,
+							false,
 							null,
 						)) {
 							throw new Error("stream should not yield");
@@ -2239,8 +2233,7 @@ export const cases = [
 						cfg,
 						"prompt",
 						1,
-						4,
-						null,
+						false,
 						null,
 					))
 						chunks.push(delta);
@@ -2279,8 +2272,7 @@ export const cases = [
 						cfg,
 						"prompt",
 						1,
-						4,
-						null,
+						false,
 						null,
 					))
 						chunks.push(delta);
@@ -2321,8 +2313,7 @@ export const cases = [
 							cfg,
 							"prompt",
 							1,
-							4,
-							null,
+							false,
 							null,
 						)) {
 							throw new Error("stream should not yield");
@@ -2373,8 +2364,7 @@ export const cases = [
 							cfg,
 							"prompt",
 							1,
-							4,
-							null,
+							false,
 							null,
 						)) {
 							throw new Error("stream should not yield");
@@ -2429,8 +2419,7 @@ export const cases = [
 						cfg,
 						"prompt",
 						1,
-						4,
-						null,
+						false,
 						null,
 					))
 						chunks.push(delta);
@@ -2470,12 +2459,32 @@ export const cases = [
 					const inner = JSON.parse(outer[1]);
 					assert.match(payload, /provider prompt/);
 					assert.match(payload, /file-ref/);
-					assert.equal(
+					const modelHeader = JSON.parse(
 						init.headers["x-goog-ext-525001261-jspb"],
-						'[1,null,null,null,"9d8ca3786ebdfbea",null,null,0,[4],null,null,1]',
 					);
+					assert.deepEqual(modelHeader.slice(0, -1), [
+						1,
+						null,
+						null,
+						null,
+						"9d8ca3786ebdfbea",
+						null,
+						null,
+						0,
+						[4, 5, 6, 8],
+						null,
+						null,
+						1,
+						null,
+						null,
+						3,
+						1,
+					]);
+					assert.match(modelHeader.at(-1), /^[0-9A-F-]+$/);
 					assert.equal(init.headers["x-goog-ext-73010989-jspb"], "[0]");
-					assert.equal(init.headers["x-goog-ext-73010990-jspb"], "[0]");
+					assert.equal(init.headers["x-goog-ext-73010990-jspb"], "[0,0,0]");
+					assert.equal(inner[79], 3);
+					assert.equal(inner[80], 1);
 					assert.equal(
 						JSON.parse(init.headers["x-goog-ext-525005358-jspb"])[0],
 						inner[59],
@@ -2491,6 +2500,145 @@ export const cases = [
 					assert.equal(text, "provider answer");
 				},
 			);
+		},
+	],
+	[
+		"routes an unknown dynamic model through one exact lease tuple",
+		async () => {
+			const cfg = baseGeminiClientConfig({
+				gemini_account_capability_mode: "prefer",
+				log_requests: true,
+			});
+			const exactRoute = {
+				providerModelId: "future-model",
+				capacity: 3,
+				capacityField: 13,
+				modelNumber: 7,
+			};
+			const lease = fakeLease(
+				accountCfgFromBase(cfg, "dynamic-account", "dynamic-hash"),
+				{ selectedRoute: exactRoute },
+			);
+			let candidateModel = null;
+			let acquireOptions = null;
+			const runtime = {
+				async resolveModel(name, defaultName) {
+					assert.equal(name, "future-model-extended");
+					assert.equal(defaultName, "gemini-3.5-flash");
+					return {
+						name: "future-model-extended",
+						family: null,
+						extended: true,
+						dynamicProviderId: "future-model",
+					};
+				},
+				async routeCandidatesForModel(model) {
+					candidateModel = model;
+					return [exactRoute];
+				},
+				async acquireLease(_base, options) {
+					acquireOptions = options;
+					return lease;
+				},
+			};
+			const provider = mod.createGeminiCompletionProvider(cfg, {
+				accountRuntime: runtime,
+			});
+			const resolved = await provider.resolveModel(
+				"future-model-extended",
+				"gemini-3.5-flash",
+			);
+			assert.deepEqual(resolved, {
+				name: "future-model-extended",
+				family: null,
+				extended: true,
+				dynamicProviderId: "future-model",
+			});
+
+			const logs = [];
+			await withConsoleLog(
+				(line) => logs.push(String(line)),
+				() =>
+					withFetch(
+						async (_url, init) => {
+							const outer = JSON.parse(
+								new URLSearchParams(String(init.body)).get("f.req"),
+							);
+							const inner = JSON.parse(outer[1]);
+							const modelHeader = JSON.parse(
+								init.headers["x-goog-ext-525001261-jspb"],
+							);
+							assert.equal(modelHeader[4], exactRoute.providerModelId);
+							assert.equal(modelHeader[12], exactRoute.capacity);
+							assert.equal(modelHeader[15], exactRoute.modelNumber);
+							assert.equal(modelHeader[16], 2);
+							assert.equal(inner[79], exactRoute.modelNumber);
+							assert.equal(inner[80], 2);
+							return new Response(wrbLine(["dynamic answer"]), { status: 200 });
+						},
+						async () => {
+							assert.equal(
+								await provider.generateText({
+									prompt: "dynamic prompt",
+									rm: resolved,
+									fileRefs: null,
+								}),
+								"dynamic answer",
+							);
+						},
+					),
+			);
+			assert.match(
+				logs.find((line) => line.includes("stage=gemini_route")),
+				/modelFamily=dynamic.*dynamicProvider=true/,
+			);
+			assert.deepEqual(candidateModel, resolved);
+			assert.deepEqual(acquireOptions.routeCandidates, [exactRoute]);
+			assert.equal(acquireOptions.capabilityMode, "prefer");
+			assert.equal(lease.successCalls, 1);
+			assert.equal(lease.releaseCalls, 1);
+		},
+	],
+	[
+		"rejects dynamic generation when a runtime lease omits the exact route",
+		async () => {
+			const cfg = baseGeminiClientConfig();
+			const lease = fakeLease(
+				accountCfgFromBase(cfg, "dynamic-missing", "dynamic-missing-hash"),
+			);
+			const provider = mod.createGeminiCompletionProvider(cfg, {
+				accountRuntime: {
+					async acquireLease() {
+						return lease;
+					},
+					async routeCandidatesForModel() {
+						return [
+							{
+								providerModelId: "future-model",
+								capacity: 3,
+								capacityField: 13,
+								modelNumber: 7,
+							},
+						];
+					},
+				},
+			});
+			await assert.rejects(
+				() =>
+					provider.generateText({
+						prompt: "dynamic prompt",
+						rm: {
+							name: "future-model",
+							family: null,
+							extended: false,
+							dynamicProviderId: "future-model",
+						},
+						fileRefs: null,
+					}),
+				/dynamic Gemini model route was not selected/,
+			);
+			assert.equal(lease.failureCalls, 1);
+			assert.equal(lease.releaseCalls, 2);
 		},
 	],
 	[
@@ -2514,7 +2662,7 @@ export const cases = [
 				]),
 			});
 			const rm = mod.resolveModel(
-				"gemini-3.1-pro-enhanced",
+				"gemini-3.1-pro-extended",
 				"gemini-3.5-flash",
 			);
 			const logs = [];
@@ -2536,12 +2684,10 @@ export const cases = [
 				},
 			);
 			const routeLog = logs.find((line) => line.includes("stage=gemini_route"));
-			assert.match(routeLog, /model=gemini-3\.1-pro-enhanced/);
-			assert.match(routeLog, /modelFamily=3/);
-			assert.match(routeLog, /thinkingMode=4/);
-			assert.match(routeLog, /enhancedMode=2/);
-			assert.match(routeLog, /enhancedRouting=3/);
-			assert.match(routeLog, /webModelHeader=true/);
+			assert.match(routeLog, /model=gemini-3\.1-pro-extended/);
+			assert.match(routeLog, /modelFamily=pro/);
+			assert.match(routeLog, /extendedThinking=true/);
+			assert.match(routeLog, /dynamicProvider=false/);
 			assert.equal(
 				logs.some((line) => line.includes("secret prompt")),
 				false,
@@ -2581,9 +2727,9 @@ export const cases = [
 							prompt: "stream prompt",
 							rm: {
 								name: "gemini-3.5-flash",
-								modeId: 1,
-								thinkMode: 4,
-								extra: null,
+								family: "flash",
+								extended: false,
+								dynamicProviderId: null,
 							},
 							fileRefs: null,
 						},
@@ -2724,14 +2870,7 @@ export const cases = [
 					},
 				},
 				client: {
-					async generate(
-						activeCfg,
-						prompt,
-						_modelId,
-						_thinkMode,
-						_extra,
-						fileRefs,
-					) {
+					async generate(activeCfg, prompt, _modelNumber, _extended, fileRefs) {
 						seenConfigs.push(activeCfg);
 						assert.equal(prompt, "provider prompt");
 						assert.deepEqual(fileRefs, [
@@ -2840,15 +2979,10 @@ export const cases = [
 					},
 				},
 			});
-			const extra = { 31: 2, 80: 3 };
-			const modelHeaders = { "x-model-route": "pro" };
-			const rm = {
-				name: "gemini-3.1-pro-enhanced",
-				modeId: 3,
-				thinkMode: 4,
-				extra,
-				modelHeaders,
-			};
+			const rm = mod.resolveModel(
+				"gemini-3.1-pro-extended",
+				"gemini-3.5-flash",
+			);
 			const fileRefs = [{ ref: "file-ref", name: "doc.txt" }];
 			const input = { prompt: "provider prompt", rm, fileRefs };
 
@@ -2877,25 +3011,28 @@ export const cases = [
 				},
 			);
 
-			assert.deepEqual(calls[0].args, [
+			assert.deepEqual(calls[0].args.slice(0, 5), [
 				selectedCfg,
 				"provider prompt",
 				3,
-				4,
-				extra,
+				true,
 				fileRefs,
-				modelHeaders,
 			]);
-			assert.deepEqual(calls[1].args[7], {});
-			assert.equal(calls[2].args[7].hydrateGeneratedImageBytes, true);
-			assert.equal(calls[3].args[6].signal instanceof AbortSignal, true);
+			const delegatedHeader = JSON.parse(
+				calls[0].args[5]["x-goog-ext-525001261-jspb"],
+			);
+			assert.equal(delegatedHeader[4], "9d8ca3786ebdfbea");
+			assert.deepEqual(delegatedHeader.slice(-3, -1), [3, 2]);
+			assert.deepEqual(calls[1].args[6], {});
+			assert.equal(calls[2].args[6].hydrateGeneratedImageBytes, true);
+			assert.equal(calls[3].args[5].signal instanceof AbortSignal, true);
 			assert.deepEqual(calls[4].args, [cfg, mod.createAttachmentPlan()]);
 			assert.deepEqual(calls[5].args, [selectedCfg, "body", "context.txt"]);
 			const routeLogs = logs.filter((line) =>
 				line.includes("stage=gemini_route"),
 			);
 			assert.equal(routeLogs.length, 4);
-			assert.match(routeLogs[0], /enhancedMode=2/);
+			assert.match(routeLogs[0], /extendedThinking=true/);
 			assert.match(routeLogs[3], /stream=true/);
 		},
 	],
@@ -2955,7 +3092,7 @@ export const cases = [
 		"applies the selected account capacity to provider model headers",
 		async () => {
 			const model = mod.resolveModel("gemini-3.1-pro", "gemini-3.5-flash");
-			const modelId = mod.geminiProviderModelId(model.modelHeaders);
+			const modelId = mod.basicRouteForFamily("pro").providerModelId;
 			const modelCapability = {
 				modelId,
 				available: true,
@@ -2977,15 +3114,15 @@ export const cases = [
 					accountRuntime: runtime,
 					client: {
 						async generate(...args) {
-							receivedHeaders.push(args[6]);
+							receivedHeaders.push(args[5]);
 							return "capacity result";
 						},
 						async generateRich(...args) {
-							receivedHeaders.push(args[6]);
+							receivedHeaders.push(args[5]);
 							return { text: "capacity rich", images: [] };
 						},
 						async *generateStream(...args) {
-							receivedHeaders.push(args[7]);
+							receivedHeaders.push(args[6]);
 							yield "capacity stream";
 						},
 					},
@@ -3305,17 +3442,17 @@ export const cases = [
 		},
 	],
 	[
-		"prefers anonymous generation without acquiring an available account",
+		"keeps anonymous Flash standard and extended generation header-free",
 		async () => {
-			let generatedConfig;
+			const calls = [];
 			const runtime = fakeRuntime([null]);
 			const provider = mod.createGeminiCompletionProvider(
 				baseGeminiClientConfig(),
 				{
 					accountRuntime: runtime,
 					client: {
-						async generate(activeCfg) {
-							generatedConfig = activeCfg;
+						async generate(...args) {
+							calls.push(args);
 							return "anonymous";
 						},
 					},
@@ -3330,7 +3467,17 @@ export const cases = [
 				}),
 				"anonymous",
 			);
-			assert.equal(generatedConfig.cookie, "");
+			assert.equal(
+				await provider.generateText({
+					prompt: "prompt",
+					rm: mod.resolveModel("gemini-3.5-flash-extended", "gemini-3.5-flash"),
+					fileRefs: null,
+				}),
+				"anonymous",
+			);
+			assert.equal(calls[0][0].cookie, "");
+			assert.deepEqual(calls[0].slice(2), [1, false, null, null]);
+			assert.deepEqual(calls[1].slice(2), [1, true, null, null]);
 			assert.equal(runtime.acquireCalls, 0);
 		},
 	],
@@ -4075,7 +4222,7 @@ export const cases = [
 						},
 					},
 					client: {
-						async generate(activeCfg, _prompt, _model, _think, _extra, refs) {
+						async generate(activeCfg, _prompt, _model, _extended, refs) {
 							const id = activeCfg.gemini_account.accountId;
 							if (id === "upload-a")
 								throw Object.assign(new Error("rate limited"), { status: 429 });
@@ -4454,7 +4601,7 @@ export const cases = [
 				},
 				async () => {
 					await assert.rejects(
-						() => mod.generate(cfg, "prompt", 1, 4, null, null),
+						() => mod.generate(cfg, "prompt", 1, false, null),
 						/network failed/,
 					);
 				},
@@ -4475,20 +4622,18 @@ async function bodyBytes(body) {
 function providerResolvedModel() {
 	return {
 		name: "gemini-3.5-flash",
-		modeId: 1,
-		thinkMode: 4,
-		extra: null,
-		modelHeaders: null,
+		family: "flash",
+		extended: false,
+		dynamicProviderId: null,
 	};
 }
 
 function providerProModel() {
 	return {
 		name: "gemini-3.1-pro",
-		modeId: 3,
-		thinkMode: 4,
-		extra: null,
-		modelHeaders: null,
+		family: "pro",
+		extended: false,
+		dynamicProviderId: null,
 	};
 }
 
@@ -4526,6 +4671,12 @@ function fakeRuntime(leases) {
 			]);
 			return leases.shift() ?? null;
 		},
+		async resolveModel(name, defaultName) {
+			return mod.resolveModel(name, defaultName);
+		},
+		async routeCandidatesForModel(model) {
+			return model.family ? [mod.basicRouteForFamily(model.family)] : [];
+		},
 	};
 }
 
@@ -4556,6 +4707,7 @@ function fakeLease(config, overrides = {}) {
 		accountId: config.gemini_account.accountId,
 		rowId: config.gemini_account.rowId,
 		selectedCookieHash: config.gemini_account.cookieHash,
+		selectedRoute: null,
 		modelCapability: null,
 		config,
 		successCalls: 0,

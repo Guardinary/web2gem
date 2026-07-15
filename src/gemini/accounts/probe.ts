@@ -1,9 +1,16 @@
 import type { RuntimeConfig } from "../../config";
+import {
+	basicRouteForFamily,
+	isGeminiProviderModelId,
+	MAX_GEMINI_DISCOVERED_MODELS,
+	MAX_GEMINI_MODEL_DESCRIPTION_CODE_POINTS,
+	MAX_GEMINI_MODEL_DISPLAY_NAME_CODE_POINTS,
+	modelNumberForProviderModelId,
+} from "../../models";
 import { errorLogSummary } from "../../shared/errors";
-import { nowSec } from "../../shared/logging";
-import { log } from "../../shared/logging";
-import { GEMINI_WEB_USER_AGENT } from "../constants";
+import { log, nowSec } from "../../shared/logging";
 import { extractWrbInnerPayloads } from "../client/parser";
+import { GEMINI_WEB_USER_AGENT } from "../constants";
 import { httpFetch } from "../transport";
 import { getFreshPageTokensForConfig } from "../uploads/tokens";
 import type { GeminiAccountIssue } from "./domain";
@@ -15,10 +22,9 @@ import type {
 
 const GET_USER_STATUS_RPC_ID = "otAQ7b";
 const MAX_PROBE_RESPONSE_CHARS = 512 * 1024;
-const MAX_PROBE_MODELS = 128;
 const MAX_PROBE_FLAG_VALUES = 256;
-const MAX_MODEL_ID_CHARS = 256;
-const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const ANONYMOUS_FLASH_PROVIDER_MODEL_ID =
+	basicRouteForFamily("flash").providerModelId;
 
 export async function verifyGeminiAccount(input: {
 	config: RuntimeConfig;
@@ -99,7 +105,12 @@ export function decodeGeminiAccountProbe(raw: unknown): GeminiAccountProbe {
 		if (statusCode === undefined) continue;
 		const status = accountStatus(statusCode);
 		if (!status) throw new Error("unknown Gemini account status");
-		const models = decodeModels(payload[15], payload[16], payload[17]);
+		const models = decodeModels(
+			payload[15],
+			payload[16],
+			payload[17],
+			statusCode,
+		);
 		return {
 			statusCode,
 			issue: status.issue,
@@ -126,32 +137,65 @@ function decodeModels(
 	rawModels: unknown,
 	tierFlags: unknown,
 	capabilityFlags: unknown,
+	statusCode: number,
 ): GeminiAccountProbe["models"] {
 	if (!Array.isArray(rawModels) || !rawModels.length) return [];
-	if (rawModels.length > MAX_PROBE_MODELS)
+	if (rawModels.length > MAX_GEMINI_DISCOVERED_MODELS)
 		throw new Error("Gemini account probe returned too many models");
 	const { capacity, capacityField } = accountModelCapacity(
 		tierFlags,
 		capabilityFlags,
 	);
 	const out: GeminiAccountProbe["models"] = [];
-	for (const item of rawModels) {
+	for (
+		let discoveryOrder = 0;
+		discoveryOrder < rawModels.length;
+		discoveryOrder++
+	) {
+		const item = rawModels[discoveryOrder];
 		if (!Array.isArray(item)) continue;
 		const modelId = typeof item[0] === "string" ? item[0].trim() : "";
-		if (
-			!modelId ||
-			modelId.length > MAX_MODEL_ID_CHARS ||
-			!MODEL_ID_PATTERN.test(modelId)
-		)
-			continue;
+		if (!isGeminiProviderModelId(modelId)) continue;
+		const displayName = boundedModelText(
+			item[1],
+			MAX_GEMINI_MODEL_DISPLAY_NAME_CODE_POINTS,
+			false,
+		);
+		const description = boundedModelText(
+			item[2],
+			MAX_GEMINI_MODEL_DESCRIPTION_CODE_POINTS,
+			true,
+		);
+		if (displayName === null || description === null) continue;
 		out.push({
 			modelId,
-			available: true,
+			displayName,
+			description,
+			available:
+				statusCode !== 1016 || modelId === ANONYMOUS_FLASH_PROVIDER_MODEL_ID,
 			capacity,
 			capacityField,
+			modelNumber: modelNumberForProviderModelId(modelId),
+			discoveryOrder,
 		});
 	}
 	return out;
+}
+
+function boundedModelText(
+	value: unknown,
+	maxCodePoints: number,
+	allowEmpty: boolean,
+): string | null {
+	if (typeof value !== "string") return null;
+	const normalized = value.trim();
+	if (!allowEmpty && !normalized) return null;
+	let codePoints = 0;
+	for (const _codePoint of normalized) {
+		codePoints += 1;
+		if (codePoints > maxCodePoints) return null;
+	}
+	return normalized;
 }
 
 function accountModelCapacity(

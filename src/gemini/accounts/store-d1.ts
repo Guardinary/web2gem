@@ -1,3 +1,9 @@
+import {
+	type GeminiPublicFamily,
+	type GeminiRouteTuple,
+	geminiRouteKey,
+	isGeminiRouteTuple,
+} from "../../models";
 import { uuid } from "../../shared/crypto";
 import {
 	boundedGeminiAccountPageLimit,
@@ -37,6 +43,7 @@ import type {
 	GeminiAccountSummaryPage,
 	GeminiAccountUpdate,
 	GeminiAccountUpdateResult,
+	GeminiModelRoutePriorityRow,
 	GeminiRefreshedCookieWrite,
 	GeminiRefreshedCookieWriteResult,
 } from "./types";
@@ -440,8 +447,12 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
         UPDATE gemini_accounts
         SET account_status_code = ?, status_checked_at_ms = ?, updated_at_ms = ?
         WHERE id = ?
-      `)
+			`)
 			.bind(probe.statusCode, checkedAtMs, checkedAtMs, accountId);
+		if (!probe.models.length) {
+			await updateStatus.run();
+			return;
+		}
 		const deleteModels = this.db
 			.prepare("DELETE FROM gemini_account_models WHERE account_id = ?")
 			.bind(accountId);
@@ -449,15 +460,20 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 			this.db
 				.prepare(`
           INSERT INTO gemini_account_models (
-            account_id, model_id, available, capacity, capacity_field, checked_at_ms
-          ) VALUES (?, ?, ?, ?, ?, ?)
+            account_id, model_id, display_name, description, available,
+            capacity, capacity_field, model_number, discovery_order, checked_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
 				.bind(
 					accountId,
 					model.modelId,
+					model.displayName,
+					model.description,
 					model.available ? 1 : 0,
-					model.capacity ?? null,
-					model.capacityField ?? null,
+					model.capacity,
+					model.capacityField,
+					model.modelNumber,
+					model.discoveryOrder,
 					checkedAtMs,
 				),
 		);
@@ -487,13 +503,92 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		const placeholders = uniqueIds.map(() => "?").join(", ");
 		const result = await this.db
 			.prepare(`
-        SELECT account_id, model_id, available, capacity, capacity_field, checked_at_ms
+        SELECT account_id, model_id, display_name, description, available,
+               capacity, capacity_field, model_number, discovery_order, checked_at_ms
         FROM gemini_account_models
         WHERE account_id IN (${placeholders})
+				ORDER BY account_id ASC, discovery_order ASC
       `)
 			.bind(...uniqueIds)
 			.all<GeminiAccountCapabilityRow>();
 		return result.results || [];
+	}
+
+	async listAllAccountCapabilities(
+		limit: number,
+	): Promise<GeminiAccountCapabilityRow[]> {
+		const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 12800);
+		const result = await this.db
+			.prepare(`
+        SELECT account_id, model_id, display_name, description, available,
+               capacity, capacity_field, model_number, discovery_order, checked_at_ms
+        FROM gemini_account_models
+        ORDER BY checked_at_ms DESC, account_id ASC, discovery_order ASC
+				LIMIT ?
+      `)
+			.bind(boundedLimit)
+			.all<GeminiAccountCapabilityRow>();
+		return result.results || [];
+	}
+
+	async listModelRoutePriorities(): Promise<GeminiModelRoutePriorityRow[]> {
+		const result = await this.db
+			.prepare(`
+        SELECT family, provider_model_id, capacity, capacity_field,
+               model_number, priority, updated_at_ms
+        FROM gemini_model_route_priority
+        ORDER BY family ASC, priority ASC
+      `)
+			.all<GeminiModelRoutePriorityRow>();
+		return result.results || [];
+	}
+
+	async replaceModelRoutePriority(
+		family: GeminiPublicFamily,
+		routes: readonly GeminiRouteTuple[],
+		nowMs: number,
+	): Promise<void> {
+		assertModelRoutePriority(family, routes);
+		const statements = [
+			this.db
+				.prepare("DELETE FROM gemini_model_route_priority WHERE family = ?")
+				.bind(family),
+			...routes.map((route, priority) =>
+				this.db
+					.prepare(`
+            INSERT INTO gemini_model_route_priority (
+              family, provider_model_id, capacity, capacity_field,
+              model_number, priority, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          `)
+					.bind(
+						family,
+						route.providerModelId,
+						route.capacity,
+						route.capacityField,
+						route.modelNumber,
+						priority,
+						nowMs,
+					),
+			),
+		];
+		if (this.db.batch) {
+			await this.db.batch([
+				...statements,
+				this.poolVersionIncrementStatement(nowMs),
+			]);
+			return;
+		}
+		for (const statement of statements) await statement.run();
+		await this.bumpPoolVersion(nowMs);
+	}
+
+	async clearModelRoutePriority(
+		family: GeminiPublicFamily,
+		nowMs: number,
+	): Promise<void> {
+		assertGeminiPublicFamily(family);
+		await this.replaceModelRoutePriority(family, [], nowMs);
 	}
 
 	async writeAccountOutcome(
@@ -835,6 +930,29 @@ function resultChanged(result: D1Result): number {
 
 function valueOrCurrent<T>(next: T | undefined, current: T): T {
 	return next === undefined ? current : next;
+}
+
+function assertGeminiPublicFamily(
+	family: unknown,
+): asserts family is GeminiPublicFamily {
+	if (family !== "pro" && family !== "flash" && family !== "flash_lite")
+		throw new Error("invalid Gemini model family");
+}
+
+function assertModelRoutePriority(
+	family: unknown,
+	routes: readonly GeminiRouteTuple[],
+): void {
+	assertGeminiPublicFamily(family);
+	if (routes.length > 128) throw new Error("too many Gemini model routes");
+	const seen = new Set<string>();
+	for (const route of routes) {
+		if (!isGeminiRouteTuple(route))
+			throw new Error("invalid Gemini route tuple");
+		const key = geminiRouteKey(route);
+		if (seen.has(key)) throw new Error("duplicate Gemini route tuple");
+		seen.add(key);
+	}
 }
 
 export function isD1UniqueConstraintError(error: unknown): boolean {

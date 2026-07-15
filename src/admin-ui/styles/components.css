@@ -166,6 +166,78 @@ td.empty {
 	color: var(--info);
 }
 
+/* Model route ordering */
+.model-route-list {
+	display: grid;
+	gap: 0;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.model-route-row {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	gap: var(--space-3);
+	border-bottom: 1px solid var(--line);
+	padding: var(--space-3) var(--space-4);
+}
+.model-route-row.route-unavailable {
+	background: var(--surface-subtle);
+}
+.route-order-actions {
+	display: grid;
+	align-content: start;
+	gap: 4px;
+}
+.icon-button {
+	width: 30px;
+	min-height: 28px;
+	padding: 2px;
+}
+.route-main {
+	min-width: 0;
+}
+.route-title-line,
+.route-facts {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+.route-title-line code {
+	max-width: 100%;
+	color: var(--text);
+	font-size: var(--text-xs);
+	overflow-wrap: anywhere;
+}
+.route-facts {
+	margin-top: var(--space-2);
+	color: var(--muted);
+	font-size: var(--text-xs);
+}
+.route-facts span {
+	border-right: 1px solid var(--line);
+	padding-right: 6px;
+}
+.route-facts span:last-child {
+	border-right: 0;
+	padding-right: 0;
+}
+.model-route-empty {
+	padding: var(--space-6) var(--space-4);
+	color: var(--muted);
+	text-align: center;
+}
+.route-error {
+	margin: var(--space-3) var(--space-4) 0;
+	color: var(--danger);
+	font-size: var(--text-sm);
+}
+.route-dirty {
+	color: var(--warning);
+	font-size: var(--text-xs);
+}
+
 /* Row actions */
 .account-actions {
 	display: flex;

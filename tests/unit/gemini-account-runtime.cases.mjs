@@ -243,9 +243,13 @@ export const cases = [
 				{
 					account_id: "capable",
 					model_id: "model-pro",
+					display_name: "Pro",
+					description: "Pro route",
 					available: 1,
 					capacity: 4,
 					capacity_field: 12,
+					model_number: 1,
+					discovery_order: 0,
 					checked_at_ms: nowMs,
 				},
 			];
@@ -253,19 +257,30 @@ export const cases = [
 				nowMs: () => nowMs,
 				rotateCookie: async () => new Response(null, { status: 200 }),
 			});
-			const capable = await pool.acquireLease(baseConfig(), {
+			const route = {
 				providerModelId: "model-pro",
+				capacity: 4,
+				capacityField: 12,
+				modelNumber: 1,
+			};
+			const capable = await pool.acquireLease(baseConfig(), {
+				routeCandidates: [route],
 				capabilityMode: "prefer",
 				capabilityFreshAfterMs: nowMs - 1000,
 			});
 			assert.equal(capable.accountId, "capable");
 			assert.deepEqual(capable.modelCapability, {
 				modelId: "model-pro",
+				displayName: "Pro",
+				description: "Pro route",
 				available: true,
 				capacity: 4,
 				capacityField: 12,
+				modelNumber: 1,
+				discoveryOrder: 0,
 				checkedAtMs: nowMs,
 			});
+			assert.deepEqual(capable.selectedRoute, route);
 			capable.release();
 
 			const fallbackStore = new FakeStore([
@@ -278,7 +293,7 @@ export const cases = [
 				rotateCookie: async () => new Response(null, { status: 200 }),
 			});
 			const preferred = await fallbackPool.acquireLease(baseConfig(), {
-				providerModelId: "model-pro",
+				routeCandidates: [route],
 				capabilityMode: "prefer",
 				capabilityFreshAfterMs: nowMs - 1000,
 			});
@@ -287,11 +302,208 @@ export const cases = [
 			preferred.release();
 			assert.equal(
 				await fallbackPool.acquireLease(baseConfig(), {
-					providerModelId: "model-pro",
+					routeCandidates: [route],
 					capabilityMode: "strict",
 					capabilityFreshAfterMs: nowMs - 1000,
 				}),
 				null,
+			);
+		},
+	],
+	[
+		"builds one catalog and honors saved exact-route priority",
+		async () => {
+			const nowMs = 100000;
+			const rows = [
+				account("first", { status_checked_at_ms: nowMs }),
+				account("second", { status_checked_at_ms: nowMs }),
+			];
+			const store = new FakeStore(rows);
+			store.listAccountCapabilities = async () => [
+				capabilityRow("first", "e6fa609c3fa255c0", 4, 12, 3, 0, nowMs, {
+					display_name: "First Pro",
+				}),
+				capabilityRow("first", "future-model", 3, 13, 7, 1, nowMs),
+				capabilityRow("first", "invalid model id", 3, 13, 7, 2, nowMs),
+				capabilityRow("first", "cf41b0e0dd7d53e5", 1, 12, 6, 2, nowMs, {
+					available: 0,
+				}),
+				capabilityRow("second", "9d8ca3786ebdfbea", 1, 12, 3, 0, nowMs, {
+					display_name: "Second Pro",
+				}),
+			];
+			store.listModelRoutePriorities = async () => [
+				{
+					family: "pro",
+					provider_model_id: "invalid model id",
+					capacity: 9,
+					capacity_field: 99,
+					model_number: 0,
+					priority: 0,
+					updated_at_ms: nowMs,
+				},
+				{
+					family: "pro",
+					provider_model_id: "9d8ca3786ebdfbea",
+					capacity: 1,
+					capacity_field: 12,
+					model_number: 3,
+					priority: 1,
+					updated_at_ms: nowMs,
+				},
+				{
+					family: "pro",
+					provider_model_id: "e6fa609c3fa255c0",
+					capacity: 2,
+					capacity_field: 12,
+					model_number: 3,
+					priority: 2,
+					updated_at_ms: nowMs,
+				},
+			];
+			const pool = new mod.AccountPoolService(store, {
+				nowMs: () => nowMs,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			const catalog = await pool.modelCatalog(nowMs - 1000);
+			assert.deepEqual(
+				catalog.entries.map((entry) => entry.id),
+				[
+					"gemini-3.5-flash",
+					"gemini-3.5-flash-extended",
+					"gemini-3.1-pro",
+					"gemini-3.1-pro-extended",
+					"future-model",
+					"future-model-extended",
+				],
+			);
+			assert.equal(
+				(
+					await pool.resolveModel(
+						"future-model-extended",
+						"gemini-3.5-flash",
+						nowMs - 1000,
+					)
+				).dynamicProviderId,
+				"future-model",
+			);
+			const resolvedPro = mod.resolveModel(
+				"gemini-3.1-pro",
+				"gemini-3.5-flash",
+			);
+			const candidates = await pool.routeCandidatesForModel(
+				resolvedPro,
+				nowMs - 1000,
+				"prefer",
+			);
+			assert.deepEqual(
+				candidates.map((route) => route.providerModelId),
+				["9d8ca3786ebdfbea", "e6fa609c3fa255c0"],
+			);
+			const overview = await pool.modelRoutingOverview(nowMs - 1000);
+			assert.equal(overview.version, "1");
+			assert.deepEqual(
+				overview.families.map((family) => family.family),
+				["pro", "flash", "flash_lite"],
+			);
+			const proOverview = overview.families[0];
+			assert.deepEqual(proOverview.publicNames, [
+				"gemini-3.1-pro",
+				"gemini-3.1-pro-extended",
+			]);
+			assert.equal(proOverview.configured, true);
+			assert.deepEqual(
+				proOverview.routes.map((route) => ({
+					providerModelId: route.providerModelId,
+					capacity: route.capacity,
+					label: route.label,
+					available: route.available,
+					configured: route.configured,
+					accountCount: route.accountCount,
+				})),
+				[
+					{
+						providerModelId: "9d8ca3786ebdfbea",
+						capacity: 1,
+						label: "Basic",
+						available: true,
+						configured: true,
+						accountCount: 1,
+					},
+					{
+						providerModelId: "e6fa609c3fa255c0",
+						capacity: 2,
+						label: "Advanced",
+						available: false,
+						configured: true,
+						accountCount: 0,
+					},
+					{
+						providerModelId: "e6fa609c3fa255c0",
+						capacity: 4,
+						label: "Plus",
+						available: true,
+						configured: false,
+						accountCount: 1,
+					},
+				],
+			);
+			const lease = await pool.acquireLease(baseConfig(), {
+				routeCandidates: candidates,
+				capabilityMode: "prefer",
+				capabilityFreshAfterMs: nowMs - 1000,
+			});
+			assert.equal(lease.accountId, "second");
+			assert.equal(lease.selectedRoute.providerModelId, "9d8ca3786ebdfbea");
+			lease.release();
+
+			const rediscoveredStore = new FakeStore(rows);
+			rediscoveredStore.listAccountCapabilities = async () => [
+				capabilityRow("second", "9d8ca3786ebdfbea", 1, 12, 3, 0, nowMs),
+				capabilityRow("first", "e6fa609c3fa255c0", 2, 12, 3, 0, nowMs),
+				capabilityRow("second", "e6fa609c3fa255c0", 4, 12, 3, 1, nowMs),
+			];
+			rediscoveredStore.listModelRoutePriorities =
+				store.listModelRoutePriorities;
+			const rediscoveredPool = new mod.AccountPoolService(rediscoveredStore, {
+				nowMs: () => nowMs,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			assert.deepEqual(
+				(
+					await rediscoveredPool.routeCandidatesForModel(
+						resolvedPro,
+						nowMs - 1000,
+						"prefer",
+					)
+				).map((route) => [route.providerModelId, route.capacity]),
+				[
+					["9d8ca3786ebdfbea", 1],
+					["e6fa609c3fa255c0", 2],
+					["e6fa609c3fa255c0", 4],
+				],
+			);
+
+			const staleStore = new FakeStore([
+				account("disabled", { enabled: 0, status_checked_at_ms: nowMs - 5000 }),
+			]);
+			staleStore.listAllAccountCapabilities = async () => [
+				capabilityRow("disabled", "persisted-model", 2, 12, 1, 0, nowMs - 5000),
+			];
+			const stalePool = new mod.AccountPoolService(staleStore, {
+				nowMs: () => nowMs,
+				rotateCookie: async () => new Response(null, { status: 200 }),
+			});
+			assert.deepEqual(
+				(await stalePool.modelCatalog(nowMs - 1000)).entries.map(
+					(entry) => entry.id,
+				),
+				[
+					"gemini-3.5-flash",
+					"gemini-3.5-flash-extended",
+					"persisted-model",
+					"persisted-model-extended",
+				],
 			);
 		},
 	],
@@ -368,6 +580,31 @@ function account(id, overrides = {}) {
 		last_refresh_success_at_ms: null,
 		created_at_ms: 1000,
 		updated_at_ms: 1000,
+		...overrides,
+	};
+}
+
+function capabilityRow(
+	accountId,
+	modelId,
+	capacity,
+	capacityField,
+	modelNumber,
+	discoveryOrder,
+	checkedAtMs,
+	overrides = {},
+) {
+	return {
+		account_id: accountId,
+		model_id: modelId,
+		display_name: modelId,
+		description: `${modelId} description`,
+		available: 1,
+		capacity,
+		capacity_field: capacityField,
+		model_number: modelNumber,
+		discovery_order: discoveryOrder,
+		checked_at_ms: checkedAtMs,
 		...overrides,
 	};
 }

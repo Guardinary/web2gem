@@ -160,9 +160,13 @@ export const cases = [
 					models: [
 						{
 							modelId: "model-pro",
+							displayName: "Pro",
+							description: "description",
 							available: true,
 							capacity: 1,
 							capacityField: 13,
+							modelNumber: 1,
+							discoveryOrder: 0,
 						},
 					],
 				},
@@ -187,52 +191,102 @@ export const cases = [
 				[[], [], [1, 12]],
 			]) {
 				const decoded = mod.decodeGeminiAccountProbe(
-					accountProbeWrb(1000, [["model"]], tierFlags, capabilityFlags),
+					accountProbeWrb(
+						1000,
+						[["model", "Model", ""]],
+						tierFlags,
+						capabilityFlags,
+					),
 				);
 				assert.deepEqual(
 					[decoded.models[0].capacity, decoded.models[0].capacityField],
 					expected,
 				);
 			}
+			const unauthenticated = mod.decodeGeminiAccountProbe(
+				accountProbeWrb(1016, [
+					["fbb127bbb056c959", "Flash", "Guest Flash"],
+					["9d8ca3786ebdfbea", "Pro", "Authenticated Pro"],
+				]),
+			);
+			assert.equal(unauthenticated.models[0].available, true);
+			assert.equal(unauthenticated.models[0].modelNumber, 1);
+			assert.equal(unauthenticated.models[1].available, false);
+			assert.equal(unauthenticated.models[1].modelNumber, 3);
+			assert.deepEqual(
+				mod.decodeGeminiAccountProbe(
+					accountProbeWrb(1000, [
+						["valid-id", "x".repeat(257), "description"],
+						["missing-display", "", "description"],
+					]),
+				).models,
+				[],
+			);
 		},
 	],
 	[
-		"builds account-specific model headers for capacity fields 12 and 13",
+		"builds exact model headers for capacity fields 12 and 13",
 		() => {
-			const resolved = mod.resolveModel("gemini-3.1-pro", "gemini-3.5-flash");
-			const modelId = mod.geminiProviderModelId(resolved.modelHeaders);
-			const field12 = mod.geminiModelHeadersForCapability(
-				resolved.modelHeaders,
+			const field12 = mod.buildGeminiModelHeaders(
 				{
-					modelId,
-					available: true,
+					providerModelId: "e6fa609c3fa255c0",
 					capacity: 4,
 					capacityField: 12,
+					modelNumber: 3,
 				},
+				false,
+				"session-id",
 			);
-			const payload12 = JSON.parse(field12["x-goog-ext-525001261-jspb"]);
-			assert.equal(payload12[11], 4);
-			const field13 = mod.geminiModelHeadersForCapability(
-				resolved.modelHeaders,
+			assert.deepEqual(JSON.parse(field12["x-goog-ext-525001261-jspb"]), [
+				1,
+				null,
+				null,
+				null,
+				"e6fa609c3fa255c0",
+				null,
+				null,
+				0,
+				[4, 5, 6, 8],
+				null,
+				null,
+				4,
+				null,
+				null,
+				3,
+				1,
+				"SESSION-ID",
+			]);
+			const field13 = mod.buildGeminiModelHeaders(
 				{
-					modelId,
-					available: true,
+					providerModelId: "e6fa609c3fa255c0",
 					capacity: 2,
 					capacityField: 13,
+					modelNumber: 3,
 				},
+				true,
+				"session-id",
 			);
-			const payload13 = JSON.parse(field13["x-goog-ext-525001261-jspb"]);
-			assert.equal(payload13[11], null);
-			assert.equal(payload13[12], 2);
-			assert.equal(
-				mod.geminiModelHeadersForCapability(resolved.modelHeaders, {
-					modelId: "other-model",
-					available: true,
-					capacity: 4,
-					capacityField: 12,
-				}),
-				resolved.modelHeaders,
-			);
+			assert.deepEqual(JSON.parse(field13["x-goog-ext-525001261-jspb"]), [
+				1,
+				null,
+				null,
+				null,
+				"e6fa609c3fa255c0",
+				null,
+				null,
+				0,
+				[4, 5, 6, 8],
+				null,
+				null,
+				null,
+				2,
+				null,
+				null,
+				3,
+				2,
+				"SESSION-ID",
+			]);
+			assert.equal(field13["x-goog-ext-73010990-jspb"], "[0,0,0]");
 		},
 	],
 	[
@@ -567,6 +621,14 @@ export const cases = [
 				/row_id|account_category|session_token|success_count|failure_count|source_id/,
 			);
 			assert.match(sql, /CREATE TABLE IF NOT EXISTS gemini_account_models/);
+			assert.match(
+				sql,
+				/CREATE TABLE IF NOT EXISTS gemini_model_route_priority/,
+			);
+			assert.match(sql, /display_name TEXT NOT NULL/);
+			assert.match(sql, /model_number INTEGER NOT NULL/);
+			assert.match(sql, /discovery_order INTEGER NOT NULL/);
+			assert.match(sql, /VALUES \('schema_version', '3'/);
 		},
 	],
 	[
@@ -847,9 +909,13 @@ export const cases = [
 					models: [
 						{
 							modelId: "model-pro",
+							displayName: "Pro",
+							description: "Stored Pro",
 							available: true,
-							capacity: 42,
-							capacityField: 7,
+							capacity: 3,
+							capacityField: 13,
+							modelNumber: 7,
+							discoveryOrder: 0,
 						},
 					],
 				},
@@ -860,12 +926,77 @@ export const cases = [
 				{
 					account_id: "first",
 					model_id: "model-pro",
+					display_name: "Pro",
+					description: "Stored Pro",
 					available: 1,
-					capacity: 42,
-					capacity_field: 7,
+					capacity: 3,
+					capacity_field: 13,
+					model_number: 7,
+					discovery_order: 0,
 					checked_at_ms: 5600,
 				},
 			]);
+			await store.writeAccountProbe(
+				"first",
+				{
+					statusCode: 1016,
+					issue: "auth",
+					selectable: false,
+					models: [],
+				},
+				5650,
+			);
+			assert.equal(db.rows.get("first").account_status_code, 1016);
+			assert.equal((await store.listAllAccountCapabilities(12800)).length, 1);
+
+			const routeOrder = [
+				{
+					providerModelId: "e6fa609c3fa255c0",
+					capacity: 4,
+					capacityField: 12,
+					modelNumber: 3,
+				},
+				{
+					providerModelId: "9d8ca3786ebdfbea",
+					capacity: 1,
+					capacityField: 12,
+					modelNumber: 3,
+				},
+			];
+			await store.replaceModelRoutePriority("pro", routeOrder, 5700);
+			assert.deepEqual(await store.listModelRoutePriorities(), [
+				{
+					family: "pro",
+					provider_model_id: "e6fa609c3fa255c0",
+					capacity: 4,
+					capacity_field: 12,
+					model_number: 3,
+					priority: 0,
+					updated_at_ms: 5700,
+				},
+				{
+					family: "pro",
+					provider_model_id: "9d8ca3786ebdfbea",
+					capacity: 1,
+					capacity_field: 12,
+					model_number: 3,
+					priority: 1,
+					updated_at_ms: 5700,
+				},
+			]);
+			const versionBeforeInvalidPriority = await store.getPoolVersion();
+			await assert.rejects(
+				() =>
+					store.replaceModelRoutePriority(
+						"pro",
+						[routeOrder[0], routeOrder[0]],
+						5800,
+					),
+				/duplicate Gemini route tuple/,
+			);
+			assert.equal(await store.getPoolVersion(), versionBeforeInvalidPriority);
+			await store.clearModelRoutePriority("pro", 5900);
+			assert.deepEqual(await store.listModelRoutePriorities(), []);
 
 			const entries = [];
 			for (const [id, cookie] of [
@@ -892,6 +1023,149 @@ export const cases = [
 			);
 			assert.equal(await store.deleteAccount("first", 9000), true);
 			assert.equal(await store.deleteAccount("missing", 9000), false);
+		},
+	],
+	[
+		"round-trips exact model routing policies through the admin API",
+		async () => {
+			const db = new MutableD1();
+			const store = new mod.D1GeminiAccountStore(db);
+			const checkedAtMs = Date.now();
+			for (const [id, model] of [
+				[
+					"basic",
+					{
+						modelId: "9d8ca3786ebdfbea",
+						displayName: "Basic Pro",
+						description: "Basic Pro route",
+						available: true,
+						capacity: 3,
+						capacityField: 13,
+						modelNumber: 3,
+						discoveryOrder: 0,
+					},
+				],
+				[
+					"plus",
+					{
+						modelId: "e6fa609c3fa255c0",
+						displayName: "Plus Pro",
+						description: "Plus Pro route",
+						available: true,
+						capacity: 4,
+						capacityField: 12,
+						modelNumber: 3,
+						discoveryOrder: 0,
+					},
+				],
+			]) {
+				await store.createAccount({
+					id,
+					cookieHeader: `__Secure-1PSID=${id}; __Secure-1PSIDTS=ts`,
+					nowMs: checkedAtMs,
+				});
+				await store.writeAccountProbe(
+					id,
+					{ statusCode: 1000, issue: null, selectable: true, models: [model] },
+					checkedAtMs,
+				);
+			}
+			const env = { GEMINI_DB: db, ADMIN_KEY: "admin-secret" };
+			const request = (path, init = {}) =>
+				mod.default.fetch(
+					new Request(`https://worker.example${path}`, {
+						...init,
+						headers: {
+							Authorization: "Bearer admin-secret",
+							...(init.headers || {}),
+						},
+					}),
+					env,
+					{},
+				);
+
+			const unauthorized = await mod.default.fetch(
+				new Request("https://worker.example/admin/model-routing"),
+				env,
+				{},
+			);
+			assert.equal(unauthorized.status, 401);
+			const initial = await request("/admin/model-routing");
+			assert.equal(initial.status, 200);
+			const initialPro = (await initial.json()).families.find(
+				(family) => family.family === "pro",
+			);
+			assert.equal(initialPro.configured, false);
+			assert.deepEqual(
+				initialPro.routes.map((route) => [
+					route.providerModelId,
+					route.capacity,
+					route.capacityField,
+				]),
+				[
+					["9d8ca3786ebdfbea", 3, 13],
+					["e6fa609c3fa255c0", 4, 12],
+				],
+			);
+
+			const versionBeforeInvalid = await store.getPoolVersion();
+			const invalid = await request("/admin/model-routing/pro", {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					routes: [
+						{
+							providerModelId: "not-discovered",
+							capacity: 1,
+							capacityField: 12,
+							modelNumber: 3,
+						},
+					],
+				}),
+			});
+			assert.equal(invalid.status, 400);
+			assert.equal((await invalid.json()).error.code, "unknown_model_route");
+			assert.equal(await store.getPoolVersion(), versionBeforeInvalid);
+
+			const routes = [...initialPro.routes]
+				.reverse()
+				.map(({ providerModelId, capacity, capacityField, modelNumber }) => ({
+					providerModelId,
+					capacity,
+					capacityField,
+					modelNumber,
+				}));
+			const saved = await request("/admin/model-routing/pro", {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ routes }),
+			});
+			assert.equal(saved.status, 200);
+			const savedBody = await saved.json();
+			const savedPro = savedBody.families.find(
+				(family) => family.family === "pro",
+			);
+			assert.equal(savedPro.configured, true);
+			assert.deepEqual(
+				savedPro.routes.map((route) => route.providerModelId),
+				["e6fa609c3fa255c0", "9d8ca3786ebdfbea"],
+			);
+			assert.equal(
+				savedBody.families.find((family) => family.family === "flash")
+					.configured,
+				false,
+			);
+
+			const reset = await request("/admin/model-routing/pro", {
+				method: "DELETE",
+			});
+			assert.equal(reset.status, 200);
+			assert.equal(
+				(await reset.json()).families.find((family) => family.family === "pro")
+					.configured,
+				false,
+			);
+			assert.equal(db.priorities.size, 0);
 		},
 	],
 ];
@@ -1072,6 +1346,7 @@ class MutableD1 {
 		this.meta = new Map([["pool_version", "0"]]);
 		this.locks = new Map();
 		this.models = new Map();
+		this.priorities = new Map();
 		this.lastChanges = 0;
 	}
 	prepare(sql) {
@@ -1124,8 +1399,21 @@ class MutableStatement {
 				this.values.includes(row.identity_hash),
 			);
 		} else if (this.sql.includes("FROM gemini_account_models")) {
-			results = [...this.db.models.values()].filter((row) =>
-				this.values.includes(row.account_id),
+			results = [...this.db.models.values()]
+				.filter(
+					(row) =>
+						!this.sql.includes("WHERE account_id IN") ||
+						this.values.includes(row.account_id),
+				)
+				.sort(
+					(a, b) =>
+						b.checked_at_ms - a.checked_at_ms ||
+						a.account_id.localeCompare(b.account_id) ||
+						a.discovery_order - b.discovery_order,
+				);
+		} else if (this.sql.includes("FROM gemini_model_route_priority")) {
+			results = [...this.db.priorities.values()].sort(
+				(a, b) => a.family.localeCompare(b.family) || a.priority - b.priority,
 			);
 		} else if (this.sql.includes("SELECT * FROM gemini_accounts WHERE id IN")) {
 			results = this.values.flatMap((id) => {
@@ -1218,18 +1506,50 @@ class MutableStatement {
 			const [
 				account_id,
 				model_id,
+				display_name,
+				description,
 				available,
 				capacity,
 				capacity_field,
+				model_number,
+				discovery_order,
 				checked_at_ms,
 			] = this.values;
 			this.db.models.set(`${account_id}\0${model_id}`, {
 				account_id,
 				model_id,
+				display_name,
+				description,
 				available,
 				capacity,
 				capacity_field,
+				model_number,
+				discovery_order,
 				checked_at_ms,
+			});
+			changes = 1;
+		} else if (this.sql.startsWith("DELETE FROM gemini_model_route_priority")) {
+			for (const [key, row] of this.db.priorities)
+				if (row.family === this.values[0]) this.db.priorities.delete(key);
+			changes = 1;
+		} else if (this.sql.startsWith("INSERT INTO gemini_model_route_priority")) {
+			const [
+				family,
+				provider_model_id,
+				capacity,
+				capacity_field,
+				model_number,
+				priority,
+				updated_at_ms,
+			] = this.values;
+			this.db.priorities.set(`${family}\0${priority}`, {
+				family,
+				provider_model_id,
+				capacity,
+				capacity_field,
+				model_number,
+				priority,
+				updated_at_ms,
 			});
 			changes = 1;
 		} else if (this.sql.startsWith("DELETE FROM gemini_accounts")) {

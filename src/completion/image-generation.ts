@@ -1,18 +1,18 @@
 import { base64ToBytes } from "../attachments/base64";
 import {
-	detectUploadMimeFromBytes,
-	firstNonEmptyString,
-	imageFilenameFromMime,
-	normalizeMimeType,
-	sanitizeUploadFilename,
-} from "../attachments/mime";
-import {
 	imageFilenameFromObject,
 	normalizeUploadFileInput,
 	parseImageUrl,
 	uploadFilenameFromObject,
 	uploadMimeFromObject,
 } from "../attachments/input";
+import {
+	detectUploadMimeFromBytes,
+	firstNonEmptyString,
+	imageFilenameFromMime,
+	normalizeMimeType,
+	sanitizeUploadFilename,
+} from "../attachments/mime";
 import { MAX_ATTACHMENTS_PER_REQUEST } from "../attachments/plan";
 import type {
 	AttachmentCandidate,
@@ -20,19 +20,19 @@ import type {
 	AttachmentPlan,
 } from "../attachments/types";
 import type { RuntimeConfig } from "../config";
-import { resolveModel, type ResolvedModel } from "../models";
-import { log } from "../shared/logging";
+import type { ResolvedModel } from "../models";
 import {
+	geminiAuthenticatedSessionRequiredError,
 	upstreamErrorCode,
 	upstreamErrorMessage,
 	upstreamErrorReason,
 	upstreamErrorStatus,
 } from "../shared/errors";
-import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
+import { log } from "../shared/logging";
 import { promptByteLength, tokenEst } from "../shared/tokens";
+import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
 import { contextFileThreshold } from "./context-files";
-import { geminiAuthenticatedSessionRequiredError } from "../shared/errors";
-import type { CompletionProvider } from "./ports";
+import { type CompletionProvider, resolveCompletionModel } from "./ports";
 import type {
 	AttachmentResolutionResult,
 	FileRef,
@@ -175,7 +175,7 @@ async function prepareImageGenerationFromState(
 		};
 	}
 
-	const rm = resolveModel(model, cfg.default_model);
+	const rm = await resolveCompletionModel(provider, model, cfg.default_model);
 	if (rm.name === undefined) {
 		log(
 			cfg,

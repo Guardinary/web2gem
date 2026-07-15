@@ -14,6 +14,9 @@
 	.primary-metrics {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
+	.model-routing-grid {
+		grid-template-columns: 1fr;
+	}
 	.filters {
 		grid-template-columns: repeat(3, minmax(150px, 1fr));
 	}
@@ -157,6 +160,16 @@
 	.account-actions button,
 	.action-menu summary {
 		min-height: 40px;
+	}
+	.model-routing-actions {
+		align-items: stretch;
+		flex-direction: column;
+	}
+	.model-routing-actions > span:first-child {
+		margin-right: 0;
+	}
+	.model-routing-actions button {
+		width: 100%;
 	}
 	.pager {
 		justify-content: space-between;

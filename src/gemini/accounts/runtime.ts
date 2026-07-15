@@ -1,13 +1,19 @@
 import type { RuntimeConfig, WorkerEnv } from "../../config";
+import type {
+	GeminiModelCatalog,
+	GeminiRouteTuple,
+	ResolvedModel,
+} from "../../models";
 import { rotateGeminiAccountCookie } from "./cookie-rotator";
-import { verifyGeminiAccount } from "./probe";
 import { AccountPoolService } from "./pool";
+import { verifyGeminiAccount } from "./probe";
 import { D1GeminiAccountStore } from "./store-d1";
 import type {
 	D1DatabaseLike,
 	GeminiAccountAcquireOptions,
 	GeminiAccountLease,
 	GeminiAccountRuntimeOptions,
+	GeminiModelRoutingOverview,
 } from "./types";
 
 const DEFAULT_RUNTIME_BY_DB = new WeakMap<
@@ -23,6 +29,40 @@ export class GeminiAccountRuntime {
 		options: GeminiAccountAcquireOptions = {},
 	): Promise<GeminiAccountLease | null> {
 		return this.pool.acquireLease(baseConfig, options);
+	}
+
+	modelCatalog(capabilityFreshAfterMs: number): Promise<GeminiModelCatalog> {
+		return this.pool.modelCatalog(capabilityFreshAfterMs);
+	}
+
+	modelRoutingOverview(
+		capabilityFreshAfterMs: number,
+	): Promise<GeminiModelRoutingOverview> {
+		return this.pool.modelRoutingOverview(capabilityFreshAfterMs);
+	}
+
+	resolveModel(
+		modelName: unknown,
+		defaultName: unknown,
+		capabilityFreshAfterMs: number,
+	): Promise<ResolvedModel> {
+		return this.pool.resolveModel(
+			modelName,
+			defaultName,
+			capabilityFreshAfterMs,
+		);
+	}
+
+	routeCandidatesForModel(
+		model: Extract<ResolvedModel, { name: string }>,
+		capabilityFreshAfterMs: number,
+		capabilityMode: "off" | "prefer" | "strict",
+	): Promise<GeminiRouteTuple[]> {
+		return this.pool.routeCandidatesForModel(
+			model,
+			capabilityFreshAfterMs,
+			capabilityMode,
+		);
 	}
 }
 

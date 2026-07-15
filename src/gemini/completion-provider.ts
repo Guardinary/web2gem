@@ -1,39 +1,42 @@
-import {
-	generate,
-	generateRich as generateGeminiRich,
-	generateStream,
-} from "./client";
-import { resolveAttachments, uploadTextFile } from "./uploads";
-import type { RuntimeConfig } from "../config";
-import {
-	geminiModelHeadersForCapability,
-	geminiProviderModelId,
-	type ResolvedModel,
-} from "../models";
+import type {
+	AttachmentFileRef,
+	AttachmentPlan,
+	AttachmentUploadResult,
+} from "../attachments/types";
 import type {
 	CompletionProvider,
 	CompletionProviderOptions,
 	CompletionRichOptions,
 	CompletionTextInput,
 } from "../completion/ports";
+import type { RuntimeConfig } from "../config";
 import {
-	geminiAuthenticatedSessionRequiredError,
-	type GeminiAuthenticatedSessionReason,
-} from "../shared/errors";
-import type {
-	AttachmentFileRef,
-	AttachmentPlan,
-	AttachmentUploadResult,
-} from "../attachments/types";
-import { errorLogSummary } from "../shared/errors";
+	basicRouteForFamily,
+	buildGeminiModelHeaders,
+	type GeminiRouteTuple,
+	type ResolvedModel,
+	resolveModel as resolveStaticModel,
+} from "../models";
 import { isAbortError } from "../shared/abort";
+import { uuid } from "../shared/crypto";
+import {
+	errorLogSummary,
+	type GeminiAuthenticatedSessionReason,
+	geminiAuthenticatedSessionRequiredError,
+} from "../shared/errors";
 import { log, logStage } from "../shared/logging";
 import { promptByteLengthGreaterThan } from "../shared/tokens";
 import type { ErrorWithMetadata } from "../shared/types";
-import type { GeminiAccountLease } from "./accounts/types";
-import type { GeminiAccountRuntime } from "./accounts/runtime";
 import { classifyGeminiAccountOutcome } from "./accounts/classify";
+import type { GeminiAccountRuntime } from "./accounts/runtime";
+import type { GeminiAccountLease } from "./accounts/types";
+import {
+	generate,
+	generateRich as generateGeminiRich,
+	generateStream,
+} from "./client";
 import { upstreamEmptyResponseError } from "./client/errors";
+import { resolveAttachments, uploadTextFile } from "./uploads";
 
 type ResolvedModelOK = Extract<ResolvedModel, { name: string }>;
 
@@ -75,6 +78,7 @@ export function createGeminiCompletionProvider(
 ): CompletionProvider {
 	const runtime = providerOptions.accountRuntime || null;
 	const anonymousCfg: RuntimeConfig = { ...cfg, cookie: "", sapisid: "" };
+	const providerSessionId = uuid().toUpperCase();
 	const client: GeminiClientDelegates = {
 		generate: providerOptions.client?.generate || generate,
 		generateRich: providerOptions.client?.generateRich || generateGeminiRich,
@@ -90,7 +94,10 @@ export function createGeminiCompletionProvider(
 	let accountAttempts = 0;
 	let disposed = false;
 	let uploadQueue: Promise<void> = Promise.resolve();
-	let activeProviderModelId = "";
+	let activeRouteCandidates: GeminiRouteTuple[] = [];
+	let activeResolvedModelName = "";
+	let activeResolvedModel: ResolvedModelOK | null = null;
+	let activeRoutingPrepared = false;
 	const attemptedAccountIds = new Set<string>();
 	const refreshedAccountIds = new Set<string>();
 	const uploadRecipes: UploadRecipe[] = [];
@@ -101,23 +108,19 @@ export function createGeminiCompletionProvider(
 	): Promise<RuntimeConfig> => {
 		if (!runtime) throw geminiAuthenticatedSessionRequiredError(reason);
 		if (disposed) throw new Error("Gemini completion provider is disposed");
+		if (activeResolvedModel && !activeRoutingPrepared)
+			await ensureModelRouting(activeResolvedModel);
 		if (!leasePromise) {
 			if (accountAttempts >= accountAttemptLimit(cfg))
 				throw noAvailableAccountError();
 			leasePromise = runtime
 				.acquireLease(cfg, {
 					excludeAccountIds: attemptedAccountIds,
-					...(activeProviderModelId
-						? { providerModelId: activeProviderModelId }
+					...(activeRoutingPrepared
+						? { routeCandidates: activeRouteCandidates }
 						: {}),
 					capabilityMode: cfg.gemini_account_capability_mode || "prefer",
-					capabilityFreshAfterMs:
-						Date.now() -
-						Math.max(
-							Number(cfg.gemini_account_capability_ttl_sec) || 3600,
-							60,
-						) *
-							1000,
+					capabilityFreshAfterMs: capabilityFreshAfterMs(cfg),
 				})
 				.then((acquiredLease) => {
 					if (!acquiredLease) throw noAvailableAccountError();
@@ -153,7 +156,10 @@ export function createGeminiCompletionProvider(
 		refreshedAccountIds.clear();
 		uploadRecipes.length = 0;
 		refAliases.clear();
-		activeProviderModelId = "";
+		activeRouteCandidates = [];
+		activeResolvedModelName = "";
+		activeResolvedModel = null;
+		activeRoutingPrepared = false;
 	};
 
 	const guardOutcome = (persistence: Promise<void>): Promise<void> =>
@@ -163,6 +169,21 @@ export function createGeminiCompletionProvider(
 				`account outcome persistence failed: ${errorLogSummary(persistenceError)}`,
 			);
 		});
+
+	const ensureModelRouting = async (model: ResolvedModelOK): Promise<void> => {
+		if (activeRoutingPrepared && activeResolvedModelName === model.name) return;
+		const mode = cfg.gemini_account_capability_mode || "prefer";
+		activeRouteCandidates = runtime
+			? await runtime.routeCandidatesForModel(
+					model,
+					capabilityFreshAfterMs(cfg),
+					mode,
+				)
+			: [routeForModel(model)];
+		activeResolvedModelName = model.name;
+		activeResolvedModel = model;
+		activeRoutingPrepared = true;
+	};
 
 	const finalizeOutcome = async (
 		kind: "success" | "failure",
@@ -471,25 +492,43 @@ export function createGeminiCompletionProvider(
 		supportsAuthenticatedSession: !!(
 			runtime || cfg.supports_authenticated_session
 		),
-		generateText(input: CompletionTextInput) {
+		async resolveModel(name: unknown, defaultName: unknown) {
+			const staticResolved = resolveStaticModel(name, defaultName);
+			const resolved =
+				staticResolved.name !== undefined || !runtime
+					? staticResolved
+					: await runtime.resolveModel(
+							name,
+							defaultName,
+							capabilityFreshAfterMs(cfg),
+						);
+			if (resolved.name !== undefined) {
+				activeResolvedModel = resolved;
+				activeResolvedModelName = resolved.name;
+				activeRoutingPrepared = false;
+				activeRouteCandidates = [];
+			}
+			return resolved;
+		},
+		async generateText(input: CompletionTextInput) {
 			const model = requireResolvedModel(input.rm);
-			activeProviderModelId = geminiProviderModelId(model.modelHeaders);
+			activeResolvedModel = model;
+			activeResolvedModelName = model.name;
 			if (cfg.log_requests) logGeminiRoute(cfg, model, false);
 			const call = async (
 				activeCfg: RuntimeConfig,
 				activeInput: CompletionTextInput,
 			): Promise<string> => {
+				const route = routeForModelAndLease(model, lease);
 				const text = await client.generate(
 					activeCfg,
 					activeInput.prompt,
-					model.modeId,
-					model.thinkMode,
-					model.extra,
+					route.modelNumber,
+					model.extended,
 					activeInput.fileRefs,
-					geminiModelHeadersForCapability(
-						model.modelHeaders,
-						lease?.modelCapability,
-					),
+					activeCfg.gemini_account
+						? buildGeminiModelHeaders(route, model.extended, providerSessionId)
+						: null,
 				);
 				if (!text) throw upstreamEmptyResponseError(502, 0, "provider");
 				return text;
@@ -508,28 +547,27 @@ export function createGeminiCompletionProvider(
 				input,
 			);
 		},
-		generateRich(
+		async generateRich(
 			input: CompletionTextInput,
 			richOptions: CompletionRichOptions = {},
 		) {
 			const model = requireResolvedModel(input.rm);
-			activeProviderModelId = geminiProviderModelId(model.modelHeaders);
+			activeResolvedModel = model;
+			activeResolvedModelName = model.name;
 			if (cfg.log_requests) logGeminiRoute(cfg, model, false);
 			return withGenerationLease(
-				(activeCfg, activeInput) =>
-					client.generateRich(
+				(activeCfg, activeInput) => {
+					const route = routeForModelAndLease(model, lease);
+					return client.generateRich(
 						activeCfg,
 						activeInput.prompt,
-						model.modeId,
-						model.thinkMode,
-						model.extra,
+						route.modelNumber,
+						model.extended,
 						activeInput.fileRefs,
-						geminiModelHeadersForCapability(
-							model.modelHeaders,
-							lease?.modelCapability,
-						),
+						buildGeminiModelHeaders(route, model.extended, providerSessionId),
 						richOptions,
-					),
+					);
+				},
 				"image",
 				input,
 			);
@@ -539,25 +577,26 @@ export function createGeminiCompletionProvider(
 			streamOptions: CompletionProviderOptions = {},
 		) {
 			const model = requireResolvedModel(input.rm);
-			activeProviderModelId = geminiProviderModelId(model.modelHeaders);
+			activeResolvedModel = model;
+			activeResolvedModelName = model.name;
 			if (cfg.log_requests) logGeminiRoute(cfg, model, true);
 			const stream = (
 				streamCfg: RuntimeConfig,
 				activeInput: CompletionTextInput,
-			) =>
-				client.generateStream(
+			) => {
+				const route = routeForModelAndLease(model, lease);
+				return client.generateStream(
 					streamCfg,
 					activeInput.prompt,
-					model.modeId,
-					model.thinkMode,
-					model.extra,
+					route.modelNumber,
+					model.extended,
 					activeInput.fileRefs,
 					streamOptions,
-					geminiModelHeadersForCapability(
-						model.modelHeaders,
-						lease?.modelCapability,
-					),
+					streamCfg.gemini_account
+						? buildGeminiModelHeaders(route, model.extended, providerSessionId)
+						: null,
 				);
+			};
 			const requiredReason = accountRequiredReason(
 				cfg,
 				model,
@@ -719,7 +758,7 @@ function accountRequiredReason(
 	hasLease: boolean,
 ): GeminiAuthenticatedSessionReason | null {
 	if (hasLease || input.fileRefs?.length) return "attachment";
-	if (model.modeId === 3) return "pro_model";
+	if (model.family !== "flash") return "pro_model";
 	if (
 		promptByteLengthGreaterThan(input.prompt, cfg.current_input_file_min_bytes)
 	)
@@ -732,6 +771,13 @@ function accountAttemptLimit(cfg: RuntimeConfig): number {
 	return Number.isSafeInteger(value) && value > 0 ? value : 10;
 }
 
+function capabilityFreshAfterMs(cfg: RuntimeConfig): number {
+	return (
+		Date.now() -
+		Math.max(Number(cfg.gemini_account_capability_ttl_sec) || 3600, 60) * 1000
+	);
+}
+
 function logGeminiRoute(
 	cfg: RuntimeConfig,
 	model: ResolvedModelOK,
@@ -739,11 +785,40 @@ function logGeminiRoute(
 ): void {
 	logStage(cfg, "gemini_route", {
 		model: model.name,
-		modelFamily: model.modeId,
-		thinkingMode: model.thinkMode,
-		enhancedMode: model.extra ? model.extra[31] : undefined,
-		enhancedRouting: model.extra ? model.extra[80] : undefined,
-		webModelHeader: !!model.modelHeaders,
+		modelFamily: model.family || "dynamic",
+		extendedThinking: model.extended,
+		dynamicProvider: !!model.dynamicProviderId,
 		stream,
 	});
+}
+
+function routeForModel(model: ResolvedModelOK): GeminiRouteTuple {
+	if (model.family) return basicRouteForFamily(model.family);
+	throw new Error("model has no Gemini route");
+}
+
+function routeForModelAndLease(
+	model: ResolvedModelOK,
+	lease: GeminiAccountLease | null,
+): GeminiRouteTuple {
+	if (lease?.selectedRoute) return lease.selectedRoute;
+	if (model.dynamicProviderId)
+		throw new Error("dynamic Gemini model route was not selected");
+	const route = routeForModel(model);
+	const capability = lease?.modelCapability;
+	if (
+		!capability?.available ||
+		capability.modelId !== route.providerModelId ||
+		(capability.capacityField !== 12 && capability.capacityField !== 13) ||
+		(capability.capacity !== 1 &&
+			capability.capacity !== 2 &&
+			capability.capacity !== 3 &&
+			capability.capacity !== 4)
+	)
+		return route;
+	return {
+		...route,
+		capacity: capability.capacity,
+		capacityField: capability.capacityField,
+	};
 }

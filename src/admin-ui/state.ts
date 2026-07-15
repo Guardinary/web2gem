@@ -1,5 +1,12 @@
 import { signal } from "@preact/signals";
-import type { AccountStats, GeminiAccount, GeminiAccountState } from "./types";
+import type {
+	AccountStats,
+	GeminiAccount,
+	GeminiAccountState,
+	ModelFamily,
+	ModelRoutingDraft,
+	ModelRoutingOverview,
+} from "./types";
 
 export const KEY_STORAGE = "web2gem_gemini_admin_key";
 export const KEY_STORAGE_MODE = "web2gem_gemini_admin_key_storage";
@@ -44,3 +51,19 @@ export const rowBusy = signal<Record<string, string>>({});
 export const confirmationDraft = signal<ConfirmationDraft | null>(null);
 export const importExpanded = signal(false);
 export const authExpanded = signal(false);
+export const modelRouting = signal<ModelRoutingOverview | null>(null);
+export const modelRoutingLoading = signal(false);
+export const modelRoutingDrafts = signal<
+	Record<ModelFamily, ModelRoutingDraft>
+>(emptyModelRoutingDrafts());
+
+export function emptyModelRoutingDrafts(): Record<
+	ModelFamily,
+	ModelRoutingDraft
+> {
+	return {
+		pro: { routes: [], busy: false, error: null, dirty: false },
+		flash: { routes: [], busy: false, error: null, dirty: false },
+		flash_lite: { routes: [], busy: false, error: null, dirty: false },
+	};
+}
