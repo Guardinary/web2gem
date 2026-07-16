@@ -1,25 +1,27 @@
 import { beforeEach, describe, test } from "vitest";
 import { prepareGoogleGeminiContext } from "../../src/completion/context";
 import { streamGoogleToolCompletionEvents } from "../../src/completion/google";
-import { finalizeGoogleCompletionResult } from "../../src/completion/google-turn";
-import { EMPTY_UPSTREAM_MSG } from "../../src/completion/turn";
+import {
+	EMPTY_UPSTREAM_MSG,
+	finalizeGoogleCompletionResult,
+} from "../../src/completion/turn";
 import { invalidGeminiCookieError } from "../../src/gemini/client/errors";
 import { handleGoogleGenerate } from "../../src/http/google/handlers";
 import { parseGoogleGenerationPath } from "../../src/http/google/model-path";
-import { parseGoogleRequest } from "../../src/promptcompat/google";
-import { createToolBundle } from "../../src/toolcall/tool-bundle";
 import {
 	streamGooglePlain,
 	streamGoogleTools,
 } from "../../src/http/google/stream";
 import worker from "../../src/index";
+import { parseGoogleRequest } from "../../src/promptcompat/google";
 import { parseGoogleFunctionCalls } from "../../src/toolcall/google";
 import {
 	filterGoogleToolsByConfig,
 	parseGoogleToolChoicePolicy,
-	validateGoogleFunctionCalls,
 	validateGoogleToolChoiceConfig,
+	validateGoogleToolPolicyCalls,
 } from "../../src/toolcall/policy-google";
+import { createToolBundle } from "../../src/toolcall/tool-bundle";
 import { assert } from "./assertions.js";
 import {
 	attachmentResult,
@@ -472,7 +474,7 @@ describe("google http", () => {
 		assert.match(result.prompt, /"text"/);
 	});
 	test("keeps Google legacy function-call syntaxes as plain text", async () => {
-		const tools = [
+		const tools = createToolBundle([
 			{
 				functionDeclarations: [
 					{
@@ -487,7 +489,7 @@ describe("google http", () => {
 					},
 				],
 			},
-		];
+		]);
 		const [cleanFence, fenceCalls] = parseGoogleFunctionCalls(
 			'before\n```function_call\n{"name":"Lookup","arguments":{"id":"7","query":"alpha"}}\n```\nafter',
 			tools,
@@ -530,6 +532,7 @@ describe("google http", () => {
 				],
 			},
 		];
+		const bundle = createToolBundle(tools);
 		assert.equal(
 			validateGoogleToolChoiceConfig(
 				{
@@ -541,7 +544,7 @@ describe("google http", () => {
 						},
 					},
 				},
-				tools,
+				bundle,
 			),
 			null,
 		);
@@ -555,7 +558,7 @@ describe("google http", () => {
 						},
 					},
 				},
-				tools,
+				bundle,
 			).mode,
 			"required",
 		);
@@ -565,7 +568,7 @@ describe("google http", () => {
 					tools,
 					toolConfig: { functionCallingConfig: { mode: "NEVER" } },
 				},
-				tools,
+				bundle,
 			).message,
 			/unsupported functionCallingConfig\.mode/,
 		);
@@ -580,16 +583,19 @@ describe("google http", () => {
 						},
 					},
 				},
-				tools,
+				bundle,
 			).message,
 			/allowed unknown function: Missing/,
 		);
 		assert.match(
-			validateGoogleFunctionCalls(
-				{
-					tools,
-					toolConfig: { functionCallingConfig: { mode: "NONE" } },
-				},
+			validateGoogleToolPolicyCalls(
+				parseGoogleToolChoicePolicy(
+					{
+						tools,
+						toolConfig: { functionCallingConfig: { mode: "NONE" } },
+					},
+					createToolBundle(tools),
+				),
 				[{ name: "Read", args: {} }],
 			).message,
 			/does not allow function\(s\): Read/,
@@ -651,9 +657,10 @@ describe("google http", () => {
 			tools,
 			toolConfig: { functionCallingConfig: { mode: "ANY" } },
 		};
+		const bundle = createToolBundle(tools);
 		const finalized = finalizeGoogleCompletionResult("plain answer", {
-			effectiveReq,
-			effectiveGoogleTools: tools,
+			tools: bundle,
+			toolPolicy: parseGoogleToolChoicePolicy(effectiveReq, bundle),
 			hasTools: true,
 		});
 		assert.equal(finalized.error.status, 422);
@@ -674,11 +681,14 @@ describe("google http", () => {
 				prompt: "must call a tool",
 				rm: { name: "gemini-3.5-flash" },
 				fileRefs: null,
-				tools,
-				effectiveReq: {
-					tools,
-					toolConfig: { functionCallingConfig: { mode: "ANY" } },
-				},
+				tools: createToolBundle(tools),
+				toolPolicy: parseGoogleToolChoicePolicy(
+					{
+						tools,
+						toolConfig: { functionCallingConfig: { mode: "ANY" } },
+					},
+					createToolBundle(tools),
+				),
 				promptTokens: 1,
 				signal: new AbortController().signal,
 			},
@@ -711,7 +721,7 @@ describe("google http", () => {
 				rm: { name: "gemini-3.5-flash" },
 				fileRefs: null,
 				tools: null,
-				effectiveReq: {},
+				toolPolicy: null,
 				promptTokens: 2,
 				signal: new AbortController().signal,
 			},
@@ -735,7 +745,7 @@ describe("google http", () => {
 				rm: { name: "gemini-3.5-flash" },
 				fileRefs: null,
 				tools: null,
-				effectiveReq: {},
+				toolPolicy: null,
 				promptTokens: 3,
 				signal: new AbortController().signal,
 			},
@@ -787,8 +797,11 @@ describe("google http", () => {
 				prompt: "read",
 				rm: { name: "gemini-3.5-flash" },
 				fileRefs: null,
-				tools,
-				effectiveReq: { tools },
+				tools: createToolBundle(tools),
+				toolPolicy: parseGoogleToolChoicePolicy(
+					{ tools },
+					createToolBundle(tools),
+				),
 				promptTokens: 4,
 				signal: new AbortController().signal,
 			},
@@ -1358,11 +1371,14 @@ describe("google http", () => {
 			prompt: "read",
 			rm: resolvedModel(),
 			fileRefs: null,
-			tools,
-			effectiveReq: {
-				tools,
-				toolConfig: { functionCallingConfig: { mode: "ANY" } },
-			},
+			tools: createToolBundle(tools),
+			toolPolicy: parseGoogleToolChoicePolicy(
+				{
+					tools,
+					toolConfig: { functionCallingConfig: { mode: "ANY" } },
+				},
+				createToolBundle(tools),
+			),
 			promptTokens: 5,
 			signal: new AbortController().signal,
 		});
@@ -1409,11 +1425,14 @@ describe("google http", () => {
 						prompt: "read",
 						rm: resolvedModel(),
 						fileRefs: null,
-						tools,
-						effectiveReq: {
-							tools,
-							toolConfig: { functionCallingConfig: { mode: "ANY" } },
-						},
+						tools: createToolBundle(tools),
+						toolPolicy: parseGoogleToolChoicePolicy(
+							{
+								tools,
+								toolConfig: { functionCallingConfig: { mode: "ANY" } },
+							},
+							createToolBundle(tools),
+						),
 						promptTokens: 5,
 						signal: new AbortController().signal,
 					},
@@ -1454,11 +1473,14 @@ describe("google http", () => {
 			prompt: "do not call tools",
 			rm: resolvedModel(),
 			fileRefs: null,
-			tools,
-			effectiveReq: {
-				tools,
-				toolConfig: { functionCallingConfig: { mode: "NONE" } },
-			},
+			tools: createToolBundle(tools),
+			toolPolicy: parseGoogleToolChoicePolicy(
+				{
+					tools,
+					toolConfig: { functionCallingConfig: { mode: "NONE" } },
+				},
+				createToolBundle(tools),
+			),
 			promptTokens: 5,
 			signal: new AbortController().signal,
 		});

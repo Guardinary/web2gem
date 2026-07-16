@@ -8,6 +8,8 @@ import {
 	prepareOpenAIImageGenerationFromUserInput,
 } from "../../completion/image-generation";
 import type { RuntimeConfig } from "../../config";
+import { parseOpenAIMessages } from "../../promptcompat/message-model";
+import { normalizeResponsesInputAsMessages } from "../../promptcompat/responses-input";
 import { nowSec } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
 import { generateRichLogged, runPreparedCompletion } from "../generation";
@@ -201,6 +203,7 @@ async function handleForcedImageEndpoint(
 				imageReq,
 				IMAGE_ENDPOINT_ROUTE,
 				true,
+				parseOpenAIMessages(normalizeResponsesInputAsMessages(imageReq, true)),
 			),
 		responseFormat,
 		stagePrefix,

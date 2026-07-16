@@ -1,5 +1,6 @@
 import { randHex } from "../shared/crypto";
 import { normalizeParsedToolCallsForSchemas } from "./schema-normalize";
+import type { ToolBundle } from "./tool-bundle";
 
 type NormalizedToolCall = {
 	name: unknown;
@@ -14,9 +15,9 @@ export type OpenAIStreamToolCall = OpenAIToolCall & { index: number };
 
 export function formatOpenAIToolCalls(
 	calls: unknown,
-	toolsRaw: unknown,
+	tools: ToolBundle | null | undefined,
 ): OpenAIToolCall[] {
-	const normalized = normalizeParsedToolCallsForSchemas(calls, toolsRaw);
+	const normalized = normalizeParsedToolCallsForSchemas(calls, tools);
 	if (!Array.isArray(normalized)) return [];
 	return normalized
 		.map((c: NormalizedToolCall, idx: number) => ({
@@ -31,9 +32,9 @@ export function formatOpenAIToolCalls(
 export function formatOpenAIStreamToolCalls(
 	calls: unknown,
 	idStore: Map<number, string> | null | undefined,
-	toolsRaw: unknown,
+	tools: ToolBundle | null | undefined,
 ): OpenAIStreamToolCall[] {
-	const normalized = normalizeParsedToolCallsForSchemas(calls, toolsRaw);
+	const normalized = normalizeParsedToolCallsForSchemas(calls, tools);
 	if (!Array.isArray(normalized) || !normalized.length) return [];
 	return normalized.map((c: NormalizedToolCall, idx: number) => ({
 		index: idx,

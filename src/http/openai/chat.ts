@@ -1,15 +1,18 @@
-import { jsonResponse } from "../core/json";
-import { sseResponse } from "../core/sse";
-import { EMPTY_UPSTREAM_MSG } from "../../completion";
 import type { CompletionProvider } from "../../completion";
+import { EMPTY_UPSTREAM_MSG } from "../../completion";
+import {
+	OPENAI_COMPLETION_DIALECT,
+	prepareCompletion,
+} from "../../completion/prepare";
+import { finalizeOpenAICompletionResult } from "../../completion/turn";
 import type { RuntimeConfig } from "../../config";
-import { prepareOpenAICompletion } from "../../completion/openai";
 import { parseOpenAIMessages } from "../../promptcompat/message-model";
-import { log, nowSec } from "../../shared/logging";
 import { randHex } from "../../shared/crypto";
+import { log, nowSec } from "../../shared/logging";
 import { tokenEst } from "../../shared/tokens";
 import { isRecord, type UnknownRecord } from "../../shared/types";
-import { OPENAI_GENERATION_PROTOCOL, openAIErrorResponse } from "./errors";
+import { jsonResponse } from "../core/json";
+import { sseResponse } from "../core/sse";
 import {
 	generateTextLogged,
 	type PreparedOk,
@@ -17,19 +20,19 @@ import {
 	type StageLog,
 } from "../generation";
 import {
-	finalizeOpenAICompletionResult,
+	streamOpenAIChatPlain,
+	streamOpenAIChatWithToolSieve,
+} from "./chat-stream";
+import { OPENAI_GENERATION_PROTOCOL, openAIErrorResponse } from "./errors";
+import {
 	imageGenerationChatContent,
 	openAIChatUsageFromCompletionTokens,
+	writeOpenAIChatStreamError,
 } from "./format";
-import { writeOpenAIChatStreamError } from "./format";
 import {
 	imageGenerationMode,
 	runImageGenerationCompletion,
 } from "./image-generation";
-import {
-	streamOpenAIChatPlain,
-	streamOpenAIChatWithToolSieve,
-} from "./chat-stream";
 
 // POST /v1/chat/completions
 export async function handleChat(
@@ -37,19 +40,30 @@ export async function handleChat(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
 ) {
+	const messages = parseOpenAIMessages(req.messages);
 	const imageMode = imageGenerationMode(req);
 	if (imageMode.enabled)
-		return handleImageGenerationChat(req, cfg, provider, imageMode.forced);
-	const messages = parseOpenAIMessages(req.messages);
+		return handleImageGenerationChat(
+			req,
+			cfg,
+			provider,
+			imageMode.forced,
+			messages,
+		);
 	return runPreparedCompletion({
 		cfg,
 		provider,
 		stage: "openai_chat",
 		protocol: OPENAI_GENERATION_PROTOCOL,
 		prepare: () =>
-			prepareOpenAICompletion(cfg, provider, req, messages, req.tools, {
-				emptyPromptMessage: "empty prompt",
-			}),
+			prepareCompletion(
+				cfg,
+				provider,
+				req,
+				messages,
+				req.model,
+				OPENAI_COMPLETION_DIALECT,
+			),
 		prepareLogFields: (prepared) => ({
 			model: prepared.rm.name,
 			promptChars: prepared.prompt.length,
@@ -69,13 +83,13 @@ async function runChatGeneration(
 	req: UnknownRecord,
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
-	prepared: PreparedOk<Awaited<ReturnType<typeof prepareOpenAICompletion>>>,
+	prepared: PreparedOk<Awaited<ReturnType<typeof prepareCompletion>>>,
 	stageLog: StageLog,
 ): Promise<Response> {
 	const {
 		rm,
 		structured,
-		allTools,
+		bundle,
 		tools,
 		toolPolicy,
 		promptToolChoice,
@@ -100,7 +114,7 @@ async function runChatGeneration(
 	const detectForbiddenToolCalls = !!(
 		stream &&
 		promptToolChoice === "none" &&
-		allTools.length
+		bundle.openAIFunctionTools.length
 	);
 
 	if (
@@ -139,6 +153,7 @@ async function runChatGeneration(
 		stream &&
 		((tools && promptToolChoice !== "none") || detectForbiddenToolCalls)
 	) {
+		const sieveTools = tools || bundle;
 		return sseResponse(
 			async (write, signal) => {
 				const generationStart = stageLog.now();
@@ -149,7 +164,7 @@ async function runChatGeneration(
 					prompt,
 					rm,
 					fileRefs,
-					tools: tools || allTools,
+					tools: sieveTools,
 					toolPolicy,
 					includeUsage: includeStreamUsage,
 					promptTokens,
@@ -159,7 +174,7 @@ async function runChatGeneration(
 					model: rm.name,
 					promptTokens,
 					fileRefs: fileRefs ? fileRefs.length : 0,
-					tools: (tools || allTools).length,
+					tools: sieveTools.openAIFunctionTools.length,
 				});
 			},
 			{
@@ -188,7 +203,7 @@ async function runChatGeneration(
 
 	const finalized = finalizeOpenAICompletionResult(text, {
 		tools,
-		noneModeTools: allTools,
+		noneModeTools: bundle,
 		promptToolChoice,
 		structured,
 		toolPolicy,
@@ -235,12 +250,14 @@ async function handleImageGenerationChat(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
 	forced: boolean,
+	messages: ReturnType<typeof parseOpenAIMessages>,
 ): Promise<Response> {
 	return runImageGenerationCompletion({
 		req,
 		cfg,
 		provider,
 		route: "chat",
+		messages,
 		forced,
 		stage: "openai_chat_image",
 		logLabel: "openai chat image",

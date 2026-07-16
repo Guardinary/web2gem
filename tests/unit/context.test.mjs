@@ -1,6 +1,5 @@
 import { beforeEach, describe, test } from "vitest";
 import { prepareOpenAIGeminiContext } from "../../src/completion/context";
-import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
 import {
 	contextFilePromptByteCheck,
 	contextFileThreshold,
@@ -14,7 +13,6 @@ import {
 	shouldUseContextFiles,
 } from "../../src/completion/context-files";
 import { ensureInlineToolPrompt } from "../../src/completion/tool-prompt-guard";
-import { readRouteJsonPost } from "../../src/http/route-body";
 import {
 	googleGenerateContentResponse,
 	googleStreamDonePayload,
@@ -24,6 +22,7 @@ import {
 	openAIChatChunk,
 	openAIChatUsageFromCompletionTokens,
 } from "../../src/http/openai/format";
+import { readRouteJsonPost } from "../../src/http/route-body";
 import worker from "../../src/index";
 import {
 	dynamicProviderModelCandidates,
@@ -32,6 +31,8 @@ import {
 	parseGeminiRouteKey,
 	resolveModel,
 } from "../../src/models";
+import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
+import { createToolBundle } from "../../src/toolcall/tool-bundle";
 import { assert } from "./assertions.js";
 import {
 	attachmentResult,
@@ -108,7 +109,7 @@ describe("context", () => {
 					parseOpenAIMessages([
 						{ role: "user", content: "short latest secret" },
 					]),
-					[
+					createToolBundle([
 						{
 							type: "function",
 							function: {
@@ -116,7 +117,7 @@ describe("context", () => {
 								parameters: { type: "object" },
 							},
 						},
-					],
+					]),
 					"auto",
 					null,
 					null,
@@ -404,13 +405,13 @@ describe("context", () => {
 		assert.match(result.error.cause.message, /tools upload broke/);
 	});
 	test("guards inline tool prompts without duplicating known metadata", async () => {
-		const tools = [
+		const tools = createToolBundle([
 			{
 				name: "Read",
 				description: "Read a file",
 				parameters: { type: "object" },
 			},
-		];
+		]);
 		const instruction =
 			'\n\nIMPORTANT: You MUST call the tool "Read". Do not call other tools.';
 		const alreadyPrepared =
@@ -430,10 +431,16 @@ describe("context", () => {
 			alreadyPrepared,
 		);
 
-		const guarded = ensureInlineToolPrompt("user prompt", tools, instruction, null, {
-			hasToolPrompt: false,
-			hasToolInstructions: false,
-		});
+		const guarded = ensureInlineToolPrompt(
+			"user prompt",
+			tools,
+			instruction,
+			null,
+			{
+				hasToolPrompt: false,
+				hasToolInstructions: false,
+			},
+		);
 		assert.match(guarded, /Available tools/);
 		assert.match(guarded, /"name": "Read"/);
 		assert.match(guarded, /You MUST call the tool "Read"/);
@@ -441,13 +448,13 @@ describe("context", () => {
 		assert.doesNotMatch(guarded, /Gemini native hidden tool calls/);
 	});
 	test("guards context-file prompts with instructions but without inline schemas", async () => {
-		const tools = [
+		const tools = createToolBundle([
 			{
 				name: "Read",
 				description: "Read a file",
 				parameters: { type: "object" },
 			},
-		];
+		]);
 		const instruction =
 			"\n\nIMPORTANT: You MUST call at least one tool. Do not respond with text only.";
 		const guarded = ensureInlineToolPrompt(
@@ -479,16 +486,28 @@ describe("context", () => {
 	test("adds missing tool-choice instruction once when no tools are declared", async () => {
 		const instruction =
 			"\n\nIMPORTANT: Do NOT call any tools. Respond with text only.";
-		const guarded = ensureInlineToolPrompt("plain prompt", null, instruction, null, {
-			hasToolPrompt: false,
-			hasToolInstructions: false,
-		});
+		const guarded = ensureInlineToolPrompt(
+			"plain prompt",
+			null,
+			instruction,
+			null,
+			{
+				hasToolPrompt: false,
+				hasToolInstructions: false,
+			},
+		);
 		assert.match(guarded, /^\s*IMPORTANT: Do NOT call any tools/);
 		assert.match(guarded, /plain prompt$/);
 		assert.equal(
-			ensureInlineToolPrompt(guarded, null, instruction, {
-				fileRefs: [],
-			}, { hasToolPrompt: false, hasToolInstructions: false }),
+			ensureInlineToolPrompt(
+				guarded,
+				null,
+				instruction,
+				{
+					fileRefs: [],
+				},
+				{ hasToolPrompt: false, hasToolInstructions: false },
+			),
 			guarded,
 		);
 	});

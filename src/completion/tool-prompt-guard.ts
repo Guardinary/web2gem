@@ -1,4 +1,5 @@
 import {
+	type ToolBundle,
 	toolCallInstructionsFor,
 	toolNamesForPromptSource,
 	toolPromptBlockFor,
@@ -7,18 +8,18 @@ import type { PromptMetadata } from "./types";
 
 export function ensureInlineToolPrompt(
 	prompt: string,
-	toolDefs: unknown,
+	tools: ToolBundle | null | undefined,
 	toolChoiceInstruction: string,
 	contextFiles: unknown,
 	metadata: PromptMetadata,
 ): string {
 	const text = String(prompt || "");
-	const toolNames = toolNamesForPromptSource(toolDefs || []);
+	const toolNames = toolNamesForPromptSource(tools);
 	if (contextFiles) {
 		if (metadata.hasToolInstructions) return text;
 		if (!toolNames.length)
 			return withMissingInstruction(text, toolChoiceInstruction);
-		return [toolCallInstructionsFor(toolDefs), toolChoiceInstruction, text]
+		return [toolCallInstructionsFor(tools), toolChoiceInstruction, text]
 			.filter((part) => part.trim())
 			.join("\n\n");
 	}
@@ -26,7 +27,7 @@ export function ensureInlineToolPrompt(
 		return withMissingInstruction(text, toolChoiceInstruction);
 	}
 	if (metadata.hasToolPrompt && metadata.hasToolInstructions) return text;
-	return [toolPromptBlockFor(toolDefs, toolChoiceInstruction), text]
+	return [toolPromptBlockFor(tools, toolChoiceInstruction), text]
 		.filter((part) => part.trim())
 		.join("\n\n");
 }

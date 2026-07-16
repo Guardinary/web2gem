@@ -8,7 +8,7 @@ import {
 } from "../../shared/errors";
 import { jsonResponse } from "../core/json";
 import type { GenerationProtocol } from "../generation";
-import type { GoogleResponsePart } from "../../completion/google-turn";
+import type { GoogleResponsePart } from "../../completion/turn";
 
 export function googleErrorResponseBody(
 	message: unknown,

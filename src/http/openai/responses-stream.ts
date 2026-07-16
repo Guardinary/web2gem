@@ -1,14 +1,15 @@
+import type { CompletionProvider } from "../../completion";
 import {
-	EMPTY_UPSTREAM_MSG,
 	createCompletionStreamLifecycle,
+	EMPTY_UPSTREAM_MSG,
 	recordCompletionStreamEvent,
 	streamPlainCompletionEvents,
 	streamToolSieveCompletionEvents,
 } from "../../completion";
-import type { CompletionProvider } from "../../completion";
+import type { FileRef } from "../../completion/types";
 import type { RuntimeConfig } from "../../config";
 import type { ResolvedModelOk } from "../../models";
-import type { FileRef } from "../../completion/types";
+import { randHex } from "../../shared/crypto";
 import {
 	errorLogSummary,
 	upstreamErrorCode,
@@ -16,9 +17,9 @@ import {
 	upstreamErrorReason,
 } from "../../shared/errors";
 import { log } from "../../shared/logging";
-import { randHex } from "../../shared/crypto";
 import { tokenCountFromCounts } from "../../shared/tokens";
 import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
+import type { ToolBundle } from "../../toolcall/tool-bundle";
 import type { SSEWrite } from "../core/sse";
 import {
 	streamInterruptedWarningText,
@@ -40,7 +41,7 @@ type StreamResponsesParams = {
 	rm: ResolvedModelOk;
 	prompt: string;
 	fileRefs: FileRef[] | null;
-	tools: unknown;
+	tools: ToolBundle | null;
 	toolPolicy: ToolChoicePolicy | null | undefined;
 	promptTokens: unknown;
 	signal: AbortSignal;

@@ -1,11 +1,13 @@
 import { beforeEach, describe, test } from "vitest";
 import {
 	createCompletionStreamLifecycle,
+	createSieveLoopContext,
 	recordCompletionStreamEvent,
-	streamBufferedToolTextCompletionEvents,
 	streamPlainCompletionEvents,
+	streamSievedTextDeltas,
 	streamToolSieveCompletionEvents,
 } from "../../src/completion/stream-events";
+import { toolSieveBufferedText } from "../../src/toolstream";
 import { assert } from "./assertions.js";
 import { chunks, fakeStreamProvider, resetTestState } from "./helpers.js";
 
@@ -35,11 +37,9 @@ function streamProvider(deltas) {
 async function consumeCompletionEvents(events, onText) {
 	const lifecycle = createCompletionStreamLifecycle();
 	let completionTokens = 0;
-	let bufferedText = "";
 	for await (const event of events) {
 		recordCompletionStreamEvent(lifecycle, event);
 		if (event.type === "text_delta") onText(event.text);
-		if (event.type === "buffered_text") bufferedText = event.text;
 		if (event.type === "done") completionTokens = event.completionTokens;
 	}
 	return {
@@ -49,7 +49,6 @@ async function consumeCompletionEvents(events, onText) {
 		completionTokens,
 		toolCalls: lifecycle.toolCalls,
 		violation: lifecycle.violation,
-		bufferedText,
 	};
 }
 function consumePlainTextDeltas(deltas, onText) {
@@ -73,15 +72,26 @@ function consumeToolSieveTextDeltas(deltas, input, onText) {
 		onText,
 	);
 }
-function consumeBufferedToolTextDeltas(deltas, onText) {
-	return consumeCompletionEvents(
-		streamBufferedToolTextCompletionEvents(streamProvider(deltas), {
+async function consumeSievedTextDeltas(deltas, onText) {
+	const ctx = createSieveLoopContext();
+	for await (const event of streamSievedTextDeltas(
+		streamProvider(deltas),
+		{
 			prompt: "test",
 			rm: { name: "gemini-3.5-flash" },
 			fileRefs: null,
-		}),
-		onText,
-	);
+		},
+		{},
+		ctx,
+	)) {
+		if (event.type === "text_delta") onText(event.text);
+	}
+	return {
+		emittedText: ctx.emittedText,
+		streamErr: ctx.streamErr,
+		errMsg: ctx.streamErr?.message || "",
+		bufferedText: toolSieveBufferedText(ctx.state),
+	};
 }
 
 describe("completion stream lifecycle", () => {
@@ -258,7 +268,7 @@ describe("completion stream lifecycle", () => {
 		const result = await consumeToolSieveTextDeltas(
 			brokenToolDeltas(),
 			{
-				tools: [],
+				tools: null,
 				toolPolicy: null,
 			},
 			(text) => emitted.push(text),
@@ -274,7 +284,7 @@ describe("completion stream lifecycle", () => {
 			() =>
 				consumeToolSieveTextDeltas(
 					abortingAsyncIterable(toolAbort),
-					{ tools: [], toolPolicy: null },
+					{ tools: null, toolPolicy: null },
 					() => {},
 				),
 			/tool abort/,
@@ -287,7 +297,7 @@ describe("completion stream lifecycle", () => {
 				prompt: "tool prompt",
 				rm: { name: "gemini-3.5-flash" },
 				fileRefs: null,
-				tools: [],
+				tools: null,
 				toolPolicy: null,
 			}),
 		);
@@ -300,64 +310,80 @@ describe("completion stream lifecycle", () => {
 		);
 		assert.equal(toolEvents.at(-1).type, "done");
 
+		const bufferedCtx = createSieveLoopContext();
 		const bufferedEvents = await collectEvents(
-			streamBufferedToolTextCompletionEvents(fakeStreamProvider([longText]), {
-				prompt: "buffered prompt",
-				rm: { name: "gemini-3.5-flash" },
-				fileRefs: null,
-			}),
+			streamSievedTextDeltas(
+				fakeStreamProvider([longText]),
+				{
+					prompt: "buffered prompt",
+					rm: { name: "gemini-3.5-flash" },
+					fileRefs: null,
+				},
+				{},
+				bufferedCtx,
+			),
 		);
 		assert.deepEqual(
 			bufferedEvents.map((event) => event.type),
-			["text_delta", "buffered_text", "done"],
+			["text_delta"],
 		);
-		assert.equal(bufferedEvents[0].text + bufferedEvents[1].text, longText);
+		assert.equal(
+			bufferedEvents[0].text + toolSieveBufferedText(bufferedCtx.state),
+			longText,
+		);
 
+		const emptyCtx = createSieveLoopContext();
 		const emptyBuffered = await collectEvents(
-			streamBufferedToolTextCompletionEvents(fakeStreamProvider([]), {
-				prompt: "empty buffered prompt",
-				rm: { name: "gemini-3.5-flash" },
-				fileRefs: null,
-			}),
+			streamSievedTextDeltas(
+				fakeStreamProvider([]),
+				{
+					prompt: "empty buffered prompt",
+					rm: { name: "gemini-3.5-flash" },
+					fileRefs: null,
+				},
+				{},
+				emptyCtx,
+			),
 		);
-		assert.deepEqual(
-			emptyBuffered.map((event) => event.type),
-			["empty", "done"],
-		);
+		assert.deepEqual(emptyBuffered, []);
+		assert.equal(emptyCtx.emittedText, false);
+		assert.equal(toolSieveBufferedText(emptyCtx.state), "");
 
 		const splitHeldCandidate = [
 			'<tool_calls><invoke name="Read"><parameter name="path">',
 			"README.md",
 		];
+		const splitCtx = createSieveLoopContext();
 		const splitBufferedEvents = await collectEvents(
-			streamBufferedToolTextCompletionEvents(
+			streamSievedTextDeltas(
 				fakeStreamProvider(splitHeldCandidate),
 				{
 					prompt: "split buffered prompt",
 					rm: { name: "gemini-3.5-flash" },
 					fileRefs: null,
 				},
+				{},
+				splitCtx,
 			),
 		);
-		assert.deepEqual(
-			splitBufferedEvents.map((event) => event.type),
-			["buffered_text", "done"],
+		assert.deepEqual(splitBufferedEvents, []);
+		assert.equal(
+			toolSieveBufferedText(splitCtx.state),
+			splitHeldCandidate.join(""),
 		);
-		assert.equal(splitBufferedEvents[0].text, splitHeldCandidate.join(""));
 	});
 	test("summarizes buffered tool text streams across success error and abort paths", async () => {
 		const emitted = [];
 		const longText = "y".repeat(100);
-		const summary = await consumeBufferedToolTextDeltas(
-			chunks([longText]),
-			(text) => emitted.push(text),
+		const summary = await consumeSievedTextDeltas(chunks([longText]), (text) =>
+			emitted.push(text),
 		);
 		assert.equal(summary.emittedText, true);
 		assert.equal(summary.streamErr, null);
 		assert.equal(emitted.join("") + summary.bufferedText, longText);
 
 		const errored = [];
-		const errorSummary = await consumeBufferedToolTextDeltas(
+		const errorSummary = await consumeSievedTextDeltas(
 			chunks([longText], 0),
 			(text) => errored.push(text),
 		);
@@ -370,7 +396,7 @@ describe("completion stream lifecycle", () => {
 			'<tool_calls><invoke name="Read"><parameter name="path">',
 			"README.md",
 		];
-		const splitSummary = await consumeBufferedToolTextDeltas(
+		const splitSummary = await consumeSievedTextDeltas(
 			chunks(splitHeldCandidate),
 			() => {},
 		);
@@ -380,10 +406,7 @@ describe("completion stream lifecycle", () => {
 		bufferAbort.name = "AbortError";
 		await assert.rejects(
 			() =>
-				consumeBufferedToolTextDeltas(
-					abortingAsyncIterable(bufferAbort),
-					() => {},
-				),
+				consumeSievedTextDeltas(abortingAsyncIterable(bufferAbort), () => {}),
 			/buffer abort/,
 		);
 	});

@@ -1,9 +1,10 @@
 import { beforeEach, describe, test } from "vitest";
 import { base64ToBytes } from "../../src/attachments/base64";
 import {
-	collectOpenAIInlineUploadImages,
-	collectOpenAIRequestAttachmentPlan,
-} from "../../src/attachments/collect-openai";
+	openAIAttachmentPlanFromRequest,
+	parseOpenAIMessages,
+	requestAttachmentPlanFromChannels,
+} from "../../src/promptcompat/message-model";
 import { parseUploadUrl } from "../../src/attachments/input";
 import {
 	attachmentDrop,
@@ -1129,7 +1130,7 @@ describe("uploads", () => {
 		);
 	});
 	test("classifies OpenAI request attachments without upload transport", async () => {
-		const plan = collectOpenAIRequestAttachmentPlan({
+		const request = {
 			ref_file_ids: ["file-top"],
 			messages: [
 				{
@@ -1187,12 +1188,16 @@ describe("uploads", () => {
 				},
 				{ type: "text", text: "ignored" },
 			],
-		});
+		};
+		const plan = openAIAttachmentPlanFromRequest(
+			request,
+			parseOpenAIMessages(request.messages),
+		);
 		assert.deepEqual(plan.existingFileRefs, [
 			"file-top",
 			{ id: "file-existing", name: "existing.txt" },
 		]);
-		assert.equal(plan.candidates.length, 4);
+		assert.equal(plan.candidates.length, 5);
 		assert.deepEqual(
 			plan.candidates.map((candidate) => ({
 				kind: candidate.kind,
@@ -1221,6 +1226,12 @@ describe("uploads", () => {
 				},
 				{
 					kind: "file",
+					filename: "content-direct.txt",
+					mime: "text/plain",
+					sourceType: "base64",
+				},
+				{
+					kind: "file",
 					filename: "message-attach.txt",
 					mime: "text/plain",
 					sourceType: "base64",
@@ -1237,7 +1248,7 @@ describe("uploads", () => {
 		);
 	});
 	test("classifies OpenAI request-level image blocks without upload transport", async () => {
-		const plan = collectOpenAIRequestAttachmentPlan({
+		const plan = requestAttachmentPlanFromChannels({
 			attachments: [
 				{
 					type: "image_url",
@@ -1306,7 +1317,7 @@ describe("uploads", () => {
 			],
 		);
 		assert.deepEqual(
-			collectOpenAIInlineUploadImages({
+			requestAttachmentPlanFromChannels({
 				attachments: [
 					{
 						type: "image_url",
@@ -1314,7 +1325,11 @@ describe("uploads", () => {
 						filename: "outer.webp",
 					},
 				],
-			}),
+			}).candidates.map((candidate) => ({
+				b64: candidate.source.data,
+				mime: candidate.mime,
+				filename: candidate.filename,
+			})),
 			[{ b64: "V0VCUA==", mime: "image/webp", filename: "outer.webp" }],
 		);
 	});

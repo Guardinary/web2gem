@@ -6,8 +6,10 @@ import {
 import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
 import type { ResolvedModelOk } from "../../models";
-import type { FileRef, LooseRequest } from "../../completion/types";
+import type { FileRef } from "../../completion/types";
 import { streamGoogleToolCompletionEvents } from "../../completion/google";
+import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
+import type { ToolBundle } from "../../toolcall/tool-bundle";
 import { tokenCountFromCounts } from "../../shared/tokens";
 import { errorLogSummary, upstreamErrorCode } from "../../shared/errors";
 import { log } from "../../shared/logging";
@@ -33,8 +35,8 @@ type GooglePlainStreamParams = {
 	signal: AbortSignal;
 };
 type GoogleToolStreamParams = GooglePlainStreamParams & {
-	tools: LooseRequest[] | null;
-	effectiveReq: LooseRequest;
+	tools: ToolBundle | null;
+	toolPolicy: ToolChoicePolicy | null | undefined;
 };
 
 export async function streamGooglePlain(
@@ -99,7 +101,7 @@ export async function streamGoogleTools(
 		rm,
 		fileRefs,
 		tools,
-		effectiveReq,
+		toolPolicy,
 		promptTokens,
 		signal,
 	} = params;
@@ -108,7 +110,7 @@ export async function streamGoogleTools(
 		rm,
 		fileRefs,
 		tools,
-		effectiveReq,
+		toolPolicy,
 		promptTokens,
 		signal,
 	})) {

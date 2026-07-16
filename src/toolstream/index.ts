@@ -13,6 +13,7 @@ import {
 	formatOpenAIToolCalls,
 	type OpenAIToolCall,
 } from "../toolcall/openai-format";
+import type { ToolBundle } from "../toolcall/tool-bundle";
 
 export type ToolSieveState = {
 	buffer: string;
@@ -302,7 +303,7 @@ function clearHeldText(state: ToolSieveState): void {
 
 export function flushToolSieve(
 	state: ToolSieveState | null | undefined,
-	toolsRaw: unknown,
+	tools: ToolBundle | null | undefined,
 ): ToolSieveFlushResult {
 	if (state) ensureToolSieveStateShape(state);
 	const buffered = state ? heldText(state) : "";
@@ -316,7 +317,7 @@ export function flushToolSieve(
 			: parseDSMLToolCallsDetailed(buffered);
 	if (!parsed.calls.length)
 		return { text: String(buffered || "").trim(), toolCalls: null };
-	const toolCalls = formatOpenAIToolCalls(parsed.calls, toolsRaw);
+	const toolCalls = formatOpenAIToolCalls(parsed.calls, tools);
 	return {
 		text: parsed.cleanText,
 		toolCalls: toolCalls.length ? toolCalls : null,

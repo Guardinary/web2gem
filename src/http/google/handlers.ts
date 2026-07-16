@@ -3,8 +3,11 @@ import { sseResponse } from "../core/sse";
 import { EMPTY_UPSTREAM_MSG } from "../../completion";
 import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
-import { prepareGoogleCompletion } from "../../completion/google-request";
-import { finalizeGoogleCompletionResult } from "../../completion/google-turn";
+import {
+	GOOGLE_COMPLETION_DIALECT,
+	prepareCompletion,
+} from "../../completion/prepare";
+import { finalizeGoogleCompletionResult } from "../../completion/turn";
 import { parseGoogleRequest } from "../../promptcompat/google";
 import { upstreamErrorCode } from "../../shared/errors";
 import { log } from "../../shared/logging";
@@ -38,11 +41,19 @@ export async function handleGoogleGenerate(
 		provider,
 		stage: "google",
 		protocol: GOOGLE_GENERATION_PROTOCOL,
-		prepare: () => prepareGoogleCompletion(cfg, provider, req, messages, modelName),
+		prepare: () =>
+			prepareCompletion(
+				cfg,
+				provider,
+				req,
+				messages,
+				modelName,
+				GOOGLE_COMPLETION_DIALECT,
+			),
 		prepareLogFields: (prepared) => ({
 			model: prepared.rm.name,
 			stream,
-			tools: prepared.hasTools,
+			tools: !!prepared.tools && prepared.promptToolChoice !== "none",
 			promptChars: prepared.prompt.length,
 			promptTokens: prepared.promptTokens,
 			fileRefs: prepared.fileRefs ? prepared.fileRefs.length : 0,
@@ -59,19 +70,20 @@ export async function handleGoogleGenerate(
 async function runGoogleGeneration(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
-	prepared: PreparedOk<Awaited<ReturnType<typeof prepareGoogleCompletion>>>,
+	prepared: PreparedOk<Awaited<ReturnType<typeof prepareCompletion>>>,
 	stream: boolean,
 	stageLog: StageLog,
 ): Promise<Response> {
 	const {
 		rm,
-		effectiveReq,
-		effectiveGoogleTools,
-		hasTools,
+		tools,
+		toolPolicy,
+		promptToolChoice,
 		prompt,
 		fileRefs,
 		promptTokens,
 	} = prepared;
+	const hasTools = !!tools && promptToolChoice !== "none";
 
 	if (stream && !hasTools) {
 		return sseResponse(
@@ -104,8 +116,8 @@ async function runGoogleGeneration(
 					prompt,
 					rm,
 					fileRefs,
-					tools: effectiveGoogleTools,
-					effectiveReq,
+					tools,
+					toolPolicy,
 					promptTokens,
 					signal,
 				});
@@ -113,7 +125,7 @@ async function runGoogleGeneration(
 					model: rm.name,
 					promptTokens,
 					fileRefs: fileRefs ? fileRefs.length : 0,
-					tools: effectiveGoogleTools ? effectiveGoogleTools.length : 0,
+					tools: tools ? tools.openAIFunctionTools.length : 0,
 				});
 			},
 			{ onError: (write, e) => writeGoogleStreamError(write, rm.name, e) },
@@ -149,8 +161,8 @@ async function runGoogleGeneration(
 	}
 
 	const finalized = finalizeGoogleCompletionResult(text, {
-		effectiveReq,
-		effectiveGoogleTools,
+		tools,
+		toolPolicy,
 		hasTools,
 	});
 	if (finalized.error)

@@ -12,6 +12,7 @@ import {
 	createToolBundle,
 	filterToolBundleByPolicy,
 	nullableOpenAIFunctionTools,
+	type ToolBundle,
 } from "./tool-bundle";
 
 type GoogleFunctionDeclaration = UnknownRecord & { name?: unknown };
@@ -67,7 +68,7 @@ export function googleToolChoiceInstructionFromPolicy(
 
 export function parseGoogleToolChoicePolicy(
 	req: unknown,
-	tools: unknown,
+	tools: ToolBundle | null | undefined,
 ): ToolChoicePolicy {
 	const fc = googleFunctionCallingConfig(req);
 	const mode = String(fc.mode || "AUTO")
@@ -107,7 +108,7 @@ export function parseGoogleToolChoicePolicy(
 
 export function validateGoogleToolChoiceConfig(
 	req: unknown,
-	tools: unknown,
+	tools: ToolBundle | null | undefined,
 ): ToolPolicyViolation | null {
 	const fc = googleFunctionCallingConfig(req);
 	const mode = String(fc.mode || "AUTO")
@@ -166,9 +167,10 @@ export function normalizeGoogleToolsForPrompt(
 	return nullableOpenAIFunctionTools(createToolBundle(tools));
 }
 
-export function validateGoogleFunctionCalls(req: unknown, calls: unknown) {
-	const record = isRecord(req) ? req : {};
-	const policy = parseGoogleToolChoicePolicy(req, record.tools || []);
+export function validateGoogleToolPolicyCalls(
+	policy: ToolChoicePolicy | null | undefined,
+	calls: unknown,
+): ToolPolicyViolation | null {
 	return validateToolPolicyCalls(policy, calls, {
 		requiredMessage:
 			"functionCallingConfig.mode=ANY requires at least one valid function call.",

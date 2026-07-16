@@ -1,15 +1,13 @@
-import type { SSEWrite } from "../core/sse";
-import { nowSec } from "../../shared/logging";
+import type { GeneratedImage } from "../../completion/ports";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
 	upstreamErrorReason,
 } from "../../shared/errors";
+import { nowSec } from "../../shared/logging";
 import { tokenEst } from "../../shared/tokens";
 import { isRecord } from "../../shared/types";
-import type { GeneratedImage } from "../../completion/ports";
-
-export { finalizeOpenAICompletionResult } from "../../completion/turn";
+import type { SSEWrite } from "../core/sse";
 
 type OpenAIChunkDelta = Record<string, unknown>;
 type OpenAIToolCall = {

@@ -22,6 +22,7 @@ export { readJsonRequest } from "./http/core/json";
 export { sseResponse } from "./http/core/sse";
 export { streamGooglePlain } from "./http/google/stream";
 export { streamResponsesWithToolSieve } from "./http/openai/responses-stream";
+export { parseOpenAIMessages } from "./promptcompat/message-model";
 export { messagesToPrompt } from "./promptcompat/messages";
 export { normalizeResponsesInputAsMessages } from "./promptcompat/responses-input";
 export { randHex } from "./shared/crypto";

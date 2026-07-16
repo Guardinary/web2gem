@@ -1,43 +1,40 @@
-import { openAIToolDefs } from "../toolcall/content";
 import { formatPromptToolCallBlock } from "../toolcall/prompt-format";
-import { toolPromptBlockFor } from "../toolcall/tool-bundle";
+import type { ToolBundle } from "../toolcall/tool-bundle";
 import {
 	historyContentText,
 	type InternalMessage,
-	messageReasoningText,
 	type MessagePart,
+	messageReasoningText,
 } from "./message-model";
 import {
 	createPromptPartAccumulator,
 	type PromptBuildResult,
 } from "./prompt-text";
 
-type ToolPromptDef = {
-	name?: unknown;
-	description?: unknown;
-	parameters?: unknown;
+export type PromptToolContext = {
+	bundle: ToolBundle;
+	choiceInstruction: string;
+	/** False when tool choice/mode is none: tools stay declared but unprompted. */
+	include: boolean;
 };
 
 export function messagesToPrompt(
 	messages: readonly InternalMessage[],
-	tools: unknown,
-	toolChoice: unknown,
-	toolDefsOverride: unknown,
-	toolChoiceInstructionOverride: unknown,
+	toolContext: PromptToolContext | null,
 	maxPromptBytes?: number | null,
 ): PromptBuildResult {
 	const prompt = createPromptPartAccumulator(maxPromptBytes);
 	let latestInputText = "";
-	let promptToolDefs: readonly ToolPromptDef[] = [];
-	if (toolChoice !== "none") {
-		promptToolDefs = Array.isArray(toolDefsOverride)
-			? toolDefsOverride
-			: openAIToolDefs(tools);
-	}
+	const includeTools = !!toolContext?.include;
+	const promptToolDefs =
+		includeTools && toolContext ? toolContext.bundle.promptArtifact.defs : [];
 
-	if (promptToolDefs.length) {
-		const choiceInstruction = toolChoiceInstructionOverride || "";
-		prompt.add(toolPromptBlockFor(tools, choiceInstruction, promptToolDefs));
+	if (promptToolDefs.length && toolContext) {
+		prompt.add(
+			toolContext.bundle.promptArtifact.inlinePromptBlock(
+				toolContext.choiceInstruction,
+			),
+		);
 	}
 	const hiddenPromptInsertOffset = promptToolDefs.length
 		? prompt.length()

@@ -52,8 +52,8 @@ import { openAIUpstreamErrorResponse } from "../../src/http/openai/errors";
 import { createDeltaCoalescer } from "../../src/http/stream/coalescer";
 import worker from "../../src/index";
 import { MODELS, resolveModel } from "../../src/models";
-import { messagesToPrompt } from "../../src/promptcompat/messages";
 import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
+import { messagesToPrompt } from "../../src/promptcompat/messages";
 import {
 	abortError,
 	isAbortError,
@@ -496,9 +496,6 @@ describe("runtime core", () => {
 		const result = messagesToPrompt(
 			parseOpenAIMessages([{ role: "user", content: "x".repeat(40) }]),
 			null,
-			null,
-			[],
-			"",
 			10,
 		);
 		assert.equal(result.byteCheck.exceeded, true);

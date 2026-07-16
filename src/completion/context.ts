@@ -1,17 +1,6 @@
-import {
-	googleToolDefs,
-	mergeFileRefs,
-	openAIToolDefs,
-} from "../toolcall/content";
-import { buildToolChoiceInstructionFromPolicy } from "../toolcall/policy-openai";
-import type { ToolBundle } from "../toolcall/tool-bundle";
-import {
-	appendStructuredOutputInstructionToPrepared,
-	appendTextToPreparedWithTokens,
-	structuredInstruction,
-	withGeminiNativeHiddenToolsPromptForPrepared,
-	withGeminiNativeHiddenToolsPromptWithTokens,
-} from "../promptcompat/prompt-build";
+import { droppedAttachmentNote } from "../attachments/notes";
+import type { AttachmentPlan } from "../attachments/types";
+import type { RuntimeConfig } from "../config";
 import {
 	buildOpenAIHistoryTranscript,
 	latestOpenAIUserInputText,
@@ -21,21 +10,35 @@ import {
 	attachmentPlanFromMessages,
 	openAIAttachmentPlanFromRequest,
 } from "../promptcompat/message-model";
-import { droppedAttachmentNote } from "../attachments/notes";
+import type { PromptToolContext } from "../promptcompat/messages";
 import { messagesToPrompt } from "../promptcompat/messages";
-import type { RuntimeConfig } from "../config";
-import { logStage } from "../shared/logging";
-
 import {
-	prepareContextFiles,
-	shouldConsiderContextFiles,
-} from "./context-files";
+	appendStructuredOutputInstructionToPrepared,
+	appendTextToPreparedWithTokens,
+	structuredInstruction,
+	withGeminiNativeHiddenToolsPromptForPrepared,
+	withGeminiNativeHiddenToolsPromptWithTokens,
+} from "../promptcompat/prompt-build";
+import { logStage } from "../shared/logging";
+import {
+	buildTextWithTokens,
+	createPromptByteLengthSniffer,
+	type PromptByteLengthBounded,
+} from "../shared/tokens";
+import { isRecord } from "../shared/types";
+import type { ToolChoicePolicy } from "../toolcall/policy-openai";
+import { buildToolChoiceInstructionFromPolicy } from "../toolcall/policy-openai";
+import type { ToolBundle } from "../toolcall/tool-bundle";
+import type { ContextFilePromptByteCheck } from "./context-files";
 import {
 	contextFilePromptByteCheck,
 	contextFileThreshold,
 	contextFileUploadUnavailableReason,
 	oversizedInlineContextFailure,
+	prepareContextFiles,
+	shouldConsiderContextFiles,
 } from "./context-files";
+import type { CompletionProvider } from "./ports";
 import type {
 	AttachmentResolutionResult,
 	ContextFileFailure,
@@ -43,73 +46,54 @@ import type {
 	FileRef,
 	GeminiContextPrepareResult,
 	LooseRequest,
+	PromptMetadata,
 	PromptWithTokens,
 	ToolDef,
 } from "./types";
-import type { PromptMetadata } from "./types";
 import { hasCompletionError } from "./types";
-import type { CompletionProvider } from "./ports";
-import type { ToolChoicePolicy } from "../toolcall/policy-openai";
-import type { ContextFilePromptByteCheck } from "./context-files";
-import {
-	buildTextWithTokens,
-	createPromptByteLengthSniffer,
-	type PromptByteLengthBounded,
-} from "../shared/tokens";
-import type { AttachmentPlan } from "../attachments/types";
+
+type FileRefGroup = "context" | "existing" | "generic" | "image";
+
+const OPENAI_FILE_REF_ORDER: readonly FileRefGroup[] = [
+	"context",
+	"existing",
+	"generic",
+	"image",
+];
+const GOOGLE_FILE_REF_ORDER: readonly FileRefGroup[] = [
+	"image",
+	"context",
+	"generic",
+];
 
 export async function prepareOpenAIGeminiContext(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
 	req: LooseRequest,
 	messages: readonly InternalMessage[],
-	tools: unknown,
+	tools: ToolBundle | null | undefined,
 	promptToolChoice: unknown,
 	toolPolicy: ToolChoicePolicy | null | undefined,
 	structured: unknown,
 ): Promise<GeminiContextPrepareResult> {
-	const toolDefs = openAIToolDefs(tools) as ToolDef[];
+	const bundle = tools || null;
 	const toolChoiceInstruction =
 		buildToolChoiceInstructionFromPolicy(toolPolicy);
-	const promptResult = messagesToPrompt(
-		messages,
-		tools,
-		promptToolChoice,
-		toolDefs,
-		toolChoiceInstruction,
-		contextFileThreshold(cfg),
-	);
-	const prompt0 = promptResult.text;
-	const attachmentPlan = openAIAttachmentPlanFromRequest(req, messages);
-	return preparePromptWithAttachments({
+	const toolContext: PromptToolContext | null = bundle
+		? {
+				bundle,
+				choiceInstruction: toolChoiceInstruction,
+				include: promptToolChoice !== "none",
+			}
+		: null;
+	return prepareGeminiContext({
 		cfg,
 		provider,
-		basePrompt: prompt0,
-		basePromptPrepared: promptResultToPrepared(promptResult, prompt0),
-		basePromptByteCheck: contextFilePromptByteCheckFromBounded(
-			cfg,
-			promptResult.byteCheck,
-		),
-		hiddenPromptInsertOffset: promptResult.hiddenPromptInsertOffset ?? undefined,
-		attachmentPlan,
-		toolDefs,
-		toolPromptSource: tools,
-		toolChoiceInstruction,
-		basePromptMetadata: promptResult.metadata,
-		buildHistoryText: () =>
-			buildOpenAIHistoryTranscript(
-				messages,
-				cfg.current_input_file_name || "message.txt",
-			),
-		getLatestInputText: () =>
-			promptResult.latestInputText || latestOpenAIUserInputText(messages),
+		messages,
+		toolContext,
+		attachmentPlan: openAIAttachmentPlanFromRequest(req, messages),
 		structured,
-		buildFileRefGroups: (
-			contextFileRefs,
-			existingFileRefs,
-			genericFileRefs,
-			imageFileRefs,
-		) => [contextFileRefs, existingFileRefs, genericFileRefs, imageFileRefs],
+		fileRefOrder: OPENAI_FILE_REF_ORDER,
 	});
 }
 
@@ -121,47 +105,71 @@ export async function prepareGoogleGeminiContext(
 	toolBundle?: ToolBundle | null,
 	toolChoiceInstructionOverride?: string,
 ): Promise<GeminiContextPrepareResult> {
-	const toolDefs = (hasTools ? googleToolDefs(toolBundle) : []) as ToolDef[];
+	const bundle = hasTools && toolBundle ? toolBundle : null;
 	const toolChoiceInstruction = toolChoiceInstructionOverride ?? "";
-	const promptResult = messagesToPrompt(
-		messages,
-		hasTools ? toolBundle : null,
-		hasTools ? "auto" : "none",
-		toolDefs,
-		toolChoiceInstruction,
-		contextFileThreshold(cfg),
-	);
-	const prompt0 = promptResult.text;
-	const attachmentPlan = attachmentPlanFromMessages(messages);
-	return preparePromptWithAttachments({
+	const toolContext: PromptToolContext | null = bundle
+		? { bundle, choiceInstruction: toolChoiceInstruction, include: true }
+		: null;
+	return prepareGeminiContext({
 		cfg,
 		provider,
-		basePrompt: prompt0,
-		basePromptPrepared: promptResultToPrepared(promptResult, prompt0),
+		messages,
+		toolContext,
+		attachmentPlan: attachmentPlanFromMessages(messages),
+		structured: null,
+		fileRefOrder: GOOGLE_FILE_REF_ORDER,
+	});
+}
+
+type PrepareGeminiContextParams = {
+	cfg: RuntimeConfig;
+	provider: CompletionProvider;
+	messages: readonly InternalMessage[];
+	toolContext: PromptToolContext | null;
+	attachmentPlan: AttachmentPlan;
+	structured: unknown;
+	fileRefOrder: readonly FileRefGroup[];
+};
+
+async function prepareGeminiContext(
+	params: PrepareGeminiContextParams,
+): Promise<GeminiContextPrepareResult> {
+	const promptResult = messagesToPrompt(
+		params.messages,
+		params.toolContext,
+		contextFileThreshold(params.cfg),
+	);
+	const bundle = params.toolContext?.bundle ?? null;
+	const toolDefs = bundle
+		? (bundle.promptArtifact.defs as readonly ToolDef[])
+		: [];
+	const prompt = promptResult.text;
+	return preparePromptWithAttachments({
+		cfg: params.cfg,
+		provider: params.provider,
+		basePrompt: prompt,
+		basePromptPrepared: promptResultToPrepared(promptResult, prompt),
 		basePromptByteCheck: contextFilePromptByteCheckFromBounded(
-			cfg,
+			params.cfg,
 			promptResult.byteCheck,
 		),
-		hiddenPromptInsertOffset: promptResult.hiddenPromptInsertOffset ?? undefined,
-		attachmentPlan,
+		hiddenPromptInsertOffset:
+			promptResult.hiddenPromptInsertOffset ?? undefined,
+		attachmentPlan: params.attachmentPlan,
 		toolDefs,
-		toolPromptSource: toolBundle,
-		toolChoiceInstruction,
+		toolPromptSource: bundle,
+		toolChoiceInstruction: params.toolContext?.choiceInstruction ?? "",
 		basePromptMetadata: promptResult.metadata,
 		buildHistoryText: () =>
 			buildOpenAIHistoryTranscript(
-				messages,
-				cfg.current_input_file_name || "message.txt",
+				params.messages,
+				params.cfg.current_input_file_name || "message.txt",
 			),
 		getLatestInputText: () =>
-			promptResult.latestInputText || latestOpenAIUserInputText(messages),
-		structured: null,
-		buildFileRefGroups: (
-			contextFileRefs,
-			_existingFileRefs,
-			genericFileRefs,
-			imageFileRefs,
-		) => [imageFileRefs, contextFileRefs, genericFileRefs],
+			promptResult.latestInputText ||
+			latestOpenAIUserInputText(params.messages),
+		structured: params.structured,
+		fileRefOrder: params.fileRefOrder,
 	});
 }
 
@@ -173,19 +181,14 @@ type PromptWithAttachmentParams = {
 	basePromptByteCheck?: ContextFilePromptByteCheck | null;
 	hiddenPromptInsertOffset?: number | undefined;
 	attachmentPlan: AttachmentPlan;
-	toolDefs: ToolDef[];
-	toolPromptSource?: unknown;
+	toolDefs: readonly ToolDef[];
+	toolPromptSource?: ToolBundle | null;
 	toolChoiceInstruction: string;
 	basePromptMetadata: PromptMetadata;
 	buildHistoryText: () => string;
 	getLatestInputText: () => unknown;
 	structured: unknown;
-	buildFileRefGroups: (
-		contextFileRefs: FileRef[] | null,
-		existingFileRefs: FileRef[] | null,
-		genericFileRefs: FileRef[] | null,
-		imageFileRefs: FileRef[] | null,
-	) => Array<FileRef[] | null>;
+	fileRefOrder: readonly FileRefGroup[];
 };
 
 async function preparePromptWithAttachments(
@@ -194,7 +197,7 @@ async function preparePromptWithAttachments(
 	const plannedDroppedNote = droppedAttachmentNote(
 		params.attachmentPlan.dropped,
 	);
-	const preUploadPromptDecision = promptDecisionForDroppedNote(
+	const preUploadPromptDecision = preUploadPromptDecisionForPlannedDrops(
 		params,
 		plannedDroppedNote,
 	);
@@ -238,52 +241,35 @@ async function preparePromptWithAttachments(
 	}
 	const attachmentPromptText =
 		(attachmentResult.promptText || "") + (attachmentResult.droppedNote || "");
-	let basePromptWithAttachmentTextPrepared: PromptWithTokens | null = null;
-	const getBasePromptWithAttachmentTextPrepared =
-		(): PromptWithTokens | null => {
-			if (!params.basePromptPrepared) return null;
-			if (!basePromptWithAttachmentTextPrepared) {
-				basePromptWithAttachmentTextPrepared = appendTextToPreparedWithTokens(
-					params.basePromptPrepared,
-					[attachmentPromptText],
-				) as PromptWithTokens;
-			}
-			return basePromptWithAttachmentTextPrepared;
-		};
-	let inlinePreparedPrompt: PromptWithTokens | null = null;
-	const getInlinePreparedPrompt = (): PromptWithTokens => {
-		if (!inlinePreparedPrompt) {
-			const preparedBase = getBasePromptWithAttachmentTextPrepared();
-			const inlineHiddenToolsPrompt = preparedBase
-				? (withGeminiNativeHiddenToolsPromptForPrepared(
-						preparedBase,
-						true,
-						params.hiddenPromptInsertOffset,
-					) as PromptWithTokens)
-				: (withGeminiNativeHiddenToolsPromptWithTokens(
-						params.basePrompt + attachmentPromptText,
-						true,
-						params.hiddenPromptInsertOffset,
-					) as PromptWithTokens);
-			inlinePreparedPrompt = prepareStructuredPrompt(
-				inlineHiddenToolsPrompt,
-				params.structured,
-			);
-		}
-		return inlinePreparedPrompt;
-	};
+	const preparedBase = params.basePromptPrepared
+		? (appendTextToPreparedWithTokens(params.basePromptPrepared, [
+				attachmentPromptText,
+			]) as PromptWithTokens)
+		: (buildTextWithTokens([
+				params.basePrompt,
+				attachmentPromptText,
+			]) as PromptWithTokens);
+	const inlineHiddenToolsPrompt = withGeminiNativeHiddenToolsPromptForPrepared(
+		preparedBase,
+		true,
+		params.hiddenPromptInsertOffset,
+	) as PromptWithTokens;
+	const inlinePreparedPrompt = prepareStructuredPrompt(
+		inlineHiddenToolsPrompt,
+		params.structured,
+	);
 	let contextPromptText = preUploadPromptDecision.contextPromptText;
 	let promptCheckSource = preUploadPromptDecision.promptCheckSource;
 	let promptByteCheck = preUploadPromptDecision.promptByteCheck;
 	if (!contextFiles) {
-		const promptDecision = promptDecisionForDroppedNote(
-			params,
-			attachmentPromptText,
-			getInlinePreparedPrompt,
+		contextPromptText = inlinePreparedPrompt.text;
+		promptCheckSource = "inline";
+		promptByteCheck = contextFilePromptByteCheck(params.cfg, contextPromptText);
+		const considerContextFiles = shouldConsiderContextFiles(
+			params.cfg,
+			contextPromptText,
+			promptByteCheck,
 		);
-		contextPromptText = promptDecision.contextPromptText;
-		promptCheckSource = promptDecision.promptCheckSource;
-		promptByteCheck = promptDecision.promptByteCheck;
 
 		const contextUnavailableReason = promptByteCheck.exceeded
 			? contextFileUploadUnavailableReason(
@@ -302,7 +288,13 @@ async function preparePromptWithAttachments(
 			};
 		}
 
-		if (promptDecision.considerContextFiles) {
+		if (considerContextFiles) {
+			const promptDecision: PromptDecision = {
+				contextPromptText,
+				promptCheckSource,
+				promptByteCheck,
+				considerContextFiles,
+			};
 			const prepared = await prepareContextFilesForDecision(
 				params,
 				promptDecision,
@@ -340,15 +332,14 @@ async function preparePromptWithAttachments(
 	}
 
 	const contextFileRefs = contextFiles ? contextFiles.fileRefs : null;
+	const fileRefGroups: Record<FileRefGroup, FileRef[] | null> = {
+		context: contextFileRefs,
+		existing: params.attachmentPlan.existingFileRefs as FileRef[] | null,
+		generic: attachmentResult.genericFileRefs as FileRef[] | null,
+		image: attachmentResult.imageFileRefs as FileRef[] | null,
+	};
 	const fileRefs = attachmentResult.supportsFileRefs
-		? mergeFileRefs(
-				...params.buildFileRefGroups(
-					contextFileRefs,
-					params.attachmentPlan.existingFileRefs as FileRef[] | null,
-					attachmentResult.genericFileRefs as FileRef[] | null,
-					attachmentResult.imageFileRefs as FileRef[] | null,
-				),
-			)
+		? mergeFileRefs(...params.fileRefOrder.map((group) => fileRefGroups[group]))
 		: null;
 	const livePreparedPrompt = contextFiles
 		? prepareStructuredPrompt(
@@ -358,7 +349,7 @@ async function preparePromptWithAttachments(
 				]) as PromptWithTokens,
 				params.structured,
 			)
-		: getInlinePreparedPrompt();
+		: inlinePreparedPrompt;
 	const usagePreparedPrompt = contextFiles
 		? prepareStructuredPrompt(
 				appendTextToPreparedWithTokens(
@@ -387,6 +378,29 @@ async function preparePromptWithAttachments(
 	};
 }
 
+/** Ordered de-duplicating merge of provider file-ref groups. */
+export function mergeFileRefs<T>(
+	...groups: Array<readonly T[] | null | undefined>
+): T[] | null {
+	const out: T[] = [];
+	const seen = new Set<unknown>();
+	for (const group of groups) {
+		if (!Array.isArray(group)) continue;
+		for (const ref of group) {
+			if (!ref) continue;
+			let key: unknown;
+			if (typeof ref === "string") key = ref;
+			else if (isRecord(ref))
+				key = ref.ref || ref.fileRef || ref.id || JSON.stringify(ref);
+			else key = JSON.stringify(ref);
+			if (!key || seen.has(key)) continue;
+			seen.add(key);
+			out.push(ref);
+		}
+	}
+	return out.length ? out : null;
+}
+
 function attachmentFileRefTokenEstimate(
 	usage: { fileRefBytes?: unknown; uploadedBytes?: unknown } | null | undefined,
 ): number {
@@ -403,12 +417,11 @@ type PromptDecision = {
 	considerContextFiles: boolean;
 };
 
-function promptDecisionForDroppedNote(
+function preUploadPromptDecisionForPlannedDrops(
 	params: PromptWithAttachmentParams,
 	droppedNote: string,
-	getInlinePreparedPrompt?: () => PromptWithTokens,
 ): PromptDecision {
-	let contextPromptText = params.basePrompt + droppedNote;
+	const contextPromptText = params.basePrompt + droppedNote;
 	let promptCheckSource = "base";
 	let promptByteCheck = droppedNote
 		? contextFilePromptByteCheck(params.cfg, contextPromptText)
@@ -420,26 +433,13 @@ function promptDecisionForDroppedNote(
 		promptByteCheck,
 	);
 	if (!promptByteCheck.exceeded) {
-		const inlineByteCheck = inlinePreparedPromptByteCheck(
+		promptByteCheck = inlinePreparedPromptByteCheck(
 			params.cfg,
 			contextPromptText,
 			params.structured,
 			params.hiddenPromptInsertOffset,
 		);
-		if (inlineByteCheck.exceeded) {
-			promptByteCheck = inlineByteCheck;
-			promptCheckSource = "inline_estimate";
-		} else {
-			contextPromptText = getInlinePreparedPrompt
-				? getInlinePreparedPrompt().text
-				: contextPromptText;
-			promptByteCheck = getInlinePreparedPrompt
-				? contextFilePromptByteCheck(params.cfg, contextPromptText)
-				: inlineByteCheck;
-			promptCheckSource = getInlinePreparedPrompt
-				? "inline"
-				: "inline_estimate";
-		}
+		promptCheckSource = "inline_estimate";
 		considerContextFiles = shouldConsiderContextFiles(
 			params.cfg,
 			contextPromptText,
@@ -469,7 +469,7 @@ async function prepareContextFilesForDecision(
 		decision.contextPromptText,
 		params.provider.uploadTextFile,
 		decision.promptByteCheck,
-		params.toolPromptSource || params.toolDefs,
+		params.toolPromptSource ?? null,
 	);
 }
 

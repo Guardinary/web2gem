@@ -1,3 +1,28 @@
+import type {
+	CompletionProvider,
+	CompletionStreamEvent,
+} from "../../completion";
+import {
+	createCompletionStreamLifecycle,
+	EMPTY_UPSTREAM_MSG,
+	recordCompletionStreamEvent,
+	streamPlainCompletionEvents,
+	streamToolSieveCompletionEvents,
+} from "../../completion";
+import type { FileRef } from "../../completion/types";
+import type { RuntimeConfig } from "../../config";
+import type { ResolvedModelOk } from "../../models";
+import { errorLogSummary, upstreamErrorCode } from "../../shared/errors";
+import { log } from "../../shared/logging";
+import {
+	combinedTokenCount,
+	createTokenCounter,
+	tokenCountFromCounts,
+} from "../../shared/tokens";
+import type { OpenAIToolCall } from "../../toolcall/openai-format";
+import { formatOpenAIStreamToolCalls } from "../../toolcall/openai-format";
+import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
+import type { ToolBundle } from "../../toolcall/tool-bundle";
 import { parseJsonObject } from "../core/json";
 import type { SSEWrite } from "../core/sse";
 import {
@@ -6,31 +31,10 @@ import {
 } from "../core/stream-errors";
 import { createDeltaCoalescer } from "../stream/coalescer";
 import {
-	EMPTY_UPSTREAM_MSG,
-	createCompletionStreamLifecycle,
-	recordCompletionStreamEvent,
-	streamPlainCompletionEvents,
-	streamToolSieveCompletionEvents,
-} from "../../completion";
-import type {
-	CompletionProvider,
-	CompletionStreamEvent,
-} from "../../completion";
-import type { RuntimeConfig } from "../../config";
-import type { ResolvedModelOk } from "../../models";
-import type { FileRef } from "../../completion/types";
-import { errorLogSummary, upstreamErrorCode } from "../../shared/errors";
-import { log } from "../../shared/logging";
-import {
-	combinedTokenCount,
-	createTokenCounter,
-	tokenCountFromCounts,
-} from "../../shared/tokens";
-import { formatOpenAIStreamToolCalls } from "../../toolcall/openai-format";
-import type { OpenAIToolCall } from "../../toolcall/openai-format";
-import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
-import { openAIChatChunk, writeOpenAIChatUsageTokenChunk } from "./format";
-import { writeOpenAIChatStreamError } from "./format";
+	openAIChatChunk,
+	writeOpenAIChatStreamError,
+	writeOpenAIChatUsageTokenChunk,
+} from "./format";
 
 type StreamIssue = Extract<
 	CompletionStreamEvent,
@@ -53,7 +57,7 @@ type OpenAIChatPlainStreamParams = {
 	signal: AbortSignal;
 };
 type OpenAIChatToolSieveStreamParams = OpenAIChatPlainStreamParams & {
-	tools: unknown[];
+	tools: ToolBundle | null;
 	toolPolicy: ToolChoicePolicy | null | undefined;
 };
 

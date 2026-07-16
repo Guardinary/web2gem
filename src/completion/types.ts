@@ -1,9 +1,9 @@
-import type { ErrorWithMetadata, UnknownRecord } from "../shared/types";
-import type { TokenCharCounts } from "../shared/tokens";
 import type {
 	AttachmentFileRef,
 	AttachmentUploadResult,
 } from "../attachments/types";
+import type { TokenCharCounts } from "../shared/tokens";
+import type { ErrorWithMetadata, UnknownRecord } from "../shared/types";
 
 export type FileRef = AttachmentFileRef;
 
@@ -42,7 +42,7 @@ export type ContextFileFailure = {
 };
 
 export type PreparedGeminiContext = {
-	toolDefs: ToolDef[];
+	toolDefs: readonly ToolDef[];
 	toolChoiceInstruction: string;
 	prompt: string;
 	promptTokens: number;

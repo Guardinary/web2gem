@@ -6,6 +6,7 @@ import type {
 import { prepareOpenAIImageGenerationCompletion } from "../../completion/image-generation";
 import type { RuntimeConfig } from "../../config";
 import type { ResolvedModelOk } from "../../models";
+import type { InternalMessage } from "../../promptcompat/message-model";
 import { generateRichLogged, runPreparedCompletion } from "../generation";
 import { OPENAI_GENERATION_PROTOCOL, openAIErrorResponse } from "./errors";
 
@@ -41,6 +42,7 @@ export async function runImageGenerationCompletion(args: {
 	cfg: RuntimeConfig;
 	provider: CompletionProvider;
 	route: "chat" | "responses";
+	messages: readonly InternalMessage[];
 	forced: boolean;
 	stage: string;
 	logLabel: string;
@@ -76,6 +78,7 @@ export async function runImageGenerationCompletion(args: {
 				req,
 				args.route,
 				args.forced,
+				args.messages,
 			),
 		prepareLogFields: (prepared) => ({
 			model: prepared.rm.name,

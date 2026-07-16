@@ -1,8 +1,6 @@
-import { firstNonEmptyString } from "../attachments/mime";
 import { isRecord } from "../shared/types";
 import type { UnknownRecord } from "../shared/types";
-import { extractToolMeta, toolFunctionDeclarations } from "./tool-meta";
-import { isToolBundle } from "./tool-bundle";
+import type { ToolBundle } from "./tool-bundle";
 
 type ParsedToolCall = UnknownRecord & { name?: unknown; input?: unknown };
 type ToolSchemaIndex = Record<string, UnknownRecord>;
@@ -10,18 +8,18 @@ type ArraySchemaRecord = UnknownRecord & { items?: unknown };
 
 export function normalizeParsedToolCallsForSchemas(
 	calls: ParsedToolCall[],
-	toolsRaw: unknown,
+	tools: ToolBundle | null | undefined,
 ): ParsedToolCall[];
 export function normalizeParsedToolCallsForSchemas(
 	calls: unknown,
-	toolsRaw: unknown,
+	tools: ToolBundle | null | undefined,
 ): unknown;
 export function normalizeParsedToolCallsForSchemas(
 	calls: unknown,
-	toolsRaw: unknown,
+	tools: ToolBundle | null | undefined,
 ): unknown {
 	if (!Array.isArray(calls) || !calls.length) return calls;
-	const schemas = buildToolSchemaIndex(toolsRaw);
+	const schemas = buildToolSchemaIndex(tools);
 	if (!schemas) return calls;
 	let changedAny = false;
 	const out = calls.map((call) => {
@@ -43,26 +41,9 @@ export function normalizeParsedToolCallsForSchemas(
 }
 
 export function buildToolSchemaIndex(
-	toolsRaw: unknown,
+	tools: ToolBundle | null | undefined,
 ): ToolSchemaIndex | null {
-	if (isToolBundle(toolsRaw)) return toolsRaw.schemaIndex;
-	if (!Array.isArray(toolsRaw) || !toolsRaw.length) return null;
-	const out: ToolSchemaIndex = {};
-	const addToolSchema = (item: unknown) => {
-		const meta = extractToolMeta(item);
-		const name = meta && firstNonEmptyString(meta.name);
-		if (name && isRecord(meta.parameters))
-			out[name.toLowerCase()] = meta.parameters;
-	};
-	for (const item of toolsRaw) {
-		const declarations = toolFunctionDeclarations(item);
-		if (declarations.length) {
-			for (const fn of declarations) addToolSchema(fn);
-		} else {
-			addToolSchema(item);
-		}
-	}
-	return Object.keys(out).length ? out : null;
+	return tools ? tools.schemaIndex : null;
 }
 
 export function normalizeToolValueWithSchema(

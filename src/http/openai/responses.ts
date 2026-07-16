@@ -1,16 +1,26 @@
-import { jsonResponse } from "../core/json";
-import { sseResponse } from "../core/sse";
-import { EMPTY_UPSTREAM_MSG } from "../../completion";
 import type { CompletionProvider } from "../../completion";
-import { prepareOpenAICompletion } from "../../completion/openai";
-import { normalizeResponsesInputStrict } from "../../promptcompat/responses-input";
-import { log, nowSec } from "../../shared/logging";
+import { EMPTY_UPSTREAM_MSG } from "../../completion";
+import {
+	OPENAI_COMPLETION_DIALECT,
+	prepareCompletion,
+} from "../../completion/prepare";
+import { finalizeOpenAICompletionResult } from "../../completion/turn";
+import type { RuntimeConfig } from "../../config";
+import { parseOpenAIMessages } from "../../promptcompat/message-model";
+import {
+	normalizeResponsesInputAsMessages,
+	normalizeResponsesInputStrict,
+} from "../../promptcompat/responses-input";
+import { randHex } from "../../shared/crypto";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
 	upstreamErrorReason,
 } from "../../shared/errors";
-import { randHex } from "../../shared/crypto";
+import { log, nowSec } from "../../shared/logging";
+import type { ToolBundle } from "../../toolcall/tool-bundle";
+import { jsonResponse } from "../core/json";
+import { sseResponse } from "../core/sse";
 import {
 	generateTextLogged,
 	type PreparedOk,
@@ -21,7 +31,6 @@ import { OPENAI_GENERATION_PROTOCOL, openAIErrorResponse } from "./errors";
 import {
 	buildImageResponsesOutput,
 	buildResponsesOutput,
-	finalizeOpenAICompletionResult,
 	openAIResponsesUsage,
 } from "./format";
 import {
@@ -32,7 +41,6 @@ import {
 	streamResponsesWithToolSieve,
 	writeResponsesEvent,
 } from "./responses-stream";
-import type { RuntimeConfig } from "../../config";
 
 // POST /v1/responses(Codex CLI 用)
 export async function handleResponses(
@@ -44,7 +52,13 @@ export async function handleResponses(
 		return openAIErrorResponse("request body must be a JSON object", 400);
 	const imageMode = imageGenerationMode(req);
 	if (imageMode.enabled)
-		return handleImageGenerationResponses(req, cfg, provider, imageMode.forced);
+		return handleImageGenerationResponses(
+			req,
+			cfg,
+			provider,
+			imageMode.forced,
+			parseOpenAIMessages(normalizeResponsesInputAsMessages(req, true)),
+		);
 	const normalized = normalizeResponsesInputStrict(req);
 	if (normalized.error != null || !normalized.messages)
 		return openAIErrorResponse(
@@ -60,9 +74,15 @@ export async function handleResponses(
 		stage: "openai_responses",
 		protocol: OPENAI_GENERATION_PROTOCOL,
 		prepare: () =>
-			prepareOpenAICompletion(cfg, provider, req, messages, req.tools, {
-				emptyPromptMessage: "empty input",
-			}),
+			prepareCompletion(
+				cfg,
+				provider,
+				req,
+				messages,
+				req.model,
+				OPENAI_COMPLETION_DIALECT,
+				{ emptyPromptMessage: "empty input" },
+			),
 		prepareLogFields: (prepared) => ({
 			model: prepared.rm.name,
 			promptChars: prepared.prompt.length,
@@ -72,8 +92,10 @@ export async function handleResponses(
 			contextRefs: prepared.contextFiles
 				? prepared.contextFiles.fileRefs.length
 				: 0,
-			rawTools: prepared.allTools.length,
-			filteredTools: Array.isArray(prepared.tools) ? prepared.tools.length : 0,
+			rawTools: prepared.bundle.openAIFunctionTools.length,
+			filteredTools: prepared.tools
+				? prepared.tools.openAIFunctionTools.length
+				: 0,
 		}),
 		run: (prepared, stageLog) =>
 			runResponsesGeneration(req, cfg, provider, prepared, stageLog),
@@ -84,21 +106,20 @@ async function runResponsesGeneration(
 	req: Record<string, unknown>,
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
-	prepared: PreparedOk<Awaited<ReturnType<typeof prepareOpenAICompletion>>>,
+	prepared: PreparedOk<Awaited<ReturnType<typeof prepareCompletion>>>,
 	stageLog: StageLog,
 ): Promise<Response> {
 	const {
 		rm,
 		structured,
-		allTools,
+		bundle,
 		toolPolicy,
-		tools: filteredTools,
+		tools,
 		promptToolChoice,
 		prompt,
 		fileRefs,
 		promptTokens,
 	} = prepared;
-	const tools = filteredTools;
 
 	if (req.stream && structured) {
 		return openAIErrorResponse(
@@ -110,9 +131,9 @@ async function runResponsesGeneration(
 
 	if (req.stream) {
 		const rid = `resp_${randHex(16)}`;
-		let streamTools: unknown[] | null = null;
+		let streamTools: ToolBundle | null = null;
 		if (tools && promptToolChoice !== "none") streamTools = tools;
-		else if (promptToolChoice === "none") streamTools = allTools;
+		else if (promptToolChoice === "none") streamTools = bundle;
 		return sseResponse(
 			async (write, signal) => {
 				const generationStart = stageLog.now();
@@ -131,7 +152,7 @@ async function runResponsesGeneration(
 					model: rm.name,
 					promptTokens,
 					fileRefs: fileRefs ? fileRefs.length : 0,
-					tools: Array.isArray(streamTools) ? streamTools.length : 0,
+					tools: streamTools ? streamTools.openAIFunctionTools.length : 0,
 				});
 			},
 			{
@@ -175,7 +196,7 @@ async function runResponsesGeneration(
 
 	const finalized = finalizeOpenAICompletionResult(text, {
 		tools,
-		noneModeTools: allTools,
+		noneModeTools: bundle,
 		promptToolChoice,
 		structured,
 		toolPolicy,
@@ -216,12 +237,14 @@ async function handleImageGenerationResponses(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
 	forced: boolean,
+	messages: ReturnType<typeof parseOpenAIMessages>,
 ): Promise<Response> {
 	return runImageGenerationCompletion({
 		req,
 		cfg,
 		provider,
 		route: "responses",
+		messages,
 		forced,
 		stage: "openai_responses_image",
 		logLabel: "openai responses image",

@@ -1,27 +1,27 @@
-import { createTokenCounter, emptyTokenCounts } from "../shared/tokens";
-import type { TokenCharCounts } from "../shared/tokens";
 import { isAbortError } from "../shared/abort";
-import {
-	createToolSieveState,
-	flushToolSieve,
-	processToolSieveChunk,
-	toolSieveBufferedText,
-} from "../toolstream";
-import { validateRequiredToolCalls } from "../toolcall/policy-openai";
-import type { CompletionProvider, CompletionTextInput } from "./ports";
+import type { TokenCharCounts, TokenCounter } from "../shared/tokens";
+import { createTokenCounter, emptyTokenCounts } from "../shared/tokens";
 import type { OpenAIToolCall } from "../toolcall/openai-format";
 import type {
 	ToolChoicePolicy,
 	ToolPolicyViolation,
 } from "../toolcall/policy-openai";
-import { completionTextDeltas } from "./stream-coalesce";
+import { validateRequiredToolCalls } from "../toolcall/policy-openai";
+import type { ToolBundle } from "../toolcall/tool-bundle";
+import type { ToolSieveState } from "../toolstream";
+import {
+	createToolSieveState,
+	flushToolSieve,
+	processToolSieveChunk,
+} from "../toolstream";
+import type { CompletionProvider, CompletionTextInput } from "./ports";
 import type { StreamConsumeInternalOptions } from "./stream-coalesce";
+import { completionTextDeltas } from "./stream-coalesce";
 
 export type GeminiCompletionInput = CompletionTextInput;
 
 export type CompletionStreamEvent =
 	| { type: "text_delta"; text: string }
-	| { type: "buffered_text"; text: string }
 	| { type: "tool_calls"; toolCalls: OpenAIToolCall[] }
 	| { type: "tool_policy_violation"; violation: ToolPolicyViolation }
 	| { type: "warning"; error: unknown; message: string }
@@ -63,7 +63,6 @@ export function recordCompletionStreamEvent(
 ): void {
 	switch (event.type) {
 		case "text_delta":
-		case "buffered_text":
 			lifecycle.emittedText ||= !!event.text;
 			break;
 		case "warning":
@@ -121,99 +120,87 @@ export async function* streamPlainCompletionEvents(
 	};
 }
 
-export async function* streamToolSieveCompletionEvents(
-	provider: CompletionProvider,
-	input: GeminiCompletionInput & {
-		tools: unknown;
-		toolPolicy?: ToolChoicePolicy | null | undefined;
-	},
-	options: StreamConsumeInternalOptions = {},
-): AsyncIterable<CompletionStreamEvent> {
-	const state = createToolSieveState();
-	let emittedText = false;
-	let streamErr: unknown = null;
-	const completionTokenCounter = createTokenCounter();
+export type SieveLoopContext = {
+	state: ToolSieveState;
+	counter: TokenCounter;
+	emittedText: boolean;
+	streamErr: unknown;
+};
 
+export function createSieveLoopContext(): SieveLoopContext {
+	return {
+		state: createToolSieveState(),
+		counter: createTokenCounter(),
+		emittedText: false,
+		streamErr: null,
+	};
+}
+
+/**
+ * Shared sieve delta loop for both dialects: pipes provider deltas through the
+ * tool sieve and yields released text as text_delta events only. Held tail
+ * text, error state, and token counts are exposed on the caller's ctx; the
+ * caller owns the per-dialect flush tail.
+ */
+export async function* streamSievedTextDeltas(
+	provider: CompletionProvider,
+	input: GeminiCompletionInput,
+	options: StreamConsumeInternalOptions,
+	ctx: SieveLoopContext,
+): AsyncIterable<CompletionStreamEvent> {
 	try {
 		for await (const deltaText of completionTextDeltas(
 			provider,
 			input,
 			options,
 		)) {
-			for (const text of processToolSieveChunk(state, deltaText)) {
+			for (const text of processToolSieveChunk(ctx.state, deltaText)) {
 				if (!text) continue;
-				emittedText = true;
-				completionTokenCounter.append(text);
+				ctx.emittedText = true;
+				ctx.counter.append(text);
 				yield { type: "text_delta", text };
 			}
 		}
 	} catch (e) {
 		if (isAbortError(e)) throw e;
-		streamErr = e;
+		ctx.streamErr = e;
 	}
+}
 
-	const flushed = flushToolSieve(state, input.tools);
+export async function* streamToolSieveCompletionEvents(
+	provider: CompletionProvider,
+	input: GeminiCompletionInput & {
+		tools: ToolBundle | null;
+		toolPolicy?: ToolChoicePolicy | null | undefined;
+	},
+	options: StreamConsumeInternalOptions = {},
+): AsyncIterable<CompletionStreamEvent> {
+	const ctx = createSieveLoopContext();
+	yield* streamSievedTextDeltas(provider, input, options, ctx);
+
+	const flushed = flushToolSieve(ctx.state, input.tools);
 	if (flushed.text) {
-		emittedText = true;
-		completionTokenCounter.append(flushed.text);
+		ctx.emittedText = true;
+		ctx.counter.append(flushed.text);
 		yield { type: "text_delta", text: flushed.text };
 	}
 	const toolCalls = flushed.toolCalls;
 	const violation = validateRequiredToolCalls(input.toolPolicy, toolCalls);
 
-	if (streamErr)
-		yield streamErrorEvent(streamErr, emittedText || !!toolCalls?.length);
+	if (ctx.streamErr)
+		yield streamErrorEvent(
+			ctx.streamErr,
+			ctx.emittedText || !!toolCalls?.length,
+		);
 	if (violation) yield { type: "tool_policy_violation", violation };
 	if (toolCalls?.length) yield { type: "tool_calls", toolCalls };
-	if (!streamErr && !emittedText && !toolCalls?.length) yield { type: "empty" };
-	yield {
-		type: "done",
-		emittedText,
-		completionTokens: completionTokenCounter.tokens(),
-		completionCounts: completionTokenCounter.counts(),
-	};
-}
-
-export async function* streamBufferedToolTextCompletionEvents(
-	provider: CompletionProvider,
-	input: GeminiCompletionInput,
-	options: StreamConsumeInternalOptions = {},
-): AsyncIterable<CompletionStreamEvent> {
-	const state = createToolSieveState();
-	let emittedText = false;
-	let streamErr: unknown = null;
-	const completionTokenCounter = createTokenCounter();
-
-	try {
-		for await (const deltaText of completionTextDeltas(
-			provider,
-			input,
-			options,
-		)) {
-			for (const text of processToolSieveChunk(state, deltaText)) {
-				if (!text) continue;
-				emittedText = true;
-				completionTokenCounter.append(text);
-				yield { type: "text_delta", text };
-			}
-		}
-	} catch (e) {
-		if (isAbortError(e)) throw e;
-		streamErr = e;
-	}
-
-	const bufferedText = toolSieveBufferedText(state);
-	if (bufferedText) yield { type: "buffered_text", text: bufferedText };
-	if (streamErr) {
-		yield streamErrorEvent(streamErr, emittedText);
-	} else if (!emittedText && !bufferedText) {
+	if (!ctx.streamErr && !ctx.emittedText && !toolCalls?.length)
 		yield { type: "empty" };
-	}
 	yield {
 		type: "done",
-		emittedText,
-		completionTokens: completionTokenCounter.tokens(),
-		completionCounts: completionTokenCounter.counts(),
+		emittedText: ctx.emittedText,
+		completionTokens: ctx.counter.tokens(),
+		completionCounts: ctx.counter.counts(),
 	};
 }
 

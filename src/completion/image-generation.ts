@@ -1,12 +1,5 @@
 import { base64ToBytes } from "../attachments/base64";
 import {
-	imageFilenameFromObject,
-	normalizeUploadFileInput,
-	parseImageUrl,
-	uploadFilenameFromObject,
-	uploadMimeFromObject,
-} from "../attachments/input";
-import {
 	detectUploadMimeFromBytes,
 	firstNonEmptyString,
 	imageFilenameFromMime,
@@ -22,6 +15,13 @@ import type {
 import type { RuntimeConfig } from "../config";
 import type { ResolvedModel } from "../models";
 import {
+	type FilePart,
+	type ImagePart,
+	type InternalMessage,
+	type MessagePart,
+	parseMessagePart,
+} from "../promptcompat/message-model";
+import {
 	geminiAuthenticatedSessionRequiredError,
 	upstreamErrorCode,
 	upstreamErrorMessage,
@@ -30,7 +30,7 @@ import {
 } from "../shared/errors";
 import { log } from "../shared/logging";
 import { promptByteLength, tokenEst } from "../shared/tokens";
-import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
+import type { UnknownRecord } from "../shared/types";
 import { contextFileThreshold } from "./context-files";
 import { type CompletionProvider, resolveCompletionModel } from "./ports";
 import type {
@@ -101,12 +101,13 @@ export async function prepareOpenAIImageGenerationCompletion(
 	req: LooseRequest,
 	route: ImageGenerationRouteKind,
 	forced: boolean,
+	messages: readonly InternalMessage[],
 ): Promise<
 	PreparedImageGenerationCompletion | { error: ImageGenerationPrepareError }
 > {
 	const state = createExtractionState();
-	if (route === "responses") extractResponsesUserInput(state, req.input);
-	else extractLatestChatUserInput(state, req.messages);
+	if (route === "responses") appendResponseMessages(state, messages);
+	else appendLatestChatUserMessage(state, messages);
 	return prepareImageGenerationFromState(
 		cfg,
 		provider,
@@ -129,13 +130,14 @@ export async function prepareOpenAIImageGenerationFromUserInput(
 	if (input.imageInputs) {
 		for (const imageInput of input.imageInputs) {
 			if (state.error) break;
-			if (imageInput.type === "part") appendImagePart(state, imageInput.part);
+			if (imageInput.type === "part")
+				appendUserImagePart(state, imageInput.part);
 			else appendImageBytes(state, imageInput.image);
 		}
 	} else if (input.imageParts) {
 		for (const part of input.imageParts) {
 			if (state.error) break;
-			appendImagePart(state, part);
+			appendUserImagePart(state, part);
 		}
 	}
 	if (!input.imageInputs && input.imageBytes) {
@@ -238,115 +240,66 @@ function createExtractionState(): ExtractionState {
 	return { textParts: [], candidates: [], slots: [], error: null, nextID: 1 };
 }
 
-function extractResponsesUserInput(
+function appendResponseMessages(
 	state: ExtractionState,
-	input: unknown,
+	messages: readonly InternalMessage[],
 ): void {
-	if (state.error || input == null) return;
-	if (typeof input === "string") {
-		appendText(state, input);
-		return;
-	}
-	if (Array.isArray(input)) {
-		for (const item of input) {
-			if (state.error) return;
-			extractResponseItem(state, item);
-		}
-		return;
-	}
-	extractResponseItem(state, input);
-}
-
-function extractResponseItem(state: ExtractionState, item: unknown): void {
-	if (state.error || item == null) return;
-	if (typeof item === "string") {
-		appendText(state, item);
-		return;
-	}
-	if (!isRecord(item)) return;
-	const role = normalizedType(item.role);
-	const typ = normalizedType(item.type);
-	if (role && role !== "user") return;
-	if (
-		typ === "output_text" ||
-		typ === "summary_text" ||
-		typ === "reasoning" ||
-		typ === "thinking" ||
-		typ === "function_call" ||
-		typ === "function_call_output"
-	)
-		return;
-	if (typ === "input_text" || typ === "text") {
-		appendText(state, item.text);
-		return;
-	}
-	if (isImagePartType(typ)) {
-		appendImagePart(state, item);
-		return;
-	}
-	if (isFilePartType(typ)) {
-		appendFilePart(state, item);
-		return;
-	}
-	if (role === "user" || typ === "message" || typ === "input_message") {
-		if (item.content != null) extractContent(state, item.content);
-		else appendText(state, item.text);
+	for (const message of messages) {
+		if (state.error) return;
+		if (message.role === "user") appendMessageParts(state, message);
 	}
 }
 
-function extractLatestChatUserInput(
+function appendLatestChatUserMessage(
 	state: ExtractionState,
-	messages: unknown,
+	messages: readonly InternalMessage[],
 ): void {
-	if (!Array.isArray(messages)) return;
 	for (let i = messages.length - 1; i >= 0; i--) {
-		const msg = messages[i];
-		if (!isRecord(msg) || normalizedType(msg.role) !== "user") continue;
-		extractContent(state, msg.content != null ? msg.content : msg.text);
-		return;
-	}
-}
-
-function extractContent(state: ExtractionState, content: unknown): void {
-	if (state.error || content == null) return;
-	if (typeof content === "string") {
-		appendText(state, content);
-		return;
-	}
-	if (Array.isArray(content)) {
-		for (const part of content) {
-			if (state.error) return;
-			extractContentPart(state, part);
+		const message = messages[i];
+		if (message?.role === "user") {
+			appendMessageParts(state, message);
+			return;
 		}
-		return;
 	}
-	extractContentPart(state, content);
 }
 
-function extractContentPart(state: ExtractionState, part: unknown): void {
-	if (state.error || part == null) return;
-	if (typeof part === "string") {
-		appendText(state, part);
+function appendMessageParts(
+	state: ExtractionState,
+	message: InternalMessage,
+): void {
+	for (const part of message.parts) {
+		if (state.error) return;
+		appendModelPart(state, part);
+	}
+}
+
+function appendModelPart(
+	state: ExtractionState,
+	part: MessagePart | null,
+): void {
+	if (state.error || !part) return;
+	if (part.kind === "text") {
+		if (part.inputText) appendText(state, part.text);
 		return;
 	}
-	if (!isRecord(part)) return;
-	const typ = normalizedType(part.type);
-	if (typ === "text" || typ === "input_text") {
-		appendText(state, part.text);
-		return;
-	}
-	if (
-		typ === "output_text" ||
-		typ === "summary_text" ||
-		typ === "reasoning" ||
-		typ === "thinking"
-	)
-		return;
-	if (isImagePartType(typ) || part.image_url != null) {
+	if (part.kind === "reasoning") return;
+	if (part.kind === "image") {
 		appendImagePart(state, part);
 		return;
 	}
-	if (isFilePartType(typ)) appendFilePart(state, part);
+	appendFilePart(state, part);
+}
+
+/** `/v1/images/*` part inputs: already image-shaped records from images-input. */
+function appendUserImagePart(state: ExtractionState, raw: UnknownRecord): void {
+	const part = parseMessagePart(raw);
+	if (part && (part.kind === "image" || part.kind === "file")) {
+		appendModelPart(state, part);
+		return;
+	}
+	state.error = unsupportedImageInput(
+		"image input must be an inline image payload or existing file reference",
+	);
 }
 
 function appendText(state: ExtractionState, value: unknown): void {
@@ -357,26 +310,51 @@ function appendText(state: ExtractionState, value: unknown): void {
 	if (text) state.textParts.push(text);
 }
 
-function appendImagePart(state: ExtractionState, part: UnknownRecord): void {
-	if (remoteUrlFromPart(part)) {
+function appendImagePart(state: ExtractionState, part: ImagePart): void {
+	if (part.remoteUrl) {
 		state.error = unsupportedImageInput(
 			"remote image/file URLs are not supported in image generation mode",
 		);
 		return;
 	}
-	const existing = existingRefFromPart(part);
-	const hasInline = hasImageInlinePayload(part);
-	if (existing && !hasInline) {
-		state.slots.push({ type: "existing", ref: existing });
+	if (part.fileRef && !part.hasInline) {
+		state.slots.push({ type: "existing", ref: part.fileRef });
 		return;
 	}
-
-	const image = imageCandidateFromPart(part, state.nextID);
-	if ("error" in image) {
-		state.error = image.error;
+	if (!part.hasInline) {
+		state.error = unsupportedImageInput(
+			"image input must be an inline image payload or existing file reference",
+		);
 		return;
 	}
-	addCandidateSlot(state, image.candidate);
+	let bytes: Uint8Array;
+	try {
+		bytes = base64ToBytes(part.b64);
+	} catch (_) {
+		state.error = unsupportedImageInput("invalid image base64 payload");
+		return;
+	}
+	const detected = detectUploadMimeFromBytes(bytes);
+	if (!normalizeMimeType(detected).startsWith("image/")) {
+		state.error = unsupportedImageInput(
+			"image input bytes are not a supported image",
+		);
+		return;
+	}
+	const mime = firstNonEmptyString(detected, part.mime, "image/png");
+	const candidate: AttachmentCandidate = {
+		id: `att_${state.nextID}`,
+		kind: "image",
+		role: "request",
+		source: { type: "bytes", bytes },
+	};
+	const filename = firstNonEmptyString(
+		part.filename,
+		imageFilenameFromMime(mime, state.nextID),
+	);
+	if (filename) candidate.filename = filename;
+	if (mime) candidate.mime = mime;
+	addCandidateSlot(state, candidate);
 }
 
 function appendImageBytes(
@@ -406,20 +384,20 @@ function appendImageBytes(
 	addCandidateSlot(state, candidate);
 }
 
-function appendFilePart(state: ExtractionState, part: UnknownRecord): void {
-	if (remoteUrlFromPart(part)) {
+function appendFilePart(state: ExtractionState, part: FilePart): void {
+	if (part.remoteUrl) {
 		state.error = unsupportedImageInput(
 			"remote image/file URLs are not supported in image generation mode",
 		);
 		return;
 	}
-	const existing = existingRefFromPart(part);
-	const input = normalizeUploadFileInput(part);
-	if (existing && !(input && input.b64 != null)) {
-		state.slots.push({ type: "existing", ref: existing });
+	const upload = part.upload;
+	const hasInline = !!upload && upload.b64 != null;
+	if (part.fileRef && !hasInline) {
+		state.slots.push({ type: "existing", ref: part.fileRef });
 		return;
 	}
-	if (!input || input.b64 == null) {
+	if (!upload || upload.b64 == null) {
 		state.error = unsupportedImageInput(
 			"image generation file input must be an inline payload or existing file reference",
 		);
@@ -427,7 +405,7 @@ function appendFilePart(state: ExtractionState, part: UnknownRecord): void {
 	}
 	let bytes: Uint8Array;
 	try {
-		bytes = base64ToBytes(input.b64);
+		bytes = base64ToBytes(upload.b64);
 	} catch (_) {
 		state.error = unsupportedImageInput("invalid file base64 payload");
 		return;
@@ -439,12 +417,7 @@ function appendFilePart(state: ExtractionState, part: UnknownRecord): void {
 		);
 		return;
 	}
-	const mime = firstNonEmptyString(
-		detected,
-		input.mime,
-		uploadMimeFromObject(part),
-		"image/png",
-	);
+	const mime = firstNonEmptyString(detected, upload.mime, "image/png");
 	const candidate: AttachmentCandidate = {
 		id: `att_${state.nextID}`,
 		kind: "image",
@@ -452,90 +425,13 @@ function appendFilePart(state: ExtractionState, part: UnknownRecord): void {
 		source: { type: "bytes", bytes },
 	};
 	const filename = firstNonEmptyString(
-		sanitizeUploadFilename(input.filename),
-		uploadFilenameFromObject(part),
+		upload.filename,
+		part.filename,
 		imageFilenameFromMime(mime, state.nextID),
 	);
 	if (filename) candidate.filename = filename;
 	if (mime) candidate.mime = mime;
 	addCandidateSlot(state, candidate);
-}
-
-function imageCandidateFromPart(
-	part: UnknownRecord,
-	nextID: number,
-): { candidate: AttachmentCandidate } | { error: ImageGenerationPrepareError } {
-	const parsed = imagePayloadFromPart(part);
-	if (!parsed)
-		return {
-			error: unsupportedImageInput(
-				"image input must be an inline image payload or existing file reference",
-			),
-		};
-	let bytes: Uint8Array;
-	try {
-		bytes = base64ToBytes(parsed.b64);
-	} catch (_) {
-		return { error: unsupportedImageInput("invalid image base64 payload") };
-	}
-	const detected = detectUploadMimeFromBytes(bytes);
-	if (!normalizeMimeType(detected).startsWith("image/")) {
-		return {
-			error: unsupportedImageInput(
-				"image input bytes are not a supported image",
-			),
-		};
-	}
-	const mime = firstNonEmptyString(
-		detected,
-		parsed.mime,
-		uploadMimeFromObject(part),
-		"image/png",
-	);
-	const candidate: AttachmentCandidate = {
-		id: `att_${nextID}`,
-		kind: "image",
-		role: "request",
-		source: { type: "bytes", bytes },
-	};
-	const filename = firstNonEmptyString(
-		imageFilenameFromObject(part),
-		imageFilenameFromMime(mime, nextID),
-	);
-	if (filename) candidate.filename = filename;
-	if (mime) candidate.mime = mime;
-	return { candidate };
-}
-
-function imagePayloadFromPart(
-	part: UnknownRecord,
-): { b64: unknown; mime: string } | null {
-	const source = isRecord(part.source) ? part.source : null;
-	if (source && source.data != null) {
-		return {
-			b64: source.data,
-			mime: firstNonEmptyString(
-				uploadMimeFromObject(part),
-				source.media_type,
-				source.mime_type,
-				source.mimeType,
-				"image/png",
-			),
-		};
-	}
-	const imageUrl = part.image_url != null ? part.image_url : part.url;
-	const rawUrl = isRecord(imageUrl) ? imageUrl.url : imageUrl;
-	const parsed = parseImageUrl(rawUrl, uploadMimeFromObject(part));
-	if (parsed) return parsed;
-	return null;
-}
-
-function hasImageInlinePayload(part: UnknownRecord): boolean {
-	const source = isRecord(part.source) ? part.source : null;
-	if (source && source.data != null) return true;
-	const imageUrl = part.image_url != null ? part.image_url : part.url;
-	const rawUrl = isRecord(imageUrl) ? imageUrl.url : imageUrl;
-	return typeof rawUrl === "string" && /^data:/i.test(rawUrl.trim());
 }
 
 function addCandidateSlot(
@@ -615,76 +511,6 @@ async function resolveImageGenerationFileRefs(
 	return { fileRefs: out.length ? out : null };
 }
 
-function existingRefFromPart(part: UnknownRecord): AttachmentFileRef | null {
-	const id =
-		part.file_id ?? part.fileId ?? part.file_ref ?? part.fileRef ?? part.ref;
-	if (id == null) {
-		const file = isRecord(part.file) ? part.file : null;
-		const nested = file
-			? (file.file_id ??
-				file.fileId ??
-				file.file_ref ??
-				file.fileRef ??
-				file.ref ??
-				file.id)
-			: null;
-		if (nested == null) return null;
-		const name = firstNonEmptyString(
-			uploadFilenameFromObject(file),
-			uploadFilenameFromObject(part),
-		);
-		return name ? { id: String(nested), name } : String(nested);
-	}
-	const name = uploadFilenameFromObject(part);
-	return name ? { id: String(id), name } : String(id);
-}
-
-function remoteUrlFromPart(part: UnknownRecord): string {
-	const direct = firstNonEmptyString(part.url, part.file_url, part.fileUrl);
-	if (isRemoteUrl(direct)) return direct;
-	const source = isRecord(part.source) ? part.source : null;
-	const sourceUrl = source
-		? firstNonEmptyString(
-				source.url,
-				source.file_url,
-				source.fileUrl,
-				source.file_uri,
-				source.fileUri,
-			)
-		: "";
-	if (isRemoteUrl(sourceUrl)) return sourceUrl;
-	const imageUrl = isRecord(part.image_url) ? part.image_url : null;
-	if (imageUrl && isRemoteUrl(imageUrl.url)) return String(imageUrl.url);
-	const file = isRecord(part.file) ? part.file : null;
-	const fileUrl = file
-		? firstNonEmptyString(file.url, file.file_url, file.fileUrl)
-		: "";
-	if (isRemoteUrl(fileUrl)) return fileUrl;
-	const fileData = firstRecord(part.fileData, part.file_data);
-	const nestedUrl = fileData
-		? firstNonEmptyString(fileData.url, fileData.file_uri, fileData.fileUri)
-		: "";
-	return isRemoteUrl(nestedUrl) ? nestedUrl : "";
-}
-
-function isRemoteUrl(value: unknown): boolean {
-	return typeof value === "string" && /^https?:\/\//i.test(value.trim());
-}
-
 function unsupportedImageInput(message: string): ImageGenerationPrepareError {
 	return { message, status: 400, code: "image_input_unsupported" };
-}
-
-function normalizedType(value: unknown): string {
-	return String(value || "")
-		.trim()
-		.toLowerCase();
-}
-
-function isImagePartType(typ: string): boolean {
-	return typ === "image_url" || typ === "image" || typ === "input_image";
-}
-
-function isFilePartType(typ: string): boolean {
-	return typ === "input_file" || typ === "file";
 }

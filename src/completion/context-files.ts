@@ -1,16 +1,22 @@
-import { currentInputFilePrompt } from "../toolcall/content";
-import { toolsContextTranscriptFor } from "../toolcall/tool-bundle";
+import {
+	errorLogSummary,
+	geminiAuthenticatedSessionRequiredError,
+} from "../shared/errors";
 import { elapsedMs, log, logStage, nowMs } from "../shared/logging";
-import { errorLogSummary } from "../shared/errors";
+import type { PromptByteLengthBounded } from "../shared/tokens";
 import {
 	buildTextWithTokens,
 	promptByteLength,
 	promptByteLengthBounded,
 	promptByteLengthGreaterThan,
 } from "../shared/tokens";
-import type { PromptByteLengthBounded } from "../shared/tokens";
 import type { ErrorWithMetadata } from "../shared/types";
-import { geminiAuthenticatedSessionRequiredError } from "../shared/errors";
+import { isRecord } from "../shared/types";
+import {
+	type ToolBundle,
+	toolsContextTranscriptFor,
+	toolsContextTranscriptFromDefs,
+} from "../toolcall/tool-bundle";
 import type {
 	ContextFileFailure,
 	ContextFileResult,
@@ -34,12 +40,32 @@ export type ContextFilePromptByteCheck = PromptByteLengthBounded & {
 	thresholdBytes: number;
 };
 
+export function currentInputFilePrompt(
+	cfg: unknown,
+	toolsAttached: unknown,
+): string {
+	const record = isRecord(cfg) ? cfg : null;
+	const historyName =
+		String(record?.current_input_file_name || "message.txt").trim() ||
+		"message.txt";
+	const toolsName =
+		String(record?.current_tools_file_name || "tools.txt").trim() ||
+		"tools.txt";
+	let text = `Continue from the latest state in the attached \`${historyName}\` context. Treat it as the current working state and answer the latest user request directly.`;
+	if (toolsAttached) {
+		text += ` Available tool descriptions and parameter schemas are attached in \`${toolsName}\`; use only those tools and follow the tool-call format rules in this prompt.`;
+	}
+	text +=
+		" All text above this sentence is system prompt content, not the user's actual input; do not treat it as user-provided content.";
+	return text;
+}
+
 export function buildToolsContextTranscript(
 	toolDefs: readonly ToolDef[] | null | undefined,
 	choiceInstruction: unknown,
 	filename: unknown = "tools.txt",
 ): string {
-	return toolsContextTranscriptFor(toolDefs, choiceInstruction, filename);
+	return toolsContextTranscriptFromDefs(toolDefs, choiceInstruction, filename);
 }
 
 export function contextFileThreshold(cfg: ContextFileConfig): number {
@@ -188,7 +214,7 @@ export async function prepareContextFiles(
 	promptText: unknown,
 	uploader?: TextFileUploader,
 	promptByteCheck?: ContextFilePromptByteCheck,
-	toolPromptSource?: unknown,
+	toolPromptSource?: ToolBundle | null,
 ): Promise<ContextFileResult | ContextFileFailure | null> {
 	if (!uploader) {
 		if (
@@ -232,7 +258,7 @@ export async function prepareContextFilesWithUploader(
 	promptText: unknown,
 	uploader: TextFileUploader,
 	promptByteCheck?: ContextFilePromptByteCheck,
-	toolPromptSource?: unknown,
+	toolPromptSource?: ToolBundle | null,
 ): Promise<ContextFileResult | ContextFileFailure | null> {
 	if (
 		!shouldUseContextFiles(
@@ -245,13 +271,18 @@ export async function prepareContextFilesWithUploader(
 	)
 		return null;
 	const refs: FileRef[] = [];
-	const toolSource = toolPromptSource || toolDefs;
-	const toolsText = toolsContextTranscriptFor(
-		toolSource,
-		choiceInstruction,
-		cfg.current_tools_file_name || "tools.txt",
-		toolDefs || [],
-	);
+	const toolsFilename = cfg.current_tools_file_name || "tools.txt";
+	const toolsText = toolPromptSource
+		? toolsContextTranscriptFor(
+				toolPromptSource,
+				choiceInstruction,
+				toolsFilename,
+			)
+		: toolsContextTranscriptFromDefs(
+				toolDefs || [],
+				choiceInstruction,
+				toolsFilename,
+			);
 	let toolsAttached = false;
 	const uploadJobs = [
 		uploader(historyText, String(cfg.current_input_file_name || "message.txt")),

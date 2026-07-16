@@ -1,8 +1,15 @@
-import { finalizeStructuredOutputText } from "../toolcall/structured";
 import { parseToolCalls } from "../toolcall/dsml";
-import { validateRequiredToolCalls } from "../toolcall/policy-openai";
+import type { GoogleFunctionCall } from "../toolcall/google";
+import { parseGoogleFunctionCalls } from "../toolcall/google";
 import type { OpenAIToolCall } from "../toolcall/openai-format";
-import type { ToolChoicePolicy } from "../toolcall/policy-openai";
+import { validateGoogleToolPolicyCalls } from "../toolcall/policy-google";
+import type {
+	ToolChoicePolicy,
+	ToolPolicyViolation,
+} from "../toolcall/policy-openai";
+import { validateRequiredToolCalls } from "../toolcall/policy-openai";
+import { finalizeStructuredOutputText } from "../toolcall/structured";
+import type { ToolBundle } from "../toolcall/tool-bundle";
 
 export const EMPTY_UPSTREAM_MSG =
 	"⚠️ Upstream Gemini returned an empty response. " +
@@ -78,13 +85,74 @@ export function finalizeOpenAICompletionResult(
 	}
 	const violation = validateRequiredToolCalls(toolPolicy, toolCalls);
 	if (violation) {
-		return {
-			error: { message: violation.message, status: 422, code: violation.code },
-		};
+		return { error: violationError(violation) };
 	}
 	return {
 		text: outText,
 		toolCalls,
 		upstreamEmpty: !outText && !toolCalls,
 	};
+}
+
+export type GoogleResponsePart =
+	| { text: string }
+	| { functionCall: GoogleFunctionCall };
+
+export type GoogleCompletionTurnOptions = {
+	tools: ToolBundle | null;
+	toolPolicy: ToolChoicePolicy | null | undefined;
+	hasTools: boolean;
+};
+
+export type GoogleCompletionTurn =
+	| {
+			responseParts: GoogleResponsePart[];
+			upstreamEmpty: boolean;
+			error?: undefined;
+	  }
+	| {
+			error: {
+				message: string;
+				status: number;
+				code?: string;
+			};
+			responseParts?: undefined;
+			upstreamEmpty?: undefined;
+	  };
+
+export function finalizeGoogleCompletionResult(
+	text: unknown,
+	options: GoogleCompletionTurnOptions,
+): GoogleCompletionTurn {
+	const source = String(text || "");
+	const responseParts: GoogleResponsePart[] = [];
+	if (options.hasTools && source) {
+		const [clean, fcs] = parseGoogleFunctionCalls(source, options.tools);
+		const violation = validateGoogleToolPolicyCalls(options.toolPolicy, fcs);
+		if (violation) return { error: violationError(violation) };
+		if (fcs.length) {
+			if (clean) responseParts.push({ text: clean });
+			for (const fc of fcs)
+				responseParts.push({ functionCall: { name: fc.name, args: fc.args } });
+		} else {
+			responseParts.push({ text: source });
+		}
+	} else {
+		const violation = validateGoogleToolPolicyCalls(options.toolPolicy, []);
+		if (violation) return { error: violationError(violation) };
+		responseParts.push({
+			text:
+				source ||
+				"I apologize, but I was unable to generate a response. Please try again.",
+		});
+	}
+	return { responseParts, upstreamEmpty: !source };
+}
+
+function violationError(violation: ToolPolicyViolation): {
+	message: string;
+	status: number;
+	code: "tool_choice_violation";
+} {
+	return { message: violation.message, status: 422, code: violation.code };
 }

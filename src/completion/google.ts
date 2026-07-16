@@ -1,17 +1,21 @@
-import { streamBufferedToolTextCompletionEvents } from "./runtime";
 import type { CompletionProvider } from "./ports";
 import type { ResolvedModel } from "../models";
-import {
-	combinedTokenCount,
-	createTokenCounter,
-	emptyTokenCounts,
-} from "../shared/tokens";
+import { combinedTokenCount, createTokenCounter } from "../shared/tokens";
 import { parseGoogleFunctionCalls } from "../toolcall/google";
-import { validateGoogleFunctionCalls } from "../toolcall/policy-google";
-import type { ToolPolicyViolation } from "../toolcall/policy-openai";
+import { validateGoogleToolPolicyCalls } from "../toolcall/policy-google";
+import type {
+	ToolChoicePolicy,
+	ToolPolicyViolation,
+} from "../toolcall/policy-openai";
 import type { GoogleFunctionCall } from "../toolcall/google";
-import type { GoogleResponsePart } from "./google-turn";
-import type { FileRef, LooseRequest } from "./types";
+import type { ToolBundle } from "../toolcall/tool-bundle";
+import { toolSieveBufferedText } from "../toolstream";
+import {
+	createSieveLoopContext,
+	streamSievedTextDeltas,
+} from "./stream-events";
+import type { FileRef } from "./types";
+import type { GoogleResponsePart } from "./turn";
 import { EMPTY_UPSTREAM_MSG } from "./turn";
 
 export type GoogleToolCompletionEvent =
@@ -36,8 +40,8 @@ type GoogleToolCompletionParams = {
 	prompt: string;
 	rm: Extract<ResolvedModel, { name: string }>;
 	fileRefs: FileRef[] | null;
-	tools: LooseRequest[] | null;
-	effectiveReq: LooseRequest;
+	tools: ToolBundle | null;
+	toolPolicy: ToolChoicePolicy | null | undefined;
 	promptTokens: number;
 	signal: AbortSignal;
 };
@@ -46,43 +50,35 @@ export async function* streamGoogleToolCompletionEvents(
 	provider: CompletionProvider,
 	params: GoogleToolCompletionParams,
 ): AsyncIterable<GoogleToolCompletionEvent> {
-	const { prompt, rm, fileRefs, tools, effectiveReq, promptTokens, signal } =
+	const { prompt, rm, fileRefs, tools, toolPolicy, promptTokens, signal } =
 		params;
 	const extraTokenCounter = createTokenCounter();
-	let completionCounts = emptyTokenCounts();
-	let buffered = "";
-	let emittedText = false;
-	let issue: { error: unknown } | null = null;
+	const ctx = createSieveLoopContext();
 
-	for await (const event of streamBufferedToolTextCompletionEvents(
+	for await (const event of streamSievedTextDeltas(
 		provider,
 		{ prompt, rm, fileRefs },
 		{ signal },
+		ctx,
 	)) {
 		if (event.type === "text_delta") {
-			emittedText = true;
 			yield {
 				type: "candidate",
 				parts: [{ text: event.text }],
 				finishReason: null,
 			};
-		} else if (event.type === "buffered_text") {
-			buffered += event.text;
-		} else if (event.type === "warning" || event.type === "stream_error") {
-			issue = event;
-		} else if (event.type === "done") {
-			completionCounts = event.completionCounts;
 		}
 	}
+	const issue = ctx.streamErr ? { error: ctx.streamErr } : null;
 
 	const [clean, functionCalls]: [string, GoogleFunctionCall[]] =
-		parseGoogleFunctionCalls(buffered, tools);
+		parseGoogleFunctionCalls(toolSieveBufferedText(ctx.state), tools);
 	if (clean) {
 		extraTokenCounter.append(clean);
 		yield { type: "candidate", parts: [{ text: clean }], finishReason: null };
 	}
 
-	const violation = validateGoogleFunctionCalls(effectiveReq, functionCalls);
+	const violation = validateGoogleToolPolicyCalls(toolPolicy, functionCalls);
 	if (violation) {
 		yield { type: "tool_policy_violation", violation };
 		return;
@@ -96,7 +92,7 @@ export async function* streamGoogleToolCompletionEvents(
 			})),
 			finishReason: null,
 		};
-	} else if (!emittedText && !clean) {
+	} else if (!ctx.emittedText && !clean) {
 		yield {
 			type: "error",
 			error: issue?.error || {
@@ -109,7 +105,7 @@ export async function* streamGoogleToolCompletionEvents(
 		yield { type: "warning", error: issue.error };
 	}
 	const candidateTokens = combinedTokenCount(
-		completionCounts,
+		ctx.counter.counts(),
 		extraTokenCounter,
 	);
 	const promptTokenCount = Math.max(0, Number(promptTokens) || 0);

@@ -4,9 +4,8 @@ import { prepareContextFilesWithUploader } from "../../src/completion/context-fi
 import { finalizeOpenAICompletionResult } from "../../src/completion/turn";
 import { streamOpenAIChatWithToolSieve } from "../../src/http/openai/chat-stream";
 import { streamResponsesWithToolSieve } from "../../src/http/openai/responses-stream";
-import { messagesToPrompt } from "../../src/promptcompat/messages";
 import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
-import { openAIToolDefs } from "../../src/toolcall/content";
+import { messagesToPrompt } from "../../src/promptcompat/messages";
 import {
 	normalizeDSMLToolCallMarkup,
 	parseCanonicalDSMLToolCallsFast,
@@ -720,22 +719,19 @@ describe("toolcall", () => {
 		const messages = parseOpenAIMessages([
 			{ role: "user", content: "find docs" },
 		]);
-		const directDefs = openAIToolDefs(tools);
 		const direct = messagesToPrompt(
 			messages,
-			tools,
-			"auto",
-			directDefs,
-			"",
+			{ bundle: createToolBundle(tools), choiceInstruction: "", include: true },
 			1000000,
 		);
 		const bundle = createToolBundle(tools);
 		const bundled = messagesToPrompt(
 			messages,
-			bundle,
-			"auto",
-			bundle.defs,
-			"",
+			{
+				bundle: createToolBundle(bundle),
+				choiceInstruction: "",
+				include: true,
+			},
 			1000000,
 		);
 		assert.equal(bundled.text, direct.text);
@@ -826,15 +822,17 @@ describe("toolcall", () => {
 		assert.equal(filterToolBundleByPolicy(bundle, null), bundle);
 
 		assert.deepEqual(
-			toolNamesForPromptSource([
-				{ name: "Search" },
-				{ name: "Search" },
-				{ name: "" },
-			]),
+			toolNamesForPromptSource(
+				createToolBundle([
+					{ name: "Search" },
+					{ name: "Search" },
+					{ name: "" },
+				]),
+			),
 			["Search"],
 		);
 		assert.match(
-			toolCallInstructionsFor([{ name: "Search" }]),
+			toolCallInstructionsFor(createToolBundle([{ name: "Search" }])),
 			/<\|DSML\|tool_calls>/,
 		);
 		const empty = createToolBundle([{ type: "function", function: {} }]);
@@ -972,12 +970,12 @@ describe("toolcall", () => {
 		const finalized = finalizeOpenAICompletionResult(
 			'<tool_calls><invoke name="Read"><parameter name="file_path">README.md</parameter></invoke></tool_calls>',
 			{
-				tools: [
+				tools: createToolBundle([
 					{
 						type: "function",
 						function: { name: "Read", parameters: { type: "object" } },
 					},
-				],
+				]),
 				promptToolChoice: "auto",
 				structured: null,
 				toolPolicy: null,
@@ -1269,12 +1267,12 @@ describe("toolcall", () => {
 			'<tool_calls><invoke name="Read"><parameter name="file_path">README.md</parameter></invoke></tool_calls>',
 			{
 				tools: null,
-				noneModeTools: [
+				noneModeTools: createToolBundle([
 					{
 						type: "function",
 						function: { name: "Read", parameters: { type: "object" } },
 					},
-				],
+				]),
 				promptToolChoice: "none",
 				structured: null,
 				toolPolicy: {
@@ -1304,12 +1302,12 @@ describe("toolcall", () => {
 				prompt: "do not call tools",
 				rm: { name: "gemini-3.5-flash" },
 				fileRefs: null,
-				tools: [
+				tools: createToolBundle([
 					{
 						type: "function",
 						function: { name: "Read", parameters: { type: "object" } },
 					},
-				],
+				]),
 				toolPolicy: {
 					mode: "none",
 					forcedName: "",
@@ -1338,12 +1336,12 @@ describe("toolcall", () => {
 				rm: { name: "gemini-3.5-flash" },
 				prompt: "must call a tool",
 				fileRefs: null,
-				tools: [
+				tools: createToolBundle([
 					{
 						type: "function",
 						function: { name: "Read", parameters: { type: "object" } },
 					},
-				],
+				]),
 				toolPolicy: {
 					mode: "required",
 					forcedName: "",
@@ -1495,7 +1493,7 @@ describe("toolcall", () => {
 			fakeStreamProvider([]),
 			{},
 			parseOpenAIMessages([{ role: "user", content: "find docs" }]),
-			tools,
+			createToolBundle(tools),
 			"required",
 			{
 				mode: "required",
@@ -1529,7 +1527,7 @@ describe("toolcall", () => {
 		const finalized = finalizeOpenAICompletionResult(
 			'<tool_calls><invoke name="Search"><parameter name="query"><term>docs</term></parameter></invoke></tool_calls>',
 			{
-				tools,
+				tools: createToolBundle(tools),
 				promptToolChoice: "required",
 				structured: null,
 				toolPolicy: {
@@ -1552,9 +1550,9 @@ describe("toolcall", () => {
 				type: "object",
 				properties: { value: { type: "string" } },
 			};
-			const defs = openAIToolDefs([
+			const defs = createToolBundle([
 				{ type: "function", name: `Alias_${key}`, [key]: schema },
-			]);
+			]).promptArtifact.defs;
 			assert.equal(defs[0].name, `Alias_${key}`);
 			assert.deepEqual(defs[0].parameters, schema);
 		}
@@ -1587,8 +1585,8 @@ describe("toolcall", () => {
 		assert.equal(formatPromptParamValue(Symbol("skip")), "");
 	});
 	test("formats OpenAI tool call payloads and prompt XML helper edges", async () => {
-		assert.deepEqual(formatOpenAIToolCalls(null, []), []);
-		assert.deepEqual(formatOpenAIStreamToolCalls([], new Map(), []), []);
+		assert.deepEqual(formatOpenAIToolCalls(null, null), []);
+		assert.deepEqual(formatOpenAIStreamToolCalls([], new Map(), null), []);
 
 		const tools = [
 			{
@@ -1605,11 +1603,12 @@ describe("toolcall", () => {
 				},
 			},
 		];
+		const bundle = createToolBundle(tools);
 		const calls = [
 			{ name: "Lookup", input: { query: { term: "docs" }, count: "3" } },
 			{ name: "NoInput" },
 		];
-		const formatted = formatOpenAIToolCalls(calls, tools);
+		const formatted = formatOpenAIToolCalls(calls, bundle);
 		assert.equal(formatted.length, 2);
 		assert.match(formatted[0].id, /^call_[0-9a-f]{8}$/);
 		assert.equal(formatted[0].type, "function");
@@ -1621,7 +1620,7 @@ describe("toolcall", () => {
 		assert.equal("index" in formatted[0], false);
 
 		const ids = new Map();
-		const streamCalls = formatOpenAIStreamToolCalls(calls, ids, tools);
+		const streamCalls = formatOpenAIStreamToolCalls(calls, ids, bundle);
 		assert.equal(streamCalls[0].index, 0);
 		assert.match(streamCalls[0].id, /^call_[0-9a-f]{32}$/);
 		assert.equal(ensureStreamToolCallID(ids, 0), streamCalls[0].id);
@@ -1754,7 +1753,10 @@ describe("toolcall", () => {
 			{ name: "Missing", input: { query: { term: "unchanged" } } },
 			{ name: "Lookup", input: "not an object" },
 		];
-		const normalized = normalizeParsedToolCallsForSchemas(calls, tools);
+		const normalized = normalizeParsedToolCallsForSchemas(
+			calls,
+			createToolBundle(tools),
+		);
 		assert.equal(normalized[0].input.query, '{"term":"docs"}');
 		assert.equal(normalized[0].input.maybe, "5");
 		assert.deepEqual(normalized[0].input.choices, ["7", { a: "1" }, false]);
@@ -1763,13 +1765,13 @@ describe("toolcall", () => {
 		assert.deepEqual(normalized[2], calls[2]);
 		assert.deepEqual(normalized[3], calls[3]);
 		assert.deepEqual(
-			buildToolSchemaIndex(tools).lookup,
+			buildToolSchemaIndex(createToolBundle(tools)).lookup,
 			tools[0].function.parameters,
 		);
 	});
 	test("keeps schema normalization conservative when no conversion is required", async () => {
-		assert.deepEqual(normalizeParsedToolCallsForSchemas(null, []), null);
-		assert.deepEqual(normalizeParsedToolCallsForSchemas([], []), []);
+		assert.deepEqual(normalizeParsedToolCallsForSchemas(null, null), null);
+		assert.deepEqual(normalizeParsedToolCallsForSchemas([], null), []);
 		assert.deepEqual(normalizeToolValueWithSchema(null, { type: "string" }), [
 			null,
 			false,
@@ -1813,7 +1815,7 @@ describe("toolcall", () => {
 			type: "object",
 			properties: { query: { type: "string" } },
 		};
-		const defs = openAIToolDefs([
+		const defs = createToolBundle([
 			{
 				type: "function",
 				tool: {
@@ -1822,24 +1824,24 @@ describe("toolcall", () => {
 					input_schema: schema,
 				},
 			},
-		]);
+		]).promptArtifact.defs;
 		assert.equal(defs[0].name, "WrappedSearch");
 		assert.equal(defs[0].description, "Search docs");
 		assert.deepEqual(defs[0].parameters, schema);
 		const policy = parseOpenAIToolChoicePolicy(
 			{ type: "function", name: "WrappedSearch" },
-			[
+			createToolBundle([
 				{
 					type: "function",
 					tool: { name: "WrappedSearch", input_schema: schema },
 				},
-			],
+			]),
 		);
 		assert.equal(policy.error, "");
 		assert.equal(policy.forcedName, "WrappedSearch");
 	});
 	test("parses OpenAI allowed_tools policy aliases and filters duplicates", async () => {
-		const tools = [
+		const tools = createToolBundle([
 			{
 				type: "function",
 				function: { name: "Read", parameters: { type: "object" } },
@@ -1848,7 +1850,7 @@ describe("toolcall", () => {
 				type: "function",
 				function: { name: "Search", parameters: { type: "object" } },
 			},
-		];
+		]);
 		const policy = parseOpenAIToolChoicePolicy(
 			{
 				type: "allowed_tools",
@@ -1866,12 +1868,12 @@ describe("toolcall", () => {
 		assert.deepEqual(Object.keys(policy.allowed), ["Read", "Search"]);
 	});
 	test("reports OpenAI tool choice shape errors without changing policy mode", async () => {
-		const tools = [
+		const tools = createToolBundle([
 			{
 				type: "function",
 				function: { name: "Read", parameters: { type: "object" } },
 			},
-		];
+		]);
 		assert.match(
 			parseOpenAIToolChoicePolicy(42, tools).error,
 			/must be a string or object/,
@@ -1919,11 +1921,15 @@ describe("toolcall", () => {
 				function: { name: "Read", parameters: { type: "object" } },
 			},
 		];
+		const toolsBundle = createToolBundle(tools);
 		const googleGroup = {
 			functionDeclarations: [{ name: "Lookup" }, { name: "Read" }],
 		};
-		assert.deepEqual(extractToolNames(tools), ["Read", "Search"]);
-		assert.deepEqual(extractToolNames(googleGroup), ["Lookup", "Read"]);
+		assert.deepEqual(extractToolNames(toolsBundle), ["Read", "Search"]);
+		assert.deepEqual(extractToolNames(createToolBundle(googleGroup)), [
+			"Lookup",
+			"Read",
+		]);
 		assert.deepEqual(extractToolNames(createToolBundle(tools)), [
 			"Read",
 			"Search",
@@ -1971,19 +1977,23 @@ describe("toolcall", () => {
 
 		const forcedAuto = parseOpenAIToolChoicePolicy(
 			{ type: "auto", name: "Read" },
-			tools,
+			toolsBundle,
 		);
 		assert.equal(forcedAuto.mode, "forced");
 		assert.deepEqual(forcedAuto.allowed, { Read: true });
-		const noneObject = parseOpenAIToolChoicePolicy({ type: "none" }, tools);
+		const noneObject = parseOpenAIToolChoicePolicy(
+			{ type: "none" },
+			toolsBundle,
+		);
 		assert.equal(noneObject.mode, "none");
 		assert.deepEqual(noneObject.allowed, {});
 		assert.match(
-			parseOpenAIToolChoicePolicy({ type: "required" }, []).error,
+			parseOpenAIToolChoicePolicy({ type: "required" }, null).error,
 			/requires at least one tool/,
 		);
 		assert.match(
-			parseOpenAIToolChoicePolicy({ allowed_tools: ["Missing"] }, tools).error,
+			parseOpenAIToolChoicePolicy({ allowed_tools: ["Missing"] }, toolsBundle)
+				.error,
 			/allowed unknown tool/,
 		);
 
@@ -1999,10 +2009,15 @@ describe("toolcall", () => {
 		assert.equal(toolPolicyAllows(forcedAuto, "Search"), false);
 
 		assert.equal(filterToolsByPolicy(null, forcedAuto), null);
-		assert.equal(filterToolsByPolicy(tools, { mode: "none" }), null);
-		assert.equal(filterToolsByPolicy(tools, null), tools);
+		assert.equal(filterToolsByPolicy(toolsBundle, { mode: "none" }), null);
+		assert.equal(
+			filterToolsByPolicy(toolsBundle, null),
+			toolsBundle.openAIFunctionTools,
+		);
 		assert.deepEqual(
-			filterToolsByPolicy(tools, forcedAuto).map((tool) => tool.function.name),
+			filterToolsByPolicy(toolsBundle, forcedAuto).map(
+				(tool) => tool.function.name,
+			),
 			["Read", "Read"],
 		);
 		assert.deepEqual(
@@ -2074,19 +2089,20 @@ describe("toolcall", () => {
 	test("uses fallback tool defs when prompt source has no tools", async () => {
 		const result = messagesToPrompt(
 			parseOpenAIMessages([{ role: "user", content: "find docs" }]),
-			null,
-			"auto",
-			[
-				{
-					name: "Search",
-					description: "Search docs",
-					parameters: {
-						type: "object",
-						properties: { query: { type: "string" } },
+			{
+				bundle: createToolBundle([
+					{
+						name: "Search",
+						description: "Search docs",
+						parameters: {
+							type: "object",
+							properties: { query: { type: "string" } },
+						},
 					},
-				},
-			],
-			"",
+				]),
+				choiceInstruction: "",
+				include: true,
+			},
 			1000000,
 		);
 		assert.match(result.text, /Available tools/);

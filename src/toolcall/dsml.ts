@@ -1,6 +1,7 @@
 import { isRecord, type UnknownRecord } from "../shared/types";
 import { maskMarkdownProtectedSpans, parseMarkdownFenceLine } from "./markdown";
 import { formatOpenAIToolCalls } from "./openai-format";
+import { createToolBundle } from "./tool-bundle";
 import {
 	TOOL_MARKUP_CONFUSABLE_RE as TOOL_MARKUP_CONFUSABLE_RE_INTERNAL,
 	containsToolMarkupSyntax as containsToolMarkupSyntaxCandidate,
@@ -38,12 +39,15 @@ type MarkdownRestore = (value: unknown) => string;
 
 export function parseToolCalls(
 	text: unknown,
-	toolsRaw: unknown,
+	toolsRaw?: unknown,
 ): [string, OpenAIToolCall[]] {
 	if (!mayContainToolCallSyntax(text)) return [String(text || "").trim(), []];
 	const parsed = parseDSMLToolCallsDetailed(text);
 	if (parsed.calls.length) {
-		return [parsed.cleanText, formatOpenAIToolCalls(parsed.calls, toolsRaw)];
+		return [
+			parsed.cleanText,
+			formatOpenAIToolCalls(parsed.calls, createToolBundle(toolsRaw)),
+		];
 	}
 	return [String(text || "").trim(), []];
 }

@@ -191,70 +191,37 @@ export function nullableOpenAIFunctionTools(
 }
 
 export function toolNamesForPromptSource(
-	source: unknown,
-	fallbackDefs?: readonly ToolPromptDef[] | null,
+	source: ToolBundle | null | undefined,
 ): string[] {
-	if (isToolBundle(source)) return source.names;
-	const defs = toolPromptDefsFromSource(source, fallbackDefs);
-	const names: string[] = [];
-	const seen: NameSet = {};
-	for (const def of defs) {
-		const name = String(def?.name || "").trim();
-		if (!name || seen[name]) continue;
-		seen[name] = true;
-		names.push(name);
-	}
-	return names;
+	return source ? source.names : [];
 }
 
 export function toolCallInstructionsFor(
-	source: unknown,
-	fallbackDefs?: readonly ToolPromptDef[] | null,
+	source: ToolBundle | null | undefined,
 ): string {
-	if (isToolBundle(source)) return source.promptArtifact.toolCallInstructions();
-	return buildToolCallInstructions(
-		toolNamesForPromptSource(source, fallbackDefs),
-	);
+	if (source) return source.promptArtifact.toolCallInstructions();
+	return buildToolCallInstructions([]);
 }
 
 export function toolPromptBlockFor(
-	source: unknown,
+	source: ToolBundle | null | undefined,
 	toolChoiceInstruction?: unknown,
-	fallbackDefs?: readonly ToolPromptDef[] | null,
 ): string {
-	if (isToolBundle(source))
-		return source.promptArtifact.inlinePromptBlock(toolChoiceInstruction);
-	const defs = toolPromptDefsFromSource(source, fallbackDefs);
-	return defs.length
-		? buildToolPromptBlock([...defs], toolChoiceInstruction)
-		: "";
+	if (!source) return "";
+	return source.promptArtifact.inlinePromptBlock(toolChoiceInstruction);
 }
 
 export function toolsContextTranscriptFor(
-	source: unknown,
+	source: ToolBundle | null | undefined,
 	toolChoiceInstruction?: unknown,
 	filename: unknown = "tools.txt",
-	fallbackDefs?: readonly ToolPromptDef[] | null,
 ): string {
-	if (isToolBundle(source))
+	if (source)
 		return source.promptArtifact.contextTranscript(
 			toolChoiceInstruction,
 			filename,
 		);
-	const defs = toolPromptDefsFromSource(source, fallbackDefs);
-	return buildToolsContextTranscriptFromDefs(
-		defs,
-		toolChoiceInstruction,
-		filename,
-	);
-}
-
-function toolPromptDefsFromSource(
-	source: unknown,
-	fallbackDefs?: readonly ToolPromptDef[] | null,
-): readonly ToolPromptDef[] {
-	if (Array.isArray(fallbackDefs)) return fallbackDefs;
-	return Array.isArray(source) ? (source as ToolPromptDef[]) : [];
+	return toolsContextTranscriptFromDefs([], toolChoiceInstruction, filename);
 }
 
 function createToolPromptArtifact(
@@ -295,7 +262,7 @@ function createToolPromptArtifact(
 			const key = `${String(filename || "tools.txt")}\x00${String(toolChoiceInstruction || "")}`;
 			const cached = transcripts.get(key);
 			if (cached != null) return cached;
-			const text = buildToolsContextTranscriptFromDefs(
+			const text = toolsContextTranscriptFromDefs(
 				cachedDefs,
 				toolChoiceInstruction,
 				filename,
@@ -306,13 +273,28 @@ function createToolPromptArtifact(
 	};
 }
 
-function buildToolsContextTranscriptFromDefs(
+function toolPromptDefNames(
+	defs: readonly ToolPromptDef[] | null | undefined,
+): string[] {
+	const names: string[] = [];
+	const seen: NameSet = {};
+	for (const def of defs || []) {
+		const name = String(def?.name || "").trim();
+		if (!name || seen[name]) continue;
+		seen[name] = true;
+		names.push(name);
+	}
+	return names;
+}
+
+/** Context-file tools.txt transcript rendered from bare tool defs. */
+export function toolsContextTranscriptFromDefs(
 	toolDefs: readonly ToolPromptDef[] | null | undefined,
 	choiceInstruction: unknown,
 	filename: unknown,
 ): string {
 	const defs = toolDefs || [];
-	const names = toolNamesForPromptSource(defs);
+	const names = toolPromptDefNames(defs);
 	const sections = [`# ${filename || "tools.txt"}`];
 	if (defs.length) {
 		sections.push(

@@ -1,12 +1,6 @@
-import { isRecord } from "../shared/types";
-import {
-	extractToolMeta,
-	toolFunctionDeclarations,
-	toolItemsFromTools,
-} from "./tool-meta";
+import { isRecord, type UnknownRecord } from "../shared/types";
 import {
 	filterToolBundleByPolicy,
-	isToolBundle,
 	nullableOpenAIFunctionTools,
 } from "./tool-bundle";
 import type { ToolBundle } from "./tool-bundle";
@@ -35,29 +29,10 @@ type ToolPolicyValidationMessages = {
 	forcedMessage: (name: string) => string;
 };
 
-export function extractToolNames(tools: unknown): string[] {
-	if (isToolBundle(tools)) return tools.names;
-	const out: string[] = [];
-	const seen = new Set<string>();
-	const addName = (raw: unknown) => {
-		const name = String(raw || "").trim();
-		if (!name || seen.has(name)) return;
-		seen.add(name);
-		out.push(name);
-	};
-	for (const tool of toolItemsFromTools(tools)) {
-		const declarations = toolFunctionDeclarations(tool);
-		if (declarations.length) {
-			for (const fn of declarations) {
-				const meta = extractToolMeta(fn);
-				addName(meta?.name);
-			}
-			continue;
-		}
-		const meta = extractToolMeta(tool);
-		addName(meta?.name);
-	}
-	return out;
+export function extractToolNames(
+	tools: ToolBundle | null | undefined,
+): string[] {
+	return tools ? tools.names : [];
 }
 
 export function namesToSet(
@@ -122,9 +97,9 @@ export function parseForcedToolName(toolChoice: unknown): string {
 
 export function parseOpenAIToolChoicePolicy(
 	toolChoiceRaw: unknown,
-	toolsRaw: unknown,
+	tools: ToolBundle | null | undefined,
 ): ToolChoicePolicy {
-	const declared = extractToolNames(toolsRaw);
+	const declared = extractToolNames(tools);
 	const declaredSet = namesToSet(declared);
 	const policy: ToolChoicePolicy = {
 		mode: "auto",
@@ -250,25 +225,12 @@ export function toolPolicyAllows(
 	return !!allowed[String(name || "").trim()];
 }
 
-export function filterToolsByPolicy<T>(
-	tools: T[] | ToolBundle | null | undefined,
+export function filterToolsByPolicy(
+	tools: ToolBundle | null | undefined,
 	policy: ToolChoicePolicy | null | undefined,
-): T[] | null {
-	if (isToolBundle(tools))
-		return nullableOpenAIFunctionTools(
-			filterToolBundleByPolicy(tools, policy),
-		) as T[] | null;
-	if (
-		!Array.isArray(tools) ||
-		!tools.length ||
-		(policy && policy.mode === "none")
-	)
-		return null;
-	if (!policyHasAllowed(policy)) return tools;
-	return tools.filter((tool) => {
-		const meta = extractToolMeta(tool);
-		return meta ? toolPolicyAllows(policy, meta.name) : false;
-	});
+): UnknownRecord[] | null {
+	if (!tools) return null;
+	return nullableOpenAIFunctionTools(filterToolBundleByPolicy(tools, policy));
 }
 
 export function buildToolChoiceInstructionFromPolicy(

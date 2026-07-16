@@ -155,6 +155,7 @@ const messages = [
 ];
 const tools = [TOOL];
 const toolBundle = mod.createToolBundle(tools);
+const internalMessages = mod.parseOpenAIMessages(messages);
 const socketSingleBody = makeBytes(SOCKET_BODY_BYTES);
 const socketChunks = makeSocketChunks(SOCKET_BODY_BYTES, SOCKET_CHUNK_BYTES);
 const socketTextSingleResponse = makeHttpResponseChunks(
@@ -397,11 +398,8 @@ const cases = [
 		name: "messages_to_prompt",
 		fn: () =>
 			mod.messagesToPrompt(
-				messages,
-				toolBundle,
-				"auto",
-				toolBundle.defs,
-				"",
+				internalMessages,
+				{ bundle: toolBundle, choiceInstruction: "", include: true },
 				1_000_000,
 			),
 	},
@@ -412,7 +410,7 @@ const cases = [
 				CFG,
 				FAKE_PROVIDER,
 				{ model: "gemini-3.5-flash" },
-				messages,
+				internalMessages,
 				toolBundle,
 				"auto",
 				null,
@@ -786,7 +784,7 @@ function runPlainSieveChunks(text) {
 	for (let i = 0; i < text.length; i += 1024) {
 		mod.processToolSieveChunk(state, text.slice(i, i + 1024));
 	}
-	return mod.flushToolSieve(state, tools);
+	return mod.flushToolSieve(state, toolBundle);
 }
 
 function runHeldToolCandidateChunks(text) {
@@ -794,7 +792,7 @@ function runHeldToolCandidateChunks(text) {
 	for (let i = 0; i < text.length; i += 1024) {
 		mod.processToolSieveChunk(state, text.slice(i, i + 1024));
 	}
-	return mod.flushToolSieve(state, tools);
+	return mod.flushToolSieve(state, toolBundle);
 }
 
 async function runResponsesSmallDeltaStream() {

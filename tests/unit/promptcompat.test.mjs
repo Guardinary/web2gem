@@ -13,16 +13,21 @@ import {
 	mimeFromFilename,
 	sanitizeUploadFilename,
 } from "../../src/attachments/mime";
+import { mergeFileRefs } from "../../src/completion/context";
 import { parseGoogleRequest } from "../../src/promptcompat/google";
 import {
 	buildOpenAIHistoryTranscript,
 	latestOpenAIUserInputText,
 } from "../../src/promptcompat/history";
-import { messagesToPrompt } from "../../src/promptcompat/messages";
 import {
+	attachmentInputsFromMessages,
 	attachmentPlanFromMessages,
+	flattenText,
+	historyContentText,
 	parseOpenAIMessages,
+	rawRecordReasoningText,
 } from "../../src/promptcompat/message-model";
+import { messagesToPrompt } from "../../src/promptcompat/messages";
 import {
 	appendStructuredOutputInstructionToPrepared,
 	appendStructuredOutputInstructionWithTokens,
@@ -39,19 +44,13 @@ import {
 } from "../../src/promptcompat/responses-input";
 import { buildTextWithTokens } from "../../src/shared/tokens";
 import {
-	contentTextForHistory,
-	mergeFileRefs,
-	messageContentToPrompt,
-	openAIToolDefs,
-	reasoningTextForHistory,
-	responsesContentToText,
-} from "../../src/toolcall/content";
-import {
 	googleToolChoiceInstructionFromPolicy,
 	parseGoogleToolChoicePolicy,
 } from "../../src/toolcall/policy-google";
-import { createToolBundle } from "../../src/toolcall/tool-bundle";
-import { toolPromptBlockFor } from "../../src/toolcall/tool-bundle";
+import {
+	createToolBundle,
+	toolPromptBlockFor,
+} from "../../src/toolcall/tool-bundle";
 import { assert } from "./assertions.js";
 import { resetTestState } from "./helpers.js";
 
@@ -72,18 +71,19 @@ function renderGooglePromptViaModel(req, toolDefsOverride, maxPromptBytes) {
 		req?.toolConfig?.functionCallingConfig?.mode || "AUTO",
 	).toUpperCase();
 	const hasTools = fcMode !== "NONE" && bundle.openAIFunctionTools.length > 0;
-	const toolDefs = Array.isArray(toolDefsOverride)
-		? toolDefsOverride
-		: hasTools
-			? openAIToolDefs(bundle)
-			: [];
+	const promptBundle = Array.isArray(toolDefsOverride)
+		? createToolBundle(toolDefsOverride)
+		: bundle;
 	const messages = parseGoogleRequest(req);
 	const built = messagesToPrompt(
 		messages,
-		hasTools ? bundle : null,
-		hasTools ? "auto" : "none",
-		toolDefs,
-		googleToolChoiceInstruction(req),
+		hasTools
+			? {
+					bundle: promptBundle,
+					choiceInstruction: googleToolChoiceInstruction(req),
+					include: true,
+				}
+			: null,
 		maxPromptBytes,
 	);
 	const plan = attachmentPlanFromMessages(messages);
@@ -120,12 +120,29 @@ function latestGoogleUserInputText(req) {
 	return latestOpenAIUserInputText(parseGoogleRequest(req));
 }
 function buildGoogleToolPrompt(toolDefs, req, toolPromptSource) {
+	const source =
+		Array.isArray(toolDefs) && toolDefs.length ? toolDefs : toolPromptSource;
 	return toolPromptBlockFor(
-		toolPromptSource || toolDefs,
+		createToolBundle(source),
 		googleToolChoiceInstruction(req),
-		Array.isArray(toolDefs) ? toolDefs : undefined,
 	);
 }
+// Re-target helpers for the dissolved toolcall/content walkers: the same raw
+// content fixtures go through the shared model parser, then prompt rendering /
+// history text / attachment collection read the parsed parts.
+function messageContentToPrompt(content, images, files) {
+	const parsed = parseOpenAIMessages([{ role: "user", content }]);
+	const inputs = attachmentInputsFromMessages(parsed);
+	if (images) images.push(...inputs.images);
+	if (files) files.push(...inputs.files);
+	return messagesToPrompt(parsed, null, 1000000).text;
+}
+function contentTextForHistory(content) {
+	const [msg] = parseOpenAIMessages([{ role: "user", content }]);
+	return msg ? historyContentText(msg) : "";
+}
+const responsesContentToText = flattenText;
+const reasoningTextForHistory = rawRecordReasoningText;
 
 describe("prompt compatibility", () => {
 	beforeEach(resetTestState);
@@ -358,7 +375,7 @@ describe("prompt compatibility", () => {
 		]);
 
 		const parsed = parseOpenAIMessages(messages);
-		const result = messagesToPrompt(parsed, null, "auto", [], "", 1000000);
+		const result = messagesToPrompt(parsed, null, 1000000);
 		assert.match(result.text, /\[file input note\.txt\]/);
 		assert.deepEqual(
 			attachmentPlanFromMessages(parsed).candidates.map((c) => ({
@@ -810,14 +827,7 @@ describe("prompt compatibility", () => {
 				],
 			},
 		]);
-		const result = messagesToPrompt(
-			parsedFileMsg,
-			null,
-			"auto",
-			[],
-			"",
-			1000000,
-		);
+		const result = messagesToPrompt(parsedFileMsg, null, 1000000);
 		assert.match(result.text, /\[file input note\.txt\]/);
 		assert.deepEqual(
 			attachmentPlanFromMessages(parsedFileMsg).candidates.map((c) => ({
@@ -1115,15 +1125,16 @@ describe("prompt compatibility", () => {
 	test("omits OpenAI tool prompt when tool choice is none", async () => {
 		const result = messagesToPrompt(
 			parseOpenAIMessages([{ role: "user", content: "answer without tools" }]),
-			[
-				{
-					type: "function",
-					function: { name: "Read", parameters: { type: "object" } },
-				},
-			],
-			"none",
-			null,
-			"",
+			{
+				bundle: createToolBundle([
+					{
+						type: "function",
+						function: { name: "Read", parameters: { type: "object" } },
+					},
+				]),
+				choiceInstruction: "",
+				include: false,
+			},
 			1000000,
 		);
 		assert.equal(result.text, "answer without tools");
@@ -1131,18 +1142,9 @@ describe("prompt compatibility", () => {
 		assert.equal(result.metadata.hasToolInstructions, false);
 	});
 	test("keeps OpenAI tool prompt metadata aligned with provided tool defs", async () => {
-		const tools = [
-			{
-				type: "function",
-				function: { name: "Read", parameters: { type: "object" } },
-			},
-		];
 		const result = messagesToPrompt(
 			parseOpenAIMessages([{ role: "user", content: "answer without tools" }]),
-			tools,
-			"auto",
-			[],
-			"",
+			{ bundle: createToolBundle([]), choiceInstruction: "", include: true },
 			1000000,
 		);
 		assert.equal(result.text, "answer without tools");
@@ -1169,9 +1171,6 @@ describe("prompt compatibility", () => {
 				},
 			]),
 			null,
-			"auto",
-			null,
-			"",
 			1000000,
 		);
 		assert.match(result.text, /\[Assistant\]: \[reasoning_content\]\nkept/);

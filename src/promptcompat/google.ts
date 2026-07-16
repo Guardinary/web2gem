@@ -39,7 +39,9 @@ export function parseGoogleRequest(req: unknown): InternalMessage[] {
 
 		const flushContent = () => {
 			if (!pending.length && !toolCalls.length) return;
-			messages.push(makeMessage(role, parseParts(pending), toolCalls.splice(0)));
+			messages.push(
+				makeMessage(role, parseParts(pending), toolCalls.splice(0)),
+			);
 			pending = [];
 		};
 

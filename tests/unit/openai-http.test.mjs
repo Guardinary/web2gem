@@ -1,6 +1,6 @@
 import { beforeEach, describe, test } from "vitest";
 import { base64ToBytes } from "../../src/attachments/base64";
-import { prepareOpenAIImageGenerationCompletion } from "../../src/completion/image-generation";
+import { prepareOpenAIImageGenerationCompletion as prepareOpenAIImageGenerationFromMessages } from "../../src/completion/image-generation";
 import { EMPTY_UPSTREAM_MSG } from "../../src/completion/turn";
 import { handleChat } from "../../src/http/openai/chat";
 import {
@@ -30,7 +30,9 @@ import {
 import { handleResponses } from "../../src/http/openai/responses";
 import { streamResponsesWithToolSieve } from "../../src/http/openai/responses-stream";
 import worker from "../../src/index";
+import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
 import { normalizeResponsesInputAsMessages } from "../../src/promptcompat/responses-input";
+import { createToolBundle } from "../../src/toolcall/tool-bundle";
 import { assert } from "./assertions.js";
 import {
 	attachmentResult,
@@ -44,6 +46,27 @@ import {
 	streamError,
 	withConsoleLog,
 } from "./helpers.js";
+
+function prepareOpenAIImageGenerationCompletion(
+	cfg,
+	provider,
+	req,
+	route,
+	forced,
+) {
+	const messages =
+		route === "responses"
+			? parseOpenAIMessages(normalizeResponsesInputAsMessages(req, true))
+			: parseOpenAIMessages(req.messages);
+	return prepareOpenAIImageGenerationFromMessages(
+		cfg,
+		provider,
+		req,
+		route,
+		forced,
+		messages,
+	);
+}
 
 const TINY_PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -3427,12 +3450,12 @@ describe("openai http", () => {
 				prompt: "read",
 				rm: resolvedModel(),
 				fileRefs: null,
-				tools: [
+				tools: createToolBundle([
 					{
 						type: "function",
 						function: { name: "Read", parameters: { type: "object" } },
 					},
-				],
+				]),
 				toolPolicy: null,
 				includeUsage: true,
 				promptTokens: 2,
@@ -3480,12 +3503,12 @@ describe("openai http", () => {
 				prompt: "read",
 				rm: resolvedModel(),
 				fileRefs: null,
-				tools: [
+				tools: createToolBundle([
 					{
 						type: "function",
 						function: { name: "Read", parameters: { type: "object" } },
 					},
-				],
+				]),
 				toolPolicy: null,
 				includeUsage: false,
 				promptTokens: 2,
@@ -3521,12 +3544,12 @@ describe("openai http", () => {
 				prompt: "read",
 				rm: resolvedModel(),
 				fileRefs: null,
-				tools: [
+				tools: createToolBundle([
 					{
 						type: "function",
 						function: { name: "Read", parameters: { type: "object" } },
 					},
-				],
+				]),
 				toolPolicy: null,
 				includeUsage: false,
 				promptTokens: 2,
@@ -3559,12 +3582,12 @@ describe("openai http", () => {
 						prompt: "answer",
 						rm: resolvedModel(),
 						fileRefs: null,
-						tools: [
+						tools: createToolBundle([
 							{
 								type: "function",
 								function: { name: "Read", parameters: { type: "object" } },
 							},
-						],
+						]),
 						toolPolicy: null,
 						includeUsage: false,
 						promptTokens: 2,
@@ -3671,12 +3694,12 @@ describe("openai http", () => {
 				rm: resolvedModel(),
 				prompt: "read",
 				fileRefs: null,
-				tools: [
+				tools: createToolBundle([
 					{
 						type: "function",
 						function: { name: "Read", parameters: { type: "object" } },
 					},
-				],
+				]),
 				toolPolicy: null,
 				promptTokens: 2,
 				signal: new AbortController().signal,
@@ -3723,12 +3746,12 @@ describe("openai http", () => {
 						rm: resolvedModel(),
 						prompt: "read",
 						fileRefs: null,
-						tools: [
+						tools: createToolBundle([
 							{
 								type: "function",
 								function: { name: "Read", parameters: { type: "object" } },
 							},
-						],
+						]),
 						toolPolicy: null,
 						promptTokens: 2,
 						signal: new AbortController().signal,
@@ -3773,12 +3796,12 @@ describe("openai http", () => {
 						rm: resolvedModel(),
 						prompt: "read",
 						fileRefs: null,
-						tools: [
+						tools: createToolBundle([
 							{
 								type: "function",
 								function: { name: "Read", parameters: { type: "object" } },
 							},
-						],
+						]),
 						toolPolicy: null,
 						promptTokens: 2,
 						signal: new AbortController().signal,

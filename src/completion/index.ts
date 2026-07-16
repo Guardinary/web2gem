@@ -13,11 +13,10 @@ export type {
 export type {
 	CompletionStreamEvent,
 	CompletionStreamLifecycle,
-} from "./runtime";
+} from "./stream-events";
 export {
 	createCompletionStreamLifecycle,
 	recordCompletionStreamEvent,
-	streamBufferedToolTextCompletionEvents,
 	streamPlainCompletionEvents,
 	streamToolSieveCompletionEvents,
-} from "./runtime";
+} from "./stream-events";

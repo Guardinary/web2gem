@@ -1,4 +1,3 @@
-import { collectOpenAIRequestAttachmentPlan } from "../attachments/collect-openai";
 import {
 	normalizeUploadFileInput,
 	parseImageUrl,
@@ -7,7 +6,10 @@ import {
 	uploadMimeFromObject,
 } from "../attachments/input";
 import { firstNonEmptyString } from "../attachments/mime";
-import { createAttachmentPlan, mergeAttachmentPlans } from "../attachments/plan";
+import {
+	createAttachmentPlan,
+	mergeAttachmentPlans,
+} from "../attachments/plan";
 import type { AttachmentFileRef, AttachmentPlan } from "../attachments/types";
 import { parseJsonObject } from "../shared/json";
 import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
@@ -18,6 +20,13 @@ export type TextPart = {
 	kind: "text";
 	text: string;
 	historyText: string | null;
+	/**
+	 * True when the text came from direct input text (string parts and
+	 * text/input_text-typed parts); false for assistant output/summary echoes
+	 * and unknown-typed text fallbacks, which prompt rendering includes but
+	 * user-input extraction (image generation) must skip.
+	 */
+	inputText: boolean;
 };
 
 export type ReasoningPart = {
@@ -82,6 +91,10 @@ type MessageAttachmentInputs = {
 	files: UploadFileInput[];
 };
 
+type RequestAttachmentInputs = MessageAttachmentInputs & {
+	existingFileRefs: AttachmentFileRef[];
+};
+
 /** Message-embedded inline image/file inputs discovered from parsed parts. */
 export function attachmentInputsFromMessages(
 	messages: readonly InternalMessage[],
@@ -91,7 +104,11 @@ export function attachmentInputsFromMessages(
 	for (const message of messages) {
 		for (const part of message.parts) {
 			if (part.kind === "image" && part.hasInline)
-				images.push({ b64: part.b64, mime: part.mime, filename: part.filename });
+				images.push({
+					b64: part.b64,
+					mime: part.mime,
+					filename: part.filename,
+				});
 			else if (part.kind === "file" && part.upload) files.push(part.upload);
 		}
 	}
@@ -107,11 +124,175 @@ export function openAIAttachmentPlanFromRequest(
 	req: unknown,
 	messages: readonly InternalMessage[],
 ): AttachmentPlan {
-	const { images, files } = attachmentInputsFromMessages(messages);
+	const messageInputs = attachmentInputsFromMessages(messages);
+	const requestInputs = requestAttachmentInputs(req, false);
 	return mergeAttachmentPlans(
-		createAttachmentPlan({ images, files }),
-		collectOpenAIRequestAttachmentPlan(req),
+		createAttachmentPlan(requestInputs),
+		createAttachmentPlan({
+			images: messageInputs.images,
+			files: messageInputs.files,
+			existingFileRefs: attachmentRefsFromMessages(messages),
+		}),
+		createAttachmentPlan({
+			existingFileRefs: requestRefsFromChannel(req, "input"),
+		}),
 	);
+}
+
+/** Request-level attachment channels, excluding message/input payloads. */
+export function requestAttachmentPlanFromChannels(
+	req: unknown,
+): AttachmentPlan {
+	return createAttachmentPlan(requestAttachmentInputs(req));
+}
+
+function attachmentRefsFromMessages(
+	messages: readonly InternalMessage[],
+): AttachmentFileRef[] {
+	const refs: AttachmentFileRef[] = [];
+	for (const message of messages) {
+		for (const part of message.parts) {
+			if (part.kind !== "image" && part.kind !== "file") continue;
+			if (part.fileRef) appendUniqueRef(refs, part.fileRef);
+		}
+	}
+	return refs;
+}
+
+function requestAttachmentInputs(
+	req: unknown,
+	includeInputRefs = true,
+): RequestAttachmentInputs {
+	const out: RequestAttachmentInputs = {
+		images: [],
+		files: [],
+		existingFileRefs: [],
+	};
+	if (!isRecord(req)) return out;
+	appendRequestRefs(out.existingFileRefs, req.ref_file_ids);
+	appendRequestRefs(out.existingFileRefs, req.file_ids);
+	for (const key of ["attachments", "files"] as const)
+		appendRequestAttachmentInputs(out, req[key]);
+	if (includeInputRefs) appendRequestRefs(out.existingFileRefs, req.input);
+	return out;
+}
+
+function requestRefsFromChannel(
+	req: unknown,
+	key: string,
+): AttachmentFileRef[] {
+	if (!isRecord(req)) return [];
+	const refs: AttachmentFileRef[] = [];
+	appendRequestRefs(refs, req[key]);
+	return refs;
+}
+
+function appendRequestAttachmentInputs(
+	out: RequestAttachmentInputs,
+	raw: unknown,
+): void {
+	if (raw == null) return;
+	if (Array.isArray(raw)) {
+		for (const item of raw) appendRequestAttachmentInputs(out, item);
+		return;
+	}
+	if (!isRecord(raw)) return;
+	const part = parseMessagePart(raw);
+	if (part?.kind === "image") {
+		if (part.hasInline)
+			out.images.push({
+				b64: part.b64,
+				mime: part.mime,
+				filename: part.filename,
+			});
+		if (part.fileRef) appendUniqueRef(out.existingFileRefs, part.fileRef);
+		return;
+	}
+	if (part?.kind === "file") {
+		if (part.upload) out.files.push(part.upload);
+		if (part.fileRef) appendUniqueRef(out.existingFileRefs, part.fileRef);
+		return;
+	}
+	const upload = normalizeUploadFileInput(raw);
+	if (upload) {
+		out.files.push(upload);
+		return;
+	}
+	const directID = raw.ref ?? raw.fileRef ?? raw.id ?? raw.file_id;
+	if (directID != null) {
+		const name = uploadFilenameFromObject(raw);
+		appendUniqueRef(
+			out.existingFileRefs,
+			name ? { id: String(directID), name } : String(directID),
+		);
+		return;
+	}
+	for (const key of [
+		"attachments",
+		"files",
+		"items",
+		"content",
+		"data",
+		"source",
+		"file",
+		"image_url",
+	] as const) {
+		if (key in raw) appendRequestAttachmentInputs(out, raw[key]);
+	}
+}
+
+function appendRequestRefs(out: AttachmentFileRef[], raw: unknown): void {
+	if (raw == null) return;
+	if (Array.isArray(raw)) {
+		for (const item of raw) appendRequestRefs(out, item);
+		return;
+	}
+	if (typeof raw === "string") {
+		appendUniqueRef(out, raw);
+		return;
+	}
+	if (!isRecord(raw)) return;
+	const part = parseMessagePart(raw);
+	if (part?.kind === "image" || part?.kind === "file") {
+		if (part.fileRef) appendUniqueRef(out, part.fileRef);
+		return;
+	}
+	const id = raw.ref ?? raw.fileRef ?? raw.id ?? raw.file_id;
+	if (id != null) {
+		appendUniqueRef(out, String(id));
+		return;
+	}
+	for (const key of [
+		"attachments",
+		"files",
+		"items",
+		"content",
+		"data",
+		"source",
+		"file",
+	] as const) {
+		if (key in raw) appendRequestRefs(out, raw[key]);
+	}
+}
+
+function appendUniqueRef(
+	out: AttachmentFileRef[],
+	ref: AttachmentFileRef,
+): void {
+	const key =
+		typeof ref === "string" ? ref : ref.id || ref.ref || ref.fileRef || "";
+	if (!key) return;
+	if (
+		out.some((existing) => {
+			const existingKey =
+				typeof existing === "string"
+					? existing
+					: existing.id || existing.ref || existing.fileRef || "";
+			return existingKey === key;
+		})
+	)
+		return;
+	out.push(ref);
 }
 
 /** Google attachment plan: message-embedded inline uploads only. */
@@ -142,13 +323,80 @@ export function messageReasoningText(message: InternalMessage): string {
 	return parts.join("\n").trim();
 }
 
+export type ParsedAssistantContent = {
+	text: string;
+	reasoning: string;
+	toolCalls: InternalToolCall[];
+};
+
+/** Parse assistant content parts once for Responses item normalization. */
+export function parseAssistantContent(
+	item: UnknownRecord,
+): ParsedAssistantContent {
+	const content =
+		item.content ?? (typeof item.text === "string" ? item.text : null);
+	let text = "";
+	let reasoning = flattenText(
+		item.reasoning_content || item.reasoning || item.thinking,
+	);
+	const toolCalls = parseMessageToolCalls(item.tool_calls);
+	const parts = Array.isArray(content)
+		? content
+		: [content].filter((part) => part != null);
+	for (const raw of parts) {
+		if (isRecord(raw)) {
+			const type = String(raw.type || "")
+				.trim()
+				.toLowerCase();
+			if (type === "function_call" || type === "tool_call") {
+				const call = parseContentToolCall(raw, toolCalls.length);
+				if (call) toolCalls.push(call);
+				continue;
+			}
+		}
+		if (typeof raw === "string") {
+			text += raw;
+			continue;
+		}
+		const part = parseMessagePart(raw);
+		if (!part) continue;
+		if (part.kind === "text") text += part.text;
+		else if (part.kind === "reasoning") reasoning += part.text;
+	}
+	return { text, reasoning, toolCalls };
+}
+
+function parseContentToolCall(
+	raw: UnknownRecord,
+	index: number,
+): InternalToolCall | null {
+	const fn = isRecord(raw.function) ? raw.function : {};
+	const name = String(raw.name || fn.name || "").trim();
+	if (!name) return null;
+	const id = String(raw.call_id || raw.id || `call_${index}`);
+	return {
+		id,
+		name,
+		args: parseToolCallArgs(
+			raw.arguments ?? raw.input ?? fn.arguments ?? fn.input,
+		),
+	};
+}
+
+function parseToolCallArgs(value: unknown): UnknownRecord {
+	return isRecord(value) ? value : parseJsonObject(String(value ?? "{}"));
+}
+
 function parseOpenAIMessage(msg: UnknownRecord): InternalMessage {
 	const roleLabel = normalizeMessageRole(msg.role);
 	const role = messageRoleBucket(roleLabel);
 	const message: InternalMessage = {
 		role,
 		roleLabel,
-		parts: parseMessageContent(msg.content),
+		parts: [
+			...parseMessageContent(msg.content != null ? msg.content : msg.text),
+			...parseMessageContent(msg.attachments),
+		],
 		toolCalls:
 			role === "assistant" ? parseMessageToolCalls(msg.tool_calls) : [],
 		toolCallId: "",
@@ -208,7 +456,6 @@ export function rawRecordReasoningText(msg: unknown): string {
 	return parts.join("\n").trim();
 }
 
-
 function messageRoleBucket(roleLabel: string): MessageRole {
 	if (
 		roleLabel === "system" ||
@@ -234,7 +481,7 @@ function parseMessageToolCalls(raw: unknown): InternalToolCall[] {
 		calls.push({
 			id: toolCallID(record),
 			name: fn?.name ? String(fn.name) : "",
-			args: parseJsonObject(String(fn?.arguments || "{}")),
+			args: parseToolCallArgs(fn?.arguments),
 		});
 	}
 	return calls;
@@ -250,10 +497,12 @@ function toolCallID(record: UnknownRecord | null): string {
 function parseMessageContent(content: unknown): MessagePart[] {
 	if (content == null) return [];
 	if (typeof content === "string")
-		return [{ kind: "text", text: content, historyText: content }];
+		return [
+			{ kind: "text", text: content, historyText: content, inputText: true },
+		];
 	if (typeof content === "number" || typeof content === "boolean") {
 		const text = String(content);
-		return [{ kind: "text", text, historyText: text }];
+		return [{ kind: "text", text, historyText: text, inputText: true }];
 	}
 	if (Array.isArray(content)) {
 		const parts: MessagePart[] = [];
@@ -276,7 +525,7 @@ export function parseMessagePart(
 	mode: PartParseMode = "item",
 ): MessagePart | null {
 	if (typeof raw === "string")
-		return { kind: "text", text: raw, historyText: null };
+		return { kind: "text", text: raw, historyText: null, inputText: true };
 	if (!isRecord(raw)) return null;
 	const historyText =
 		mode === "content" ? stringifyContent(raw) : historyTextForRecord(raw);
@@ -289,7 +538,12 @@ export function parseMessagePart(
 		if (type === "input_file" || type === "file")
 			return filePart(raw, historyText);
 		const text = flattenText(raw);
-		return { kind: "text", text: text || stringifyContent(raw), historyText };
+		return {
+			kind: "text",
+			text: text || stringifyContent(raw),
+			historyText,
+			inputText: true,
+		};
 	}
 	if (
 		type === "text" ||
@@ -297,7 +551,12 @@ export function parseMessagePart(
 		type === "output_text" ||
 		type === "summary_text"
 	)
-		return { kind: "text", text: flattenText(raw.text), historyText };
+		return {
+			kind: "text",
+			text: flattenText(raw.text),
+			historyText,
+			inputText: type === "text" || type === "input_text",
+		};
 	if (type === "reasoning" || type === "thinking") {
 		const rawTypeLower = String(raw.type || "").toLowerCase();
 		return {
@@ -326,12 +585,9 @@ export function parseMessagePart(
 				},
 				historyText,
 			);
-		if (raw.image_url)
-			return imagePart(
-				raw,
-				parsedImagePayload(raw, raw.image_url),
-				historyText,
-			);
+		const urlValue = raw.image_url != null ? raw.image_url : raw.url;
+		if (urlValue != null)
+			return imagePart(raw, parsedImagePayload(raw, urlValue), historyText);
 		return imagePart(raw, null, historyText);
 	}
 	if (type === "input_file" || type === "file")
@@ -341,8 +597,10 @@ export function parseMessagePart(
 			kind: "text",
 			text: flattenText(raw.text ?? raw.content ?? raw.output),
 			historyText,
+			inputText: false,
 		};
-	if (historyText !== null) return { kind: "text", text: "", historyText };
+	if (historyText !== null)
+		return { kind: "text", text: "", historyText, inputText: false };
 	return null;
 }
 
@@ -426,19 +684,20 @@ function imagePart(
 		mime: payload ? payload.mime : uploadMimeFromObject(raw),
 		filename: uploadFilenameFromObject(raw),
 		remoteUrl: remoteUrlFromRecord(raw),
-		fileRef: existingFileRefFromRecord(raw),
+		fileRef: payload ? null : existingFileRefFromRecord(raw, false),
 		hasInline: !!payload,
 		historyText,
 	};
 }
 
 function filePart(raw: UnknownRecord, historyText: string | null): FilePart {
+	const upload = normalizeUploadFileInput(raw);
 	return {
 		kind: "file",
-		upload: normalizeUploadFileInput(raw),
+		upload,
 		filename: uploadFilenameFromObject(raw),
 		remoteUrl: remoteUrlFromRecord(raw),
-		fileRef: existingFileRefFromRecord(raw),
+		fileRef: upload?.b64 != null ? null : existingFileRefFromRecord(raw, true),
 		label: fileLabel(raw),
 		historyText,
 	};
@@ -475,6 +734,7 @@ function remoteUrlFromRecord(raw: UnknownRecord): string {
 	if (isRemoteUrl(sourceUrl)) return sourceUrl;
 	const imageUrl = isRecord(raw.image_url) ? raw.image_url : null;
 	if (imageUrl && isRemoteUrl(imageUrl.url)) return String(imageUrl.url);
+	if (isRemoteUrl(raw.image_url)) return String(raw.image_url);
 	const file = isRecord(raw.file) ? raw.file : null;
 	const fileUrl = file
 		? firstNonEmptyString(file.url, file.file_url, file.fileUrl)
@@ -493,9 +753,15 @@ function isRemoteUrl(value: unknown): boolean {
 
 function existingFileRefFromRecord(
 	raw: UnknownRecord,
+	includeDirectID: boolean,
 ): AttachmentFileRef | null {
 	const id =
-		raw.file_id ?? raw.fileId ?? raw.file_ref ?? raw.fileRef ?? raw.ref;
+		raw.file_id ??
+		raw.fileId ??
+		raw.file_ref ??
+		raw.fileRef ??
+		raw.ref ??
+		(includeDirectID ? raw.id : null);
 	if (id == null) {
 		const file = isRecord(raw.file) ? raw.file : null;
 		const nested = file

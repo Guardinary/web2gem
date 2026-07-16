@@ -5,14 +5,16 @@ import {
 	type InternalMessage,
 	isTextPartType,
 	normalizeMessageRole,
+	parseAssistantContent,
 	parseOpenAIMessages,
 	rawRecordReasoningText,
 } from "./message-model";
 
 export function normalizeResponsesInputAsMessages(
 	req: unknown,
+	preservePartTypes = false,
 ): UnknownRecord[] {
-	const messages = responsesMessagesFromRequest(req || {});
+	const messages = responsesMessagesFromRequest(req || {}, preservePartTypes);
 	return messages || [];
 }
 
@@ -33,7 +35,7 @@ export function normalizeResponsesInputAsMessagesStrict(
 	| { messages: UnknownRecord[]; error?: undefined }
 	| { messages?: undefined; error: string } {
 	if (!isRecord(req)) return { error: "request body must be a JSON object" };
-	const validation = validateResponsesInputValue(req.input);
+	const validation = strictResponsesInputError(req.input);
 	if (validation) return { error: validation };
 	const messages = responsesMessagesFromRequest(req);
 	return { messages: messages || [] };
@@ -41,13 +43,17 @@ export function normalizeResponsesInputAsMessagesStrict(
 
 export function responsesMessagesFromRequest(
 	req: unknown,
+	preservePartTypes = false,
 ): UnknownRecord[] | null {
 	if (!isRecord(req)) return null;
 	let messages: UnknownRecord[] | null = null;
 	if (Array.isArray(req.messages) && req.messages.length) {
 		messages = req.messages;
 	} else if (req.input != null) {
-		messages = normalizeResponsesInputValueAsMessages(req.input);
+		messages = normalizeResponsesInputValueAsMessages(
+			req.input,
+			preservePartTypes,
+		);
 	}
 	if (!messages?.length) return null;
 	return prependInstructionMessage(messages, req.instructions);
@@ -64,14 +70,16 @@ export function prependInstructionMessage(
 
 export function normalizeResponsesInputValueAsMessages(
 	input: unknown,
+	preservePartTypes = false,
 ): UnknownRecord[] | null {
 	if (input == null) return null;
 	if (typeof input === "string") {
 		return input.trim() ? [{ role: "user", content: input }] : null;
 	}
-	if (Array.isArray(input)) return normalizeResponsesInputArray(input);
+	if (Array.isArray(input))
+		return normalizeResponsesInputArray(input, preservePartTypes);
 	if (isRecord(input)) {
-		const msg = normalizeResponsesInputItem(input, null);
+		const msg = normalizeResponsesInputItem(input, null, preservePartTypes);
 		if (msg) return [msg];
 	}
 	return null;
@@ -79,6 +87,7 @@ export function normalizeResponsesInputValueAsMessages(
 
 export function normalizeResponsesInputArray(
 	items: readonly unknown[],
+	preservePartTypes = false,
 ): UnknownRecord[] | null {
 	const out: UnknownRecord[] = [];
 	const callNameByID: Record<string, string> = {};
@@ -112,7 +121,11 @@ export function normalizeResponsesInputArray(
 			continue;
 		}
 
-		const msg = normalizeResponsesInputItem(item, callNameByID);
+		const msg = normalizeResponsesInputItem(
+			item,
+			callNameByID,
+			preservePartTypes,
+		);
 		if (msg) {
 			const reasoning = assistantReasoningOnlyContent(msg);
 			if (reasoning) {
@@ -150,19 +163,57 @@ export function normalizeResponsesInputArray(
 export function normalizeResponsesInputItem(
 	item: unknown,
 	callNameByID: Record<string, string> | null,
+	preservePartTypes = false,
 ): UnknownRecord | null {
-	if (!isRecord(item)) return null;
+	return parseResponsesInputItem(item, callNameByID, preservePartTypes).message;
+}
+
+type ResponsesInputItemParseResult = {
+	message: UnknownRecord | null;
+	error: string;
+};
+
+function parsedItem(message: UnknownRecord): ResponsesInputItemParseResult {
+	return { message, error: "" };
+}
+
+function invalidItem(error: string): ResponsesInputItemParseResult {
+	return { message: null, error };
+}
+
+function parseResponsesInputItem(
+	item: unknown,
+	callNameByID: Record<string, string> | null,
+	preservePartTypes = false,
+): ResponsesInputItemParseResult {
+	if (!isRecord(item))
+		return invalidItem("must be a supported object or string");
 	const itemType = String(item.type || "")
 		.trim()
 		.toLowerCase();
 	const role = normalizeMessageRole(item.role);
 	if (item.role != null && role) {
-		if (role === "assistant") return normalizeResponsesAssistantMessage(item);
-		let content = item.content;
-		if (content == null && typeof item.text === "string" && item.text.trim())
+		if (role === "assistant") {
+			const message = normalizeResponsesAssistantMessage(item);
+			return message
+				? parsedItem(message)
+				: invalidItem("assistant message requires content or tool calls");
+		}
+		let content = item.content ?? (role === "tool" ? item.output : null);
+		if (
+			content == null &&
+			((typeof item.text === "string" && item.text.trim()) ||
+				typeof item.text === "number" ||
+				typeof item.text === "boolean")
+		)
 			content = item.text;
 		if (content == null && isFileInputType(itemType)) content = [item];
-		if (content == null) return null;
+		if (content == null)
+			return invalidItem(
+				role === "tool"
+					? "tool message requires content"
+					: "message requires content",
+			);
 		const out: UnknownRecord = {
 			role: role === "function" ? "tool" : role,
 			content,
@@ -172,19 +223,28 @@ export function normalizeResponsesInputItem(
 				out.tool_call_id = item.tool_call_id || item.call_id;
 			if (item.name) out.name = item.name;
 		}
-		return out;
+		return parsedItem(out);
 	}
 
 	const type = itemType;
 	if (type === "message" || type === "input_message") {
 		const msgRole = normalizeMessageRole(item.role || "user");
-		if (msgRole === "assistant")
-			return normalizeResponsesAssistantMessage(item);
+		if (msgRole === "assistant") {
+			const message = normalizeResponsesAssistantMessage(item);
+			return message
+				? parsedItem(message)
+				: invalidItem("assistant message requires content or tool calls");
+		}
 		let content = item.content;
-		if (content == null && typeof item.text === "string" && item.text.trim())
+		if (
+			content == null &&
+			((typeof item.text === "string" && item.text.trim()) ||
+				typeof item.text === "number" ||
+				typeof item.text === "boolean")
+		)
 			content = item.text;
-		if (content == null) return null;
-		return { role: msgRole || "user", content };
+		if (content == null) return invalidItem("message requires content");
+		return parsedItem({ role: msgRole || "user", content });
 	}
 
 	if (type === "function_call_output" || type === "tool_result") {
@@ -199,17 +259,19 @@ export function normalizeResponsesInputItem(
 				"",
 			content: item.output ?? item.content ?? "",
 		};
-		return out;
+		return item.output != null || item.content != null
+			? parsedItem(out)
+			: invalidItem("tool result requires output");
 	}
 
 	if (type === "function_call" || type === "tool_call") {
 		const fn = isRecord(item.function) ? item.function : {};
 		const name = String(item.name || fn.name || "").trim();
-		if (!name) return null;
+		if (!name) return invalidItem("function call requires name");
 		const argsRaw = item.arguments ?? item.input ?? fn.arguments ?? fn.input;
 		const callID = item.call_id || item.id || `call_${randHex(6)}`;
 		if (callID && callNameByID) callNameByID[String(callID)] = name;
-		return {
+		return parsedItem({
 			role: "assistant",
 			content: null,
 			tool_calls: [
@@ -219,20 +281,18 @@ export function normalizeResponsesInputItem(
 					function: { name, arguments: stringifyToolCallArguments(argsRaw) },
 				},
 			],
-		};
+		});
 	}
 
 	if (type === "reasoning" || type === "thinking") {
-		const text = flattenText(
-			item.summary ?? item.content ?? item.text,
-		);
+		const text = flattenText(item.summary ?? item.content ?? item.text);
 		return text
-			? { role: "assistant", content: "", reasoning_content: text }
-			: null;
+			? parsedItem({ role: "assistant", content: "", reasoning_content: text })
+			: invalidItem("reasoning item requires text");
 	}
 
 	if (isFileInputType(type)) {
-		return { role: "user", content: [item] };
+		return parsedItem({ role: "user", content: [item] });
 	}
 
 	if (
@@ -240,9 +300,13 @@ export function normalizeResponsesInputItem(
 		typeof item.text === "string" &&
 		item.text.trim()
 	) {
-		return { role: "user", content: item.text };
+		return parsedItem({
+			role: "user",
+			content: preservePartTypes ? [item] : item.text,
+		});
 	}
-	return null;
+	if (isTextPartType(type)) return invalidItem("text item requires text");
+	return invalidItem(`has unsupported type${type ? `: ${type}` : ""}`);
 }
 
 export function normalizeResponsesAssistantMessage(
@@ -250,50 +314,17 @@ export function normalizeResponsesAssistantMessage(
 ): UnknownRecord | null {
 	if (!isRecord(item)) return null;
 	const out: UnknownRecord = { role: "assistant" };
-	const content =
-		item.content ?? (typeof item.text === "string" ? item.text : null);
-	const parts = Array.isArray(content)
-		? content
-		: [content].filter((part) => part != null);
-	let text = "";
-	let reasoning = flattenText(
-		item.reasoning_content || item.reasoning || item.thinking,
-	);
-	const toolCalls: unknown[] = Array.isArray(item.tool_calls)
-		? [...item.tool_calls]
-		: [];
-
-	for (const part of parts) {
-		if (typeof part === "string") {
-			text += part;
-			continue;
-		}
-		if (!isRecord(part)) continue;
-		const typ = String(part.type || "")
-			.trim()
-			.toLowerCase();
-		if (typ === "output_text" || typ === "text" || typ === "input_text")
-			text += part.text || "";
-		else if (typ === "reasoning" || typ === "thinking")
-			reasoning += flattenText(
-				part.summary ?? part.text ?? part.content,
-			);
-		else if (typ === "function_call" || typ === "tool_call") {
-			const fn = isRecord(part.function) ? part.function : {};
-			const name = part.name || fn.name || "";
-			if (name)
-				toolCalls.push({
-					id: part.call_id || part.id || `call_${toolCalls.length}`,
-					type: "function",
-					function: {
-						name,
-						arguments: stringifyToolCallArguments(
-							part.arguments ?? part.input ?? fn.arguments,
-						),
-					},
-				});
-		}
-	}
+	const parsed = parseAssistantContent(item);
+	const text = parsed.text;
+	const reasoning = parsed.reasoning;
+	const toolCalls = parsed.toolCalls.map((call) => ({
+		id: call.id,
+		type: "function",
+		function: {
+			name: call.name,
+			arguments: JSON.stringify(call.args),
+		},
+	}));
 	if (text) out.content = text;
 	else if (item.content === null || toolCalls.length) out.content = null;
 	if (reasoning) out.reasoning_content = reasoning;
@@ -363,97 +394,26 @@ export function stringifyToolCallArguments(value: unknown): string {
 	}
 }
 
-function validateResponsesInputValue(input: unknown): string {
+function strictResponsesInputError(input: unknown): string {
 	if (input == null || typeof input === "string") return "";
 	if (Array.isArray(input)) {
+		const callNameByID: Record<string, string> = {};
 		for (let i = 0; i < input.length; i++) {
-			const error = validateResponsesInputArrayItem(input[i], i);
-			if (error) return error;
+			const item = input[i];
+			if (typeof item === "string") {
+				if (!item.trim()) return `Responses input item ${i} is empty`;
+				continue;
+			}
+			if (!isRecord(item))
+				return `Responses input item ${i} must be a supported object or string`;
+			const error = parseResponsesInputItem(item, callNameByID).error;
+			if (error) return `Responses input item ${i} ${error}`;
 		}
 		return "";
 	}
-	if (isRecord(input)) return validateResponsesInputRecord(input, "input");
+	if (isRecord(input)) {
+		const error = parseResponsesInputItem(input, null).error;
+		return error ? `input ${error}` : "";
+	}
 	return "Responses input must be a string, object, or array of supported items";
-}
-
-function validateResponsesInputArrayItem(item: unknown, index: number): string {
-	if (typeof item === "string")
-		return item.trim() ? "" : `Responses input item ${index} is empty`;
-	if (!isRecord(item))
-		return `Responses input item ${index} must be a supported object or string`;
-	return validateResponsesInputRecord(item, `Responses input item ${index}`);
-}
-
-function validateResponsesInputRecord(
-	item: UnknownRecord,
-	label: string,
-): string {
-	const type = String(item.type || "")
-		.trim()
-		.toLowerCase();
-	const role = normalizeMessageRole(item.role);
-	if (item.role != null && !role) return `${label} has unsupported role`;
-	if (item.role != null && role) {
-		if (role === "assistant")
-			return validateResponsesAssistantRecord(item, label);
-		if (role === "tool" || role === "function")
-			return item.content != null || item.output != null
-				? ""
-				: `${label} tool message requires content`;
-		if (
-			item.content != null ||
-			typeof item.text === "string" ||
-			isFileInputType(type)
-		)
-			return "";
-		return `${label} message requires content`;
-	}
-	switch (type) {
-		case "message":
-		case "input_message":
-			return item.content != null || typeof item.text === "string"
-				? ""
-				: `${label} message requires content`;
-		case "function_call_output":
-		case "tool_result":
-			return item.output != null || item.content != null
-				? ""
-				: `${label} tool result requires output`;
-		case "function_call":
-		case "tool_call": {
-			const fn = isRecord(item.function) ? item.function : {};
-			const name = String(item.name || fn.name || "").trim();
-			return name ? "" : `${label} function call requires name`;
-		}
-		case "reasoning":
-		case "thinking":
-			return flattenText(item.summary ?? item.content ?? item.text).trim()
-				? ""
-				: `${label} reasoning item requires text`;
-		case "input_file":
-		case "file":
-			return "";
-		default:
-			if (isTextPartType(type))
-				return typeof item.text === "string" && item.text.trim()
-					? ""
-					: `${label} text item requires text`;
-			return `${label} has unsupported type${type ? `: ${type}` : ""}`;
-	}
-}
-
-function validateResponsesAssistantRecord(
-	item: UnknownRecord,
-	label: string,
-): string {
-	if (
-		item.content != null ||
-		item.reasoning_content != null ||
-		item.reasoning != null ||
-		item.thinking != null
-	)
-		return "";
-	return Array.isArray(item.tool_calls) && item.tool_calls.length
-		? ""
-		: `${label} assistant message requires content or tool calls`;
 }

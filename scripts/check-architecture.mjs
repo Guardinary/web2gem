@@ -81,18 +81,14 @@ const rules = [
 			"../../promptcompat/",
 		],
 		allowed: [
-			"../promptcompat/google",
 			"../promptcompat/history",
 			"../promptcompat/message-model",
 			"../promptcompat/messages",
 			"../promptcompat/prompt-build",
-			"../promptcompat/responses-input",
-			"../../promptcompat/google",
 			"../../promptcompat/history",
 			"../../promptcompat/message-model",
 			"../../promptcompat/messages",
 			"../../promptcompat/prompt-build",
-			"../../promptcompat/responses-input",
 		],
 	},
 	{
