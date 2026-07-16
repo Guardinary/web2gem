@@ -1,13 +1,10 @@
-import { parseJsonObject } from "../shared/json";
-import { isRecord } from "../shared/types";
-import {
-	contentTextForHistory,
-	normalizeHistoryRole,
-	reasoningTextForHistory,
-	roleLabelForHistory,
-} from "../toolcall/content";
 import { formatPromptToolCallBlock } from "../toolcall/prompt-format";
 import { googleContentsToOpenAIMessages } from "./google";
+import {
+	historyContentText,
+	messageReasoningText,
+	parseOpenAIMessages,
+} from "./message-model";
 
 type HistoryTranscriptEntry = {
 	role: string;
@@ -20,49 +17,42 @@ export function buildOpenAIHistoryTranscript(
 ): string {
 	const entries: HistoryTranscriptEntry[] = [];
 	if (!Array.isArray(messages)) return "";
-	for (const msg of messages) {
-		if (!isRecord(msg)) continue;
-		const role = normalizeHistoryRole(msg.role);
+	for (const msg of parseOpenAIMessages(messages)) {
 		let content = "";
-		if (role === "assistant") {
-			const reasoning = reasoningTextForHistory(msg);
+		if (msg.role === "assistant") {
+			const reasoning = messageReasoningText(msg);
 			content = [
 				reasoning
 					? `[reasoning_content]\n${reasoning}\n[/reasoning_content]`
 					: "",
-				contentTextForHistory(msg.content),
+				historyContentText(msg),
 			]
 				.filter(Boolean)
 				.join("\n\n");
-			if (Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
-				const blocks = msg.tool_calls.map((tc) => {
-					const record = isRecord(tc) ? tc : null;
-					const fn = record && isRecord(record.function) ? record.function : {};
-					return formatPromptToolCallBlock(
-						fn.name,
-						parseJsonObject(String(fn.arguments || "{}")),
-					);
-				});
+			if (msg.toolCalls.length) {
+				const blocks = msg.toolCalls.map((tc) =>
+					formatPromptToolCallBlock(tc.name, tc.args),
+				);
 				content = [content, ...blocks].filter(Boolean).join("\n");
 			}
-		} else if (role === "tool") {
+		} else if (msg.role === "tool") {
 			const meta: string[] = [];
-			if (msg.name) meta.push(`name=${msg.name}`);
-			if (msg.tool_call_id) meta.push(`tool_call_id=${msg.tool_call_id}`);
-			const toolContent = contentTextForHistory(msg.content).trim() || "null";
+			if (msg.toolName) meta.push(`name=${msg.toolName}`);
+			if (msg.toolCallId) meta.push(`tool_call_id=${msg.toolCallId}`);
+			const toolContent = historyContentText(msg).trim() || "null";
 			content = [meta.length ? `[${meta.join(" ")}]` : "", toolContent]
 				.filter(Boolean)
 				.join("\n");
 		} else {
-			content = contentTextForHistory(msg.content);
+			content = historyContentText(msg);
 		}
 		content = String(content || "").trim();
-		if (content) entries.push({ role, content });
+		if (content) entries.push({ role: msg.roleLabel, content });
 	}
 	if (!entries.length) return "";
 	const sections = entries.map(
 		(entry, idx) =>
-			`=== ${idx + 1}. ${roleLabelForHistory(entry.role)} ===\n${entry.content}`,
+			`=== ${idx + 1}. ${entry.role.toUpperCase()} ===\n${entry.content}`,
 	);
 	return `# ${filename || "message.txt"}\nPrior conversation history and tool progress.\n\n${sections.join("\n\n")}\n`;
 }
@@ -79,11 +69,11 @@ export function buildGoogleHistoryTranscript(
 
 export function latestOpenAIUserInputText(messages: unknown): string {
 	if (!Array.isArray(messages)) return "";
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const msg = messages[i];
-		if (!isRecord(msg)) continue;
-		if (normalizeHistoryRole(msg.role) !== "user") continue;
-		const text = contentTextForHistory(msg.content).trim();
+	const parsed = parseOpenAIMessages(messages);
+	for (let i = parsed.length - 1; i >= 0; i--) {
+		const msg = parsed[i];
+		if (msg?.roleLabel !== "user") continue;
+		const text = historyContentText(msg).trim();
 		if (text) return text;
 	}
 	return "";
