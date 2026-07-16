@@ -1,3 +1,4 @@
+import { collectOpenAIRequestAttachmentPlan } from "../attachments/collect-openai";
 import {
 	normalizeUploadFileInput,
 	parseImageUrl,
@@ -6,7 +7,8 @@ import {
 	uploadMimeFromObject,
 } from "../attachments/input";
 import { firstNonEmptyString } from "../attachments/mime";
-import type { AttachmentFileRef } from "../attachments/types";
+import { createAttachmentPlan, mergeAttachmentPlans } from "../attachments/plan";
+import type { AttachmentFileRef, AttachmentPlan } from "../attachments/types";
 import { parseJsonObject } from "../shared/json";
 import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
 
@@ -74,6 +76,52 @@ export function parseOpenAIMessages(messages: unknown): InternalMessage[] {
 	return out;
 }
 
+type MessageImageInput = { b64: string; mime: string; filename: string };
+type MessageAttachmentInputs = {
+	images: MessageImageInput[];
+	files: UploadFileInput[];
+};
+
+/** Message-embedded inline image/file inputs discovered from parsed parts. */
+export function attachmentInputsFromMessages(
+	messages: readonly InternalMessage[],
+): MessageAttachmentInputs {
+	const images: MessageImageInput[] = [];
+	const files: UploadFileInput[] = [];
+	for (const message of messages) {
+		for (const part of message.parts) {
+			if (part.kind === "image" && part.hasInline)
+				images.push({ b64: part.b64, mime: part.mime, filename: part.filename });
+			else if (part.kind === "file" && part.upload) files.push(part.upload);
+		}
+	}
+	return { images, files };
+}
+
+/**
+ * OpenAI attachment plan: message-embedded inline uploads plus request-level
+ * channels (attachments/files/ref_file_ids/file_ids) walked by the attachments
+ * collector.
+ */
+export function openAIAttachmentPlanFromRequest(
+	req: unknown,
+	messages: readonly InternalMessage[],
+): AttachmentPlan {
+	const { images, files } = attachmentInputsFromMessages(messages);
+	return mergeAttachmentPlans(
+		createAttachmentPlan({ images, files }),
+		collectOpenAIRequestAttachmentPlan(req),
+	);
+}
+
+/** Google attachment plan: message-embedded inline uploads only. */
+export function attachmentPlanFromMessages(
+	messages: readonly InternalMessage[],
+): AttachmentPlan {
+	const { images, files } = attachmentInputsFromMessages(messages);
+	return createAttachmentPlan({ images, files });
+}
+
 /** Prompt-visible content text of a message rendered for history/latest-input. */
 export function historyContentText(message: InternalMessage): string {
 	const parts: string[] = [];
@@ -114,7 +162,11 @@ function parseOpenAIMessage(msg: UnknownRecord): InternalMessage {
 	return message;
 }
 
-function normalizeMessageRole(role: unknown): string {
+/**
+ * Role normalization for message/history records: `function` -> `tool`,
+ * `developer` -> `system`, default `user`.
+ */
+export function normalizeMessageRole(role: unknown): string {
 	const r = String(role || "")
 		.trim()
 		.toLowerCase();
@@ -122,6 +174,40 @@ function normalizeMessageRole(role: unknown): string {
 	if (r === "developer") return "system";
 	return r || "user";
 }
+
+/** Whether an item/part type flattens to text (text|input_text|output_text|summary_text). */
+export function isTextPartType(type: unknown): boolean {
+	const t = String(type || "")
+		.trim()
+		.toLowerCase();
+	return (
+		t === "text" ||
+		t === "input_text" ||
+		t === "output_text" ||
+		t === "summary_text"
+	);
+}
+
+/** Reasoning text of a raw OpenAI-shaped message record (direct field or content parts). */
+export function rawRecordReasoningText(msg: unknown): string {
+	if (!isRecord(msg)) return "";
+	const direct = msg.reasoning_content || msg.reasoning || msg.thinking;
+	if (typeof direct === "string" && direct.trim()) return direct.trim();
+	const content = msg.content;
+	if (!Array.isArray(content)) return "";
+	const parts: string[] = [];
+	for (const c of content) {
+		if (!isRecord(c)) continue;
+		const typ = String(c.type || "").toLowerCase();
+		if (
+			(typ === "reasoning" || typ === "thinking") &&
+			typeof c.text === "string"
+		)
+			parts.push(c.text);
+	}
+	return parts.join("\n").trim();
+}
+
 
 function messageRoleBucket(roleLabel: string): MessageRole {
 	if (
@@ -185,9 +271,9 @@ function parseMessageContent(content: unknown): MessagePart[] {
 type PartParseMode = "item" | "content";
 
 /** The single raw content-part walker. */
-function parseMessagePart(
+export function parseMessagePart(
 	raw: unknown,
-	mode: PartParseMode,
+	mode: PartParseMode = "item",
 ): MessagePart | null {
 	if (typeof raw === "string")
 		return { kind: "text", text: raw, historyText: null };
@@ -280,7 +366,7 @@ function stringifyContent(content: unknown): string {
 }
 
 /** Recursive text flattening; replicates responsesContentToText. */
-function flattenText(content: unknown): string {
+export function flattenText(content: unknown): string {
 	if (content == null) return "";
 	if (typeof content === "string") return content;
 	if (typeof content === "number" || typeof content === "boolean")

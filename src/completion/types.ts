@@ -20,8 +20,8 @@ export type PromptWithTokens = {
 };
 
 export type PromptMetadata = {
-	hasToolPrompt?: boolean;
-	hasToolInstructions?: boolean;
+	hasToolPrompt: boolean;
+	hasToolInstructions: boolean;
 };
 
 export type AttachmentResolutionResult = AttachmentUploadResult;
@@ -48,7 +48,7 @@ export type PreparedGeminiContext = {
 	promptTokens: number;
 	fileRefs: FileRef[] | null;
 	contextFiles: ContextFileResult | null;
-	promptMetadata?: PromptMetadata;
+	promptMetadata: PromptMetadata;
 };
 
 export type GeminiContextPrepareResult =

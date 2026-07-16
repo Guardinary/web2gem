@@ -1,5 +1,6 @@
 import type { RuntimeConfig } from "../config";
 import type { ResolvedModel } from "../models";
+import type { InternalMessage } from "../promptcompat/message-model";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
@@ -54,7 +55,7 @@ export async function prepareOpenAICompletion(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
 	req: LooseRequest,
-	messages: unknown,
+	messages: readonly InternalMessage[],
 	toolsRaw: unknown,
 	options: PrepareOpenAICompletionOptions,
 ): Promise<PreparedOpenAICompletion | { error: OpenAICompletionPrepareError }> {

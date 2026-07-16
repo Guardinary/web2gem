@@ -6,10 +6,6 @@ import {
 import { buildToolChoiceInstructionFromPolicy } from "../toolcall/policy-openai";
 import type { ToolBundle } from "../toolcall/tool-bundle";
 import {
-	googleContentsToPrompt,
-	googleToolChoiceInstruction,
-} from "../promptcompat/google";
-import {
 	appendStructuredOutputInstructionToPrepared,
 	appendTextToPreparedWithTokens,
 	structuredInstruction,
@@ -17,17 +13,15 @@ import {
 	withGeminiNativeHiddenToolsPromptWithTokens,
 } from "../promptcompat/prompt-build";
 import {
-	buildGoogleHistoryTranscript,
 	buildOpenAIHistoryTranscript,
-	latestGoogleUserInputText,
 	latestOpenAIUserInputText,
 } from "../promptcompat/history";
-import { collectOpenAIRequestAttachmentPlan } from "../attachments/collect-openai";
-import { droppedAttachmentNote } from "../attachments/notes";
+import type { InternalMessage } from "../promptcompat/message-model";
 import {
-	createAttachmentPlan,
-	mergeAttachmentPlans,
-} from "../attachments/plan";
+	attachmentPlanFromMessages,
+	openAIAttachmentPlanFromRequest,
+} from "../promptcompat/message-model";
+import { droppedAttachmentNote } from "../attachments/notes";
 import { messagesToPrompt } from "../promptcompat/messages";
 import type { RuntimeConfig } from "../config";
 import { logStage } from "../shared/logging";
@@ -64,26 +58,11 @@ import {
 } from "../shared/tokens";
 import type { AttachmentPlan } from "../attachments/types";
 
-export { currentInputFilePrompt } from "../toolcall/content";
-export {
-	buildToolsContextTranscript,
-	contextFilePromptByteCheck,
-	contextFileThreshold,
-	contextFileUploadFailure,
-	latestInputInlineLimit,
-	latestInputPromptForContextFile,
-	oversizedInlineContextFailure,
-	prepareContextFiles,
-	prepareContextFilesWithUploader,
-	shouldConsiderContextFiles,
-	shouldUseContextFiles,
-} from "./context-files";
-
 export async function prepareOpenAIGeminiContext(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
 	req: LooseRequest,
-	messages: unknown,
+	messages: readonly InternalMessage[],
 	tools: unknown,
 	promptToolChoice: unknown,
 	toolPolicy: ToolChoicePolicy | null | undefined,
@@ -100,11 +79,8 @@ export async function prepareOpenAIGeminiContext(
 		toolChoiceInstruction,
 		contextFileThreshold(cfg),
 	);
-	const [prompt0, images] = promptResult as [string, unknown];
-	const attachmentPlan = mergeAttachmentPlans(
-		createAttachmentPlan({ images, files: promptResult.files }),
-		collectOpenAIRequestAttachmentPlan(req),
-	);
+	const prompt0 = promptResult.text;
+	const attachmentPlan = openAIAttachmentPlanFromRequest(req, messages);
 	return preparePromptWithAttachments({
 		cfg,
 		provider,
@@ -114,21 +90,19 @@ export async function prepareOpenAIGeminiContext(
 			cfg,
 			promptResult.byteCheck,
 		),
-		hiddenPromptInsertOffset: promptResult.hiddenPromptInsertOffset,
+		hiddenPromptInsertOffset: promptResult.hiddenPromptInsertOffset ?? undefined,
 		attachmentPlan,
 		toolDefs,
 		toolPromptSource: tools,
 		toolChoiceInstruction,
-		basePromptMetadata: promptResultMetadata(promptResult),
+		basePromptMetadata: promptResult.metadata,
 		buildHistoryText: () =>
 			buildOpenAIHistoryTranscript(
 				messages,
 				cfg.current_input_file_name || "message.txt",
 			),
 		getLatestInputText: () =>
-			promptResult.latestInputText != null
-				? promptResult.latestInputText
-				: latestOpenAIUserInputText(messages),
+			promptResult.latestInputText || latestOpenAIUserInputText(messages),
 		structured,
 		buildFileRefGroups: (
 			contextFileRefs,
@@ -142,27 +116,23 @@ export async function prepareOpenAIGeminiContext(
 export async function prepareGoogleGeminiContext(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
-	effectiveReq: LooseRequest,
+	messages: readonly InternalMessage[],
 	hasTools: boolean,
 	toolBundle?: ToolBundle | null,
 	toolChoiceInstructionOverride?: string,
 ): Promise<GeminiContextPrepareResult> {
-	const toolDefs = (
-		hasTools ? googleToolDefs(toolBundle || effectiveReq) : []
-	) as ToolDef[];
-	const toolChoiceInstruction =
-		toolChoiceInstructionOverride ?? googleToolChoiceInstruction(effectiveReq);
-	const promptResult = googleContentsToPrompt(
-		effectiveReq,
+	const toolDefs = (hasTools ? googleToolDefs(toolBundle) : []) as ToolDef[];
+	const toolChoiceInstruction = toolChoiceInstructionOverride ?? "";
+	const promptResult = messagesToPrompt(
+		messages,
+		hasTools ? toolBundle : null,
+		hasTools ? "auto" : "none",
 		toolDefs,
+		toolChoiceInstruction,
 		contextFileThreshold(cfg),
-		toolBundle || effectiveReq,
 	);
-	const [prompt0, images] = promptResult as [string, unknown];
-	const attachmentPlan = createAttachmentPlan({
-		images,
-		files: promptResult.files,
-	});
+	const prompt0 = promptResult.text;
+	const attachmentPlan = attachmentPlanFromMessages(messages);
 	return preparePromptWithAttachments({
 		cfg,
 		provider,
@@ -172,21 +142,19 @@ export async function prepareGoogleGeminiContext(
 			cfg,
 			promptResult.byteCheck,
 		),
-		hiddenPromptInsertOffset: promptResult.hiddenPromptInsertOffset,
+		hiddenPromptInsertOffset: promptResult.hiddenPromptInsertOffset ?? undefined,
 		attachmentPlan,
 		toolDefs,
-		toolPromptSource: toolBundle || effectiveReq,
+		toolPromptSource: toolBundle,
 		toolChoiceInstruction,
-		basePromptMetadata: promptResultMetadata(promptResult),
+		basePromptMetadata: promptResult.metadata,
 		buildHistoryText: () =>
-			buildGoogleHistoryTranscript(
-				effectiveReq,
+			buildOpenAIHistoryTranscript(
+				messages,
 				cfg.current_input_file_name || "message.txt",
 			),
 		getLatestInputText: () =>
-			promptResult.latestInputText != null
-				? promptResult.latestInputText
-				: latestGoogleUserInputText(effectiveReq),
+			promptResult.latestInputText || latestOpenAIUserInputText(messages),
 		structured: null,
 		buildFileRefGroups: (
 			contextFileRefs,
@@ -208,7 +176,7 @@ type PromptWithAttachmentParams = {
 	toolDefs: ToolDef[];
 	toolPromptSource?: unknown;
 	toolChoiceInstruction: string;
-	basePromptMetadata?: PromptMetadata;
+	basePromptMetadata: PromptMetadata;
 	buildHistoryText: () => string;
 	getLatestInputText: () => unknown;
 	structured: unknown;
@@ -364,13 +332,10 @@ async function preparePromptWithAttachments(
 			dedupedAttachments: attachmentResult.usage.dedupedFiles,
 			toolDefs: params.toolDefs.length,
 		};
-		contextPrepareStageFields.basePromptHasToolBlock = String(
-			params.basePrompt || "",
-		).includes("Available tools");
-		contextPrepareStageFields.basePromptHasToolNames = promptContainsToolNames(
-			params.basePrompt,
-			params.toolDefs,
-		);
+		contextPrepareStageFields.basePromptHasToolBlock =
+			params.basePromptMetadata.hasToolPrompt;
+		contextPrepareStageFields.basePromptHasToolNames =
+			params.basePromptMetadata.hasToolPrompt && params.toolDefs.length > 0;
 		logStage(params.cfg, "context_prepare", contextPrepareStageFields);
 	}
 
@@ -417,8 +382,8 @@ async function preparePromptWithAttachments(
 		fileRefs,
 		contextFiles,
 		promptMetadata: contextFiles
-			? { hasToolInstructions: true }
-			: params.basePromptMetadata || {},
+			? { hasToolPrompt: false, hasToolInstructions: true }
+			: params.basePromptMetadata,
 	};
 }
 
@@ -534,16 +499,6 @@ function promptResultToPrepared(
 	};
 }
 
-function promptResultMetadata(promptResult: {
-	hasToolPrompt?: boolean;
-	hasToolInstructions?: boolean;
-}): PromptMetadata {
-	return {
-		hasToolPrompt: !!promptResult.hasToolPrompt,
-		hasToolInstructions: !!promptResult.hasToolInstructions,
-	};
-}
-
 function contextFilePromptByteCheckFromBounded(
 	cfg: RuntimeConfig,
 	check: PromptByteLengthBounded | null | undefined,
@@ -575,15 +530,4 @@ function inlinePreparedPromptByteCheck(
 		sniffer.append(instruction);
 	}
 	return { ...sniffer.result(), thresholdBytes };
-}
-
-function promptContainsToolNames(
-	prompt: unknown,
-	toolDefs: readonly ToolDef[],
-): boolean {
-	const text = String(prompt || "");
-	const names = toolDefs
-		.map((tool) => String(tool.name || "").trim())
-		.filter(Boolean);
-	return !!names.length && names.every((name) => text.includes(name));
 }

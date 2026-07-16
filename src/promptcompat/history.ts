@@ -1,9 +1,8 @@
 import { formatPromptToolCallBlock } from "../toolcall/prompt-format";
-import { googleContentsToOpenAIMessages } from "./google";
 import {
 	historyContentText,
+	type InternalMessage,
 	messageReasoningText,
-	parseOpenAIMessages,
 } from "./message-model";
 
 type HistoryTranscriptEntry = {
@@ -12,12 +11,11 @@ type HistoryTranscriptEntry = {
 };
 
 export function buildOpenAIHistoryTranscript(
-	messages: unknown,
+	messages: readonly InternalMessage[],
 	filename: unknown = "message.txt",
 ): string {
 	const entries: HistoryTranscriptEntry[] = [];
-	if (!Array.isArray(messages)) return "";
-	for (const msg of parseOpenAIMessages(messages)) {
+	for (const msg of messages) {
 		let content = "";
 		if (msg.role === "assistant") {
 			const reasoning = messageReasoningText(msg);
@@ -57,28 +55,14 @@ export function buildOpenAIHistoryTranscript(
 	return `# ${filename || "message.txt"}\nPrior conversation history and tool progress.\n\n${sections.join("\n\n")}\n`;
 }
 
-export function buildGoogleHistoryTranscript(
-	req: unknown,
-	filename: unknown = "message.txt",
+export function latestOpenAIUserInputText(
+	messages: readonly InternalMessage[],
 ): string {
-	return buildOpenAIHistoryTranscript(
-		googleContentsToOpenAIMessages(req),
-		filename,
-	);
-}
-
-export function latestOpenAIUserInputText(messages: unknown): string {
-	if (!Array.isArray(messages)) return "";
-	const parsed = parseOpenAIMessages(messages);
-	for (let i = parsed.length - 1; i >= 0; i--) {
-		const msg = parsed[i];
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i];
 		if (msg?.roleLabel !== "user") continue;
 		const text = historyContentText(msg).trim();
 		if (text) return text;
 	}
 	return "";
-}
-
-export function latestGoogleUserInputText(req: unknown): string {
-	return latestOpenAIUserInputText(googleContentsToOpenAIMessages(req));
 }

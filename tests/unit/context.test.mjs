@@ -1,5 +1,6 @@
 import { beforeEach, describe, test } from "vitest";
 import { prepareOpenAIGeminiContext } from "../../src/completion/context";
+import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
 import {
 	contextFilePromptByteCheck,
 	contextFileThreshold,
@@ -104,7 +105,9 @@ describe("context", () => {
 					cfg,
 					provider,
 					{},
-					[{ role: "user", content: "short latest secret" }],
+					parseOpenAIMessages([
+						{ role: "user", content: "short latest secret" },
+					]),
 					[
 						{
 							type: "function",
@@ -250,7 +253,7 @@ describe("context", () => {
 			supports_authenticated_session: true,
 			log_requests: false,
 		};
-		const messages = [
+		const messages = parseOpenAIMessages([
 			{
 				role: "user",
 				content: [
@@ -263,7 +266,7 @@ describe("context", () => {
 					},
 				],
 			},
-		];
+		]);
 		const prepareWithFileRefBytes = (fileRefBytes) =>
 			prepareOpenAIGeminiContext(
 				cfg,
@@ -420,11 +423,17 @@ describe("context", () => {
 			alreadyPrepared,
 		);
 		assert.equal(
-			ensureInlineToolPrompt(alreadyPrepared, tools, instruction),
+			ensureInlineToolPrompt(alreadyPrepared, tools, instruction, null, {
+				hasToolPrompt: true,
+				hasToolInstructions: true,
+			}),
 			alreadyPrepared,
 		);
 
-		const guarded = ensureInlineToolPrompt("user prompt", tools, instruction);
+		const guarded = ensureInlineToolPrompt("user prompt", tools, instruction, null, {
+			hasToolPrompt: false,
+			hasToolInstructions: false,
+		});
 		assert.match(guarded, /Available tools/);
 		assert.match(guarded, /"name": "Read"/);
 		assert.match(guarded, /You MUST call the tool "Read"/);
@@ -446,6 +455,7 @@ describe("context", () => {
 			tools,
 			instruction,
 			{ fileRefs: [] },
+			{ hasToolPrompt: false, hasToolInstructions: false },
 		);
 		assert.doesNotMatch(guarded, /Available tools/);
 		assert.match(guarded, /<\|DSML\|tool_calls>/);
@@ -459,6 +469,7 @@ describe("context", () => {
 				instruction,
 				{ fileRefs: [] },
 				{
+					hasToolPrompt: false,
 					hasToolInstructions: true,
 				},
 			),
@@ -468,13 +479,16 @@ describe("context", () => {
 	test("adds missing tool-choice instruction once when no tools are declared", async () => {
 		const instruction =
 			"\n\nIMPORTANT: Do NOT call any tools. Respond with text only.";
-		const guarded = ensureInlineToolPrompt("plain prompt", null, instruction);
+		const guarded = ensureInlineToolPrompt("plain prompt", null, instruction, null, {
+			hasToolPrompt: false,
+			hasToolInstructions: false,
+		});
 		assert.match(guarded, /^\s*IMPORTANT: Do NOT call any tools/);
 		assert.match(guarded, /plain prompt$/);
 		assert.equal(
 			ensureInlineToolPrompt(guarded, null, instruction, {
 				fileRefs: [],
-			}),
+			}, { hasToolPrompt: false, hasToolInstructions: false }),
 			guarded,
 		);
 	});

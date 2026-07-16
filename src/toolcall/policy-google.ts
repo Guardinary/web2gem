@@ -47,6 +47,24 @@ export function googleAllowedFunctionNames(fc: unknown): string[] {
 	return [];
 }
 
+/** Google tool-choice instruction derived from a parsed ToolChoicePolicy. */
+export function googleToolChoiceInstructionFromPolicy(
+	policy: ToolChoicePolicy | null | undefined,
+): string {
+	if (!policy) return "";
+	if (policy.mode === "none")
+		return "\n\nIMPORTANT: Do NOT call any tools. Respond with text only.";
+	if (policy.mode === "required") {
+		const allowed = policy.allowed ? Object.keys(policy.allowed) : [];
+		if (allowed.length) {
+			const names = allowed.map((name) => `"${name}"`).join(", ");
+			return `\n\nIMPORTANT: You MUST call one of these tools: ${names}. Do not respond with text only.`;
+		}
+		return "\n\nIMPORTANT: You MUST call at least one tool. Do not respond with text only.";
+	}
+	return "";
+}
+
 export function parseGoogleToolChoicePolicy(
 	req: unknown,
 	tools: unknown,

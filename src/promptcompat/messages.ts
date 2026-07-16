@@ -1,5 +1,3 @@
-import type { UploadFileInput } from "../attachments/input";
-import type { UnknownRecord } from "../shared/types";
 import { openAIToolDefs } from "../toolcall/content";
 import { formatPromptToolCallBlock } from "../toolcall/prompt-format";
 import { toolPromptBlockFor } from "../toolcall/tool-bundle";
@@ -8,9 +6,11 @@ import {
 	type InternalMessage,
 	messageReasoningText,
 	type MessagePart,
-	parseOpenAIMessages,
 } from "./message-model";
-import { createPromptPartAccumulator } from "./prompt-text";
+import {
+	createPromptPartAccumulator,
+	type PromptBuildResult,
+} from "./prompt-text";
 
 type ToolPromptDef = {
 	name?: unknown;
@@ -19,16 +19,14 @@ type ToolPromptDef = {
 };
 
 export function messagesToPrompt(
-	messages: unknown,
+	messages: readonly InternalMessage[],
 	tools: unknown,
 	toolChoice: unknown,
 	toolDefsOverride: unknown,
 	toolChoiceInstructionOverride: unknown,
 	maxPromptBytes?: number | null,
-) {
+): PromptBuildResult {
 	const prompt = createPromptPartAccumulator(maxPromptBytes);
-	const images: UnknownRecord[] = [];
-	const files: UploadFileInput[] = [];
 	let latestInputText = "";
 	let promptToolDefs: readonly ToolPromptDef[] = [];
 	if (toolChoice !== "none") {
@@ -43,10 +41,10 @@ export function messagesToPrompt(
 	}
 	const hiddenPromptInsertOffset = promptToolDefs.length
 		? prompt.length()
-		: undefined;
+		: null;
 
-	for (const msg of parseOpenAIMessages(messages)) {
-		let content = renderMessagePromptContent(msg, images, files);
+	for (const msg of messages) {
+		let content = renderMessagePromptContent(msg);
 
 		if (msg.role === "system") {
 			prompt.add(`[System instruction]: ${content}`);
@@ -82,30 +80,25 @@ export function messagesToPrompt(
 		}
 	}
 
-	const result = prompt.result(images);
-	if (files.length) result.files = files;
-	if (hiddenPromptInsertOffset != null)
-		result.hiddenPromptInsertOffset = hiddenPromptInsertOffset;
-	if (latestInputText) result.latestInputText = latestInputText;
-	if (promptToolDefs.length) {
-		result.hasToolPrompt = true;
-		result.hasToolInstructions = true;
-	}
-	return result;
+	const accumulated = prompt.result();
+	const hasToolPrompt = promptToolDefs.length > 0;
+	return {
+		text: accumulated.text,
+		byteCheck: accumulated.byteCheck,
+		tokens: accumulated.tokens,
+		counts: accumulated.counts,
+		latestInputText,
+		hiddenPromptInsertOffset,
+		metadata: {
+			hasToolPrompt,
+			hasToolInstructions: hasToolPrompt,
+		},
+	};
 }
 
-function renderMessagePromptContent(
-	msg: InternalMessage,
-	images: UnknownRecord[],
-	files: UploadFileInput[],
-): string {
+function renderMessagePromptContent(msg: InternalMessage): string {
 	const textParts: string[] = [];
 	for (const part of msg.parts) {
-		if (part.kind === "image" && part.hasInline) {
-			images.push({ b64: part.b64, mime: part.mime, filename: part.filename });
-		} else if (part.kind === "file" && part.upload) {
-			files.push(part.upload);
-		}
 		const text = promptPartText(part);
 		if (text) textParts.push(text);
 	}

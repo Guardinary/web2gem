@@ -3,7 +3,7 @@ import { sseResponse } from "../core/sse";
 import { EMPTY_UPSTREAM_MSG } from "../../completion";
 import type { CompletionProvider } from "../../completion";
 import { prepareOpenAICompletion } from "../../completion/openai";
-import { normalizeResponsesInputAsMessagesStrict } from "../../promptcompat/responses-input";
+import { normalizeResponsesInputStrict } from "../../promptcompat/responses-input";
 import { log, nowSec } from "../../shared/logging";
 import {
 	upstreamErrorCode,
@@ -45,10 +45,10 @@ export async function handleResponses(
 	const imageMode = imageGenerationMode(req);
 	if (imageMode.enabled)
 		return handleImageGenerationResponses(req, cfg, provider, imageMode.forced);
-	const normalized = normalizeResponsesInputAsMessagesStrict(req);
-	if (normalized.error)
+	const normalized = normalizeResponsesInputStrict(req);
+	if (normalized.error != null || !normalized.messages)
 		return openAIErrorResponse(
-			normalized.error,
+			normalized.error || "request body must be a JSON object",
 			400,
 			"unsupported_responses_input",
 		);

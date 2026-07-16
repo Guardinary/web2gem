@@ -5,22 +5,33 @@ import {
 	type TokenCharCounts,
 } from "../shared/tokens";
 
-export type PromptTextTuple<TSecond = unknown> = [string, TSecond] & {
-	byteCheck?: PromptByteLengthBounded;
-	tokens?: number;
-	counts?: TokenCharCounts & { hasText: boolean };
-	latestInputText?: string;
-	files?: unknown;
-	hiddenPromptInsertOffset?: number;
-	hasToolPrompt?: boolean;
-	hasToolInstructions?: boolean;
+export type PromptMetadata = {
+	hasToolPrompt: boolean;
+	hasToolInstructions: boolean;
+};
+
+export type PromptBuildResult = {
+	text: string;
+	byteCheck: PromptByteLengthBounded | null;
+	tokens: number;
+	counts: TokenCharCounts & { hasText: boolean };
+	latestInputText: string;
+	hiddenPromptInsertOffset: number | null;
+	metadata: PromptMetadata;
+};
+
+export type PromptAccumulatorResult = {
+	text: string;
+	byteCheck: PromptByteLengthBounded | null;
+	tokens: number;
+	counts: TokenCharCounts & { hasText: boolean };
 };
 
 export function createPromptPartAccumulator(maxBytes?: number | null): {
 	add: (part: unknown) => void;
 	length: () => number;
 	text: () => string;
-	result: <TSecond>(second: TSecond) => PromptTextTuple<TSecond>;
+	result: () => PromptAccumulatorResult;
 } {
 	const parts: string[] = [];
 	let textLength = 0;
@@ -48,12 +59,13 @@ export function createPromptPartAccumulator(maxBytes?: number | null): {
 		text() {
 			return parts.join("\n\n");
 		},
-		result<TSecond>(second: TSecond) {
-			const tuple = [parts.join("\n\n"), second] as PromptTextTuple<TSecond>;
-			if (sniffer) tuple.byteCheck = sniffer.result();
-			tuple.tokens = tokenCounter.tokens();
-			tuple.counts = tokenCounter.counts();
-			return tuple;
+		result(): PromptAccumulatorResult {
+			return {
+				text: parts.join("\n\n"),
+				byteCheck: sniffer ? sniffer.result() : null,
+				tokens: tokenCounter.tokens(),
+				counts: tokenCounter.counts(),
+			};
 		},
 	};
 }

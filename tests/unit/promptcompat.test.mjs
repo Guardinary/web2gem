@@ -13,19 +13,16 @@ import {
 	mimeFromFilename,
 	sanitizeUploadFilename,
 } from "../../src/attachments/mime";
+import { parseGoogleRequest } from "../../src/promptcompat/google";
 import {
-	buildGoogleToolPrompt,
-	googleContentsToOpenAIMessages,
-	googleContentsToPrompt,
-	googleToolChoiceInstruction,
-} from "../../src/promptcompat/google";
-import {
-	buildGoogleHistoryTranscript,
 	buildOpenAIHistoryTranscript,
-	latestGoogleUserInputText,
 	latestOpenAIUserInputText,
 } from "../../src/promptcompat/history";
 import { messagesToPrompt } from "../../src/promptcompat/messages";
+import {
+	attachmentPlanFromMessages,
+	parseOpenAIMessages,
+} from "../../src/promptcompat/message-model";
 import {
 	appendStructuredOutputInstructionToPrepared,
 	appendStructuredOutputInstructionWithTokens,
@@ -45,11 +42,90 @@ import {
 	contentTextForHistory,
 	mergeFileRefs,
 	messageContentToPrompt,
+	openAIToolDefs,
 	reasoningTextForHistory,
 	responsesContentToText,
 } from "../../src/toolcall/content";
+import {
+	googleToolChoiceInstructionFromPolicy,
+	parseGoogleToolChoicePolicy,
+} from "../../src/toolcall/policy-google";
+import { createToolBundle } from "../../src/toolcall/tool-bundle";
+import { toolPromptBlockFor } from "../../src/toolcall/tool-bundle";
 import { assert } from "./assertions.js";
 import { resetTestState } from "./helpers.js";
+
+// Re-target helpers: reproduce the deleted renderGooglePromptViaModel /
+// googleToolChoiceInstruction / buildGoogleHistoryTranscript surface by parsing
+// the Google request into the shared model and rendering through the shared
+// builders, so the same request fixtures assert the same prompt/transcript
+// strings.
+function googleToolChoiceInstruction(req) {
+	const bundle = createToolBundle(req?.tools);
+	return googleToolChoiceInstructionFromPolicy(
+		parseGoogleToolChoicePolicy(req, bundle),
+	);
+}
+function renderGooglePromptViaModel(req, toolDefsOverride, maxPromptBytes) {
+	const bundle = createToolBundle(req?.tools);
+	const fcMode = String(
+		req?.toolConfig?.functionCallingConfig?.mode || "AUTO",
+	).toUpperCase();
+	const hasTools = fcMode !== "NONE" && bundle.openAIFunctionTools.length > 0;
+	const toolDefs = Array.isArray(toolDefsOverride)
+		? toolDefsOverride
+		: hasTools
+			? openAIToolDefs(bundle)
+			: [];
+	const messages = parseGoogleRequest(req);
+	const built = messagesToPrompt(
+		messages,
+		hasTools ? bundle : null,
+		hasTools ? "auto" : "none",
+		toolDefs,
+		googleToolChoiceInstruction(req),
+		maxPromptBytes,
+	);
+	const plan = attachmentPlanFromMessages(messages);
+	const images = plan.candidates
+		.filter((c) => c.kind === "image")
+		.map((c) => ({
+			b64: c.source.type === "base64" ? c.source.data : "",
+			mime: c.mime,
+			filename: c.filename,
+		}));
+	const files = plan.candidates
+		.filter((c) => c.kind === "file")
+		.map((c) => ({
+			b64: c.source.type === "base64" ? c.source.data : "",
+			mime: c.mime,
+			filename: c.filename,
+		}));
+	// Reproduce the deleted tuple-with-props surface for assertion parity.
+	const tuple = [built.text, images];
+	tuple.text = built.text;
+	tuple.latestInputText = built.latestInputText;
+	tuple.byteCheck = built.byteCheck;
+	if (files.length) tuple.files = files;
+	if (built.metadata.hasToolPrompt) {
+		tuple.hasToolPrompt = true;
+		tuple.hasToolInstructions = true;
+	}
+	return tuple;
+}
+function buildGoogleHistoryTranscript(req, filename) {
+	return buildOpenAIHistoryTranscript(parseGoogleRequest(req), filename);
+}
+function latestGoogleUserInputText(req) {
+	return latestOpenAIUserInputText(parseGoogleRequest(req));
+}
+function buildGoogleToolPrompt(toolDefs, req, toolPromptSource) {
+	return toolPromptBlockFor(
+		toolPromptSource || toolDefs,
+		googleToolChoiceInstruction(req),
+		Array.isArray(toolDefs) ? toolDefs : undefined,
+	);
+}
 
 describe("prompt compatibility", () => {
 	beforeEach(resetTestState);
@@ -281,11 +357,17 @@ describe("prompt compatibility", () => {
 			},
 		]);
 
-		const result = messagesToPrompt(messages, null, "auto", [], "", 1000000);
-		assert.match(result[0], /\[file input note\.txt\]/);
-		assert.deepEqual(result.files, [
-			{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" },
-		]);
+		const parsed = parseOpenAIMessages(messages);
+		const result = messagesToPrompt(parsed, null, "auto", [], "", 1000000);
+		assert.match(result.text, /\[file input note\.txt\]/);
+		assert.deepEqual(
+			attachmentPlanFromMessages(parsed).candidates.map((c) => ({
+				mime: c.mime,
+				filename: c.filename,
+				data: c.source.type === "base64" ? c.source.data : undefined,
+			})),
+			[{ mime: "text/plain", filename: "note.txt", data: "aGVsbG8=" }],
+		);
 	});
 	test("merges Responses reasoning-only items into following assistant tool calls", async () => {
 		const messages = normalizeResponsesInputValueAsMessages([
@@ -311,7 +393,7 @@ describe("prompt compatibility", () => {
 	});
 	test("builds OpenAI history transcript with reasoning tool call and tool metadata", async () => {
 		const transcript = buildOpenAIHistoryTranscript(
-			[
+			parseOpenAIMessages([
 				{ role: "system", content: "system guide" },
 				{
 					role: "user",
@@ -339,7 +421,7 @@ describe("prompt compatibility", () => {
 					tool_call_id: "call_1",
 					content: { ok: true },
 				},
-			],
+			]),
 			"history.txt",
 		);
 		assert.match(transcript, /# history\.txt/);
@@ -353,17 +435,19 @@ describe("prompt compatibility", () => {
 		assert.match(transcript, /\{"ok":true\}/);
 	});
 	test("returns empty history transcripts for invalid or contentless inputs", async () => {
-		assert.equal(buildOpenAIHistoryTranscript(null, "empty.txt"), "");
+		assert.equal(buildOpenAIHistoryTranscript([], "empty.txt"), "");
 		assert.equal(
 			buildOpenAIHistoryTranscript(
-				[{ role: "assistant", content: "" }],
+				parseOpenAIMessages([{ role: "assistant", content: "" }]),
 				"empty.txt",
 			),
 			"",
 		);
-		assert.equal(latestOpenAIUserInputText(null), "");
+		assert.equal(latestOpenAIUserInputText([]), "");
 		assert.equal(
-			latestOpenAIUserInputText([{ role: "assistant", content: "answer" }]),
+			latestOpenAIUserInputText(
+				parseOpenAIMessages([{ role: "assistant", content: "answer" }]),
+			),
 			"",
 		);
 	});
@@ -504,7 +588,7 @@ describe("prompt compatibility", () => {
 		assert.match(fallbackPrompt, /"name": "Fallback"/);
 		assert.match(fallbackPrompt, /MUST call one of these tools: "Search"/);
 
-		const promptResult = googleContentsToPrompt(req, null, 1000000);
+		const promptResult = renderGooglePromptViaModel(req, null, 1000000);
 		const prompt = promptResult[0];
 		assert.match(prompt, /Available tools/);
 		assert.match(prompt, /\[System instruction\]: be concise cite sources/);
@@ -526,7 +610,7 @@ describe("prompt compatibility", () => {
 			{ b64: "BBBB", mime: "image/jpeg", filename: "diagram.jpg" },
 		]);
 
-		const noTools = googleContentsToPrompt(
+		const noTools = renderGooglePromptViaModel(
 			{
 				tools,
 				toolConfig: { functionCallingConfig: { mode: "NONE" } },
@@ -543,7 +627,7 @@ describe("prompt compatibility", () => {
 			}),
 			/Do NOT call any tools/,
 		);
-		const noOverrideTools = googleContentsToPrompt(
+		const noOverrideTools = renderGooglePromptViaModel(
 			{
 				tools: [
 					{
@@ -561,7 +645,7 @@ describe("prompt compatibility", () => {
 		assert.equal(noOverrideTools.hasToolPrompt, undefined);
 		assert.equal(noOverrideTools.hasToolInstructions, undefined);
 
-		const assistantTextOnly = googleContentsToPrompt(
+		const assistantTextOnly = renderGooglePromptViaModel(
 			{
 				contents: [{ role: "model", parts: [{ text: "previous answer" }] }],
 			},
@@ -571,38 +655,32 @@ describe("prompt compatibility", () => {
 		assert.match(assistantTextOnly[0], /\[Assistant\]: previous answer/);
 		assert.doesNotMatch(assistantTextOnly[0], /<tool_calls>/);
 
-		const messages = googleContentsToOpenAIMessages(req);
-		assert.deepEqual(messages[0], {
-			role: "system",
-			content: "be concise cite sources",
-		});
+		const messages = parseGoogleRequest(req);
+		assert.equal(messages[0].role, "system");
+		assert.equal(messages[0].parts[0].text, "be concise cite sources");
 		assert.equal(messages[1].role, "user");
-		assert.equal(messages[1].content[0].text, "look up docs");
-		assert.equal(messages[1].content[1].source.media_type, "image/jpeg");
+		assert.equal(messages[1].parts[0].text, "look up docs");
+		assert.equal(messages[1].parts[1].kind, "image");
+		assert.equal(messages[1].parts[1].mime, "image/jpeg");
 		assert.equal(messages[2].role, "assistant");
-		assert.equal(messages[2].tool_calls[0].function.name, "Search");
-		assert.equal(
-			messages[2].tool_calls[0].function.arguments,
-			'{"query":"docs"}',
-		);
+		assert.equal(messages[2].toolCalls[0].name, "Search");
+		assert.deepEqual(messages[2].toolCalls[0].args, { query: "docs" });
 		assert.equal(messages[3].role, "user");
-		assert.deepEqual(messages[3].content, [
-			{ type: "text", text: "tool output follows" },
-		]);
-		assert.deepEqual(messages[4], {
-			role: "tool",
-			name: "Search",
-			content: '{"ok":true}',
-		});
+		assert.equal(messages[3].parts[0].text, "tool output follows");
+		assert.equal(messages[4].role, "tool");
+		assert.equal(messages[4].toolName, "Search");
+		assert.equal(messages[4].parts[0].text, '{"ok":true}');
 	});
 	test("extracts latest OpenAI user text while ignoring empty and assistant messages", async () => {
 		assert.equal(
-			latestOpenAIUserInputText([
-				{ role: "user", content: "first" },
-				{ role: "assistant", content: "answer" },
-				{ role: "user", content: [{ type: "input_text", text: "" }] },
-				{ role: "user", content: [{ type: "text", text: "latest" }] },
-			]),
+			latestOpenAIUserInputText(
+				parseOpenAIMessages([
+					{ role: "user", content: "first" },
+					{ role: "assistant", content: "answer" },
+					{ role: "user", content: [{ type: "input_text", text: "" }] },
+					{ role: "user", content: [{ type: "text", text: "latest" }] },
+				]),
+			),
 			"latest",
 		);
 	});
@@ -724,24 +802,31 @@ describe("prompt compatibility", () => {
 			},
 		]);
 
+		const parsedFileMsg = parseOpenAIMessages([
+			{
+				role: "user",
+				content: [
+					{ type: "input_file", data: "aGVsbG8=", filename: "note.txt" },
+				],
+			},
+		]);
 		const result = messagesToPrompt(
-			[
-				{
-					role: "user",
-					content: [
-						{ type: "input_file", data: "aGVsbG8=", filename: "note.txt" },
-					],
-				},
-			],
+			parsedFileMsg,
 			null,
 			"auto",
 			[],
 			"",
 			1000000,
 		);
-		assert.deepEqual(result.files, [
-			{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" },
-		]);
+		assert.match(result.text, /\[file input note\.txt\]/);
+		assert.deepEqual(
+			attachmentPlanFromMessages(parsedFileMsg).candidates.map((c) => ({
+				mime: c.mime,
+				filename: c.filename,
+				data: c.source.type === "base64" ? c.source.data : undefined,
+			})),
+			[{ mime: "text/plain", filename: "note.txt", data: "aGVsbG8=" }],
+		);
 	});
 	test("uses explicit image_url MIME metadata when a data URL omits MIME", async () => {
 		const images = [];
@@ -803,7 +888,7 @@ describe("prompt compatibility", () => {
 				},
 			],
 		};
-		const result = googleContentsToPrompt(req, [], 1000000);
+		const result = renderGooglePromptViaModel(req, [], 1000000);
 		assert.deepEqual(result[1], []);
 		assert.deepEqual(result.files, [
 			{
@@ -814,22 +899,20 @@ describe("prompt compatibility", () => {
 		]);
 		assert.match(result[0], /\[file input main\.py\]/);
 		assert.match(result[0], /\[file input inline\.js\]/);
+		// §9.1/§9.2: latest-input file label now uses the unified displayName-first
+		// rule (previously the prompt path used fileData.fileUri for fileData parts).
+		assert.equal(
+			result.latestInputText,
+			"[file input main.py]\n[file input inline.js]",
+		);
 
-		const messages = googleContentsToOpenAIMessages(req);
+		const messages = parseGoogleRequest(req);
 		assert.equal(messages[0].role, "user");
-		assert.equal(messages[0].content[0].type, "file");
-		assert.deepEqual(messages[0].content[0].fileData, {
-			fileUri: "https://files.example/main.py",
-			mimeType: "text/x-python",
-			displayName: "main.py",
-		});
-		assert.equal(messages[0].content[0].filename, "main.py");
-		assert.equal(messages[0].content[1].type, "file");
-		assert.deepEqual(messages[0].content[1].source, {
-			data: "Y29uc29sZS5sb2coMSk=",
-			media_type: "text/javascript",
-		});
-		assert.equal(messages[0].content[1].filename, "inline.js");
+		assert.equal(messages[0].parts[0].kind, "file");
+		assert.equal(messages[0].parts[0].label, "main.py");
+		assert.equal(messages[0].parts[1].kind, "file");
+		assert.equal(messages[0].parts[1].upload.b64, "Y29uc29sZS5sb2coMSk=");
+		assert.equal(messages[0].parts[1].label, "inline.js");
 
 		const transcript = buildGoogleHistoryTranscript(req, "google-files.txt");
 		assert.match(transcript, /\[file input main\.py\]/);
@@ -1031,7 +1114,7 @@ describe("prompt compatibility", () => {
 	});
 	test("omits OpenAI tool prompt when tool choice is none", async () => {
 		const result = messagesToPrompt(
-			[{ role: "user", content: "answer without tools" }],
+			parseOpenAIMessages([{ role: "user", content: "answer without tools" }]),
 			[
 				{
 					type: "function",
@@ -1043,9 +1126,9 @@ describe("prompt compatibility", () => {
 			"",
 			1000000,
 		);
-		assert.equal(result[0], "answer without tools");
-		assert.equal(result.hasToolPrompt, undefined);
-		assert.equal(result.hasToolInstructions, undefined);
+		assert.equal(result.text, "answer without tools");
+		assert.equal(result.metadata.hasToolPrompt, false);
+		assert.equal(result.metadata.hasToolInstructions, false);
 	});
 	test("keeps OpenAI tool prompt metadata aligned with provided tool defs", async () => {
 		const tools = [
@@ -1055,20 +1138,20 @@ describe("prompt compatibility", () => {
 			},
 		];
 		const result = messagesToPrompt(
-			[{ role: "user", content: "answer without tools" }],
+			parseOpenAIMessages([{ role: "user", content: "answer without tools" }]),
 			tools,
 			"auto",
 			[],
 			"",
 			1000000,
 		);
-		assert.equal(result[0], "answer without tools");
-		assert.equal(result.hasToolPrompt, undefined);
-		assert.equal(result.hasToolInstructions, undefined);
+		assert.equal(result.text, "answer without tools");
+		assert.equal(result.metadata.hasToolPrompt, false);
+		assert.equal(result.metadata.hasToolInstructions, false);
 	});
 	test("formats assistant tool-call history and tool-result fallbacks", async () => {
 		const result = messagesToPrompt(
-			[
+			parseOpenAIMessages([
 				"ignored",
 				{
 					role: "assistant",
@@ -1084,24 +1167,24 @@ describe("prompt compatibility", () => {
 					role: "user",
 					content: [{ type: "text", text: "latest user text" }],
 				},
-			],
+			]),
 			null,
 			"auto",
 			null,
 			"",
 			1000000,
 		);
-		assert.match(result[0], /\[Assistant\]: \[reasoning_content\]\nkept/);
-		assert.doesNotMatch(result[0], /should not be duplicated/);
+		assert.match(result.text, /\[Assistant\]: \[reasoning_content\]\nkept/);
+		assert.doesNotMatch(result.text, /should not be duplicated/);
 		assert.match(
-			result[0],
+			result.text,
 			/<\|DSML\|tool_calls><\|DSML\|invoke name="Run"><\/\|DSML\|invoke><\/\|DSML\|tool_calls>/,
 		);
 		assert.match(
-			result[0],
+			result.text,
 			/<\|DSML\|parameter name="query"><!\[CDATA\[docs\]\]><\/\|DSML\|parameter>/,
 		);
-		assert.match(result[0], /\[Tool result for id=call_1\]: null/);
+		assert.match(result.text, /\[Tool result for id=call_1\]: null/);
 		assert.equal(result.latestInputText, "latest user text");
 	});
 	test("builds hidden-tool prompt token text from prepared and raw prompts", async () => {
@@ -1180,10 +1263,9 @@ describe("prompt compatibility", () => {
 		acc.add("second");
 
 		assert.equal(acc.text(), "first\n\nsecond");
-		const result = acc.result({ images: [] });
-		assert.deepEqual(result[1], { images: [] });
-		assert.equal(result[0], "first\n\nsecond");
-		assert.equal(result.byteCheck, undefined);
+		const result = acc.result();
+		assert.equal(result.text, "first\n\nsecond");
+		assert.equal(result.byteCheck, null);
 		assert.equal(result.counts.hasText, true);
 		assert.equal(result.tokens > 0, true);
 	});

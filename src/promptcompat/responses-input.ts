@@ -1,16 +1,30 @@
 import { randHex } from "../shared/crypto";
 import { isRecord, type UnknownRecord } from "../shared/types";
 import {
-	normalizeHistoryRole,
-	reasoningTextForHistory,
-	responsesContentToText,
-} from "../toolcall/content";
+	flattenText,
+	type InternalMessage,
+	isTextPartType,
+	normalizeMessageRole,
+	parseOpenAIMessages,
+	rawRecordReasoningText,
+} from "./message-model";
 
 export function normalizeResponsesInputAsMessages(
 	req: unknown,
 ): UnknownRecord[] {
 	const messages = responsesMessagesFromRequest(req || {});
 	return messages || [];
+}
+
+/** Strict Responses edge parser: item-level normalize then parse to the model. */
+export function normalizeResponsesInputStrict(
+	req: unknown,
+):
+	| { messages: InternalMessage[]; error?: undefined }
+	| { messages?: undefined; error: string } {
+	const normalized = normalizeResponsesInputAsMessagesStrict(req);
+	if (normalized.error) return { error: normalized.error };
+	return { messages: parseOpenAIMessages(normalized.messages) };
 }
 
 export function normalizeResponsesInputAsMessagesStrict(
@@ -108,7 +122,7 @@ export function normalizeResponsesInputArray(
 				continue;
 			}
 			if (isAssistantToolCallMessage(msg) && pendingAssistantReasoning) {
-				if (!reasoningTextForHistory(msg))
+				if (!rawRecordReasoningText(msg))
 					msg.reasoning_content = pendingAssistantReasoning;
 				pendingAssistantReasoning = "";
 			} else {
@@ -141,7 +155,7 @@ export function normalizeResponsesInputItem(
 	const itemType = String(item.type || "")
 		.trim()
 		.toLowerCase();
-	const role = normalizeHistoryRole(item.role);
+	const role = normalizeMessageRole(item.role);
 	if (item.role != null && role) {
 		if (role === "assistant") return normalizeResponsesAssistantMessage(item);
 		let content = item.content;
@@ -163,7 +177,7 @@ export function normalizeResponsesInputItem(
 
 	const type = itemType;
 	if (type === "message" || type === "input_message") {
-		const msgRole = normalizeHistoryRole(item.role || "user");
+		const msgRole = normalizeMessageRole(item.role || "user");
 		if (msgRole === "assistant")
 			return normalizeResponsesAssistantMessage(item);
 		let content = item.content;
@@ -209,7 +223,7 @@ export function normalizeResponsesInputItem(
 	}
 
 	if (type === "reasoning" || type === "thinking") {
-		const text = responsesContentToText(
+		const text = flattenText(
 			item.summary ?? item.content ?? item.text,
 		);
 		return text
@@ -222,10 +236,7 @@ export function normalizeResponsesInputItem(
 	}
 
 	if (
-		(type === "input_text" ||
-			type === "text" ||
-			type === "output_text" ||
-			type === "summary_text") &&
+		isTextPartType(type) &&
 		typeof item.text === "string" &&
 		item.text.trim()
 	) {
@@ -245,7 +256,7 @@ export function normalizeResponsesAssistantMessage(
 		? content
 		: [content].filter((part) => part != null);
 	let text = "";
-	let reasoning = responsesContentToText(
+	let reasoning = flattenText(
 		item.reasoning_content || item.reasoning || item.thinking,
 	);
 	const toolCalls: unknown[] = Array.isArray(item.tool_calls)
@@ -264,7 +275,7 @@ export function normalizeResponsesAssistantMessage(
 		if (typ === "output_text" || typ === "text" || typ === "input_text")
 			text += part.text || "";
 		else if (typ === "reasoning" || typ === "thinking")
-			reasoning += responsesContentToText(
+			reasoning += flattenText(
 				part.summary ?? part.text ?? part.content,
 			);
 		else if (typ === "function_call" || typ === "tool_call") {
@@ -294,14 +305,14 @@ export function normalizeResponsesAssistantMessage(
 
 export function assistantReasoningOnlyContent(msg: unknown): string {
 	if (!isAssistantMessage(msg) || isAssistantToolCallMessage(msg)) return "";
-	const contentText = responsesContentToText(msg.content).trim();
-	const reasoning = reasoningTextForHistory(msg);
+	const contentText = flattenText(msg.content).trim();
+	const reasoning = rawRecordReasoningText(msg);
 	if (!reasoning) return "";
 	return !contentText || contentText === reasoning ? reasoning : "";
 }
 
 export function isAssistantMessage(msg: unknown): msg is UnknownRecord {
-	return isRecord(msg) && normalizeHistoryRole(msg.role) === "assistant";
+	return isRecord(msg) && normalizeMessageRole(msg.role) === "assistant";
 }
 
 export function isAssistantToolCallMessage(
@@ -321,8 +332,8 @@ export function mergeResponsesAssistantToolCalls(
 	if (!isAssistantToolCallMessage(prev) || !isAssistantToolCallMessage(next))
 		return false;
 	prev.tool_calls = [...(prev.tool_calls || []), ...(next.tool_calls || [])];
-	if (!reasoningTextForHistory(prev) && reasoningTextForHistory(next))
-		prev.reasoning_content = reasoningTextForHistory(next);
+	if (!rawRecordReasoningText(prev) && rawRecordReasoningText(next))
+		prev.reasoning_content = rawRecordReasoningText(next);
 	return true;
 }
 
@@ -331,14 +342,7 @@ export function normalizeResponsesFallbackPart(item: unknown): string {
 	const type = String(item.type || "")
 		.trim()
 		.toLowerCase();
-	if (
-		(type === "input_text" ||
-			type === "text" ||
-			type === "output_text" ||
-			type === "summary_text") &&
-		typeof item.text === "string" &&
-		item.text.trim()
-	)
+	if (isTextPartType(type) && typeof item.text === "string" && item.text.trim())
 		return item.text;
 	return "";
 }
@@ -387,7 +391,7 @@ function validateResponsesInputRecord(
 	const type = String(item.type || "")
 		.trim()
 		.toLowerCase();
-	const role = normalizeHistoryRole(item.role);
+	const role = normalizeMessageRole(item.role);
 	if (item.role != null && !role) return `${label} has unsupported role`;
 	if (item.role != null && role) {
 		if (role === "assistant")
@@ -423,22 +427,17 @@ function validateResponsesInputRecord(
 		}
 		case "reasoning":
 		case "thinking":
-			return responsesContentToText(
-				item.summary ?? item.content ?? item.text,
-			).trim()
+			return flattenText(item.summary ?? item.content ?? item.text).trim()
 				? ""
 				: `${label} reasoning item requires text`;
 		case "input_file":
 		case "file":
 			return "";
-		case "input_text":
-		case "text":
-		case "output_text":
-		case "summary_text":
-			return typeof item.text === "string" && item.text.trim()
-				? ""
-				: `${label} text item requires text`;
 		default:
+			if (isTextPartType(type))
+				return typeof item.text === "string" && item.text.trim()
+					? ""
+					: `${label} text item requires text`;
 			return `${label} has unsupported type${type ? `: ${type}` : ""}`;
 	}
 }

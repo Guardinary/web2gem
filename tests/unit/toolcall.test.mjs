@@ -5,6 +5,7 @@ import { finalizeOpenAICompletionResult } from "../../src/completion/turn";
 import { streamOpenAIChatWithToolSieve } from "../../src/http/openai/chat-stream";
 import { streamResponsesWithToolSieve } from "../../src/http/openai/responses-stream";
 import { messagesToPrompt } from "../../src/promptcompat/messages";
+import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
 import { openAIToolDefs } from "../../src/toolcall/content";
 import {
 	normalizeDSMLToolCallMarkup,
@@ -716,7 +717,9 @@ describe("toolcall", () => {
 				},
 			},
 		];
-		const messages = [{ role: "user", content: "find docs" }];
+		const messages = parseOpenAIMessages([
+			{ role: "user", content: "find docs" },
+		]);
 		const directDefs = openAIToolDefs(tools);
 		const direct = messagesToPrompt(
 			messages,
@@ -735,9 +738,9 @@ describe("toolcall", () => {
 			"",
 			1000000,
 		);
-		assert.equal(bundled[0], direct[0]);
-		assert.equal(bundled.hasToolPrompt, true);
-		assert.equal(bundled.hasToolInstructions, true);
+		assert.equal(bundled.text, direct.text);
+		assert.equal(bundled.metadata.hasToolPrompt, true);
+		assert.equal(bundled.metadata.hasToolInstructions, true);
 		assert.match(toolPromptBlockFor(bundle, ""), /"name": "Search"/);
 		assert.doesNotMatch(
 			toolPromptBlockFor(bundle, ""),
@@ -1424,7 +1427,7 @@ describe("toolcall", () => {
 			cfg,
 			fakeStreamProvider([]),
 			{},
-			[{ role: "user", content: "what changed today?" }],
+			parseOpenAIMessages([{ role: "user", content: "what changed today?" }]),
 			null,
 			"auto",
 			null,
@@ -1491,7 +1494,7 @@ describe("toolcall", () => {
 			cfg,
 			fakeStreamProvider([]),
 			{},
-			[{ role: "user", content: "find docs" }],
+			parseOpenAIMessages([{ role: "user", content: "find docs" }]),
 			tools,
 			"required",
 			{
@@ -2070,7 +2073,7 @@ describe("toolcall", () => {
 	});
 	test("uses fallback tool defs when prompt source has no tools", async () => {
 		const result = messagesToPrompt(
-			[{ role: "user", content: "find docs" }],
+			parseOpenAIMessages([{ role: "user", content: "find docs" }]),
 			null,
 			"auto",
 			[
@@ -2086,9 +2089,9 @@ describe("toolcall", () => {
 			"",
 			1000000,
 		);
-		assert.match(result[0], /Available tools/);
-		assert.match(result[0], /"name": "Search"/);
-		assert.match(result[0], /"query"/);
-		assert.doesNotMatch(result[0], /Gemini native hidden tool calls/);
+		assert.match(result.text, /Available tools/);
+		assert.match(result.text, /"name": "Search"/);
+		assert.match(result.text, /"query"/);
+		assert.doesNotMatch(result.text, /Gemini native hidden tool calls/);
 	});
 });

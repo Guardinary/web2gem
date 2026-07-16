@@ -44,12 +44,6 @@ export function collectOpenAIRequestAttachmentPlan(
 	});
 }
 
-export function collectOpenAIInlineUploadFiles(
-	req: unknown,
-): UploadFileInput[] | null {
-	return collectOpenAIInlineUploads(req).files;
-}
-
 export function collectOpenAIInlineUploadImages(
 	req: unknown,
 ): Array<{ b64: string; mime: string; filename?: string }> | null {

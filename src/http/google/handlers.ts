@@ -5,6 +5,7 @@ import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
 import { prepareGoogleCompletion } from "../../completion/google-request";
 import { finalizeGoogleCompletionResult } from "../../completion/google-turn";
+import { parseGoogleRequest } from "../../promptcompat/google";
 import { upstreamErrorCode } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import { tokenEst } from "../../shared/tokens";
@@ -31,12 +32,13 @@ export async function handleGoogleGenerate(
 	route: GoogleGenerationRoute,
 ) {
 	const { modelName, stream } = route;
+	const messages = parseGoogleRequest(req);
 	return runPreparedCompletion({
 		cfg,
 		provider,
 		stage: "google",
 		protocol: GOOGLE_GENERATION_PROTOCOL,
-		prepare: () => prepareGoogleCompletion(cfg, provider, req, modelName),
+		prepare: () => prepareGoogleCompletion(cfg, provider, req, messages, modelName),
 		prepareLogFields: (prepared) => ({
 			model: prepared.rm.name,
 			stream,

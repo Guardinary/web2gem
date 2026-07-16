@@ -9,16 +9,15 @@ export function ensureInlineToolPrompt(
 	prompt: string,
 	toolDefs: unknown,
 	toolChoiceInstruction: string,
-	contextFiles?: unknown,
-	metadata?: PromptMetadata,
+	contextFiles: unknown,
+	metadata: PromptMetadata,
 ): string {
 	const text = String(prompt || "");
 	const toolNames = toolNamesForPromptSource(toolDefs || []);
 	if (contextFiles) {
-		if (metadata?.hasToolInstructions) return text;
+		if (metadata.hasToolInstructions) return text;
 		if (!toolNames.length)
 			return withMissingInstruction(text, toolChoiceInstruction);
-		if (!metadata && text.includes("<|DSML|tool_calls>")) return text;
 		return [toolCallInstructionsFor(toolDefs), toolChoiceInstruction, text]
 			.filter((part) => part.trim())
 			.join("\n\n");
@@ -26,13 +25,7 @@ export function ensureInlineToolPrompt(
 	if (!toolNames.length) {
 		return withMissingInstruction(text, toolChoiceInstruction);
 	}
-	if (metadata?.hasToolPrompt && metadata.hasToolInstructions) return text;
-	if (
-		!metadata &&
-		text.includes("Available tools") &&
-		text.includes("<|DSML|tool_calls>")
-	)
-		return text;
+	if (metadata.hasToolPrompt && metadata.hasToolInstructions) return text;
 	return [toolPromptBlockFor(toolDefs, toolChoiceInstruction), text]
 		.filter((part) => part.trim())
 		.join("\n\n");

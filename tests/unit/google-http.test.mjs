@@ -6,6 +6,8 @@ import { EMPTY_UPSTREAM_MSG } from "../../src/completion/turn";
 import { invalidGeminiCookieError } from "../../src/gemini/client/errors";
 import { handleGoogleGenerate } from "../../src/http/google/handlers";
 import { parseGoogleGenerationPath } from "../../src/http/google/model-path";
+import { parseGoogleRequest } from "../../src/promptcompat/google";
+import { createToolBundle } from "../../src/toolcall/tool-bundle";
 import {
 	streamGooglePlain,
 	streamGoogleTools,
@@ -287,7 +289,7 @@ describe("google http", () => {
 				supports_authenticated_session: true,
 			}),
 			provider,
-			{
+			parseGoogleRequest({
 				contents: [
 					{
 						role: "user",
@@ -304,7 +306,7 @@ describe("google http", () => {
 						],
 					},
 				],
-			},
+			}),
 			false,
 		);
 
@@ -347,8 +349,9 @@ describe("google http", () => {
 		const result = await prepareGoogleGeminiContext(
 			cfg,
 			fakeStreamProvider([]),
-			{ ...req, tools: filtered },
+			parseGoogleRequest(req),
 			true,
+			createToolBundle(filtered),
 		);
 		assert.equal(result.error, undefined);
 		assert.match(result.prompt, /Available tools/);
@@ -380,8 +383,9 @@ describe("google http", () => {
 		const result = await prepareGoogleGeminiContext(
 			cfg,
 			fakeStreamProvider([]),
-			{ ...req, tools: filtered },
+			parseGoogleRequest(req),
 			true,
+			createToolBundle(filtered),
 		);
 		assert.equal(result.error, undefined);
 		assert.match(result.prompt, /"name": "Lookup"/);
@@ -419,8 +423,9 @@ describe("google http", () => {
 		const result = await prepareGoogleGeminiContext(
 			cfg,
 			fakeStreamProvider([]),
-			{ ...req, tools: filtered },
+			parseGoogleRequest(req),
 			true,
+			createToolBundle(filtered),
 		);
 		assert.equal(result.error, undefined);
 		assert.match(result.prompt, /"name": "Fetch"/);
@@ -458,8 +463,9 @@ describe("google http", () => {
 		const result = await prepareGoogleGeminiContext(
 			cfg,
 			fakeStreamProvider([]),
-			{ ...req, tools: filtered },
+			parseGoogleRequest(req),
 			true,
+			createToolBundle(filtered),
 		);
 		assert.equal(result.error, undefined);
 		assert.match(result.prompt, /"name": "Translate"/);

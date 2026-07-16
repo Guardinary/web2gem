@@ -53,6 +53,7 @@ import { createDeltaCoalescer } from "../../src/http/stream/coalescer";
 import worker from "../../src/index";
 import { MODELS, resolveModel } from "../../src/models";
 import { messagesToPrompt } from "../../src/promptcompat/messages";
+import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
 import {
 	abortError,
 	isAbortError,
@@ -493,7 +494,7 @@ describe("runtime core", () => {
 	});
 	test("marks prompt conversion as over byte budget", async () => {
 		const result = messagesToPrompt(
-			[{ role: "user", content: "x".repeat(40) }],
+			parseOpenAIMessages([{ role: "user", content: "x".repeat(40) }]),
 			null,
 			null,
 			[],

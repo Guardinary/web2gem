@@ -1,6 +1,6 @@
 import type { RuntimeConfig } from "../config";
 import type { ResolvedModel } from "../models";
-import { googleToolChoiceInstruction } from "../promptcompat/google";
+import type { InternalMessage } from "../promptcompat/message-model";
 import {
 	upstreamErrorCode,
 	upstreamErrorMessage,
@@ -10,6 +10,7 @@ import {
 import { log } from "../shared/logging";
 import {
 	googleFunctionCallingConfig,
+	googleToolChoiceInstructionFromPolicy,
 	parseGoogleToolChoicePolicy,
 	validateGoogleToolChoiceConfig,
 } from "../toolcall/policy-google";
@@ -45,6 +46,7 @@ export async function prepareGoogleCompletion(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
 	req: LooseRequest,
+	messages: readonly InternalMessage[],
 	modelName: string,
 ): Promise<PreparedGoogleCompletion | { error: GoogleCompletionPrepareError }> {
 	const rm = await resolveCompletionModel(
@@ -84,11 +86,12 @@ export async function prepareGoogleCompletion(
 		: null;
 	const effectiveReq = { ...req, tools: effectiveGoogleTools || [] };
 	const hasTools = !!effectiveGoogleTools && fcMode !== "NONE";
-	const toolChoiceInstruction = googleToolChoiceInstruction(effectiveReq);
+	const toolChoiceInstruction =
+		googleToolChoiceInstructionFromPolicy(toolPolicy);
 	const ctx = await prepareGoogleGeminiContext(
 		cfg,
 		provider,
-		effectiveReq,
+		messages,
 		hasTools,
 		effectiveToolBundle,
 		toolChoiceInstruction,

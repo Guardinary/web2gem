@@ -4,6 +4,7 @@ import { EMPTY_UPSTREAM_MSG } from "../../completion";
 import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
 import { prepareOpenAICompletion } from "../../completion/openai";
+import { parseOpenAIMessages } from "../../promptcompat/message-model";
 import { log, nowSec } from "../../shared/logging";
 import { randHex } from "../../shared/crypto";
 import { tokenEst } from "../../shared/tokens";
@@ -39,7 +40,7 @@ export async function handleChat(
 	const imageMode = imageGenerationMode(req);
 	if (imageMode.enabled)
 		return handleImageGenerationChat(req, cfg, provider, imageMode.forced);
-	const messages = req.messages || [];
+	const messages = parseOpenAIMessages(req.messages);
 	return runPreparedCompletion({
 		cfg,
 		provider,
