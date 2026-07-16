@@ -924,13 +924,13 @@ Use this contract when changing completion stream event helpers, OpenAI or Googl
 ### 2. Signatures
 
 - `streamPlainCompletionEvents(provider, input, { signal, coalesceTextDeltas, minCoalescedTextChars, maxCoalescedTextWaitMs })` emits completion stream events.
-- `streamToolSieveCompletionEvents(...)` and `streamBufferedToolTextCompletionEvents(...)` accept the same internal coalescing options.
+- `streamToolSieveCompletionEvents(...)` and the shared `streamSievedTextDeltas(...)` loop accept the same internal coalescing options.
 - `createDeltaCoalescer(sendDeltaFrame, minFlushChars = 64, maxFlushWaitMs = 20, { emitFirstImmediately })` buffers protocol deltas.
 - `MIN_DELTA_FLUSH_CHARS` and `MAX_DELTA_FLUSH_WAIT_MS` are the protocol-frame defaults.
 
 ### 3. Contracts
 
-- Completion coalescing options are internal to `src/completion/runtime.ts`; pass only provider-supported options such as `signal` into `provider.streamText`.
+- Completion coalescing options are owned by `src/completion/stream-coalesce.ts` and consumed by `stream-events.ts`; pass only provider-supported options such as `signal` into `provider.streamText`.
 - With `coalesceTextDeltas: true`, emit the first provider text delta immediately, then buffer later deltas until `minCoalescedTextChars` code points, `maxCoalescedTextWaitMs`, stream end, or a non-abort stream error.
 - On non-abort provider errors, flush pending text before yielding the warning/error event so partial output is preserved.
 - On abort/disconnect, do not flush buffered text as a synthetic final delta and do not emit noisy stream errors.

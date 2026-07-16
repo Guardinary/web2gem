@@ -9,9 +9,9 @@
 - `src/http/openai/images.ts` owns OpenAI image route orchestration and generation response flow. JSON and multipart image-edit input normalization, upload-size enforcement, and image-part coercion belong in `src/http/openai/images-input.ts`; keep provider calls and response formatting out of that input owner.
 - HTTP protocol adapters import `http/core/*`, `http/stream/*`, and `src/http/*` owner modules directly. There is no `src/http/index.ts` barrel; `src/app.ts` also imports owner modules directly. New generation endpoints run through `runPreparedCompletion`/`generateTextLogged`/`generateRichLogged` with their protocol's `*_GENERATION_PROTOCOL` constant instead of hand-rolling prepare/generate/log/error pipelines.
 - `src/completion/` owns provider-neutral completion contracts and shared business behavior: prompt/context preparation, provider text-generation ports, empty-output handling, stream/tool-sieve event generation, one `CompletionStreamLifecycle` reducer, and completion turn finalization. Protocol adapters must not mirror reducer-owned issue/empty/tool-call/policy/count state, and callback-style stream consumption APIs are not part of the contract.
-- `src/promptcompat/` converts OpenAI Responses, OpenAI chat, and Google content shapes into prompt text and file references.
+- `src/promptcompat/` owns the typed `InternalMessage` boundary. HTTP adapters parse OpenAI Responses, OpenAI chat, and Google wire shapes once; prompt, history, attachment, and image-generation consumers receive the parsed model instead of re-walking raw content parts.
 - `src/toolcall/` owns tool-call prompt formatting, parsing, policy validation, and schema normalization.
-- `src/toolcall/index.ts` is a compatibility barrel only. Implementation modules outside `src/toolcall/` should import concrete owner modules such as `toolcall/content`, `toolcall/tool-bundle`, `toolcall/policy-openai`, `toolcall/policy-google`, `toolcall/google`, `toolcall/dsml`, `toolcall/openai-format`, `toolcall/prompt-format`, or `toolcall/structured` instead of the broad barrel.
+- `src/toolcall/index.ts` is a compatibility barrel only. Implementation modules outside `src/toolcall/` should import concrete owner modules such as `toolcall/tool-bundle`, `toolcall/policy-openai`, `toolcall/policy-google`, `toolcall/google`, `toolcall/dsml`, `toolcall/openai-format`, `toolcall/prompt-format`, or `toolcall/structured` instead of the broad barrel.
 - `src/toolstream/` owns streamed tool-call sieve state.
 - `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. `gemini/client/index.ts` should stay an orchestration layer; payload/header construction, response parsing, retry helpers, and domain error classification live in sibling client modules.
 - `src/gemini/client/generated-images.ts` owns generated-image URL candidates, browser/cookie download headers, byte hydration, supported output-format mapping, and URL fallback. It must reuse MIME detection from `src/attachments/mime.ts` and encoding from `src/attachments/base64.ts`.
@@ -99,7 +99,7 @@ Use the completion provider port when code needs model text generation, request-
 - `CompletionProvider.resolveAttachments(plan)` accepts a provider-neutral attachment plan and returns provider file references plus request-local dropped-attachment notes.
 - `CompletionProvider.uploadTextFile(text, filename)` returns a provider file reference for large context attachment.
 - `CompletionTextInput.fileRefs` is `FileRef[] | null | undefined`; completion and HTTP modules should not pass untyped provider file payloads through this port.
-- `streamPlainCompletionEvents`, `streamToolSieveCompletionEvents`, and `streamBufferedToolTextCompletionEvents` convert provider deltas into explicit completion events.
+- `streamPlainCompletionEvents` and `streamToolSieveCompletionEvents` convert provider deltas into explicit completion events. Google tool streaming reuses the shared sieved-text loop with its protocol-specific tail finalizer.
 
 ### 3. Contracts
 
@@ -120,7 +120,7 @@ Use the completion provider port when code needs model text generation, request-
 
 - Good: `src/app.ts` creates `createGeminiCompletionProvider(cfg)` and passes it to `handleChat`.
 - Base: completion consumes `CompletionProvider.streamText(...)` through completion event helpers.
-- Bad: `src/completion/runtime.ts` imports `../gemini/client` or HTTP stream code calls provider delta callbacks directly.
+- Bad: a completion module imports `../gemini/client`, or HTTP stream code calls provider delta callbacks directly.
 
 ### 6. Tests Required
 
@@ -157,8 +157,8 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 
 - `src/attachments/types.ts` owns `AttachmentPlan`, `AttachmentCandidate`, `AttachmentDrop`, and `AttachmentUploadResult`.
 - `src/attachments/plan.ts` owns `createAttachmentPlan({ images, files, existingFileRefs, maxFiles })`, `mergeAttachmentPlans(...)`, candidate ordering, max-count enforcement, and request-local candidate normalization.
-- `src/attachments/refs.ts` owns existing file-reference extraction and consolidation, including OpenAI-compatible `file_id`, `ref_file_ids`, `file_ids`, and direct provider file-ref objects.
-- `src/attachments/collect-openai.ts` owns OpenAI-compatible request walking for top-level inline upload candidates and returns an `AttachmentPlan` by composing `refs.ts` and `plan.ts`.
+- `src/promptcompat/message-model.ts` owns OpenAI message/content-part parsing plus request-level `attachments`, `files`, `ref_file_ids`, and `file_ids` channel parsing. It produces one model-backed `AttachmentPlan`; no attachment module re-walks `messages` or Responses `input`.
+- `src/attachments/refs.ts` only consolidates already-parsed provider file-reference values for `AttachmentPlan`; it does not inspect raw OpenAI messages.
 - `src/attachments/notes.ts` owns dropped-attachment records and deterministic prompt notes.
 - `CompletionProvider.resolveAttachments(plan)` resolves request-local candidates to provider file refs and prompt notes.
 - `CompletionProvider.uploadTextFile(text, filename)` uploads required large-context text files.
@@ -168,6 +168,7 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 - `src/attachments/**` is provider-neutral and may depend on `src/shared/**`, but must not import `src/gemini/**`, HTTP adapters, or completion modules.
 - Implementation modules import Base64 helpers from `src/attachments/base64.ts`, MIME/filename helpers from `src/attachments/mime.ts`, and upload-input normalization from `src/attachments/input.ts`. `src/attachments/media.ts` is a compatibility facade only.
 - `src/completion/**` must call provider ports for upload and must not import Gemini upload modules.
+- Chat/Responses image generation parses messages at the HTTP edge and passes `readonly InternalMessage[]` into completion. Completion image preparation must not accept or dispatch raw content-part arrays.
 - `src/gemini/uploads/**` owns Gemini Web upload protocol details. Preferred content-push upload is multipart and must not include Gemini cookie or SAPISID authorization headers.
 - Request-local candidate dedupe is scoped to one request and keyed by MIME/content type, filename, and bytes.
 - Large-context `message.txt` / `tools.txt` uploads use the upload transport but keep hard-failure semantics through `prepareContextFiles`.
@@ -208,12 +209,13 @@ const fileRefs = await provider.resolveFiles(files);
 
 ```typescript
 const attachmentResult = await provider.resolveAttachments(attachmentPlan);
-const fileRefs = mergeFileRefs(
-  contextFileRefs,
-  attachmentPlan.existingFileRefs,
-  attachmentResult.genericFileRefs,
-  attachmentResult.imageFileRefs,
-);
+const groups = {
+  context: contextFileRefs,
+  existing: existingFileRefs,
+  generic: genericFileRefs,
+  image: imageFileRefs,
+};
+const fileRefs = mergeFileRefs(...dialect.fileRefOrder.map((key) => groups[key]));
 ```
 
 ## Architecture Guard
@@ -605,7 +607,7 @@ Use this contract when changing OpenAI Chat, OpenAI Responses, or Google-compati
 - Accept schema aliases at top level or under `function`: `parameters`, `input_schema`, `inputSchema`, and `schema`.
 - Accept Google declarations from `tools[].functionDeclarations` and `tools[].function_declarations`.
 - Do not make endpoint-local prompt builders reinterpret only one protocol's tool shape.
-- For hot paths, build one `ToolBundle` per request and pass it through policy, filtering, prompt definition, and schema-normalization code instead of repeatedly calling `toolItemsFromTools`, `extractToolNames`, `openAIToolDefs`, or `buildToolSchemaIndex`.
+- For hot paths, build one `ToolBundle` per request and pass it through policy, filtering, prompt definition, stream sieving, formatting, and schema normalization instead of rebuilding tool metadata from raw arrays.
 
 ### 4. Validation & Error Matrix
 
@@ -617,7 +619,7 @@ Use this contract when changing OpenAI Chat, OpenAI Responses, or Google-compati
 ### 5. Good/Base/Bad Cases
 
 - Good: add a new schema alias by updating `tool-meta.ts` and reusing it from prompt and schema-normalization code.
-- Base: endpoint handlers pass raw request tools into the lower layer and let `toolcall` normalize them once into a `ToolBundle`.
+- Base: the endpoint boundary calls `createToolBundle(req.tools)` once; downstream completion and tool-call helpers receive `ToolBundle | null`.
 - Bad: Google prompt code loops only over `functionDeclarations`, while validation accepts OpenAI-style tools; this validates a request and then builds a prompt with no tools.
 - Bad: OpenAI Responses normalizes tools in the HTTP adapter, then completion code builds a second schema/name index for the same request.
 

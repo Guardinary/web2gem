@@ -886,6 +886,6 @@ const livePrompt = [
 #### Correct
 
 ```typescript
-const toolsText = toolsContextTranscriptFor(toolSource, choiceInstruction, cfg.current_tools_file_name, toolDefs);
+const toolsText = toolsContextTranscriptFor(toolBundle, choiceInstruction, cfg.current_tools_file_name);
 const livePrompt = currentInputFilePrompt(cfg, true);
 ```
