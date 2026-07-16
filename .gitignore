@@ -13,14 +13,7 @@ AGENTS.md
 .dev.vars.*
 !.dev.vars.example
 
-# Local agent and workspace state
+# Local agent integration state
 .claude/
 .codex/
 .cursor/
-.trellis/.backup-*
-.trellis/.cache/
-.trellis/.runtime/
-.trellis/.template-hashes.json
-.trellis/worktrees/
-.trellis/tasks/
-.trellis/workspace/

@@ -109,7 +109,8 @@ channel:
 # codex:
 #   dispatch_mode: inline  # or "sub-agent" to dispatch trellis-* sub-agents
 
-# Auto-detected monorepo packages
+# Project package mapping. Keep the root package explicit so Trellis loads
+# package-scoped specs from .trellis/spec/web2gem/.
 packages:
   web2gem:
     path: .

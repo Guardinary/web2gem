@@ -412,7 +412,7 @@ def _get_update_hint(repo_root: Path) -> str | None:
 
     return (
         f"Trellis update available: {current_version} -> {latest_version}, "
-        "run trellis upgrade"
+        "run trellis update"
     )
 
 
@@ -528,7 +528,7 @@ def get_context_text(repo_root: Path | None = None) -> str:
     lines.append("## DEVELOPER")
     if not developer:
         lines.append(
-            f"ERROR: Not initialized. Run: python3 ./{DIR_WORKFLOW}/{DIR_SCRIPTS}/init_developer.py <name>"
+            f"ERROR: Not initialized. Run: python ./{DIR_WORKFLOW}/{DIR_SCRIPTS}/init_developer.py <name>"
         )
         return "\n".join(lines)
 
@@ -747,7 +747,7 @@ def get_context_text_record(repo_root: Path | None = None) -> str:
     developer = get_developer(repo_root)
     if not developer:
         lines.append(
-            f"ERROR: Not initialized. Run: python3 ./{DIR_WORKFLOW}/{DIR_SCRIPTS}/init_developer.py <name>"
+            f"ERROR: Not initialized. Run: python ./{DIR_WORKFLOW}/{DIR_SCRIPTS}/init_developer.py <name>"
         )
         return "\n".join(lines)
 
