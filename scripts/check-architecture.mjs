@@ -84,11 +84,13 @@ const rules = [
 			"../../promptcompat/",
 		],
 		allowed: [
+			"../promptcompat/attachment-inputs",
 			"../promptcompat/history",
 			"../promptcompat/message-model",
 			"../promptcompat/messages",
 			"../promptcompat/prompt-build",
 			"../promptcompat/token-accounting",
+			"../../promptcompat/attachment-inputs",
 			"../../promptcompat/history",
 			"../../promptcompat/message-model",
 			"../../promptcompat/messages",

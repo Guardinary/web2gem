@@ -5,11 +5,11 @@ import {
 	buildOpenAIHistoryTranscript,
 	latestOpenAIUserInputText,
 } from "../promptcompat/history";
-import type { InternalMessage } from "../promptcompat/message-model";
 import {
 	attachmentPlanFromMessages,
 	openAIAttachmentPlanFromRequest,
-} from "../promptcompat/message-model";
+} from "../promptcompat/attachment-inputs";
+import type { InternalMessage } from "../promptcompat/message-model";
 import type { PromptToolContext } from "../promptcompat/messages";
 import { messagesToPrompt } from "../promptcompat/messages";
 import {

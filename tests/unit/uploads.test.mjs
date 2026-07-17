@@ -2,9 +2,9 @@ import { beforeEach, describe, test } from "vitest";
 import { base64ToBytes } from "../../src/attachments/base64";
 import {
 	openAIAttachmentPlanFromRequest,
-	parseOpenAIMessages,
 	requestAttachmentPlanFromChannels,
-} from "../../src/promptcompat/message-model";
+} from "../../src/promptcompat/attachment-inputs";
+import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
 import { parseUploadUrl } from "../../src/attachments/input";
 import {
 	attachmentDrop,

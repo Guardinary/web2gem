@@ -22,6 +22,8 @@ import {
 import {
 	attachmentInputsFromMessages,
 	attachmentPlanFromMessages,
+} from "../../src/promptcompat/attachment-inputs";
+import {
 	flattenText,
 	historyContentText,
 	parseOpenAIMessages,
