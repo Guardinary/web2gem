@@ -4,15 +4,9 @@ import {
 	type MaterializedAttachment,
 	materializeAttachment,
 } from "../../attachments/materialize";
-import {
-	chooseUploadMime,
-	genericFilenameFromMime,
-	imageFilenameFromMime,
-	normalizeMimeType,
-} from "../../attachments/mime";
+import { normalizeMimeType } from "../../attachments/mime";
 import { firstNonEmptyString } from "../../shared/strings";
 import { attachmentDrop, droppedAttachmentNote } from "../../attachments/notes";
-import { createAttachmentPlan } from "../../attachments/plan";
 import type {
 	AttachmentCandidate,
 	AttachmentDrop,
@@ -170,56 +164,6 @@ export async function uploadTextFile(
 		filename: name,
 	});
 	return { ref, name };
-}
-
-export async function uploadImage(
-	cfg: RuntimeConfig,
-	bytes: Uint8Array,
-	mime: string,
-): Promise<string> {
-	const activeCfg = await configWithFreshGeminiCookie(cfg);
-	const result = await uploadBytesWithFallbackResult(activeCfg, {
-		bytes,
-		mime: chooseUploadMime(mime, "image/png"),
-		filename: imageFilenameFromMime(mime, 1),
-	});
-	return result.ref;
-}
-
-export async function uploadFile(
-	cfg: RuntimeConfig,
-	bytes: Uint8Array,
-	mime: string,
-): Promise<string> {
-	const activeCfg = await configWithFreshGeminiCookie(cfg);
-	const result = await uploadBytesWithFallbackResult(activeCfg, {
-		bytes,
-		mime: chooseUploadMime(mime),
-		filename: genericFilenameFromMime(mime, 1),
-	});
-	return result.ref;
-}
-
-export async function resolveImages(
-	cfg: RuntimeConfig,
-	images: unknown,
-): Promise<AttachmentUploadResult> {
-	return resolveAttachments(cfg, createAttachmentPlan({ images }));
-}
-
-export async function resolveFiles(
-	cfg: RuntimeConfig,
-	files: unknown,
-): Promise<AttachmentUploadResult> {
-	return resolveAttachments(cfg, createAttachmentPlan({ files }));
-}
-
-export async function uploadBytesWithFallback(
-	cfg: RuntimeConfig,
-	input: UploadBytesInput,
-): Promise<string> {
-	const result = await uploadBytesWithFallbackResult(cfg, input);
-	return result.ref;
 }
 
 async function uploadBytesWithFallbackResult(
