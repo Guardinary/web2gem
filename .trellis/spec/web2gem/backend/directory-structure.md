@@ -380,7 +380,7 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
   through `scripts/check-bundle-size.mjs`; the default gzip ceiling is 3 MiB and
   `BUNDLE_GZIP_SIZE_LIMIT_BYTES` may override it.
 - `wrangler.jsonc` deploys `dist/worker.js`.
-- `tests/unit/*.test.mjs` are Vitest-discovered files that import authored `src/**` modules directly (owner modules, bypassing compatibility barrels) plus shared fakes from `tests/unit/helpers.js`.
+- `tests/unit/**/*.test.mjs` are recursively Vitest-discovered files that import authored `src/**` modules directly (owner modules, bypassing compatibility barrels) plus shared fakes from `tests/unit/helpers.js`.
 - `tests/unit/assertions.js` provides Vitest-backed assertion helpers.
 
 ### 3. Contracts
@@ -415,7 +415,7 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
 ### 6. Tests Required
 
 - Run `pnpm build` after changing build entrypoints.
-- Run `pnpm unit` after changing `tests/unit/*` or a helper's exports.
+- Run `pnpm unit` after changing any file under `tests/unit/` or a helper's exports.
 - Run `pnpm smoke` after changing `src/index.ts`, `src/public-exports.ts`, `src/harness-exports.ts`, `scripts/build.mjs`, or `scripts/smoke.mjs`.
 - Run `pnpm check:arch` after adding imports between source layers.
 - Run `pnpm check:size` after changing build inputs or runtime dependencies.

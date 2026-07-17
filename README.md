@@ -498,7 +498,7 @@ The build script emits the production bundle plus an optional harness bundle:
 | `pnpm check:size`   | Build the production Worker and enforce the gzip bundle-size budget.                                                            |
 | `pnpm docker:smoke` | Build the Docker image, run a temporary container, and verify health, auth, and OpenAI route behavior through the Node adapter. |
 
-Vitest discovers `tests/unit/*.test.mjs`, which import `src/**` modules directly, so watch mode and coverage both work without a build step. Coverage uses Vitest's V8 provider over authored sources (lcov and JSON summary reports). `pnpm coverage` and `pnpm coverage:ci` use a Node runner so environment variables are handled consistently across Windows and Unix shells. `pnpm coverage:ci` also reads `coverage/coverage-summary.json` through `scripts/check-coverage.mjs` to catch regressions in key source directories and selected high-risk branch paths.
+Vitest recursively discovers `tests/unit/**/*.test.mjs`, which import `src/**` modules directly, so watch mode and coverage both work without a build step. Coverage uses Vitest's V8 provider over authored sources (lcov and JSON summary reports). `pnpm coverage` and `pnpm coverage:ci` use a Node runner so environment variables are handled consistently across Windows and Unix shells. `pnpm coverage:ci` also reads `coverage/coverage-summary.json` through `scripts/check-coverage.mjs` to catch regressions in key source directories and selected high-risk branch paths.
 
 Recommended pre-commit gate:
 

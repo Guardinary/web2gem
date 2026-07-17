@@ -432,63 +432,89 @@ PORT=52389
 WEB2GEM_IMAGE=ghcr.io/guardinary/web2gem-account-pool:latest
 ```
 
-## Scenario: Generated Test Bundle Selection
+## Scenario: Direct-Source Unit Discovery In Quality Gates
 
 ### 1. Scope / Trigger
 
-Use this contract when a quality script launches another Node process that imports a generated Worker test bundle, especially when builds use different output directories such as `dist/` and `dist-coverage/`.
+Use this contract when changing Vitest discovery, moving unit suites into nested
+owner directories, or changing the unit/coverage commands used by quality and
+release workflows.
 
 ### 2. Signatures
 
-- `BENCH_TEST_BUNDLE`: repository-relative or absolute path consumed by `scripts/bench.mjs`.
-- Default benchmark bundle: `dist/worker.test.js`.
-- Coverage benchmark bundle: `dist-coverage/worker.test.js`.
-- `TEST_BUNDLE`: Vitest test-loader path; its relative semantics belong to `tests/unit/helpers.js` and must not be reused as a script working-directory path.
+- `vitest.config.mjs` owns `test.include = ["tests/unit/**/*.test.mjs"]`.
+- `pnpm unit` and `pnpm unit:quick` run `vitest run` directly against authored
+  source imports.
+- `pnpm coverage` runs Vitest V8 coverage through `scripts/coverage.mjs`;
+  `pnpm coverage:ci` additionally runs `scripts/check-coverage.mjs`.
+- `pnpm check:bench` separately builds and consumes `dist/harness.js` through
+  `BENCH_HARNESS_BUNDLE`; that harness is not a unit-test or coverage input.
 
 ### 3. Contracts
 
-- Every generated-artifact consumer must select the artifact produced by its own build phase explicitly.
-- Script bundle paths resolve from the repository working directory, not from the importing source file or a test helper directory.
-- `pnpm check:bench` builds and consumes the normal `dist/worker.test.js` bundle.
-- `pnpm coverage:ci` builds and consumes `dist-coverage/worker.test.js`, including benchmark subprocesses launched from tests.
-- A clean checkout must not require a stale bundle left by an earlier command.
+- Vitest recursively discovers `*.test.mjs` files at every depth under
+  `tests/unit/`; support modules must not use that suffix.
+- Unit tests import their authored `src/**` owners directly. Unit and coverage
+  commands require no Worker build, generated test bundle, `TEST_BUNDLE`,
+  `BENCH_TEST_BUNDLE`, or `dist-coverage/` tree.
+- Coverage instruments `src/**/*.ts` and `src/**/*.tsx` directly and writes its
+  reports under the git-ignored `coverage/` directory.
+- Mechanical suite moves compare the recursively enumerated disk paths,
+  `vitest list --filesOnly`, and full test IDs. Intentional semantic changes are
+  recorded separately instead of weakening discovery validation.
+- Benchmark harness selection remains owned by the benchmark command; do not
+  couple its generated artifact to unit discovery or coverage.
 
 ### 4. Validation & Error Matrix
 
-- Configured bundle exists and exports benchmark helpers -> benchmark runs normally.
-- Configured bundle is missing or cannot be imported -> exit nonzero with `Benchmark bundle load failed` and the resolved path.
-- Coverage build exists but normal bundle is absent -> coverage and its benchmark-output test still pass.
-- Normal benchmark gate starts without a test bundle -> its build step creates the normal bundle before execution.
+- A disk `*.test.mjs` path is absent from `vitest list --filesOnly` -> discovery
+  is incomplete; fix the include pattern before moving more suites.
+- A mechanical move changes or duplicates full test IDs -> stop and reconcile
+  the manifest before accepting semantic cleanup.
+- `pnpm coverage:ci` reports zero authored source files -> coverage include or
+  exclude paths are wrong; do not add a coverage build bundle.
+- `pnpm unit` requires `dist/` or succeeds only after another build command ->
+  a generated-artifact dependency was reintroduced; restore direct imports.
+- `pnpm check:bench` cannot load `dist/harness.js` -> its own build/selection
+  contract is broken; do not route unit or coverage through the harness.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: coverage passes `BENCH_TEST_BUNDLE=dist-coverage/worker.test.js` to Vitest subprocesses.
-- Base: direct benchmark execution defaults to `dist/worker.test.js` after `build.mjs --test-bundle`.
-- Bad: a subprocess hardcodes `../dist/worker.test.js` while its parent build writes only to `dist-coverage/`.
+- Good: add `tests/unit/gemini/client/retry.test.mjs`; recursive discovery lists
+  it and the suite imports `src/gemini/client/**` directly.
+- Base: a clean checkout after dependency installation can run discovery,
+  unit, and coverage without a production or harness build.
+- Bad: keep the flat `tests/unit/*.test.mjs` glob, create a generated Worker
+  test bundle, or use `BENCH_HARNESS_BUNDLE` as a Vitest loader.
 
 ### 6. Tests Required
 
-- Script test asserting machine-readable benchmark output works with the selected bundle.
-- Script test asserting an invalid bundle path exits with a clear diagnostic.
-- Clean-state `pnpm coverage:ci` run after a normal build has removed `dist/worker.test.js`.
-- `pnpm check:bench` and `pnpm smoke` to preserve normal generated-bundle consumers.
+- Run `pnpm exec vitest list --filesOnly` and compare it with recursive disk
+  enumeration after discovery or test-path changes.
+- Run `pnpm exec vitest list --json` and compare full IDs for mechanical moves.
+- Run `pnpm unit`, `pnpm coverage:ci`, and `pnpm check:static` after changing
+  discovery or quality-gate commands.
+- Run `pnpm check:bench` and `pnpm smoke` only when benchmark harness or build
+  ownership changes.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```javascript
-const mod = await import("../dist/worker.test.js");
+export default defineConfig({
+  test: { include: ["tests/unit/*.test.mjs"] },
+});
+await build({ outfile: "dist-coverage/worker.test.js" });
 ```
 
 #### Correct
 
 ```javascript
-const bundlePath = resolve(
-  process.cwd(),
-  process.env.BENCH_TEST_BUNDLE || "dist/worker.test.js",
-);
-const mod = await import(pathToFileURL(bundlePath).href);
+export default defineConfig({
+  test: { include: ["tests/unit/**/*.test.mjs"] },
+});
+await runPnpm(["exec", "vitest", "run", "--coverage"]);
 ```
 
 ## Scenario: Generated Worker Binding Types
