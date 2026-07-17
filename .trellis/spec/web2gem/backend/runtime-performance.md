@@ -155,8 +155,8 @@ Use this contract when changing environment config parsing, config cache keys, r
 
 ### 2. Signatures
 
-- `CONFIG_ENV_KEYS` lists every environment key that affects `getConfig`.
-- `CONFIG_ENV_KEYS` defines the ordered fields captured by the structured cache snapshot.
+- `CONFIG_SPEC` defines each static setting once as `{ key, field, defaultValue, parse }`.
+- `CONFIG_ENV_KEYS`, parsing, and ordered cache snapshots are derived from `CONFIG_SPEC`.
 - `getConfig(env)` returns a cached `StaticRuntimeConfig` only when current watched values match the stored snapshot.
 - `assertRuntimeConfig(env)` validates the production bundle environment without exposing the internal config object.
 - `RuntimeConfigError` contains safe `code`, `setting`, and `reason` fields and never includes the rejected value.
@@ -167,7 +167,7 @@ Use this contract when changing environment config parsing, config cache keys, r
 
 ### 3. Contracts
 
-- Add every new environment variable consumed by `getConfig` to `CONFIG_ENV_KEYS`; otherwise cached configs can go stale.
+- Add every new environment-backed static setting as one typed `CONFIG_SPEC` entry; never maintain a parallel key/default/parser list.
 - `ADMIN_KEY` is the single administrator credential and appears once in `CONFIG_ENV_KEYS`, deployment secret templates, and Compose forwarding. It accepts only one string; placeholder and overlong values are invalid.
 - `API_KEYS` uses one comma-separated format. JSON-array strings, empty members, duplicates, and non-string array entries are invalid.
 - Boolean settings accept only booleans or exact `"true"` / `"false"` strings. Integer settings accept only safe base-10 integers inside their documented bounds.
@@ -176,7 +176,7 @@ Use this contract when changing environment config parsing, config cache keys, r
 - Parsed static config and its key arrays are frozen. Request/session composition must return a distinct object.
 - The application composition root in `src/app.ts` must call `createRuntimeConfig(getConfig(env), executionContext)` before adding account-pool availability or acquiring a lease. Do not attach request/account fields directly to the cached object returned by `getConfig`.
 - `GEMINI_COOKIE` and `SAPISID` are not public runtime config keys on the D1 account-pool branch. Do not add them back to `CONFIG_ENV_KEYS`; account leases populate `RuntimeConfig.cookie` and `RuntimeConfig.sapisid` internally after selecting a D1 account.
-- Do not cache config solely by env object identity. Compare every watched value before returning a cached result.
+- The cache is one `WeakMap<WorkerEnv, { snapshot, value }>` keyed by env identity, but it must compare every derived snapshot value before returning the cached result.
 - Store primitive watched values directly. Do not concatenate or serialize secret-bearing strings such as `ADMIN_KEY` or string-form `API_KEYS` on cache hits.
 - Array-form `API_KEYS` uses a shallow content snapshot and invalidates after in-place replacement or length changes.
 - `requestContentLength` accepts only safe base-10 integer strings after trimming; invalid, signed, fractional, or unsafe values return `null`.
@@ -201,7 +201,7 @@ Use this contract when changing environment config parsing, config cache keys, r
 
 ### 5. Good/Base/Bad Cases
 
-- Good: add `NEW_FEATURE_FLAG` to `CONFIG_ENV_KEYS` in the same change that reads it in `getConfig`.
+- Good: add `NEW_FEATURE_FLAG` once to `CONFIG_SPEC`; derive key watching, default selection, parsing, and snapshots from that entry.
 - Good: call `createRuntimeConfig(staticConfig, { execution_ctx })` in `src/app.ts` and let account leases clone that runtime with session fields.
 - Good: validate the built Worker module through `assertRuntimeConfig` before Docker starts listening.
 - Base: use `requestContentLength(request)` for route-level body byte telemetry and oversized preflight checks.
@@ -235,14 +235,11 @@ if (_configCacheValue && _configCacheEnv === env) return _configCacheValue;
 #### Correct
 
 ```typescript
-if (
-  _configCacheValue &&
-  _configCacheEnv === env &&
-  _configCacheSnapshot &&
-  configSnapshotMatches(_configCacheSnapshot, env)
-) {
-  return _configCacheValue;
-}
+const cached = CONFIG_CACHE.get(env);
+if (cached && configSnapshotMatches(cached.snapshot, env)) return cached.value;
+const value = parseStaticRuntimeConfig(env);
+CONFIG_CACHE.set(env, { snapshot: captureConfigSnapshot(env), value });
+return value;
 ```
 
 #### Wrong

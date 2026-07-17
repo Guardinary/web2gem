@@ -80,6 +80,10 @@ Use this contract when changing account lease selection, model-header resolution
   optional known-family Basic fallback. Acquisition separately carries the
   capability mode and freshness cutoff; a successful lease returns the route
   validated or safely assigned for that exact account as `selectedRoute`.
+- `GeminiAccountAttemptOrchestrator` owns distinct-account attempts, lease
+  recovery, outcome persistence, and success maintenance for one provider.
+- `UploadReplayState` owns generated upload recipes, immutable alias remapping,
+  replay against a recovered account, and opaque-reference detection.
 
 ### 3. Contracts
 
@@ -110,6 +114,12 @@ Use this contract when changing account lease selection, model-header resolution
   unrelated accounts cannot displace runtime selection data.
 - Cross-account budget counts distinct account IDs, not same-account transport retries. Never retry one ID solely to spend the budget; eligible pool size is the natural ceiling.
 - Semantic recovery scope, abort, stream output, and attachment replay safety remain stronger gates than numeric budget.
+- Generated attachment/text references may switch accounts only after every
+  recorded recipe replays with the same reference count. Opaque external refs
+  pin the request to the current account.
+- Release the lease only after capturing the selected lease for persistence and
+  maintenance. Abort never records failure; post-delta stream errors never
+  fail over; `waitUntil` registration failure never changes a completed result.
 - Successful Worker requests may schedule session-only maintenance through the bound `execution_ctx.waitUntil(promise)`. It must not block/change the response or run the full status/capability probe.
 
 ### 4. Validation & Error Matrix
@@ -125,6 +135,8 @@ Use this contract when changing account lease selection, model-header resolution
 - Off-mode failover to a different account -> recompute route binding for the
   second account; never reuse the first account's route.
 - Static/global `1052`, StreamGenerate `1060`, abort, post-delta failure, or opaque refs -> no blind pool traversal.
+- Replay returns a different reference count or an invalid ref ->
+  `gemini_upload_replay_failed` (502), then stop traversal.
 - Refresh interval `0` or fresh session -> no background refresh.
 - `waitUntil` registration/background failure -> safe log only; completed response remains successful.
 
