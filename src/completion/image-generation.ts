@@ -1,11 +1,11 @@
 import { base64ToBytes } from "../attachments/base64";
 import {
 	detectUploadMimeFromBytes,
-	firstNonEmptyString,
 	imageFilenameFromMime,
 	normalizeMimeType,
 	sanitizeUploadFilename,
 } from "../attachments/mime";
+import { firstNonEmptyString } from "../shared/strings";
 import { MAX_ATTACHMENTS_PER_REQUEST } from "../attachments/plan";
 import type {
 	AttachmentCandidate,

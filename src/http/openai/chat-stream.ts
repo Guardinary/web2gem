@@ -19,11 +19,9 @@ import {
 	createTokenCounter,
 	tokenCountFromCounts,
 } from "../../shared/tokens";
-import type { OpenAIToolCall } from "../../toolcall/openai-format";
 import { formatOpenAIStreamToolCalls } from "../../toolcall/openai-format";
 import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
 import type { ToolBundle } from "../../toolcall/tool-bundle";
-import { parseJsonObject } from "../core/json";
 import type { SSEWrite } from "../core/sse";
 import {
 	streamInterruptedWarningText,
@@ -93,7 +91,7 @@ export async function streamOpenAIChatPlain(
 	for await (const event of streamPlainCompletionEvents(
 		provider,
 		{ prompt, rm, fileRefs },
-		{ signal, coalesceTextDeltas: true },
+		{ signal },
 	)) {
 		recordCompletionStreamEvent(lifecycle, event);
 		if (event.type === "text_delta") {
@@ -166,8 +164,8 @@ export async function streamOpenAIChatWithToolSieve(
 
 	for await (const event of streamToolSieveCompletionEvents(
 		provider,
-		{ prompt, rm, fileRefs, tools, toolPolicy },
-		{ signal, coalesceTextDeltas: true },
+		{ prompt, rm, fileRefs, toolPolicy },
+		{ signal },
 	)) {
 		recordCompletionStreamEvent(toolLifecycle, event);
 		if (event.type === "text_delta") {
@@ -195,12 +193,12 @@ export async function streamOpenAIChatWithToolSieve(
 			await writeStreamWarningEvent(write, toolLifecycle.issue.error);
 		}
 		const toolCallDeltas = formatOpenAIStreamToolCalls(
-			toolLifecycle.toolCalls.map(openAIStreamToolCallInput),
+			toolLifecycle.toolCalls,
 			new Map(),
 			tools,
 		);
 		await writeChunk({ tool_calls: toolCallDeltas }, "tool_calls");
-		extraTokenCounter.append(JSON.stringify(toolLifecycle.toolCalls));
+		extraTokenCounter.append(JSON.stringify(toolCallDeltas));
 	} else {
 		if (!toolLifecycle.emittedText || toolLifecycle.empty) {
 			const error = toolLifecycle.issue?.error || {
@@ -270,14 +268,4 @@ async function writeOpenAIChatInterrupted(
 		`openai chat stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(issue.error) || "stream_interrupted"} error=${errorLogSummary(issue.error)}`,
 	);
 	await writeStreamWarningEvent(write, issue.error, warning.trim());
-}
-
-function openAIStreamToolCallInput(toolCall: OpenAIToolCall): {
-	name: unknown;
-	input: unknown;
-} {
-	return {
-		name: toolCall.function.name,
-		input: parseJsonObject(toolCall.function.arguments),
-	};
 }

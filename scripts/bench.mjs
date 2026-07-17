@@ -784,7 +784,7 @@ function runPlainSieveChunks(text) {
 	for (let i = 0; i < text.length; i += 1024) {
 		mod.processToolSieveChunk(state, text.slice(i, i + 1024));
 	}
-	return mod.flushToolSieve(state, toolBundle);
+	return mod.flushToolSieve(state);
 }
 
 function runHeldToolCandidateChunks(text) {
@@ -792,7 +792,7 @@ function runHeldToolCandidateChunks(text) {
 	for (let i = 0; i < text.length; i += 1024) {
 		mod.processToolSieveChunk(state, text.slice(i, i + 1024));
 	}
-	return mod.flushToolSieve(state, toolBundle);
+	return mod.flushToolSieve(state);
 }
 
 async function runResponsesSmallDeltaStream() {

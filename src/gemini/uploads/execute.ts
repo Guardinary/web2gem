@@ -6,11 +6,11 @@ import {
 } from "../../attachments/materialize";
 import {
 	chooseUploadMime,
-	firstNonEmptyString,
 	genericFilenameFromMime,
 	imageFilenameFromMime,
 	normalizeMimeType,
 } from "../../attachments/mime";
+import { firstNonEmptyString } from "../../shared/strings";
 import { attachmentDrop, droppedAttachmentNote } from "../../attachments/notes";
 import { createAttachmentPlan } from "../../attachments/plan";
 import type {

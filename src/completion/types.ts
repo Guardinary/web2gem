@@ -26,10 +26,6 @@ export type PromptMetadata = {
 
 export type AttachmentResolutionResult = AttachmentUploadResult;
 
-export type ImageResolutionResult = AttachmentResolutionResult;
-
-export type FileResolutionResult = AttachmentResolutionResult;
-
 export type ContextFileResult = {
 	fileRefs: FileRef[];
 	prompt: string;

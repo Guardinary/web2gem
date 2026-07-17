@@ -1,28 +1,39 @@
 import { isAbortError } from "../shared/abort";
 import type { TokenCharCounts, TokenCounter } from "../shared/tokens";
 import { createTokenCounter, emptyTokenCounts } from "../shared/tokens";
-import type { OpenAIToolCall } from "../toolcall/openai-format";
+import type { ParsedToolCall } from "../toolcall/dsml";
 import type {
 	ToolChoicePolicy,
 	ToolPolicyViolation,
 } from "../toolcall/policy-openai";
 import { validateRequiredToolCalls } from "../toolcall/policy-openai";
-import type { ToolBundle } from "../toolcall/tool-bundle";
-import type { ToolSieveState } from "../toolstream";
+import type { ToolSieveState } from "../toolcall/sieve";
 import {
 	createToolSieveState,
 	flushToolSieve,
 	processToolSieveChunk,
-} from "../toolstream";
-import type { CompletionProvider, CompletionTextInput } from "./ports";
-import type { StreamConsumeInternalOptions } from "./stream-coalesce";
-import { completionTextDeltas } from "./stream-coalesce";
+} from "../toolcall/sieve";
+import type {
+	CompletionProvider,
+	CompletionProviderOptions,
+	CompletionTextInput,
+} from "./ports";
 
 export type GeminiCompletionInput = CompletionTextInput;
 
+function completionTextDeltas(
+	provider: CompletionProvider,
+	input: CompletionTextInput,
+	options: CompletionProviderOptions,
+): AsyncIterable<string> {
+	const providerOptions: CompletionProviderOptions = {};
+	if (options.signal) providerOptions.signal = options.signal;
+	return provider.streamText(input, providerOptions);
+}
+
 export type CompletionStreamEvent =
 	| { type: "text_delta"; text: string }
-	| { type: "tool_calls"; toolCalls: OpenAIToolCall[] }
+	| { type: "tool_calls"; toolCalls: ParsedToolCall[] }
 	| { type: "tool_policy_violation"; violation: ToolPolicyViolation }
 	| { type: "warning"; error: unknown; message: string }
 	| { type: "stream_error"; error: unknown; message: string }
@@ -41,7 +52,7 @@ export type CompletionStreamLifecycle = {
 		CompletionStreamEvent,
 		{ type: "warning" } | { type: "stream_error" }
 	> | null;
-	toolCalls: OpenAIToolCall[] | null;
+	toolCalls: ParsedToolCall[] | null;
 	violation: ToolPolicyViolation | null;
 	completionCounts: TokenCharCounts & { hasText: boolean };
 };
@@ -87,7 +98,7 @@ export function recordCompletionStreamEvent(
 export async function* streamPlainCompletionEvents(
 	provider: CompletionProvider,
 	input: GeminiCompletionInput,
-	options: StreamConsumeInternalOptions = {},
+	options: CompletionProviderOptions = {},
 ): AsyncIterable<CompletionStreamEvent> {
 	let emittedText = false;
 	let streamErr: unknown = null;
@@ -145,7 +156,7 @@ export function createSieveLoopContext(): SieveLoopContext {
 export async function* streamSievedTextDeltas(
 	provider: CompletionProvider,
 	input: GeminiCompletionInput,
-	options: StreamConsumeInternalOptions,
+	options: CompletionProviderOptions,
 	ctx: SieveLoopContext,
 ): AsyncIterable<CompletionStreamEvent> {
 	try {
@@ -170,15 +181,14 @@ export async function* streamSievedTextDeltas(
 export async function* streamToolSieveCompletionEvents(
 	provider: CompletionProvider,
 	input: GeminiCompletionInput & {
-		tools: ToolBundle | null;
 		toolPolicy?: ToolChoicePolicy | null | undefined;
 	},
-	options: StreamConsumeInternalOptions = {},
+	options: CompletionProviderOptions = {},
 ): AsyncIterable<CompletionStreamEvent> {
 	const ctx = createSieveLoopContext();
 	yield* streamSievedTextDeltas(provider, input, options, ctx);
 
-	const flushed = flushToolSieve(ctx.state, input.tools);
+	const flushed = flushToolSieve(ctx.state);
 	if (flushed.text) {
 		ctx.emittedText = true;
 		ctx.counter.append(flushed.text);

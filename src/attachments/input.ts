@@ -1,9 +1,9 @@
 import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
 import { TEXT_ENCODER } from "../shared/encoding";
+import { firstNonEmptyString } from "../shared/strings";
 import { bytesToBase64 } from "./base64";
 import {
 	cleanUploadMime,
-	firstNonEmptyString,
 	mimeFromFilename,
 	sanitizeUploadFilename,
 } from "./mime";
@@ -118,10 +118,6 @@ export function uploadFilenameFromObject(obj: unknown): string {
 					file.display_name),
 		].map(sanitizeUploadFilename),
 	);
-}
-
-export function imageFilenameFromObject(obj: unknown): string {
-	return uploadFilenameFromObject(obj);
 }
 
 export function uploadMimeFromObject(obj: unknown): string {
@@ -247,10 +243,6 @@ export function normalizeUploadFileInput(
 		return out;
 	}
 	return null;
-}
-
-export function hasInlineUploadFilePayload(raw: unknown): boolean {
-	return !!normalizeUploadFileInput(raw);
 }
 
 export function isDataUrl(raw: string): boolean {

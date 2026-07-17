@@ -54,8 +54,8 @@ function fullCoverageSummary() {
 		"src/promptcompat/responses-input.ts": coverageEntry(),
 		"src/shared/tokens.ts": coverageEntry(),
 		"src/toolcall/markdown.ts": coverageEntry(),
-		"src/toolcall/structured.ts": coverageEntry(),
-		"src/toolstream/index.ts": coverageEntry(),
+		"src/completion/structured-output.ts": coverageEntry(),
+		"src/toolcall/sieve.ts": coverageEntry(),
 	};
 }
 async function withCoverageSummary(summary, run) {
@@ -228,7 +228,7 @@ describe("quality scripts", () => {
 	});
 	test("rejects coverage summaries below branch gates", async () => {
 		const summary = fullCoverageSummary();
-		summary["src/toolcall/structured.ts"].branches.covered = 54;
+		summary["src/toolcall/sieve.ts"].branches.covered = 54;
 		await withCoverageSummary(summary, async (summaryPath) => {
 			const result = await runNodeScript(
 				"scripts/check-coverage.mjs",

@@ -5,7 +5,7 @@ import {
 	uploadFilenameFromObject,
 	uploadMimeFromObject,
 } from "../attachments/input";
-import { firstNonEmptyString } from "../attachments/mime";
+import { firstNonEmptyString } from "../shared/strings";
 import {
 	createAttachmentPlan,
 	mergeAttachmentPlans,

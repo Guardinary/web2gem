@@ -2,13 +2,6 @@ import { TEXT_DECODER, UTF8_FATAL_DECODER } from "../shared/encoding";
 
 const MIME_MAX_LENGTH = 180;
 
-export function firstNonEmptyString(...values: unknown[]): string {
-	for (const value of values) {
-		if (typeof value === "string" && value.trim()) return value.trim();
-	}
-	return "";
-}
-
 export function sanitizeUploadFilename(name: unknown): string {
 	if (typeof name !== "string" && typeof name !== "number") return "";
 	let safeName = String(name || "").trim();

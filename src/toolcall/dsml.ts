@@ -3,15 +3,10 @@ import { maskMarkdownProtectedSpans, parseMarkdownFenceLine } from "./markdown";
 import { formatOpenAIToolCalls } from "./openai-format";
 import { createToolBundle } from "./tool-bundle";
 import {
-	TOOL_MARKUP_CONFUSABLE_RE as TOOL_MARKUP_CONFUSABLE_RE_INTERNAL,
-	containsToolMarkupSyntax as containsToolMarkupSyntaxCandidate,
+	TOOL_MARKUP_CONFUSABLE_RE,
+	containsToolMarkupSyntax,
 	findToolCallSyntaxCandidateStart,
-	hasToolCallMarkupSyntaxCandidate,
-	hasToolCallSyntaxCandidate,
-	isPartialToolCallSyntaxPrefix,
-	normalizeMarkupTagShell as normalizeMarkupTagShellInternal,
-	normalizeToolMarkupConfusables as normalizeToolMarkupConfusablesInternal,
-	toolCallSieveSafeTailLength,
+	normalizeToolMarkupConfusables,
 } from "./syntax-probe";
 import {
 	appendMarkupValue,
@@ -24,12 +19,12 @@ import {
 import type { OpenAIToolCall } from "./openai-format";
 import type { XmlElementBlock } from "./xml";
 
-type ParsedToolCall = {
+export type ParsedToolCall = {
 	name: string;
 	input: unknown;
 };
 
-type DSMLToolCallParseResult = {
+export type DSMLToolCallParseResult = {
 	cleanText: string;
 	calls: ParsedToolCall[];
 	sawToolCallSyntax: boolean;
@@ -41,7 +36,7 @@ export function parseToolCalls(
 	text: unknown,
 	toolsRaw?: unknown,
 ): [string, OpenAIToolCall[]] {
-	if (!mayContainToolCallSyntax(text)) return [String(text || "").trim(), []];
+	if (!containsToolMarkupSyntax(text)) return [String(text || "").trim(), []];
 	const parsed = parseDSMLToolCallsDetailed(text);
 	if (parsed.calls.length) {
 		return [
@@ -52,34 +47,17 @@ export function parseToolCalls(
 	return [String(text || "").trim(), []];
 }
 
-export function mayContainToolCallSyntax(text: unknown): boolean {
-	return hasToolCallSyntaxCandidate(text);
-}
-
-export function mayContainToolMarkupSyntax(text: unknown): boolean {
-	return hasToolCallMarkupSyntaxCandidate(text);
-}
-
-export function findToolSieveCandidateStart(text: unknown): number {
-	return findToolCallSyntaxCandidateStart(text);
-}
-
-export function isPartialToolMarkupPrefix(text: unknown): boolean {
-	return isPartialToolCallSyntaxPrefix(text);
-}
-
-export function toolSieveSafeTailLength(text: unknown): number {
-	return toolCallSieveSafeTailLength(text);
-}
-
 export function parseDSMLToolCallsDetailed(
 	text: unknown,
 ): DSMLToolCallParseResult {
 	const raw = String(text || "");
 	if (!raw) return { cleanText: "", calls: [], sawToolCallSyntax: false };
-	if (!mayContainToolMarkupSyntax(raw))
+	if (!containsToolMarkupSyntax(raw))
 		return { cleanText: raw.trim(), calls: [], sawToolCallSyntax: false };
-	if (containsToolMarkupSyntax(raw) && findToolSieveCandidateStart(raw) < 0) {
+	if (
+		containsToolMarkupSyntax(raw) &&
+		findToolCallSyntaxCandidateStart(raw) < 0
+	) {
 		return { cleanText: raw.trim(), calls: [], sawToolCallSyntax: true };
 	}
 	const canonical = parseCanonicalDSMLToolCallsFast(raw);
@@ -128,10 +106,7 @@ export function parseCanonicalDSMLToolCallsFast(
 ): DSMLToolCallParseResult | null {
 	const source = String(text || "").trim();
 	if (!source) return null;
-	if (
-		source.indexOf("`") >= 0 ||
-		TOOL_MARKUP_CONFUSABLE_RE_INTERNAL.test(source)
-	)
+	if (source.indexOf("`") >= 0 || TOOL_MARKUP_CONFUSABLE_RE.test(source))
 		return null;
 	if (
 		/<\s*\/?\s*(?:\|?\s*D?SML|tool-calls|toolcalls|[A-Za-z][A-Za-z0-9_$-]*(?:ToolCalls|Invoke|Parameter))\b/.test(
@@ -240,20 +215,6 @@ export function shouldSkipToolCallParsingForCodeFenceExample(
 ): boolean {
 	if (!containsToolMarkupSyntax(text)) return false;
 	return !containsToolMarkupSyntax(stripFencedCodeBlocks(text));
-}
-
-export function containsToolMarkupSyntax(text: unknown): boolean {
-	return containsToolMarkupSyntaxCandidate(text);
-}
-
-export { TOOL_MARKUP_CONFUSABLE_RE } from "./syntax-probe";
-
-export function normalizeToolMarkupConfusables(text: unknown): string {
-	return normalizeToolMarkupConfusablesInternal(text);
-}
-
-export function normalizeMarkupTagShell(tag: unknown): string {
-	return normalizeMarkupTagShellInternal(tag);
 }
 
 export function normalizeDSMLToolCallMarkup(text: unknown): string {

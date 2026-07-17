@@ -1,7 +1,7 @@
 import type { CompletionProvider } from "./ports";
 import type { ResolvedModel } from "../models";
 import { combinedTokenCount, createTokenCounter } from "../shared/tokens";
-import { parseGoogleFunctionCalls } from "../toolcall/google";
+import { formatGoogleFunctionCalls } from "../toolcall/google";
 import { validateGoogleToolPolicyCalls } from "../toolcall/policy-google";
 import type {
 	ToolChoicePolicy,
@@ -9,7 +9,7 @@ import type {
 } from "../toolcall/policy-openai";
 import type { GoogleFunctionCall } from "../toolcall/google";
 import type { ToolBundle } from "../toolcall/tool-bundle";
-import { toolSieveBufferedText } from "../toolstream";
+import { flushToolSieve } from "../toolcall/sieve";
 import {
 	createSieveLoopContext,
 	streamSievedTextDeltas,
@@ -71,8 +71,12 @@ export async function* streamGoogleToolCompletionEvents(
 	}
 	const issue = ctx.streamErr ? { error: ctx.streamErr } : null;
 
-	const [clean, functionCalls]: [string, GoogleFunctionCall[]] =
-		parseGoogleFunctionCalls(toolSieveBufferedText(ctx.state), tools);
+	const flushed = flushToolSieve(ctx.state);
+	const clean = flushed.text;
+	const functionCalls: GoogleFunctionCall[] = formatGoogleFunctionCalls(
+		flushed.toolCalls,
+		tools,
+	);
 	if (clean) {
 		extraTokenCounter.append(clean);
 		yield { type: "candidate", parts: [{ text: clean }], finishReason: null };

@@ -8,7 +8,7 @@ import type {
 	ToolPolicyViolation,
 } from "../toolcall/policy-openai";
 import { validateRequiredToolCalls } from "../toolcall/policy-openai";
-import { finalizeStructuredOutputText } from "../toolcall/structured";
+import { finalizeStructuredOutputText } from "./structured-output";
 import type { ToolBundle } from "../toolcall/tool-bundle";
 
 export const EMPTY_UPSTREAM_MSG =

@@ -32,10 +32,10 @@ export { buildToolCallInstructions } from "./toolcall/prompt-format";
 export {
 	extractFirstJsonDocument,
 	validateStructuredOutputValue,
-} from "./toolcall/structured";
+} from "./completion/structured-output";
 export { createToolBundle } from "./toolcall/tool-bundle";
 export {
 	createToolSieveState,
 	flushToolSieve,
 	processToolSieveChunk,
-} from "./toolstream";
+} from "./toolcall/sieve";

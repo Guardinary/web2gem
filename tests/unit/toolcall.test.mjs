@@ -89,14 +89,14 @@ import {
 	extractFirstJsonDocument,
 	finalizeStructuredOutputText,
 	getStructuredResponseFormat,
-	jsonValuesEqual,
 	parseStructuredJsonCandidate,
 	STRUCTURED_JSON_NOT_FOUND,
 	validateStructuredOutputValue,
-} from "../../src/toolcall/structured";
+} from "../../src/completion/structured-output";
+import { jsonValuesEqual } from "../../src/shared/json-schema";
 import {
 	findToolCallSyntaxCandidateStart,
-	hasToolCallMarkupSyntaxCandidate,
+	containsToolMarkupSyntax,
 	isPartialToolCallSyntaxPrefix,
 } from "../../src/toolcall/syntax-probe";
 import {
@@ -111,7 +111,6 @@ import {
 import {
 	extractToolMeta,
 	firstNonNil,
-	normalizeToolsToOpenAIFunctionTools,
 	toolDefsFromTools,
 	toolFunctionDeclarations,
 	toolItemsFromTools,
@@ -138,12 +137,14 @@ import {
 	hasToolSieveSentinel,
 	processToolSieveChunk,
 	TOOL_SIEVE_PLAIN_TEXT_KEEP,
-} from "../../src/toolstream";
+} from "../../src/toolcall/sieve";
 import { assert } from "./assertions.js";
 import { fakeStreamProvider, resetTestState } from "./helpers.js";
 
 describe("toolcall", () => {
 	beforeEach(resetTestState);
+	const sieveState = (overrides = {}) =>
+		Object.assign(createToolSieveState(), overrides);
 	test("parses long plain text without tool calls", async () => {
 		const plain = "plain text without tool syntax\n".repeat(8000);
 		const [clean, toolCalls] = parseToolCalls(plain, [
@@ -158,7 +159,7 @@ describe("toolcall", () => {
 	test("avoids expensive parsing for markup false positives", async () => {
 		const falsePositive =
 			"a < b and parameterless prose should stay plain\n".repeat(5000);
-		assert.equal(hasToolCallMarkupSyntaxCandidate(falsePositive), false);
+		assert.equal(containsToolMarkupSyntax(falsePositive), false);
 		assert.equal(findToolCallSyntaxCandidateStart(falsePositive), -1);
 		const [clean, toolCalls] = parseToolCalls(falsePositive, [
 			{
@@ -190,7 +191,7 @@ describe("toolcall", () => {
 		const emitted = processToolSieveChunk(state, text);
 		assert.equal(emitted.join("").length > 0, true);
 		assert.equal(state.buffer.length <= 64, true);
-		const flushed = flushToolSieve(state, null);
+		const flushed = flushToolSieve(state);
 		assert.equal(emitted.join("") + flushed.text, text);
 		assert.equal(flushed.toolCalls, null);
 	});
@@ -229,47 +230,46 @@ describe("toolcall", () => {
 		]);
 		assert.equal(plain.buffer.length, TOOL_SIEVE_PLAIN_TEXT_KEEP);
 
-		const parsed = {
+		const parsed = sieveState({
 			buffer: '<tool_calls><invoke name="Read"></invoke></tool_calls>',
 			holdingToolCandidate: true,
 			sawToolClose: true,
 			parsedToolCandidate: true,
-		};
+		});
 		assert.deepEqual(processToolSieveChunk(parsed, ""), []);
 		assert.equal(parsed.buffer.includes("<tool_calls>"), true);
 
-		const malformedHeld = {
+		const malformedHeld = sieveState({
 			buffer: "<tool_calls><invoke></invoke></tool_calls>",
 			holdingToolCandidate: true,
 			sawToolClose: true,
 			parsedToolCandidate: false,
-		};
+		});
 		assert.deepEqual(processToolSieveChunk(malformedHeld, ""), []);
 		assert.equal(malformedHeld.buffer.includes("<tool_calls>"), true);
 
-		const malformed = {
+		const malformed = sieveState({
 			buffer: "</tool_calls>",
 			holdingToolCandidate: true,
 			sawToolClose: true,
 			parsedToolCandidate: false,
-		};
+		});
 		assert.deepEqual(processToolSieveChunk(malformed, ""), []);
 		assert.equal(malformed.buffer, "</tool_calls>");
 		assert.equal(malformed.holdingToolCandidate, true);
 
-		assert.deepEqual(flushToolSieve(null, []), {
+		assert.deepEqual(flushToolSieve(null), {
 			text: "",
 			toolCalls: null,
 		});
 		assert.deepEqual(
 			flushToolSieve(
-				{
+				sieveState({
 					buffer: "plain",
 					holdingToolCandidate: false,
 					sawToolClose: false,
 					parsedToolCandidate: false,
-				},
-				[],
+				}),
 			),
 			{
 				text: "plain",
@@ -299,14 +299,9 @@ describe("toolcall", () => {
 		assert.deepEqual(processToolSieveChunk(state, candidate.slice(32)), []);
 		assert.equal(state.parsedToolCandidateResult.calls[0].name, "Read");
 		assert.equal(state.parsedToolCandidateLength, candidate.length);
-		const flushed = flushToolSieve(state, [
-			{
-				type: "function",
-				function: { name: "Read", parameters: { type: "object" } },
-			},
-		]);
-		assert.equal(flushed.toolCalls[0].function.name, "Read");
-		assert.match(flushed.toolCalls[0].function.arguments, /README\.md/);
+		const flushed = flushToolSieve(state);
+		assert.equal(flushed.toolCalls[0].name, "Read");
+		assert.equal(flushed.toolCalls[0].input.path, "README.md");
 	});
 	test("reparses cached tool candidates when more text arrives before flush", async () => {
 		const state = createToolSieveState();
@@ -316,14 +311,9 @@ describe("toolcall", () => {
 		assert.deepEqual(processToolSieveChunk(state, candidate.slice(32)), []);
 		assert.equal(state.parsedToolCandidateResult.calls[0].name, "Read");
 		assert.deepEqual(processToolSieveChunk(state, " trailing text"), []);
-		const flushed = flushToolSieve(state, [
-			{
-				type: "function",
-				function: { name: "Read", parameters: { type: "object" } },
-			},
-		]);
+		const flushed = flushToolSieve(state);
 		assert.equal(flushed.text, "trailing text");
-		assert.equal(flushed.toolCalls[0].function.name, "Read");
+		assert.equal(flushed.toolCalls[0].name, "Read");
 	});
 	test("uses canonical DSML fast path for plain XML tool blocks", async () => {
 		const longPath = "x".repeat(16 * 1024);
@@ -370,15 +360,12 @@ describe("toolcall", () => {
 		);
 	});
 	test("releases oversized unterminated tool candidates as plain text", async () => {
-		const state = {
-			buffer: "unterminated candidate ",
-			holdingToolCandidate: true,
-			sawToolClose: false,
-			parsedToolCandidate: false,
-		};
+		const state = createToolSieveState();
+		const prefix = "<tool_calls ";
+		assert.deepEqual(processToolSieveChunk(state, prefix), []);
 		const oversizedTail = "x".repeat(256 * 1024 + 1);
 		const emitted = processToolSieveChunk(state, oversizedTail);
-		assert.equal(emitted.join(""), `unterminated candidate ${oversizedTail}`);
+		assert.equal(emitted.join(""), prefix + oversizedTail);
 		assert.equal(state.buffer, "");
 		assert.equal(state.holdingToolCandidate, false);
 	});
@@ -402,12 +389,7 @@ describe("toolcall", () => {
 		);
 		assert.equal(emitted.join(""), "before\n");
 		assert.match(state.buffer, /```tool_call/);
-		const flushed = flushToolSieve(state, [
-			{
-				type: "function",
-				function: { name: "Read", parameters: { type: "object" } },
-			},
-		]);
+		const flushed = flushToolSieve(state);
 		assert.match(flushed.text, /```tool_call/);
 		assert.equal(flushed.toolCalls, null);
 	});
@@ -424,26 +406,14 @@ describe("toolcall", () => {
 		assert.equal(emitted.join(""), "plain before\n");
 		assert.match(withPrefix.buffer, /^```js/);
 	});
-	test("recovers stale tool-sieve holding state to bounded plain text", async () => {
-		const state = {
-			buffer: "x".repeat(100),
-			holdingToolCandidate: true,
-			sawToolClose: true,
-			parsedToolCandidate: false,
-		};
-		const emitted = processToolSieveChunk(state, "");
-		assert.equal(emitted.join(""), "x".repeat(36));
-		assert.equal(state.buffer, "x".repeat(64));
-		assert.equal(state.holdingToolCandidate, false);
-	});
 	test("releases markdown-protected tool-looking examples from holding state", async () => {
 		const fenced = "```xml\n<tool_calls></tool_calls>\n```";
-		const state = {
+		const state = sieveState({
 			buffer: fenced,
 			holdingToolCandidate: true,
 			sawToolClose: true,
 			parsedToolCandidate: false,
-		};
+		});
 		const emitted = processToolSieveChunk(state, "");
 		assert.equal(emitted.join(""), fenced);
 		assert.equal(state.buffer, "");
@@ -953,17 +923,6 @@ describe("toolcall", () => {
 				parameters: {},
 			},
 		]);
-		assert.deepEqual(normalizeToolsToOpenAIFunctionTools(grouped), [
-			{
-				type: "function",
-				function: {
-					name: "GoogleSearch",
-					description: "Google style",
-					parameters: schema,
-				},
-			},
-		]);
-		assert.equal(normalizeToolsToOpenAIFunctionTools([{ name: "" }]), null);
 		assert.equal(firstNonNil(null, undefined, false, "fallback"), false);
 	});
 	test("finalizes OpenAI text into tool calls", async () => {
@@ -1187,6 +1146,20 @@ describe("toolcall", () => {
 			"json_object",
 		);
 		assert.equal(getStructuredResponseFormat(null), null);
+		assert.equal(buildStructuredOutputRequirement({}), null);
+		assert.equal(
+			buildStructuredOutputRequirement({ type: "unsupported" }),
+			null,
+		);
+		const defaultedRequirement = buildStructuredOutputRequirement({
+			type: "json_schema",
+			name: " ",
+			schema: { type: "object" },
+		});
+		assert.match(defaultedRequirement.instruction, /Schema name: response/);
+		assert.match(defaultedRequirement.instruction, /Strict mode: true/);
+		assert.equal(canonicalizeStructuredOutputText(" raw ", null), " raw ");
+		assert.equal(validateStructuredOutputValue({}, null), "");
 		assert.equal(
 			buildStructuredOutputRequirement({
 				type: "json_schema",

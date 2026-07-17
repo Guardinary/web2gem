@@ -7,7 +7,7 @@ import {
 	streamSievedTextDeltas,
 	streamToolSieveCompletionEvents,
 } from "../../src/completion/stream-events";
-import { toolSieveBufferedText } from "../../src/toolstream";
+import { toolSieveBufferedText } from "../../src/toolcall/sieve";
 import { assert } from "./assertions.js";
 import { chunks, fakeStreamProvider, resetTestState } from "./helpers.js";
 
@@ -198,31 +198,7 @@ describe("completion stream lifecycle", () => {
 			/plain abort/,
 		);
 	});
-	test("coalesces plain completion event deltas when requested", async () => {
-		const events = await collectEvents(
-			streamPlainCompletionEvents(
-				fakeStreamProvider(["a", "b", "c"]),
-				{
-					prompt: "plain prompt",
-					rm: { name: "gemini-3.5-flash" },
-					fileRefs: null,
-				},
-				{
-					coalesceTextDeltas: true,
-					minCoalescedTextChars: 10,
-					maxCoalescedTextWaitMs: 0,
-				},
-			),
-		);
-		assert.deepEqual(
-			events
-				.filter((event) => event.type === "text_delta")
-				.map((event) => event.text),
-			["a", "bc"],
-		);
-		assert.equal(events.at(-1).type, "done");
-	});
-	test("flushes coalesced plain text before reporting stream errors", async () => {
+	test("preserves provider delta boundaries before reporting stream errors", async () => {
 		async function* brokenDeltas() {
 			yield "a";
 			yield "b";
@@ -240,11 +216,6 @@ describe("completion stream lifecycle", () => {
 					prompt: "plain prompt",
 					rm: { name: "gemini-3.5-flash" },
 					fileRefs: null,
-				},
-				{
-					coalesceTextDeltas: true,
-					minCoalescedTextChars: 10,
-					maxCoalescedTextWaitMs: 0,
 				},
 			),
 		);
@@ -431,7 +402,7 @@ describe("completion stream lifecycle", () => {
 		);
 		assert.deepEqual(emitted, ["before "]);
 		assert.equal(Array.isArray(result.toolCalls), true);
-		assert.equal(result.toolCalls[0].function.name, "Read");
+		assert.equal(result.toolCalls[0].name, "Read");
 		assert.equal(result.violation, null);
 	});
 	test("reports required tool choice violation for plain output", async () => {

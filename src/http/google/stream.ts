@@ -60,7 +60,7 @@ export async function streamGooglePlain(
 	for await (const event of streamPlainCompletionEvents(
 		provider,
 		{ prompt, rm, fileRefs },
-		{ signal, coalesceTextDeltas: true },
+		{ signal },
 	)) {
 		recordCompletionStreamEvent(lifecycle, event);
 		if (event.type === "text_delta") {

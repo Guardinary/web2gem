@@ -83,10 +83,8 @@ import {
 	tokenEst,
 	trimContinuationOverlap,
 } from "../../src/shared/tokens";
-import {
-	jsonValuesEqual,
-	validateStructuredOutputValue,
-} from "../../src/toolcall/structured";
+import { validateStructuredOutputValue } from "../../src/completion/structured-output";
+import { jsonValuesEqual } from "../../src/shared/json-schema";
 import { assert } from "./assertions.js";
 import {
 	fakePersistentSocketConnect,

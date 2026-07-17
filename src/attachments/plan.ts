@@ -1,14 +1,14 @@
 import { isRecord } from "../shared/types";
+import { firstNonEmptyString } from "../shared/strings";
 import {
-	firstNonEmptyString,
 	genericFilenameFromMime,
 	imageFilenameFromMime,
 	mimeFromFilename,
 	sanitizeUploadFilename,
 } from "./mime";
 import {
-	imageFilenameFromObject,
 	normalizeUploadFileInput,
+	uploadFilenameFromObject,
 	type UploadFileInput,
 } from "./input";
 import { attachmentDrop } from "./notes";
@@ -91,7 +91,7 @@ function appendImageInputs(state: PlanState, raw: unknown): void {
 					"image",
 					"invalid_image_input",
 					"invalid image input",
-					imageFilenameFromObject(image),
+					uploadFilenameFromObject(image),
 				),
 			);
 			continue;

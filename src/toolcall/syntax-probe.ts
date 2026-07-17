@@ -32,14 +32,6 @@ const PARTIAL_TOOL_PREFIXES = [
 	"<parameter",
 ];
 
-export function hasToolCallSyntaxCandidate(text: unknown): boolean {
-	return hasToolCallMarkupSyntaxCandidate(text);
-}
-
-export function hasToolCallMarkupSyntaxCandidate(text: unknown): boolean {
-	return containsToolMarkupSyntax(text);
-}
-
 export function containsToolMarkupSyntax(text: unknown): boolean {
 	const source = normalizeToolMarkupConfusables(String(text || ""));
 	if (!hasMarkupOpen(source)) return false;
@@ -129,7 +121,6 @@ export function normalizeToolMarkupConfusables(text: unknown): string {
 		.replace(/[＇‘’]/g, "'")
 		.replace(/[｜]/g, "|")
 		.replace(/[！]/g, "!")
-		.replace(/[、]/g, "、")
 		.replace(/[\u3000]/g, " ")
 		.replace(/[ｄＤ]/g, "D")
 		.replace(/[ｓＳЅ]/g, "S")

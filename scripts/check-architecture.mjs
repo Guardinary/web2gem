@@ -24,12 +24,10 @@ const rules = [
 			"../http/",
 			"../promptcompat/",
 			"../toolcall/",
-			"../toolstream/",
 			"./gemini/",
 			"./http/",
 			"./promptcompat/",
 			"./toolcall/",
-			"./toolstream/",
 		],
 	},
 	{
@@ -120,14 +118,9 @@ const rules = [
 		disallowed: ["../index", "../index.ts", "../../http", "../../http/"],
 	},
 	{
-		label: "HTTP adapters must not consume tool stream state directly",
+		label: "HTTP adapters must not consume tool sieve state directly",
 		files: "src/http/**/*.ts",
-		disallowed: [
-			"../toolstream",
-			"../toolstream/",
-			"../../toolstream",
-			"../../toolstream/",
-		],
+		disallowed: ["../toolcall/sieve", "../../toolcall/sieve"],
 	},
 	{
 		label: "HTTP adapter barrels must not re-export lower-layer internals",
@@ -180,14 +173,9 @@ const rules = [
 		disallowed: ["../promptcompat/", "../../promptcompat/"],
 	},
 	{
-		label: "toolcall must not depend on HTTP adapters or stream state",
+		label: "toolcall must not depend on HTTP adapters",
 		files: "src/toolcall/**/*.ts",
-		disallowed: [
-			"../http/",
-			"../../http/",
-			"../toolstream/",
-			"../../toolstream/",
-		],
+		disallowed: ["../http/", "../../http/"],
 	},
 	{
 		label: "toolcall must not depend on Gemini upload modules",
@@ -202,7 +190,7 @@ const rules = [
 	{
 		label:
 			"implementation modules must import toolcall owner modules instead of the compatibility barrel",
-		files: "src/{completion,promptcompat,toolstream,http}/**/*.ts",
+		files: "src/{completion,promptcompat,http}/**/*.ts",
 		disallowedExact: [
 			"../toolcall",
 			"../toolcall/index",

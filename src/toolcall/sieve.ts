@@ -1,39 +1,32 @@
-import {
-	findToolSieveCandidateStart,
-	isPartialToolMarkupPrefix,
-	parseDSMLToolCallsDetailed,
-	toolSieveSafeTailLength,
-} from "../toolcall/dsml";
+import { parseDSMLToolCallsDetailed } from "./dsml";
+import type { DSMLToolCallParseResult, ParsedToolCall } from "./dsml";
 import {
 	markdownProtectedSpanStartAtCut,
 	markdownProtectedTailStart,
-} from "../toolcall/markdown";
-import { hasClosedToolCallsSyntax } from "../toolcall/syntax-probe";
+} from "./markdown";
 import {
-	formatOpenAIToolCalls,
-	type OpenAIToolCall,
-} from "../toolcall/openai-format";
-import type { ToolBundle } from "../toolcall/tool-bundle";
+	findToolCallSyntaxCandidateStart,
+	hasClosedToolCallsSyntax,
+	isPartialToolCallSyntaxPrefix,
+	toolCallSieveSafeTailLength,
+} from "./syntax-probe";
 
 export type ToolSieveState = {
 	buffer: string;
 	holdingToolCandidate: boolean;
 	sawToolClose: boolean;
 	parsedToolCandidate: boolean;
-	candidateStart: number;
 	confirmedToolCandidate: boolean;
-	heldChunks?: string[];
-	heldLength?: number;
-	heldTail?: string;
-	parsedToolCandidateResult?: ReturnType<
-		typeof parseDSMLToolCallsDetailed
-	> | null;
-	parsedToolCandidateLength?: number;
+	heldChunks: string[];
+	heldLength: number;
+	heldTail: string;
+	parsedToolCandidateResult: DSMLToolCallParseResult | null;
+	parsedToolCandidateLength: number;
 };
 
 export type ToolSieveFlushResult = {
 	text: string;
-	toolCalls: OpenAIToolCall[] | null;
+	toolCalls: ParsedToolCall[] | null;
 };
 
 export function createToolSieveState(): ToolSieveState {
@@ -42,7 +35,6 @@ export function createToolSieveState(): ToolSieveState {
 		holdingToolCandidate: false,
 		sawToolClose: false,
 		parsedToolCandidate: false,
-		candidateStart: -1,
 		confirmedToolCandidate: false,
 		heldChunks: [],
 		heldLength: 0,
@@ -58,7 +50,7 @@ const COMPLETE_TOOL_CANDIDATE_OPEN_RE =
 	/^\s*<\s*(?:\|DSML\|)?(?:tool_calls|tool-calls|toolcalls|invoke|parameter)\b[^>]*>/i;
 
 export function hasToolSieveSentinel(text: unknown): boolean {
-	return findToolSieveCandidateStart(text) >= 0;
+	return findToolCallSyntaxCandidateStart(text) >= 0;
 }
 
 export function flushToolSievePlainPrefix(
@@ -86,7 +78,6 @@ export function processToolSieveChunk(
 	chunk: unknown,
 ): string[] {
 	const activeState = state || createToolSieveState();
-	ensureToolSieveStateShape(activeState);
 	const incoming = String(chunk || "");
 	if (activeState.holdingToolCandidate) {
 		const tail =
@@ -103,14 +94,13 @@ export function processToolSieveChunk(
 	const plainPrefix = flushToolSievePlainPrefix(activeState);
 	if (plainPrefix) return plainPrefix;
 
-	const start = findToolSieveCandidateStart(activeState.buffer);
+	const start = findToolCallSyntaxCandidateStart(activeState.buffer);
 	if (start >= 0) {
 		activeState.holdingToolCandidate = true;
 		activeState.sawToolClose = hasToolCallCloseSyntax(
 			activeState.buffer.slice(start),
 		);
 		activeState.parsedToolCandidate = false;
-		activeState.candidateStart = 0;
 		const candidate = activeState.buffer.slice(start);
 		activeState.confirmedToolCandidate =
 			hasCompleteToolCandidateOpenPrefix(candidate);
@@ -129,7 +119,7 @@ export function processToolSieveChunk(
 		return out ? [out] : [];
 	}
 
-	const keep = toolSieveSafeTailLength(activeState.buffer);
+	const keep = toolCallSieveSafeTailLength(activeState.buffer);
 	if (activeState.buffer.length <= keep) return [];
 	let emitLen = activeState.buffer.length - keep;
 	const protectedStart = markdownProtectedSpanStartAtCut(
@@ -147,7 +137,7 @@ function processHeldToolCandidate(state: ToolSieveState): string[] {
 	if (state.parsedToolCandidate) return [];
 	if (!state.confirmedToolCandidate) {
 		const prefix = heldPrefixText(state, 512);
-		if (isPartialToolMarkupPrefix(prefix)) {
+		if (isPartialToolCallSyntaxPrefix(prefix)) {
 			if (heldLength(state) <= TOOL_SIEVE_MAX_CANDIDATE_CHARS) return [];
 			const out = releaseHeldText(state);
 			resetToolCandidateState(state);
@@ -159,7 +149,8 @@ function processHeldToolCandidate(state: ToolSieveState): string[] {
 			/^\s*<\s*\/\s*(?:\|DSML\|)?tool_calls\s*>\s*$/i.test(prefix)
 		)
 			return [];
-		state.confirmedToolCandidate = findToolSieveCandidateStart(prefix) === 0;
+		state.confirmedToolCandidate =
+			findToolCallSyntaxCandidateStart(prefix) === 0;
 		if (state.confirmedToolCandidate) {
 			if (!state.sawToolClose) return [];
 		} else {
@@ -182,7 +173,7 @@ function processHeldToolCandidate(state: ToolSieveState): string[] {
 			/^\s*<\s*\/\s*(?:\|DSML\|)?tool_calls\s*>\s*$/i.test(text)
 		)
 			return [];
-		state.confirmedToolCandidate = findToolSieveCandidateStart(text) === 0;
+		state.confirmedToolCandidate = findToolCallSyntaxCandidateStart(text) === 0;
 		if (!state.confirmedToolCandidate) {
 			const out = releaseHeldText(state);
 			resetToolCandidateState(state);
@@ -218,28 +209,9 @@ function resetToolCandidateFlags(state: ToolSieveState): void {
 	state.holdingToolCandidate = false;
 	state.sawToolClose = false;
 	state.parsedToolCandidate = false;
-	state.candidateStart = -1;
 	state.confirmedToolCandidate = false;
 	state.parsedToolCandidateResult = null;
 	state.parsedToolCandidateLength = 0;
-}
-
-function ensureToolSieveStateShape(state: ToolSieveState): void {
-	if (!Number.isInteger(state.candidateStart))
-		state.candidateStart = state.holdingToolCandidate ? 0 : -1;
-	if (!Array.isArray(state.heldChunks)) state.heldChunks = [];
-	if (!Number.isFinite(state.heldLength || 0)) state.heldLength = 0;
-	if (typeof state.heldTail !== "string") state.heldTail = "";
-	if (state.holdingToolCandidate && !state.heldChunks.length && state.buffer)
-		setHeldText(state, state.buffer);
-	if (typeof state.confirmedToolCandidate !== "boolean") {
-		const text = heldText(state);
-		const start = findToolSieveCandidateStart(text);
-		state.confirmedToolCandidate =
-			state.holdingToolCandidate &&
-			((state.sawToolClose && start < 0) ||
-				(start === 0 && hasCompleteToolCandidateOpenPrefix(text)));
-	}
 }
 
 function hasCompleteToolCandidateOpenPrefix(text: unknown): boolean {
@@ -254,13 +226,12 @@ function setHeldText(state: ToolSieveState, text: string): void {
 
 function appendHeldChunk(state: ToolSieveState, text: string): void {
 	if (!text) return;
-	if (!Array.isArray(state.heldChunks)) state.heldChunks = [];
 	state.heldChunks.push(text);
-	state.heldLength = (state.heldLength || 0) + text.length;
+	state.heldLength += text.length;
 	state.heldTail =
 		text.length >= 128
 			? text.slice(-128)
-			: `${state.heldTail || ""}${text}`.slice(-128);
+			: `${state.heldTail}${text}`.slice(-128);
 }
 
 function heldLength(state: ToolSieveState): number {
@@ -268,7 +239,7 @@ function heldLength(state: ToolSieveState): number {
 }
 
 function heldText(state: ToolSieveState): string {
-	const chunks = state.heldChunks || [];
+	const chunks = state.heldChunks;
 	if (!chunks.length) return state.buffer;
 	if (chunks.length === 1) return chunks[0] || "";
 	const text = chunks.join("");
@@ -278,7 +249,7 @@ function heldText(state: ToolSieveState): string {
 }
 
 function heldPrefixText(state: ToolSieveState, maxLength: number): string {
-	const chunks = state.heldChunks || [];
+	const chunks = state.heldChunks;
 	if (!chunks.length) return state.buffer.slice(0, maxLength);
 	let out = "";
 	for (const chunk of chunks) {
@@ -303,12 +274,10 @@ function clearHeldText(state: ToolSieveState): void {
 
 export function flushToolSieve(
 	state: ToolSieveState | null | undefined,
-	tools: ToolBundle | null | undefined,
 ): ToolSieveFlushResult {
-	if (state) ensureToolSieveStateShape(state);
 	const buffered = state ? heldText(state) : "";
 	if (!buffered) return { text: "", toolCalls: null };
-	if (findToolSieveCandidateStart(buffered) < 0)
+	if (findToolCallSyntaxCandidateStart(buffered) < 0)
 		return { text: buffered, toolCalls: null };
 	const parsed =
 		state?.parsedToolCandidateResult &&
@@ -317,10 +286,9 @@ export function flushToolSieve(
 			: parseDSMLToolCallsDetailed(buffered);
 	if (!parsed.calls.length)
 		return { text: String(buffered || "").trim(), toolCalls: null };
-	const toolCalls = formatOpenAIToolCalls(parsed.calls, tools);
 	return {
 		text: parsed.cleanText,
-		toolCalls: toolCalls.length ? toolCalls : null,
+		toolCalls: parsed.calls.length ? parsed.calls : null,
 	};
 }
 
@@ -328,6 +296,5 @@ export function toolSieveBufferedText(
 	state: ToolSieveState | null | undefined,
 ): string {
 	if (!state) return "";
-	ensureToolSieveStateShape(state);
 	return heldText(state);
 }

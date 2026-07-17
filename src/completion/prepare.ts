@@ -24,7 +24,7 @@ import {
 import {
 	buildStructuredOutputRequirement,
 	getStructuredResponseFormat,
-} from "../toolcall/structured";
+} from "./structured-output";
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,

@@ -1,9 +1,9 @@
 import type { ErrorWithMetadata } from "../shared/types";
+import { firstNonEmptyString } from "../shared/strings";
 import { base64DecodedByteLength, base64ToBytes } from "./base64";
 import {
 	chooseUploadMime,
 	detectUploadMimeFromBytes,
-	firstNonEmptyString,
 	genericFilenameFromMime,
 	imageFilenameFromMime,
 	mimeFromFilename,
@@ -60,19 +60,6 @@ export async function materializeAttachment(
 			e,
 		);
 	}
-}
-
-export function joinByteChunks(
-	chunks: readonly Uint8Array[],
-	total: number,
-): Uint8Array {
-	const out = new Uint8Array(total);
-	let offset = 0;
-	for (const chunk of chunks) {
-		out.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return out;
 }
 
 export function attachmentMaterializeFailure(

@@ -7,21 +7,12 @@ import {
 import type { ToolChoicePolicy, ToolPolicyViolation } from "./policy-openai";
 import { firstRecord, isRecord } from "../shared/types";
 import type { UnknownRecord } from "../shared/types";
-import { toolFunctionDeclarations } from "./tool-meta";
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,
 	nullableOpenAIFunctionTools,
 	type ToolBundle,
 } from "./tool-bundle";
-
-type GoogleFunctionDeclaration = UnknownRecord & { name?: unknown };
-
-export function googleFunctionDeclarations(
-	group: unknown,
-): GoogleFunctionDeclaration[] {
-	return toolFunctionDeclarations(group) as GoogleFunctionDeclaration[];
-}
 
 export function googleFunctionCallingConfig(req: unknown): UnknownRecord {
 	const record = isRecord(req) ? req : {};
@@ -159,12 +150,6 @@ export function filterGoogleToolsByConfig(
 	if (policy.mode === "none") return null;
 	if (!policyHasAllowed(policy)) return bundle.openAIFunctionTools;
 	return nullableOpenAIFunctionTools(filterToolBundleByPolicy(bundle, policy));
-}
-
-export function normalizeGoogleToolsForPrompt(
-	tools: unknown,
-): UnknownRecord[] | null {
-	return nullableOpenAIFunctionTools(createToolBundle(tools));
 }
 
 export function validateGoogleToolPolicyCalls(

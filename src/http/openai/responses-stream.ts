@@ -18,6 +18,7 @@ import {
 } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import { tokenCountFromCounts } from "../../shared/tokens";
+import { formatOpenAIToolCalls } from "../../toolcall/openai-format";
 import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
 import type { ToolBundle } from "../../toolcall/tool-bundle";
 import type { SSEWrite } from "../core/sse";
@@ -201,8 +202,8 @@ export async function streamResponsesWithToolSieve(
 	if (tools) {
 		for await (const event of streamToolSieveCompletionEvents(
 			provider,
-			{ prompt, rm, fileRefs, tools, toolPolicy },
-			{ signal, coalesceTextDeltas: true },
+			{ prompt, rm, fileRefs, toolPolicy },
+			{ signal },
 		)) {
 			recordCompletionStreamEvent(lifecycle, event);
 			if (event.type === "text_delta") {
@@ -243,7 +244,7 @@ export async function streamResponsesWithToolSieve(
 		for await (const event of streamPlainCompletionEvents(
 			provider,
 			{ prompt, rm, fileRefs },
-			{ signal, coalesceTextDeltas: true },
+			{ signal },
 		)) {
 			recordCompletionStreamEvent(lifecycle, event);
 			if (event.type === "text_delta") {
@@ -281,7 +282,11 @@ export async function streamResponsesWithToolSieve(
 	await finishMessage();
 
 	if (lifecycle.toolCalls?.length) {
-		for (const tc of lifecycle.toolCalls) {
+		const formattedToolCalls = formatOpenAIToolCalls(
+			lifecycle.toolCalls,
+			tools,
+		);
+		for (const tc of formattedToolCalls) {
 			const args = tc.function.arguments || "";
 			const id = tc.id || "";
 			const item: ResponseOutputItem = {

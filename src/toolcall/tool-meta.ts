@@ -1,4 +1,4 @@
-import { firstNonEmptyString } from "../attachments/mime";
+import { firstNonEmptyString } from "../shared/strings";
 import { isRecord } from "../shared/types";
 import type { UnknownRecord } from "../shared/types";
 
@@ -71,29 +71,6 @@ export function toolDefsFromTools(tools: unknown): ToolMeta[] {
 	}));
 }
 
-export function normalizeToolsToOpenAIFunctionTools(
-	tools: unknown,
-): UnknownRecord[] | null {
-	const items = toolItemsFromTools(tools);
-	if (!items.length) return null;
-	const out: UnknownRecord[] = [];
-	for (const item of items) {
-		const declarations = toolFunctionDeclarations(item);
-		if (declarations.length) {
-			for (const declaration of declarations) {
-				const converted = openAIFunctionToolFromMeta(
-					extractToolMeta(declaration),
-				);
-				if (converted) out.push(converted);
-			}
-			continue;
-		}
-		const converted = openAIFunctionToolFromMeta(extractToolMeta(item));
-		if (converted) out.push(converted);
-	}
-	return out.length ? out : null;
-}
-
 export function toolItemsFromTools(tools: unknown): UnknownRecord[] {
 	if (Array.isArray(tools)) return tools.filter(isRecord);
 	if (!isRecord(tools)) return [];
@@ -116,14 +93,4 @@ export function toolFunctionDeclarations(group: unknown): UnknownRecord[] {
 export function firstNonNil(...values: unknown[]): unknown {
 	for (const value of values) if (value != null) return value;
 	return null;
-}
-
-function openAIFunctionToolFromMeta(
-	meta: ToolMeta | null,
-): UnknownRecord | null {
-	if (!meta?.name) return null;
-	const fn: UnknownRecord = { name: meta.name };
-	if (meta.description) fn.description = meta.description;
-	if (meta.parameters != null) fn.parameters = meta.parameters;
-	return { type: "function", function: fn };
 }

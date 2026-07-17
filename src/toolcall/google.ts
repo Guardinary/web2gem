@@ -1,7 +1,5 @@
-import {
-	normalizeParsedToolCallsForSchemas,
-	parseDSMLToolCallsDetailed,
-} from "./parse";
+import { parseDSMLToolCallsDetailed, type ParsedToolCall } from "./dsml";
+import { normalizeParsedToolCallsForSchemas } from "./schema-normalize";
 import type { ToolBundle } from "./tool-bundle";
 
 type GoogleParsedToolCall = { name?: unknown; input?: unknown };
@@ -23,6 +21,14 @@ function toGoogleFunctionCalls(
 	return calls.map((call) => ({ name: call.name, args: call.input || {} }));
 }
 
+export function formatGoogleFunctionCalls(
+	calls: ParsedToolCall[] | null | undefined,
+	tools: ToolBundle | null | undefined,
+): GoogleFunctionCall[] {
+	if (!calls?.length) return [];
+	return toGoogleFunctionCalls(normalizeGoogleParsedCalls(calls, tools));
+}
+
 /** Extract DSML/XML tool-call blocks -> [cleanText, functionCalls]. */
 export function parseGoogleFunctionCalls(
 	text: unknown,
@@ -30,8 +36,7 @@ export function parseGoogleFunctionCalls(
 ): [string, GoogleFunctionCall[]] {
 	const parsed = parseDSMLToolCallsDetailed(text);
 	if (parsed.calls.length) {
-		const normalized = normalizeGoogleParsedCalls(parsed.calls, tools);
-		return [parsed.cleanText, toGoogleFunctionCalls(normalized)];
+		return [parsed.cleanText, formatGoogleFunctionCalls(parsed.calls, tools)];
 	}
 	return [String(text || ""), []];
 }

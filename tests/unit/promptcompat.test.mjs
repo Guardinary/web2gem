@@ -1,18 +1,18 @@
 import { beforeEach, describe, test } from "vitest";
 import {
-	imageFilenameFromObject,
 	normalizeUploadFileInput,
 	parseImageUrl,
 	parseUploadUrl,
+	uploadFilenameFromObject,
 } from "../../src/attachments/input";
 import {
 	filenameFromUrl,
-	firstNonEmptyString,
 	genericFilenameFromMime,
 	imageFilenameFromMime,
 	mimeFromFilename,
 	sanitizeUploadFilename,
 } from "../../src/attachments/mime";
+import { firstNonEmptyString } from "../../src/shared/strings";
 import { mergeFileRefs } from "../../src/completion/context";
 import { parseGoogleRequest } from "../../src/promptcompat/google";
 import {
@@ -1079,7 +1079,7 @@ describe("prompt compatibility", () => {
 		assert.equal(filenameFromUrl("https://example.com/%E0%A4%A"), "%E0%A4%A");
 		assert.equal(firstNonEmptyString(null, "  ", " ok "), "ok");
 		assert.equal(
-			imageFilenameFromObject({
+			uploadFilenameFromObject({
 				inline_data: { display_name: " inline.gif " },
 			}),
 			"inline.gif",
