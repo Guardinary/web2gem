@@ -20,11 +20,11 @@ import {
 	withGeminiNativeHiddenToolsPromptWithTokens,
 } from "../promptcompat/prompt-build";
 import { logStage } from "../shared/logging";
+import { buildTextWithTokens } from "../promptcompat/token-accounting";
 import {
-	buildTextWithTokens,
 	createPromptByteLengthSniffer,
 	type PromptByteLengthBounded,
-} from "../shared/tokens";
+} from "../shared/text-metrics";
 import { isRecord } from "../shared/types";
 import type { ToolChoicePolicy } from "../toolcall/policy-openai";
 import { buildToolChoiceInstructionFromPolicy } from "../toolcall/policy-openai";

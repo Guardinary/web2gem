@@ -2,11 +2,7 @@ import type { RuntimeConfig, WorkerEnv } from "../../config";
 import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
-import {
-	type GeminiPublicFamily,
-	type GeminiRouteTuple,
-	geminiRouteKey,
-} from "../../models";
+import type { GeminiPublicFamily } from "../../models";
 import type { GeminiAccountAdminFilterInput } from "./admin-input";
 import {
 	createInputFromAccount,
@@ -20,6 +16,7 @@ import {
 	WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS,
 } from "./admin-input";
 import { rotateGeminiAccountCookie } from "./cookie-rotator";
+import { type GeminiRouteTuple, geminiRouteKey } from "./routes";
 import { verifyGeminiAccount } from "./probe";
 import {
 	identityHashFromCookie,

@@ -4,8 +4,8 @@ import {
 	buildTextWithTokens,
 	tokenCharCounts,
 	tokenCountFromCounts,
-} from "../shared/tokens";
-import type { PreparedTokenText, TokenCharCounts } from "../shared/tokens";
+} from "./token-accounting";
+import type { PreparedTokenText, TokenCharCounts } from "./token-accounting";
 import { isRecord } from "../shared/types";
 import { GEMINI_NATIVE_HIDDEN_TOOLS_PROMPT } from "../toolcall/prompt-format";
 

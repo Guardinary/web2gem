@@ -3,13 +3,13 @@ import {
 	geminiAuthenticatedSessionRequiredError,
 } from "../shared/errors";
 import { elapsedMs, log, logStage, nowMs } from "../shared/logging";
-import type { PromptByteLengthBounded } from "../shared/tokens";
+import { buildTextWithTokens } from "../promptcompat/token-accounting";
 import {
-	buildTextWithTokens,
+	type PromptByteLengthBounded,
 	promptByteLength,
 	promptByteLengthBounded,
 	promptByteLengthGreaterThan,
-} from "../shared/tokens";
+} from "../shared/text-metrics";
 import type { ErrorWithMetadata } from "../shared/types";
 import { isRecord } from "../shared/types";
 import {

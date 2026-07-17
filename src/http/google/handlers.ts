@@ -11,7 +11,7 @@ import { finalizeGoogleCompletionResult } from "../../completion/turn";
 import { parseGoogleRequest } from "../../promptcompat/google";
 import { upstreamErrorCode } from "../../shared/errors";
 import { log } from "../../shared/logging";
-import { tokenEst } from "../../shared/tokens";
+import { tokenEst } from "../../promptcompat/token-accounting";
 import type { UnknownRecord } from "../../shared/types";
 import {
 	generateTextLogged,

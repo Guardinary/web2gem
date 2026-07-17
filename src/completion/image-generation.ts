@@ -29,7 +29,8 @@ import {
 	upstreamErrorStatus,
 } from "../shared/errors";
 import { log } from "../shared/logging";
-import { promptByteLength, tokenEst } from "../shared/tokens";
+import { tokenEst } from "../promptcompat/token-accounting";
+import { promptByteLength } from "../shared/text-metrics";
 import type { UnknownRecord } from "../shared/types";
 import { contextFileThreshold } from "./context-files";
 import { type CompletionProvider, resolveCompletionModel } from "./ports";

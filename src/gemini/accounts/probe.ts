@@ -1,19 +1,18 @@
 import type { RuntimeConfig } from "../../config";
 import {
-	basicRouteForFamily,
 	isGeminiProviderModelId,
 	MAX_GEMINI_DISCOVERED_MODELS,
 	MAX_GEMINI_MODEL_DESCRIPTION_CODE_POINTS,
 	MAX_GEMINI_MODEL_DISPLAY_NAME_CODE_POINTS,
-	modelNumberForProviderModelId,
 } from "../../models";
 import { errorLogSummary } from "../../shared/errors";
 import { log, nowSec } from "../../shared/logging";
-import { extractWrbInnerPayloads } from "../client/parser";
+import { extractWrbInnerPayloads } from "../client/parse-envelope";
 import { GEMINI_WEB_USER_AGENT } from "../constants";
 import { httpFetch } from "../transport";
 import { getFreshPageTokensForConfig } from "../uploads/tokens";
 import type { GeminiAccountIssue } from "./domain";
+import { basicRouteForFamily, modelNumberForProviderModelId } from "./routes";
 import type {
 	GeminiAccountProbe,
 	GeminiAccountVerificationLevel,

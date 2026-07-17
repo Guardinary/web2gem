@@ -18,7 +18,7 @@ import {
 	combinedTokenCount,
 	createTokenCounter,
 	tokenCountFromCounts,
-} from "../../shared/tokens";
+} from "../../promptcompat/token-accounting";
 import { formatOpenAIStreamToolCalls } from "../../toolcall/openai-format";
 import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
 import type { ToolBundle } from "../../toolcall/tool-bundle";

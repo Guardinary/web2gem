@@ -72,17 +72,19 @@ import {
 import { log, logStage } from "../../src/shared/logging";
 import {
 	buildTextWithTokens,
+	createTokenCounter,
+	tokenCharCounts,
+	tokenEst,
+} from "../../src/promptcompat/token-accounting";
+import {
 	codePointLength,
 	codePointLengthAtLeast,
 	createPromptByteLengthSniffer,
-	createTokenCounter,
 	promptByteLength,
 	promptByteLengthBounded,
 	promptByteLengthGreaterThan,
-	tokenCharCounts,
-	tokenEst,
 	trimContinuationOverlap,
-} from "../../src/shared/tokens";
+} from "../../src/shared/text-metrics";
 import { validateStructuredOutputValue } from "../../src/completion/structured-output";
 import { jsonValuesEqual } from "../../src/shared/json-schema";
 import { assert } from "./assertions.js";

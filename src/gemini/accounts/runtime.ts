@@ -1,11 +1,8 @@
 import type { RuntimeConfig, WorkerEnv } from "../../config";
-import type {
-	GeminiModelCatalog,
-	GeminiRouteTuple,
-	ResolvedModel,
-} from "../../models";
+import type { GeminiModelCatalog, ResolvedModel } from "../../models";
 import { rotateGeminiAccountCookie } from "./cookie-rotator";
 import { AccountPoolService } from "./pool";
+import type { GeminiRouteTuple } from "./routes";
 import { verifyGeminiAccount } from "./probe";
 import { D1GeminiAccountStore } from "./store-d1";
 import type {

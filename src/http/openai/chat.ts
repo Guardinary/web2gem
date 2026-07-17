@@ -9,7 +9,7 @@ import type { RuntimeConfig } from "../../config";
 import { parseOpenAIMessages } from "../../promptcompat/message-model";
 import { randHex } from "../../shared/crypto";
 import { log, nowSec } from "../../shared/logging";
-import { tokenEst } from "../../shared/tokens";
+import { tokenEst } from "../../promptcompat/token-accounting";
 import { isRecord, type UnknownRecord } from "../../shared/types";
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";

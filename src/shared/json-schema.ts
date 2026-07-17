@@ -1,4 +1,4 @@
-import { codePointLength } from "./tokens";
+import { codePointLength } from "./text-metrics";
 import { isRecord, type UnknownRecord } from "./types";
 
 const SCHEMA_PATTERN_CACHE = new WeakMap<UnknownRecord, RegExp | null>();

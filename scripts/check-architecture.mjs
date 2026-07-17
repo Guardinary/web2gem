@@ -31,6 +31,11 @@ const rules = [
 		],
 	},
 	{
+		label: "model catalog modules must stay leaf-level and data-only",
+		files: "src/models/**/*.ts",
+		disallowed: ["../"],
+	},
+	{
 		label:
 			"HTTP core helpers must stay protocol- and completion-neutral (business policy belongs to src/http root or adapters)",
 		files: "src/http/core/**/*.ts",
@@ -83,10 +88,12 @@ const rules = [
 			"../promptcompat/message-model",
 			"../promptcompat/messages",
 			"../promptcompat/prompt-build",
+			"../promptcompat/token-accounting",
 			"../../promptcompat/history",
 			"../../promptcompat/message-model",
 			"../../promptcompat/messages",
 			"../../promptcompat/prompt-build",
+			"../../promptcompat/token-accounting",
 		],
 	},
 	{

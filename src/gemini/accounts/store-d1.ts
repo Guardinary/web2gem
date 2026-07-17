@@ -1,118 +1,51 @@
 import {
-	type GeminiPublicFamily,
-	type GeminiRouteTuple,
-	geminiRouteKey,
-	isGeminiRouteTuple,
-} from "../../models";
-import { uuid } from "../../shared/crypto";
-import {
 	boundedGeminiAccountPageLimit,
 	GEMINI_DURABLE_ACCOUNT_ISSUES,
 } from "./domain";
 import {
-	changedRows,
-	identityHashFromCookie,
-	normalizeGeminiCookieHeader,
-	sha256Hex,
-} from "./normalize";
-import {
 	ADMIN_ACCOUNT_SELECT,
+	adminPageFromRows,
+	adminStatsFromRow,
 	adminWhere,
 	type GeminiAccountSummarySqlRow,
-	numberOrZero,
 	summaryFromSql,
 } from "./store-d1-admin";
+import {
+	ACCOUNT_UPSERT_IDENTITY_SQL,
+	accountRowValues,
+	buildAccountInsertRow,
+	resultChanged,
+	valueOrCurrent,
+} from "./store-d1-codec";
+import { D1GeminiAccountRuntimeStore } from "./store-d1-runtime";
 import type {
 	D1DatabaseLike,
 	D1PreparedStatementLike,
-	D1Result,
 	GeminiAccountAdminFilter,
 	GeminiAccountAdminOverview,
 	GeminiAccountAdminStats,
 	GeminiAccountBulkCreateEntry,
 	GeminiAccountBulkCreateResult,
-	GeminiAccountCapabilityRow,
 	GeminiAccountCreateInput,
-	GeminiAccountOutcome,
-	GeminiAccountProbe,
 	GeminiAccountRow,
-	GeminiAccountSecretRow,
-	GeminiAccountSnapshotRow,
 	GeminiAccountStore,
 	GeminiAccountSummary,
 	GeminiAccountSummaryPage,
 	GeminiAccountUpdate,
 	GeminiAccountUpdateResult,
-	GeminiModelRoutePriorityRow,
-	GeminiRefreshedCookieWrite,
-	GeminiRefreshedCookieWriteResult,
 } from "./types";
 
-const POOL_VERSION_KEY = "pool_version";
+export { isD1UniqueConstraintError } from "./store-d1-codec";
+
 const MAX_D1_BOUND_PARAMETERS = 100;
 const MAX_TRANSACTIONAL_ACCOUNT_INSERTS = 40;
-const ACCOUNT_INSERT_COLUMNS = [
-	"id",
-	"label",
-	"enabled",
-	"cookie_header",
-	"cookie_hash",
-	"identity_hash",
-	"issue",
-	"cooldown_until_ms",
-	"last_issue_at_ms",
-	"last_used_at_ms",
-	"last_refresh_at_ms",
-	"account_status_code",
-	"status_checked_at_ms",
-	"last_refresh_attempt_at_ms",
-	"last_refresh_success_at_ms",
-	"created_at_ms",
-	"updated_at_ms",
-] as const satisfies readonly (keyof GeminiAccountRow)[];
-const ACCOUNT_INSERT_SQL = `
-  INSERT INTO gemini_accounts (${ACCOUNT_INSERT_COLUMNS.join(", ")})
-  VALUES (${ACCOUNT_INSERT_COLUMNS.map(() => "?").join(", ")})
-`;
-const ACCOUNT_UPSERT_IDENTITY_SQL = `${ACCOUNT_INSERT_SQL}
-	ON CONFLICT(identity_hash) DO UPDATE SET
-		label = excluded.label,
-		cookie_header = excluded.cookie_header,
-		cookie_hash = excluded.cookie_hash,
-		updated_at_ms = excluded.updated_at_ms
-`;
 
-export class D1GeminiAccountStore implements GeminiAccountStore {
-	constructor(private readonly db: D1DatabaseLike) {}
-
-	async getPoolVersion(): Promise<string> {
-		const value = await this.db
-			.prepare("SELECT value FROM gemini_pool_meta WHERE key = ?")
-			.bind(POOL_VERSION_KEY)
-			.first<string>("value");
-		return value || "0";
-	}
-
-	async listSelectableAccounts(
-		nowMs: number,
-		limit: number,
-	): Promise<GeminiAccountSnapshotRow[]> {
-		const boundedLimit = boundedGeminiAccountPageLimit(limit);
-		const result = await this.db
-			.prepare(`
-      SELECT id, enabled, cookie_header, cookie_hash, issue,
-				 cooldown_until_ms, last_used_at_ms, status_checked_at_ms,
-				 last_refresh_success_at_ms
-      FROM gemini_accounts
-      WHERE enabled = 1
-        AND (cooldown_until_ms IS NULL OR cooldown_until_ms <= ?)
-        AND (issue IS NULL OR issue NOT IN (${GEMINI_DURABLE_ACCOUNT_ISSUES.map(() => "?").join(", ")}))
-      ORDER BY COALESCE(last_used_at_ms, 0) ASC
-      LIMIT ?
-    `)
-			.bind(nowMs, ...GEMINI_DURABLE_ACCOUNT_ISSUES, boundedLimit)
-			.all<GeminiAccountSnapshotRow>();
-		return result.results || [];
+export class D1GeminiAccountStore
+	extends D1GeminiAccountRuntimeStore
+	implements GeminiAccountStore
+{
+	constructor(db: D1DatabaseLike) {
+		super(db);
 	}
 
 	async getAdminOverview(
@@ -339,327 +272,6 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		return existingIds;
 	}
 
-	async getAccountForRefresh(
-		accountId: string,
-	): Promise<GeminiAccountSecretRow | null> {
-		return this.getAccountRow(accountId);
-	}
-
-	async tryAcquireRefreshLock(
-		accountId: string,
-		owner: string,
-		expiresAtMs: number,
-		nowMs: number,
-	): Promise<boolean> {
-		const result = await this.db
-			.prepare(`
-      INSERT INTO gemini_account_locks (
-        account_id, lock_owner, expires_at_ms, created_at_ms
-      ) VALUES (?, ?, ?, ?)
-      ON CONFLICT(account_id) DO UPDATE SET
-        lock_owner = excluded.lock_owner,
-        expires_at_ms = excluded.expires_at_ms,
-        created_at_ms = excluded.created_at_ms
-      WHERE gemini_account_locks.expires_at_ms <= ?
-    `)
-			.bind(accountId, owner, expiresAtMs, nowMs, nowMs)
-			.run();
-		return resultChanged(result) > 0;
-	}
-
-	async releaseRefreshLock(accountId: string, owner: string): Promise<void> {
-		await this.db
-			.prepare(
-				"DELETE FROM gemini_account_locks WHERE account_id = ? AND lock_owner = ?",
-			)
-			.bind(accountId, owner)
-			.run();
-	}
-
-	async writeRefreshedCookie(
-		accountId: string,
-		update: GeminiRefreshedCookieWrite,
-	): Promise<GeminiRefreshedCookieWriteResult> {
-		const current = await this.getAccountRow(accountId);
-		if (!current) return { changed: false };
-		const cookieHeader = normalizeGeminiCookieHeader(update.cookieHeader);
-		const cookieHash = await sha256Hex(cookieHeader);
-		if (cookieHash === current.cookie_hash) {
-			await this.runMutationWithPoolVersion(
-				this.db
-					.prepare(`
-          UPDATE gemini_accounts
-					SET last_refresh_at_ms = ?, last_refresh_attempt_at_ms = ?,
-						last_refresh_success_at_ms = ?, updated_at_ms = ?
-					WHERE id = ?
-				`)
-					.bind(
-						update.refreshedAtMs,
-						update.nowMs,
-						update.refreshedAtMs,
-						update.nowMs,
-						accountId,
-					),
-				update.nowMs,
-			);
-			return { changed: false };
-		}
-		const duplicateId = await this.findAccountIdByCookieHash(cookieHash);
-		if (duplicateId && duplicateId !== accountId)
-			return { changed: false, reason: "duplicate_cookie" };
-		try {
-			await this.runMutationWithPoolVersion(
-				this.db
-					.prepare(`
-          UPDATE gemini_accounts
-					SET cookie_header = ?, cookie_hash = ?,
-						last_refresh_at_ms = ?, last_refresh_attempt_at_ms = ?,
-						last_refresh_success_at_ms = ?, updated_at_ms = ?
-          WHERE id = ?
-        `)
-					.bind(
-						cookieHeader,
-						cookieHash,
-						update.refreshedAtMs,
-						update.nowMs,
-						update.refreshedAtMs,
-						update.nowMs,
-						accountId,
-					),
-				update.nowMs,
-			);
-		} catch (error) {
-			if (!isD1UniqueConstraintError(error)) throw error;
-			const duplicate = await this.findAccountIdByCookieHash(cookieHash);
-			if (!duplicate || duplicate === accountId) throw error;
-			return { changed: false, reason: "duplicate_cookie" };
-		}
-		return { changed: true };
-	}
-
-	async writeAccountProbe(
-		accountId: string,
-		probe: GeminiAccountProbe,
-		checkedAtMs: number,
-	): Promise<void> {
-		const updateStatus = this.db
-			.prepare(`
-        UPDATE gemini_accounts
-        SET account_status_code = ?, status_checked_at_ms = ?, updated_at_ms = ?
-        WHERE id = ?
-			`)
-			.bind(probe.statusCode, checkedAtMs, checkedAtMs, accountId);
-		if (!probe.models.length) {
-			await updateStatus.run();
-			return;
-		}
-		const deleteModels = this.db
-			.prepare("DELETE FROM gemini_account_models WHERE account_id = ?")
-			.bind(accountId);
-		const insertModels = probe.models.map((model) =>
-			this.db
-				.prepare(`
-          INSERT INTO gemini_account_models (
-            account_id, model_id, display_name, description, available,
-            capacity, capacity_field, model_number, discovery_order, checked_at_ms
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-				.bind(
-					accountId,
-					model.modelId,
-					model.displayName,
-					model.description,
-					model.available ? 1 : 0,
-					model.capacity,
-					model.capacityField,
-					model.modelNumber,
-					model.discoveryOrder,
-					checkedAtMs,
-				),
-		);
-		if (this.db.batch) {
-			await this.db.batch([
-				updateStatus,
-				deleteModels,
-				...insertModels,
-				this.poolVersionIncrementStatement(checkedAtMs),
-			]);
-			return;
-		}
-		await updateStatus.run();
-		await deleteModels.run();
-		for (const statement of insertModels) await statement.run();
-		await this.bumpPoolVersion(checkedAtMs);
-	}
-
-	async listAccountCapabilities(
-		accountIds: readonly string[],
-	): Promise<GeminiAccountCapabilityRow[]> {
-		if (!accountIds.length) return [];
-		const uniqueIds = [...new Set(accountIds)].slice(
-			0,
-			MAX_D1_BOUND_PARAMETERS,
-		);
-		const placeholders = uniqueIds.map(() => "?").join(", ");
-		const result = await this.db
-			.prepare(`
-        SELECT account_id, model_id, display_name, description, available,
-               capacity, capacity_field, model_number, discovery_order, checked_at_ms
-        FROM gemini_account_models
-        WHERE account_id IN (${placeholders})
-				ORDER BY account_id ASC, discovery_order ASC
-      `)
-			.bind(...uniqueIds)
-			.all<GeminiAccountCapabilityRow>();
-		return result.results || [];
-	}
-
-	async listAllAccountCapabilities(
-		limit: number,
-	): Promise<GeminiAccountCapabilityRow[]> {
-		const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 12800);
-		const result = await this.db
-			.prepare(`
-        SELECT account_id, model_id, display_name, description, available,
-               capacity, capacity_field, model_number, discovery_order, checked_at_ms
-        FROM gemini_account_models
-        ORDER BY checked_at_ms DESC, account_id ASC, discovery_order ASC
-				LIMIT ?
-      `)
-			.bind(boundedLimit)
-			.all<GeminiAccountCapabilityRow>();
-		return result.results || [];
-	}
-
-	async listModelRoutePriorities(): Promise<GeminiModelRoutePriorityRow[]> {
-		const result = await this.db
-			.prepare(`
-        SELECT family, provider_model_id, capacity, capacity_field,
-               model_number, priority, updated_at_ms
-        FROM gemini_model_route_priority
-        ORDER BY family ASC, priority ASC
-      `)
-			.all<GeminiModelRoutePriorityRow>();
-		return result.results || [];
-	}
-
-	async replaceModelRoutePriority(
-		family: GeminiPublicFamily,
-		routes: readonly GeminiRouteTuple[],
-		nowMs: number,
-	): Promise<void> {
-		assertModelRoutePriority(family, routes);
-		const statements = [
-			this.db
-				.prepare("DELETE FROM gemini_model_route_priority WHERE family = ?")
-				.bind(family),
-			...routes.map((route, priority) =>
-				this.db
-					.prepare(`
-            INSERT INTO gemini_model_route_priority (
-              family, provider_model_id, capacity, capacity_field,
-              model_number, priority, updated_at_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-          `)
-					.bind(
-						family,
-						route.providerModelId,
-						route.capacity,
-						route.capacityField,
-						route.modelNumber,
-						priority,
-						nowMs,
-					),
-			),
-		];
-		if (this.db.batch) {
-			await this.db.batch([
-				...statements,
-				this.poolVersionIncrementStatement(nowMs),
-			]);
-			return;
-		}
-		for (const statement of statements) await statement.run();
-		await this.bumpPoolVersion(nowMs);
-	}
-
-	async clearModelRoutePriority(
-		family: GeminiPublicFamily,
-		nowMs: number,
-	): Promise<void> {
-		assertGeminiPublicFamily(family);
-		await this.replaceModelRoutePriority(family, [], nowMs);
-	}
-
-	async writeAccountOutcome(
-		accountId: string,
-		outcome: GeminiAccountOutcome,
-	): Promise<void> {
-		if (outcome.kind === "success") {
-			const clearHealth = this.db
-				.prepare(`
-          UPDATE gemini_accounts
-          SET issue = NULL, cooldown_until_ms = NULL, last_issue_at_ms = NULL,
-              updated_at_ms = ?
-          WHERE id = ?
-            AND (issue IS NOT NULL OR cooldown_until_ms IS NOT NULL OR last_issue_at_ms IS NOT NULL)
-        `)
-				.bind(outcome.nowMs, accountId);
-			const recordUse = this.db
-				.prepare(`
-          UPDATE gemini_accounts
-          SET last_used_at_ms = ?, updated_at_ms = ?
-          WHERE id = ?
-        `)
-				.bind(outcome.nowMs, outcome.nowMs, accountId);
-			if (this.db.batch) {
-				await this.db.batch([
-					clearHealth,
-					this.poolVersionIncrementStatement(
-						outcome.nowMs,
-						"WHERE changes() > 0",
-					),
-					recordUse,
-				]);
-			} else {
-				const result = await clearHealth.run();
-				if (resultChanged(result) > 0)
-					await this.bumpPoolVersion(outcome.nowMs);
-				await recordUse.run();
-			}
-			return;
-		}
-		if (!outcome.issue) {
-			await this.db
-				.prepare(`
-          UPDATE gemini_accounts
-          SET last_used_at_ms = ?, updated_at_ms = ?
-          WHERE id = ?
-        `)
-				.bind(outcome.nowMs, outcome.nowMs, accountId)
-				.run();
-			return;
-		}
-		await this.runMutationWithPoolVersion(
-			this.db
-				.prepare(`
-        UPDATE gemini_accounts
-        SET issue = ?, cooldown_until_ms = ?, last_issue_at_ms = ?,
-            last_used_at_ms = ?, updated_at_ms = ?
-        WHERE id = ?
-      `)
-				.bind(
-					outcome.issue,
-					outcome.cooldownUntilMs ?? null,
-					outcome.nowMs,
-					outcome.nowMs,
-					outcome.nowMs,
-					accountId,
-				),
-			outcome.nowMs,
-		);
-	}
-
 	private async listAdminAccounts(
 		filter: GeminiAccountAdminFilter,
 		nowMs: number,
@@ -719,24 +331,6 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 				nowMs,
 				...GEMINI_DURABLE_ACCOUNT_ISSUES,
 			);
-	}
-
-	private async getAccountRow(
-		accountId: string,
-	): Promise<GeminiAccountRow | null> {
-		return this.db
-			.prepare("SELECT * FROM gemini_accounts WHERE id = ? LIMIT 1")
-			.bind(accountId)
-			.first<GeminiAccountRow>();
-	}
-
-	private async findAccountIdByCookieHash(
-		cookieHash: string,
-	): Promise<string | null> {
-		return this.db
-			.prepare("SELECT id FROM gemini_accounts WHERE cookie_hash = ? LIMIT 1")
-			.bind(cookieHash)
-			.first<string>("id");
 	}
 
 	private async findCookieHashesByIdentity(
@@ -811,45 +405,6 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 		});
 	}
 
-	private async runMutationWithPoolVersion(
-		mutation: D1PreparedStatementLike,
-		nowMs: number,
-	): Promise<D1Result> {
-		if (!this.db.batch) {
-			const result = await mutation.run();
-			if (resultChanged(result) > 0) await this.bumpPoolVersion(nowMs);
-			return result;
-		}
-		const [result] = await this.db.batch([
-			mutation,
-			this.poolVersionIncrementStatement(nowMs, "WHERE changes() > 0"),
-		]);
-		if (!result)
-			throw new Error("D1 account mutation batch returned no result");
-		return result;
-	}
-
-	private async bumpPoolVersion(nowMs: number): Promise<void> {
-		await this.poolVersionIncrementStatement(nowMs).run();
-	}
-
-	private poolVersionIncrementStatement(
-		nowMs: number,
-		condition = "",
-		conditionValues: readonly unknown[] = [],
-	): D1PreparedStatementLike {
-		return this.db
-			.prepare(`
-      INSERT INTO gemini_pool_meta (key, value, updated_at_ms)
-      SELECT ?, '1', ?
-      ${condition}
-      ON CONFLICT(key) DO UPDATE SET
-        value = CAST(CAST(gemini_pool_meta.value AS INTEGER) + 1 AS TEXT),
-        updated_at_ms = MAX(gemini_pool_meta.updated_at_ms, excluded.updated_at_ms)
-    `)
-			.bind(POOL_VERSION_KEY, nowMs, ...conditionValues);
-	}
-
 	private poolVersionIncrementForInsertedRows(
 		nowMs: number,
 		accountIds: readonly string[],
@@ -863,101 +418,4 @@ export class D1GeminiAccountStore implements GeminiAccountStore {
 			accountIds,
 		);
 	}
-}
-
-function adminPageFromRows(
-	rows: GeminiAccountSummarySqlRow[],
-	requestedLimit: number,
-	nowMs: number,
-): GeminiAccountSummaryPage {
-	const limit = boundedGeminiAccountPageLimit(requestedLimit);
-	const pageRows = rows.slice(0, limit);
-	return {
-		items: pageRows.map((row) => summaryFromSql(row, nowMs)),
-		nextCursor:
-			rows.length > limit ? pageRows[pageRows.length - 1]?.id || null : null,
-		limit,
-	};
-}
-
-function adminStatsFromRow(
-	row: Partial<GeminiAccountAdminStats> | null | undefined,
-): GeminiAccountAdminStats {
-	return {
-		total: numberOrZero(row?.total),
-		available: numberOrZero(row?.available),
-		cooling: numberOrZero(row?.cooling),
-		attention: numberOrZero(row?.attention),
-		disabled: numberOrZero(row?.disabled),
-	};
-}
-
-async function buildAccountInsertRow(
-	input: GeminiAccountCreateInput,
-	cookieHash?: string,
-): Promise<GeminiAccountRow> {
-	const cookieHeader = normalizeGeminiCookieHeader(input.cookieHeader);
-	return {
-		id: input.id || uuid(),
-		label: input.label || null,
-		enabled: 1,
-		cookie_header: cookieHeader,
-		cookie_hash: cookieHash || (await sha256Hex(cookieHeader)),
-		identity_hash:
-			input.identityHash || (await identityHashFromCookie(cookieHeader)),
-		issue: null,
-		cooldown_until_ms: null,
-		last_issue_at_ms: null,
-		last_used_at_ms: null,
-		last_refresh_at_ms: null,
-		account_status_code: null,
-		status_checked_at_ms: null,
-		last_refresh_attempt_at_ms: null,
-		last_refresh_success_at_ms: null,
-		created_at_ms: input.nowMs,
-		updated_at_ms: input.nowMs,
-	};
-}
-
-function accountRowValues(row: GeminiAccountRow): unknown[] {
-	return ACCOUNT_INSERT_COLUMNS.map((column) => row[column]);
-}
-
-function resultChanged(result: D1Result): number {
-	const rows = changedRows(result.meta);
-	return rows == null ? 1 : rows;
-}
-
-function valueOrCurrent<T>(next: T | undefined, current: T): T {
-	return next === undefined ? current : next;
-}
-
-function assertGeminiPublicFamily(
-	family: unknown,
-): asserts family is GeminiPublicFamily {
-	if (family !== "pro" && family !== "flash" && family !== "flash_lite")
-		throw new Error("invalid Gemini model family");
-}
-
-function assertModelRoutePriority(
-	family: unknown,
-	routes: readonly GeminiRouteTuple[],
-): void {
-	assertGeminiPublicFamily(family);
-	if (routes.length > 128) throw new Error("too many Gemini model routes");
-	const seen = new Set<string>();
-	for (const route of routes) {
-		if (!isGeminiRouteTuple(route))
-			throw new Error("invalid Gemini route tuple");
-		const key = geminiRouteKey(route);
-		if (seen.has(key)) throw new Error("duplicate Gemini route tuple");
-		seen.add(key);
-	}
-}
-
-export function isD1UniqueConstraintError(error: unknown): boolean {
-	const message = error instanceof Error ? error.message : String(error ?? "");
-	return /unique constraint failed|constraint.*unique|SQLITE_CONSTRAINT/i.test(
-		message,
-	);
 }

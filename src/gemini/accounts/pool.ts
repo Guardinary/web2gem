@@ -1,35 +1,46 @@
 import type { RuntimeConfig } from "../../config";
 import {
 	buildGeminiModelCatalog,
-	familyForProviderModelId,
-	type GeminiCatalogRoute,
 	type GeminiModelCatalog,
-	GEMINI_PUBLIC_FAMILIES,
 	type GeminiPublicFamily,
-	type GeminiRouteTuple,
-	geminiRouteKey,
-	isGeminiRouteTuple,
-	knownTierLabel,
-	publicNamesForFamily,
 	type ResolvedModel,
 	resolveModelFromCatalog,
 } from "../../models";
 import { uuid } from "../../shared/crypto";
 import {
 	COOKIE_ROTATE_MIN_INTERVAL_MS,
-	extractCookieValue,
 	mergeSetCookieHeaders,
 	parseCookieHeader,
 	setCookieHeaders,
 } from "../cookies";
 import { classifyGeminiAccountOutcome } from "./classify";
-import { isDurableGeminiAccountIssue } from "./domain";
+import { createAccountRuntimeConfig, PoolLease } from "./lease";
 import {
 	identityHashFromCookie,
 	normalizeGeminiCookieHeader,
 	sha256Hex,
 } from "./normalize";
+import { choosePoolAccount } from "./pool-selection";
+import {
+	buildModelRoutingOverview,
+	freshSelectableCatalogRoutes,
+	loadSelectedCapabilityRows,
+	persistedCatalogRoutes,
+} from "./pool-catalog";
+import {
+	type AccountRuntimeState,
+	applyOutcomeToSnapshot,
+	applyRefreshToSnapshot,
+	positiveIntOption,
+} from "./pool-state";
 import { verifyGeminiAccount } from "./probe";
+import {
+	capabilitiesByAccount,
+	type GeminiRouteTuple,
+	reconcileRoutePriority,
+	routePrioritiesByFamily,
+	uniqueRouteTuples,
+} from "./routes";
 import type {
 	GeminiAccountAcquireOptions,
 	GeminiAccountCapabilityRow,
@@ -45,21 +56,12 @@ import type {
 	GeminiAccountVerificationLevel,
 	GeminiAccountVerifier,
 	GeminiModelRoutingOverview,
-	GeminiModelRoutePriorityRow,
 } from "./types";
 
 const DEFAULT_SNAPSHOT_TTL_MS = 30 * 1000;
 const DEFAULT_VERSION_PROBE_TTL_MS = 1 * 1000;
 const DEFAULT_SELECTABLE_LIMIT = 100;
 const DEFAULT_REFRESH_LOCK_TTL_MS = 2 * 60 * 1000;
-const MAX_OBSERVED_SET_COOKIE_HEADERS = 64;
-const MAX_OBSERVED_SET_COOKIE_CHARS = 8192;
-
-type AccountRuntimeState = {
-	cookieHeader: string;
-	cookieHash: string;
-	lastRotateAtMs: number;
-};
 
 type AccountPoolServiceOptions = Omit<
 	GeminiAccountRuntimeOptions,
@@ -102,19 +104,19 @@ export class AccountPoolService {
 		options: AccountPoolServiceOptions,
 	) {
 		this.nowMs = options.nowMs || Date.now;
-		this.snapshotTtlMs = positiveInt(
+		this.snapshotTtlMs = positiveIntOption(
 			options.snapshotTtlMs,
 			DEFAULT_SNAPSHOT_TTL_MS,
 		);
-		this.versionProbeTtlMs = positiveInt(
+		this.versionProbeTtlMs = positiveIntOption(
 			options.versionProbeTtlMs,
 			DEFAULT_VERSION_PROBE_TTL_MS,
 		);
-		this.selectableLimit = positiveInt(
+		this.selectableLimit = positiveIntOption(
 			options.selectableLimit,
 			DEFAULT_SELECTABLE_LIMIT,
 		);
-		this.refreshLockTtlMs = positiveInt(
+		this.refreshLockTtlMs = positiveIntOption(
 			options.refreshLockTtlMs,
 			DEFAULT_REFRESH_LOCK_TTL_MS,
 		);
@@ -129,7 +131,17 @@ export class AccountPoolService {
 		const nowMs = this.nowMs();
 		const rows = await this.selectableSnapshot(nowMs);
 		const excluded = new Set(options.excludeAccountIds || []);
-		const selection = this.chooseRow(rows, nowMs, excluded, options);
+		const result = choosePoolAccount({
+			rows,
+			nowMs,
+			excludedAccountIds: excluded,
+			options,
+			capabilitiesByAccount: this.capabilitiesByAccount,
+			inFlight: this.inFlight,
+			roundRobinCursor: this.roundRobinCursor,
+		});
+		this.roundRobinCursor = result.nextRoundRobinCursor;
+		const selection = result.selection;
 		if (!selection) return null;
 		this.incrementInFlight(selection.row.id);
 		return new PoolLease(
@@ -145,10 +157,14 @@ export class AccountPoolService {
 		capabilityFreshAfterMs: number,
 	): Promise<GeminiModelCatalog> {
 		await this.selectableSnapshot(this.nowMs());
-		const freshRoutes = this.freshSelectableRoutes(capabilityFreshAfterMs);
+		const freshRoutes = freshSelectableCatalogRoutes(
+			this.snapshotRows,
+			this.capabilitiesByAccount,
+			capabilityFreshAfterMs,
+		);
 		const routes = freshRoutes.length
 			? freshRoutes
-			: this.persistedCatalogRoutes();
+			: persistedCatalogRoutes(this.persistedCapabilities);
 		return buildGeminiModelCatalog(routes, this.nowMs());
 	}
 
@@ -168,37 +184,16 @@ export class AccountPoolService {
 		capabilityFreshAfterMs: number,
 	): Promise<GeminiModelRoutingOverview> {
 		await this.selectableSnapshot(this.nowMs());
-		const persisted = this.persistedCatalogRoutes();
-		const fresh = this.freshSelectableRoutes(capabilityFreshAfterMs);
-		const availableAccounts = availableAccountsByRoute(fresh);
-		return {
-			version: this.snapshotVersion,
-			families: GEMINI_PUBLIC_FAMILIES.map((family) => {
-				const saved = this.routePriorities.get(family) || [];
-				const savedKeys = new Set(saved.map(geminiRouteKey));
-				const discovered = uniqueRouteTuples(
-					persisted.filter((route) => route.family === family),
-				);
-				return {
-					family,
-					publicNames: publicNamesForFamily(family),
-					configured: saved.length > 0,
-					routes: mergeSavedAndDiscoveredRoutes(saved, discovered).map(
-						(route) => {
-							const accountCount =
-								availableAccounts.get(geminiRouteKey(route))?.size || 0;
-							return {
-								...route,
-								label: knownTierLabel(route),
-								available: accountCount > 0,
-								configured: savedKeys.has(geminiRouteKey(route)),
-								accountCount,
-							};
-						},
-					),
-				};
-			}),
-		};
+		return buildModelRoutingOverview(
+			this.snapshotVersion,
+			this.routePriorities,
+			persistedCatalogRoutes(this.persistedCapabilities),
+			freshSelectableCatalogRoutes(
+				this.snapshotRows,
+				this.capabilitiesByAccount,
+				capabilityFreshAfterMs,
+			),
+		);
 	}
 
 	invalidateSnapshot(): void {
@@ -211,8 +206,12 @@ export class AccountPoolService {
 		capabilityFreshAfterMs: number,
 	): Promise<GeminiRouteTuple[]> {
 		await this.selectableSnapshot(this.nowMs());
-		const fresh = this.freshSelectableRoutes(capabilityFreshAfterMs);
-		const persisted = this.persistedCatalogRoutes();
+		const fresh = freshSelectableCatalogRoutes(
+			this.snapshotRows,
+			this.capabilitiesByAccount,
+			capabilityFreshAfterMs,
+		);
+		const persisted = persistedCatalogRoutes(this.persistedCapabilities);
 		const relevant = (fresh.length ? fresh : persisted).filter((route) =>
 			model.family
 				? route.family === model.family
@@ -276,7 +275,8 @@ export class AccountPoolService {
 					Math.min(this.selectableLimit * 128, 12800),
 				)
 			: null;
-		const selectedCapabilityRowsPromise = this.loadSelectedCapabilityRows(
+		const selectedCapabilityRowsPromise = loadSelectedCapabilityRows(
+			this.store,
 			rows,
 			globalCapabilityRowsPromise,
 		);
@@ -366,7 +366,11 @@ export class AccountPoolService {
 		nowMs: number = this.nowMs(),
 	): Promise<void> {
 		const outcome: GeminiAccountOutcome = { kind: "success", nowMs };
-		this.applyOutcomeToSnapshot(accountId, outcome);
+		this.snapshotRows = applyOutcomeToSnapshot(
+			this.snapshotRows,
+			accountId,
+			outcome,
+		);
 		await this.store.writeAccountOutcome(accountId, outcome);
 	}
 
@@ -376,7 +380,11 @@ export class AccountPoolService {
 		nowMs: number = this.nowMs(),
 	): Promise<void> {
 		const outcome = classifyGeminiAccountOutcome(error, nowMs);
-		this.applyOutcomeToSnapshot(accountId, outcome);
+		this.snapshotRows = applyOutcomeToSnapshot(
+			this.snapshotRows,
+			accountId,
+			outcome,
+		);
 		await this.store.writeAccountOutcome(accountId, outcome);
 	}
 
@@ -422,36 +430,15 @@ export class AccountPoolService {
 				cookieHash,
 				lastRotateAtMs: 0,
 			});
-			this.applyRefreshToSnapshot(lease.accountId, cookieHeader, cookieHash);
+			this.snapshotRows = applyRefreshToSnapshot(
+				this.snapshotRows,
+				lease.accountId,
+				cookieHeader,
+				cookieHash,
+			);
 		} finally {
 			await this.store.releaseRefreshLock(lease.accountId, owner);
 		}
-	}
-
-	private applyOutcomeToSnapshot(
-		accountId: string,
-		outcome: GeminiAccountOutcome,
-	): void {
-		this.snapshotRows = this.snapshotRows.map((row) => {
-			if (row.id !== accountId) return row;
-			if (outcome.kind === "success") {
-				return {
-					...row,
-					issue: null,
-					cooldown_until_ms: null,
-					last_used_at_ms: outcome.nowMs,
-				};
-			}
-			return {
-				...row,
-				issue: outcome.issue ?? row.issue,
-				cooldown_until_ms:
-					outcome.issue === undefined
-						? row.cooldown_until_ms
-						: (outcome.cooldownUntilMs ?? null),
-				last_used_at_ms: outcome.nowMs,
-			};
-		});
 	}
 
 	private async refreshAccountOnce(
@@ -518,7 +505,7 @@ export class AccountPoolService {
 				cookie_header: nextCookieHeader,
 				cookie_hash: nextCookieHash,
 			};
-			const nextConfig = accountConfig(lease.config, nextAccount);
+			const nextConfig = createAccountRuntimeConfig(lease.config, nextAccount);
 			const verification = await this.verifyAccount({
 				config: nextConfig,
 				level: verificationLevel,
@@ -550,7 +537,8 @@ export class AccountPoolService {
 				cookieHash: nextCookieHash,
 				lastRotateAtMs: nowMs,
 			});
-			this.applyRefreshToSnapshot(
+			this.snapshotRows = applyRefreshToSnapshot(
+				this.snapshotRows,
 				lease.accountId,
 				nextCookieHeader,
 				nextCookieHash,
@@ -594,211 +582,6 @@ export class AccountPoolService {
 		}
 	}
 
-	private applyRefreshToSnapshot(
-		accountId: string,
-		cookieHeader: string,
-		cookieHash: string,
-	): void {
-		this.snapshotRows = this.snapshotRows.map((row) =>
-			row.id === accountId
-				? {
-						...row,
-						cookie_header: cookieHeader,
-						cookie_hash: cookieHash,
-					}
-				: row,
-		);
-	}
-
-	private chooseRow(
-		rows: readonly GeminiAccountSnapshotRow[],
-		nowMs: number,
-		excludedAccountIds: ReadonlySet<string>,
-		options: GeminiAccountAcquireOptions,
-	): {
-		row: GeminiAccountSnapshotRow;
-		capability: GeminiAccountModelCapability | null;
-		route: GeminiRouteTuple | null;
-	} | null {
-		const selectable = rows
-			.filter((row) => !excludedAccountIds.has(row.id))
-			.filter((row) => row.enabled !== 0)
-			.filter((row) => !isDurableGeminiAccountIssue(row.issue))
-			.filter(
-				(row) =>
-					row.cooldown_until_ms == null || row.cooldown_until_ms <= nowMs,
-			);
-		if (!selectable.length) return null;
-		const mode = options.capabilityMode || "off";
-		const requirement = options.routeRequirement;
-		const freshAfter = Number(options.capabilityFreshAfterMs) || 0;
-		if (!requirement) return this.unroutedSelection(selectable);
-
-		const requiresExact = requirement.fallbackRoute === null;
-		if (mode !== "off" || requiresExact) {
-			const exact = this.chooseExactRoute(
-				selectable,
-				requirement.candidates,
-				freshAfter,
-			);
-			if (exact) return exact;
-			if (mode === "strict" || requiresExact) return null;
-			const unknownOrStale = selectable.filter(
-				(row) => !this.hasFreshCapabilitySnapshot(row.id, freshAfter),
-			);
-			const fallback = this.chooseLeastInFlight(unknownOrStale);
-			return fallback && requirement.fallbackRoute
-				? {
-						row: fallback,
-						capability: null,
-						route: requirement.fallbackRoute,
-					}
-				: null;
-		}
-
-		const best = this.chooseLeastInFlight(selectable);
-		if (!best) return null;
-		const matched = this.exactRouteForAccount(
-			best.id,
-			requirement.candidates,
-			freshAfter,
-		);
-		return {
-			row: best,
-			capability: matched?.capability || null,
-			route: matched?.route || requirement.fallbackRoute,
-		};
-	}
-
-	private unroutedSelection(selectable: readonly GeminiAccountSnapshotRow[]): {
-		row: GeminiAccountSnapshotRow;
-		capability: null;
-		route: null;
-	} | null {
-		const row = this.chooseLeastInFlight(selectable);
-		return row ? { row, capability: null, route: null } : null;
-	}
-
-	private chooseExactRoute(
-		selectable: readonly GeminiAccountSnapshotRow[],
-		candidates: readonly GeminiRouteTuple[],
-		freshAfterMs: number,
-	): {
-		row: GeminiAccountSnapshotRow;
-		capability: GeminiAccountModelCapability;
-		route: GeminiRouteTuple;
-	} | null {
-		for (const route of candidates) {
-			const capableRows = selectable.filter(
-				(candidate) =>
-					this.exactRouteForAccount(candidate.id, [route], freshAfterMs) !==
-					null,
-			);
-			const row = this.chooseLeastInFlight(capableRows);
-			if (!row) continue;
-			const matched = this.exactRouteForAccount(row.id, [route], freshAfterMs);
-			if (matched) return { row, ...matched };
-		}
-		return null;
-	}
-
-	private exactRouteForAccount(
-		accountId: string,
-		candidates: readonly GeminiRouteTuple[],
-		freshAfterMs: number,
-	): {
-		capability: GeminiAccountModelCapability;
-		route: GeminiRouteTuple;
-	} | null {
-		for (const route of candidates) {
-			const capability = this.capabilitiesByAccount
-				.get(accountId)
-				?.get(route.providerModelId);
-			if (
-				capability?.available === true &&
-				capability.checkedAtMs >= freshAfterMs &&
-				capabilityMatchesRoute(capability, route)
-			)
-				return { capability, route };
-		}
-		return null;
-	}
-
-	private hasFreshCapabilitySnapshot(
-		accountId: string,
-		freshAfterMs: number,
-	): boolean {
-		const capabilities = this.capabilitiesByAccount.get(accountId);
-		if (!capabilities) return false;
-		for (const capability of capabilities.values()) {
-			if (capability.checkedAtMs >= freshAfterMs) return true;
-		}
-		return false;
-	}
-
-	private chooseLeastInFlight(
-		selectable: readonly GeminiAccountSnapshotRow[],
-	): GeminiAccountSnapshotRow | null {
-		if (!selectable.length) return null;
-		const rotated: GeminiAccountSnapshotRow[] = [];
-		for (let index = 0; index < selectable.length; index++) {
-			const row =
-				selectable[(this.roundRobinCursor + index) % selectable.length];
-			if (row) rotated.push(row);
-		}
-		let best: GeminiAccountSnapshotRow | null = null;
-		for (const row of rotated) {
-			if (!best || this.localInFlight(row.id) < this.localInFlight(best.id))
-				best = row;
-		}
-		if (best) {
-			const index = selectable.findIndex((row) => row.id === best?.id);
-			this.roundRobinCursor = index < 0 ? 0 : (index + 1) % selectable.length;
-		}
-		return best;
-	}
-
-	private async loadSelectedCapabilityRows(
-		rows: readonly GeminiAccountSnapshotRow[],
-		globalRowsPromise: Promise<GeminiAccountCapabilityRow[]> | null,
-	): Promise<GeminiAccountCapabilityRow[]> {
-		if (!rows.length) return [];
-		const accountIds = rows.map((row) => row.id);
-		if (this.store.listAccountCapabilities)
-			return this.store.listAccountCapabilities(accountIds);
-		if (!globalRowsPromise) return [];
-		const selectedIds = new Set(accountIds);
-		return (await globalRowsPromise).filter((row) =>
-			selectedIds.has(row.account_id),
-		);
-	}
-
-	private freshSelectableRoutes(freshAfterMs: number): GeminiCatalogRoute[] {
-		const routes: GeminiCatalogRoute[] = [];
-		for (const row of this.snapshotRows) {
-			const capabilities = [
-				...(this.capabilitiesByAccount.get(row.id)?.values() || []),
-			].sort((a, b) => a.discoveryOrder - b.discoveryOrder);
-			for (const capability of capabilities) {
-				if (!capability.available || capability.checkedAtMs < freshAfterMs)
-					continue;
-				routes.push(catalogRoute(row.id, capability));
-			}
-		}
-		return routes;
-	}
-
-	private persistedCatalogRoutes(): GeminiCatalogRoute[] {
-		const routes: GeminiCatalogRoute[] = [];
-		for (const row of this.persistedCapabilities) {
-			if (row.available === 0) continue;
-			const capability = capabilityFromRow(row);
-			if (!capability) continue;
-			routes.push(catalogRoute(row.account_id, capability));
-		}
-		return routes;
-	}
-
 	private incrementInFlight(accountId: string): void {
 		this.inFlight.set(accountId, this.localInFlight(accountId) + 1);
 	}
@@ -812,303 +595,4 @@ export class AccountPoolService {
 		this.accountStates.set(lease.accountId, state);
 		return state;
 	}
-}
-
-function capabilityFromRow(
-	row: GeminiAccountCapabilityRow,
-): GeminiAccountModelCapability | null {
-	const route = {
-		providerModelId: row.model_id,
-		capacity: row.capacity,
-		capacityField: row.capacity_field,
-		modelNumber: row.model_number,
-	};
-	if (!isGeminiRouteTuple(route)) return null;
-	return {
-		modelId: route.providerModelId,
-		displayName: row.display_name,
-		description: row.description,
-		available: row.available !== 0,
-		capacity: route.capacity,
-		capacityField: route.capacityField,
-		modelNumber: route.modelNumber,
-		discoveryOrder: row.discovery_order,
-		checkedAtMs: row.checked_at_ms,
-	};
-}
-
-function capabilitiesByAccount(
-	rows: readonly GeminiAccountCapabilityRow[],
-): Map<string, Map<string, GeminiAccountModelCapability>> {
-	const out = new Map<string, Map<string, GeminiAccountModelCapability>>();
-	for (const row of rows) {
-		const capability = capabilityFromRow(row);
-		if (!capability) continue;
-		let account = out.get(row.account_id);
-		if (!account) {
-			account = new Map();
-			out.set(row.account_id, account);
-		}
-		account.set(row.model_id, capability);
-	}
-	return out;
-}
-
-function catalogRoute(
-	accountId: string,
-	capability: GeminiAccountModelCapability,
-): GeminiCatalogRoute {
-	return {
-		accountId,
-		providerModelId: capability.modelId,
-		family: familyForProviderModelId(capability.modelId),
-		displayName: capability.displayName,
-		description: capability.description,
-		capacity: capability.capacity,
-		capacityField: capability.capacityField,
-		modelNumber: capability.modelNumber,
-		available: capability.available,
-		checkedAtMs: capability.checkedAtMs,
-		discoveryOrder: capability.discoveryOrder,
-	};
-}
-
-function routePrioritiesByFamily(
-	rows: readonly GeminiModelRoutePriorityRow[],
-): Map<GeminiPublicFamily, GeminiRouteTuple[]> {
-	const out = new Map<GeminiPublicFamily, GeminiRouteTuple[]>();
-	for (const row of rows) {
-		const route = {
-			providerModelId: row.provider_model_id,
-			capacity: row.capacity,
-			capacityField: row.capacity_field,
-			modelNumber: row.model_number,
-		};
-		if (!isGeminiRouteTuple(route)) continue;
-		let family = out.get(row.family);
-		if (!family) {
-			family = [];
-			out.set(row.family, family);
-		}
-		family.push(route);
-	}
-	return out;
-}
-
-function uniqueRouteTuples(
-	routes: readonly GeminiCatalogRoute[],
-): GeminiRouteTuple[] {
-	const out: GeminiRouteTuple[] = [];
-	const seen = new Set<string>();
-	for (const route of routes) {
-		const tuple: GeminiRouteTuple = {
-			providerModelId: route.providerModelId,
-			capacity: route.capacity,
-			capacityField: route.capacityField,
-			modelNumber: route.modelNumber,
-		};
-		const key = geminiRouteKey(tuple);
-		if (seen.has(key)) continue;
-		seen.add(key);
-		out.push(tuple);
-	}
-	return out;
-}
-
-function availableAccountsByRoute(
-	routes: readonly GeminiCatalogRoute[],
-): Map<string, Set<string>> {
-	const out = new Map<string, Set<string>>();
-	for (const route of routes) {
-		const key = geminiRouteKey(route);
-		let accounts = out.get(key);
-		if (!accounts) {
-			accounts = new Set();
-			out.set(key, accounts);
-		}
-		accounts.add(route.accountId);
-	}
-	return out;
-}
-
-function mergeSavedAndDiscoveredRoutes(
-	saved: readonly GeminiRouteTuple[],
-	discovered: readonly GeminiRouteTuple[],
-): GeminiRouteTuple[] {
-	const out = [...saved];
-	const seen = new Set(saved.map(geminiRouteKey));
-	for (const route of discovered) {
-		const key = geminiRouteKey(route);
-		if (seen.has(key)) continue;
-		seen.add(key);
-		out.push(route);
-	}
-	return out;
-}
-
-function reconcileRoutePriority(
-	saved: readonly GeminiRouteTuple[],
-	discovered: readonly GeminiRouteTuple[],
-): GeminiRouteTuple[] {
-	const discoveredByKey = new Map(
-		discovered.map((route) => [geminiRouteKey(route), route]),
-	);
-	const out: GeminiRouteTuple[] = [];
-	const seen = new Set<string>();
-	for (const route of saved) {
-		const key = geminiRouteKey(route);
-		const available = discoveredByKey.get(key);
-		if (!available) continue;
-		seen.add(key);
-		out.push(available);
-	}
-	for (const route of discovered) {
-		const key = geminiRouteKey(route);
-		if (seen.has(key)) continue;
-		seen.add(key);
-		out.push(route);
-	}
-	return out;
-}
-
-function capabilityMatchesRoute(
-	capability: GeminiAccountModelCapability,
-	route: GeminiRouteTuple,
-): boolean {
-	return (
-		capability.modelId === route.providerModelId &&
-		capability.capacity === route.capacity &&
-		capability.capacityField === route.capacityField &&
-		capability.modelNumber === route.modelNumber
-	);
-}
-
-class PoolLease implements GeminiAccountLease {
-	readonly accountId: string;
-	readonly selectedCookieHash: string;
-	readonly selectedRoute: GeminiRouteTuple | null;
-	readonly modelCapability: GeminiAccountModelCapability | null;
-	config: RuntimeConfig;
-	cookieHeader: string;
-	cookieHash: string;
-	private released = false;
-	private lastRefreshSuccessAtMs: number;
-	private readonly observedSetCookieValues: string[] = [];
-
-	constructor(
-		private readonly pool: AccountPoolService,
-		baseConfig: RuntimeConfig,
-		row: GeminiAccountSnapshotRow,
-		modelCapability: GeminiAccountModelCapability | null = null,
-		selectedRoute: GeminiRouteTuple | null = null,
-	) {
-		this.accountId = row.id;
-		this.selectedCookieHash = row.cookie_hash;
-		this.modelCapability = modelCapability;
-		this.selectedRoute = selectedRoute;
-		this.cookieHeader = row.cookie_header;
-		this.cookieHash = row.cookie_hash;
-		this.lastRefreshSuccessAtMs = Number(row.last_refresh_success_at_ms) || 0;
-		this.config = accountConfig(baseConfig, row, (values) =>
-			this.observeSetCookie(values),
-		);
-	}
-
-	refreshForRetry(reason?: string): Promise<GeminiAccountRefreshResult> {
-		return this.pool.refreshForRetry(this, reason !== "auth");
-	}
-
-	markSuccess(nowMs?: number): Promise<void> {
-		return this.pool.markSuccess(this.accountId, nowMs);
-	}
-
-	markFailure(error: unknown, nowMs?: number): Promise<void> {
-		return this.pool.markFailure(this.accountId, error, nowMs);
-	}
-
-	async flushObservedCookies(): Promise<void> {
-		if (!this.observedSetCookieValues.length) return;
-		const values = this.observedSetCookieValues.splice(0);
-		await this.pool.persistObservedCookies(this, values);
-	}
-
-	updateCookie(
-		cookieHeader: string,
-		cookieHash: string,
-		refreshedAtMs: number,
-		config?: RuntimeConfig,
-	): void {
-		this.cookieHeader = cookieHeader;
-		this.cookieHash = cookieHash;
-		this.lastRefreshSuccessAtMs = refreshedAtMs;
-		this.config =
-			config ||
-			accountConfig(
-				this.config,
-				{
-					id: this.accountId,
-					cookie_header: cookieHeader,
-					cookie_hash: cookieHash,
-				},
-				(values) => this.observeSetCookie(values),
-			);
-	}
-
-	async maintainSessionIfStale(intervalMs: number): Promise<void> {
-		const nowMs = Date.now();
-		if (
-			!Number.isFinite(intervalMs) ||
-			intervalMs <= 0 ||
-			nowMs - this.lastRefreshSuccessAtMs < intervalMs
-		)
-			return;
-		const result = await this.pool.refreshForRetry(this, false);
-		if (
-			result.reason === "rotation_updated" ||
-			result.reason === "rotation_no_update"
-		)
-			this.lastRefreshSuccessAtMs = nowMs;
-	}
-
-	release(): void {
-		if (this.released) return;
-		this.released = true;
-		this.pool.release(this.accountId);
-	}
-
-	private observeSetCookie(values: readonly string[]): void {
-		for (const value of values) {
-			if (
-				this.observedSetCookieValues.length >= MAX_OBSERVED_SET_COOKIE_HEADERS
-			)
-				break;
-			if (value.length > MAX_OBSERVED_SET_COOKIE_CHARS) continue;
-			if (value) this.observedSetCookieValues.push(value);
-		}
-	}
-}
-
-function accountConfig(
-	baseConfig: RuntimeConfig,
-	row: Pick<GeminiAccountSnapshotRow, "id" | "cookie_header" | "cookie_hash">,
-	observeSetCookie?: (values: readonly string[]) => void,
-): RuntimeConfig {
-	const cookie = normalizeGeminiCookieHeader(row.cookie_header);
-	const observer =
-		observeSetCookie || baseConfig.gemini_account?.observeSetCookie;
-	return {
-		...baseConfig,
-		cookie,
-		sapisid: extractCookieValue(cookie, "SAPISID"),
-		gemini_account: {
-			accountId: row.id,
-			cookieHash: row.cookie_hash,
-			...(observer ? { observeSetCookie: observer } : {}),
-		},
-	};
-}
-
-function positiveInt(value: unknown, fallback: number): number {
-	const n = Number(value);
-	return Number.isInteger(n) && n > 0 ? n : fallback;
 }

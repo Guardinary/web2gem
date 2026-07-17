@@ -7,7 +7,7 @@ export { prepareOpenAIGeminiContext } from "./completion/context";
 export { getConfig } from "./config";
 export { GeminiAccountAdminService } from "./gemini/accounts/admin";
 export { generateStream } from "./gemini/client";
-export { createStreamTextExtractor } from "./gemini/client/parser";
+export { createStreamTextExtractor } from "./gemini/client/parse-stream";
 export { buildPayload } from "./gemini/client/protocol";
 export { getFreshGeminiBuildLabel } from "./gemini/client/retry";
 export { createByteQueue } from "./gemini/transport/byte-queue";

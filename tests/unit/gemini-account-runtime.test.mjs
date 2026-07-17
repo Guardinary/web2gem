@@ -5,8 +5,9 @@ import {
 	sha256Hex,
 } from "../../src/gemini/accounts/normalize";
 import { AccountPoolService } from "../../src/gemini/accounts/pool";
+import { basicRouteForFamily } from "../../src/gemini/accounts/routes";
 import { geminiAccountCacheScope } from "../../src/gemini/cache";
-import { basicRouteForFamily, resolveModel } from "../../src/models";
+import { resolveModel } from "../../src/models";
 import { assert } from "./assertions.js";
 import { baseConfig } from "./helpers.js";
 

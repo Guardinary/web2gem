@@ -5,7 +5,7 @@ import {
 	upstreamErrorReason,
 } from "../../shared/errors";
 import { nowSec } from "../../shared/logging";
-import { tokenEst } from "../../shared/tokens";
+import { tokenEst } from "../../promptcompat/token-accounting";
 import { isRecord } from "../../shared/types";
 import type { SSEWrite } from "../core/sse";
 

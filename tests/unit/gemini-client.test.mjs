@@ -20,16 +20,18 @@ import {
 	hydrateGeneratedImages,
 } from "../../src/gemini/client/generated-images";
 import {
+	extractTextsFromLine,
+	wrbResponseShapeSummary,
+} from "../../src/gemini/client/parse-envelope";
+import {
 	cleanText,
-	createStreamTextExtractor,
 	extractResponseFatalCode,
 	extractResponseParts,
 	extractResponseText,
-	extractTextsFromLine,
 	richResponseShapeSummary,
 	stripArtifacts,
-	wrbResponseShapeSummary,
-} from "../../src/gemini/client/parser";
+} from "../../src/gemini/client/parse-parts";
+import { createStreamTextExtractor } from "../../src/gemini/client/parse-stream";
 import {
 	buildHeaders,
 	buildPayload,
@@ -58,7 +60,8 @@ import {
 	getPageTokens,
 	resetGeminiUploadCachesForTest,
 } from "../../src/gemini/uploads/tokens";
-import { basicRouteForFamily, resolveModel } from "../../src/models";
+import { basicRouteForFamily } from "../../src/gemini/accounts/routes";
+import { resolveModel } from "../../src/models";
 import { assert } from "./assertions.js";
 import {
 	createMemoryCache,

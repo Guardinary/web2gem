@@ -42,7 +42,7 @@ import {
 	responsesMessagesFromRequest,
 	stringifyToolCallArguments,
 } from "../../src/promptcompat/responses-input";
-import { buildTextWithTokens } from "../../src/shared/tokens";
+import { buildTextWithTokens } from "../../src/promptcompat/token-accounting";
 import {
 	googleToolChoiceInstructionFromPolicy,
 	parseGoogleToolChoicePolicy,

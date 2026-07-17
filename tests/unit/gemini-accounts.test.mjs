@@ -19,9 +19,9 @@ import {
 } from "../../src/gemini/accounts/normalize";
 import { decodeGeminiAccountProbe } from "../../src/gemini/accounts/probe";
 import { D1GeminiAccountStore } from "../../src/gemini/accounts/store-d1";
+import { buildGeminiModelHeaders } from "../../src/gemini/client/model-headers";
 import { handleGeminiAccountAdminRequest } from "../../src/http/admin/gemini-accounts";
 import worker from "../../src/index";
-import { buildGeminiModelHeaders } from "../../src/models";
 import { assert } from "./assertions.js";
 import { baseConfig } from "./helpers.js";
 

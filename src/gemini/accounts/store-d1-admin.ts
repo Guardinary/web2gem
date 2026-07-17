@@ -1,12 +1,15 @@
 import {
+	boundedGeminiAccountPageLimit,
 	GEMINI_DURABLE_ACCOUNT_ISSUES,
 	geminiAccountState,
 	visibleGeminiAccountIssue,
 } from "./domain";
 import type {
 	GeminiAccountAdminFilter,
+	GeminiAccountAdminStats,
 	GeminiAccountIssue,
 	GeminiAccountSummary,
+	GeminiAccountSummaryPage,
 } from "./types";
 
 export const ADMIN_ACCOUNT_SELECT = `
@@ -90,6 +93,33 @@ export function summaryFromSql(
 export function numberOrZero(value: unknown): number {
 	const n = Number(value);
 	return Number.isFinite(n) ? n : 0;
+}
+
+export function adminPageFromRows(
+	rows: GeminiAccountSummarySqlRow[],
+	requestedLimit: number,
+	nowMs: number,
+): GeminiAccountSummaryPage {
+	const limit = boundedGeminiAccountPageLimit(requestedLimit);
+	const pageRows = rows.slice(0, limit);
+	return {
+		items: pageRows.map((row) => summaryFromSql(row, nowMs)),
+		nextCursor:
+			rows.length > limit ? pageRows[pageRows.length - 1]?.id || null : null,
+		limit,
+	};
+}
+
+export function adminStatsFromRow(
+	row: Partial<GeminiAccountAdminStats> | null | undefined,
+): GeminiAccountAdminStats {
+	return {
+		total: numberOrZero(row?.total),
+		available: numberOrZero(row?.available),
+		cooling: numberOrZero(row?.cooling),
+		attention: numberOrZero(row?.attention),
+		disabled: numberOrZero(row?.disabled),
+	};
 }
 
 function escapeSqlLike(value: string): string {

@@ -1,9 +1,6 @@
-import type {
-	GeminiKnownTierLabel,
-	GeminiPublicFamily,
-	GeminiRouteTuple,
-} from "../../models";
+import type { GeminiPublicFamily } from "../../models";
 import type { GeminiAccountIssue, GeminiAccountState } from "./domain";
+import type { GeminiKnownTierLabel, GeminiRouteTuple } from "./routes";
 
 export type D1Result<T = unknown> = {
 	results?: T[];

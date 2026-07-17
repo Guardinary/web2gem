@@ -6,7 +6,7 @@ import { log } from "../../shared/logging";
 import { GEMINI_WEB_USER_AGENT } from "../constants";
 import { httpFetch } from "../transport";
 import { upstreamImageFetchFailedError } from "./errors";
-import type { GeminiParsedImage } from "./parser";
+import type { GeminiParsedImage } from "./parse-images";
 
 export type GeminiImageOutputFormat = "png" | "jpeg" | "gif" | "webp";
 

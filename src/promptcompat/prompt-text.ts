@@ -1,9 +1,8 @@
+import { createTokenCounter, type TokenCharCounts } from "./token-accounting";
 import {
 	createPromptByteLengthSniffer,
-	createTokenCounter,
 	type PromptByteLengthBounded,
-	type TokenCharCounts,
-} from "../shared/tokens";
+} from "../shared/text-metrics";
 
 export type PromptMetadata = {
 	hasToolPrompt: boolean;

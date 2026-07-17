@@ -2,7 +2,7 @@ import type {
 	AttachmentFileRef,
 	AttachmentUploadResult,
 } from "../attachments/types";
-import type { TokenCharCounts } from "../shared/tokens";
+import type { TokenCharCounts } from "../promptcompat/token-accounting";
 import type { ErrorWithMetadata, UnknownRecord } from "../shared/types";
 
 export type FileRef = AttachmentFileRef;

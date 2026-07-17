@@ -1,6 +1,6 @@
 import type { ErrorWithMetadata } from "../../shared/types";
-import { promptByteLength } from "../../shared/tokens";
-import type { GeminiFatalCode } from "./parser";
+import { promptByteLength } from "../../shared/text-metrics";
+import type { GeminiFatalCode } from "./parse-parts";
 
 export const LARGE_PROMPT_EMPTY_RESPONSE_MIN_BYTES = 95000;
 export const LARGE_PROMPT_EMPTY_RESPONSE_CODE = "large_prompt_empty_response";

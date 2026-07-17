@@ -1,6 +1,9 @@
 import type { CompletionProvider } from "./ports";
 import type { ResolvedModel } from "../models";
-import { combinedTokenCount, createTokenCounter } from "../shared/tokens";
+import {
+	combinedTokenCount,
+	createTokenCounter,
+} from "../promptcompat/token-accounting";
 import { formatGoogleFunctionCalls } from "../toolcall/google";
 import { validateGoogleToolPolicyCalls } from "../toolcall/policy-google";
 import type {

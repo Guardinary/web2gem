@@ -17,7 +17,7 @@ import {
 	upstreamErrorReason,
 } from "../../shared/errors";
 import { log } from "../../shared/logging";
-import { tokenCountFromCounts } from "../../shared/tokens";
+import { tokenCountFromCounts } from "../../promptcompat/token-accounting";
 import { formatOpenAIToolCalls } from "../../toolcall/openai-format";
 import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
 import type { ToolBundle } from "../../toolcall/tool-bundle";

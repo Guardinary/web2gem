@@ -1,6 +1,12 @@
 import { isAbortError } from "../shared/abort";
-import type { TokenCharCounts, TokenCounter } from "../shared/tokens";
-import { createTokenCounter, emptyTokenCounts } from "../shared/tokens";
+import type {
+	TokenCharCounts,
+	TokenCounter,
+} from "../promptcompat/token-accounting";
+import {
+	createTokenCounter,
+	emptyTokenCounts,
+} from "../promptcompat/token-accounting";
 import type { ParsedToolCall } from "../toolcall/dsml";
 import type {
 	ToolChoicePolicy,

@@ -25,12 +25,11 @@ import {
 import { readRouteJsonPost } from "../../src/http/route-body";
 import worker from "../../src/index";
 import {
-	dynamicProviderModelCandidates,
 	geminiRouteKey,
 	knownTierLabel,
 	parseGeminiRouteKey,
-	resolveModel,
-} from "../../src/models";
+} from "../../src/gemini/accounts/routes";
+import { dynamicProviderModelCandidates, resolveModel } from "../../src/models";
 import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
 import { createToolBundle } from "../../src/toolcall/tool-bundle";
 import { assert } from "./assertions.js";

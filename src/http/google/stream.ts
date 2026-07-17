@@ -10,7 +10,7 @@ import type { FileRef } from "../../completion/types";
 import { streamGoogleToolCompletionEvents } from "../../completion/google";
 import type { ToolChoicePolicy } from "../../toolcall/policy-openai";
 import type { ToolBundle } from "../../toolcall/tool-bundle";
-import { tokenCountFromCounts } from "../../shared/tokens";
+import { tokenCountFromCounts } from "../../promptcompat/token-accounting";
 import { errorLogSummary, upstreamErrorCode } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import type { SSEWrite } from "../core/sse";

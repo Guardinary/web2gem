@@ -1,4 +1,4 @@
-import { codePointLengthAtLeast } from "../../shared/tokens";
+import { codePointLengthAtLeast } from "../../shared/text-metrics";
 
 export const MIN_DELTA_FLUSH_CHARS = 64;
 export const MAX_DELTA_FLUSH_WAIT_MS = 20;

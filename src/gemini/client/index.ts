@@ -29,13 +29,13 @@ import {
 import type { GeminiRichImage } from "./generated-images";
 import { hydrateGeneratedImages } from "./generated-images";
 import {
-	createStreamTextExtractor,
 	extractResponseFatalCode,
 	extractResponseParts,
 	extractResponseText,
 	richResponseShapeSummary,
-	wrbResponseShapeSummary,
-} from "./parser";
+} from "./parse-parts";
+import { wrbResponseShapeSummary } from "./parse-envelope";
+import { createStreamTextExtractor } from "./parse-stream";
 import { buildHeaders, buildPayload, getUrl } from "./protocol";
 import {
 	configWithCachedGeminiBuildLabel,
@@ -69,14 +69,16 @@ export type GeminiRichOutput = {
 };
 
 export {
+	extractTextsFromLine,
+	wrbResponseShapeSummary,
+} from "./parse-envelope";
+export {
 	cleanText,
 	extractResponseFatalCode,
 	extractResponseParts,
 	extractResponseText,
-	extractTextsFromLine,
 	richResponseShapeSummary,
-	wrbResponseShapeSummary,
-} from "./parser";
+} from "./parse-parts";
 export { buildHeaders, buildPayload, getUrl } from "./protocol";
 export { getFreshGeminiBuildLabel } from "./retry";
 
