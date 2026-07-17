@@ -41,7 +41,7 @@ Account-pool Docker images use the isolated `web2gem-account-pool` repository an
 
 The canonical GHCR image is `ghcr.io/guardinary/web2gem-account-pool`. Docker archive assets should load into `web2gem-account-pool:<tag>`. Registry images must include OCI labels for the package version and the actual release commit revision.
 
-The final Docker runtime image must include every repository-local module imported by `scripts/docker-server.mjs`. At minimum this currently includes `d1-http-binding.mjs` and `io.mjs`; unit coverage compares the adapter's relative imports against explicit runtime-stage `COPY` entries so the container cannot pass build but exit before listening due to a missing module.
+The final Docker runtime image must include every repository-local module imported by `server/docker-server.mjs`. At minimum this currently includes `server/d1-http-binding.mjs` and `server/io.mjs`; unit coverage compares the adapter's relative imports against explicit runtime-stage `COPY` entries so the container cannot pass build but exit before listening due to a missing module.
 
 ---
 
@@ -509,7 +509,7 @@ Use this contract when adding, removing, or renaming Wrangler vars, secrets, or 
 ### 3. Contracts
 
 - `wrangler.jsonc` and `.dev.vars.example` are the generation inputs. The example secret file contributes secret names only; it must not contain real credentials.
-- Both type commands build `dist/worker.js` before invoking Wrangler. Wrangler conditionally emits `Cloudflare.GlobalProps.mainModule` based on main-module existence, so this prerequisite makes clean-clone and post-build generation byte-for-byte deterministic.
+- Wrangler's custom `build.command` builds `dist/worker.js` during both type commands. Package scripts invoke `wrangler types` directly so the build runs exactly once.
 - Generation uses `--include-runtime false` because runtime types continue to come from the pinned `@cloudflare/workers-types` dependency.
 - Generation uses `--strict-vars false` so runtime-config parsers may validate deployment-provided values rather than accepting only current literal defaults.
 - `WorkerBindings` types the Cloudflare entrypoint and known binding names.
@@ -538,7 +538,7 @@ Use this contract when adding, removing, or renaming Wrangler vars, secrets, or 
 
 - `pnpm check:worker-types` in the required Ubuntu quality job.
 - Unit test generated declarations contain `WorkerBindings`, `GEMINI_DB: D1Database`, and every `CONFIG_ENV_KEYS` key.
-- Unit test both package scripts retain the build-first prerequisite.
+- Unit test both package scripts invoke Wrangler directly and the Wrangler custom build remains `pnpm build`.
 - `pnpm typecheck` to verify the Worker entrypoint and application boundary remain compatible.
 - `pnpm unit`, `pnpm coverage:ci`, and `pnpm smoke` after binding-type changes.
 
@@ -571,14 +571,14 @@ Use this contract when changing `Dockerfile`, `.dockerignore`, Docker smoke beha
 
 ### 2. Signatures
 
-- Build inputs: package manifests, TypeScript/Vitest/Wrangler config, `scripts/`, and `src/`.
+- Build inputs: package manifests, TypeScript/Vitest/Wrangler config, `scripts/`, `server/`, and `src/`.
 - Safe templates: `.env.example`, `.env.docker.example`, and `.dev.vars.example`.
 
 ### 3. Contracts
 
 - Exclude `.env`, `.env.*`, `.dev.vars`, and `.dev.vars.*`, then re-include only committed examples.
 - Exclude tests, docs, reports, coverage, and release assets when not copied by `Dockerfile`.
-- Preserve every repository path copied by `Dockerfile`, including account-pool runtime adapters under `scripts/`.
+- Preserve every repository path copied by `Dockerfile`, including production runtime adapters under `server/`.
 
 ### 4. Validation & Error Matrix
 
@@ -683,7 +683,7 @@ upgrading an existing one-click deployment.
 ### 2. Signatures
 
 - Draft D1 binding: `wrangler.jsonc` `d1_databases[].binding = "GEMINI_DB"`.
-- Deploy Button entrypoint: `wrangler.jsonc` `main = "src/index.ts"`.
+- Deploy Button entrypoint: `wrangler.jsonc` `main = "dist/worker.js"` plus `build.command = "pnpm build"`.
 - Release and Docker bundle: `scripts/build.mjs` writes `dist/worker.js`.
 - Migration command: `wrangler d1 migrations apply GEMINI_DB --remote`.
 - Sync workflow: `.github/workflows/sync-upstream.yml`.
@@ -697,10 +697,12 @@ upgrading an existing one-click deployment.
 - Keep `wrangler.jsonc` portable: declare the stable D1 binding/resource name
   but omit `database_id`. Cloudflare/Wrangler automatic provisioning owns the
   physical resource association outside Git.
-- Keep `wrangler.jsonc` `main` pointed at committed source that exists in a
-  fresh clone. Deploy Button resolves the entrypoint before running the package
-  build command, so generated `dist/worker.js` cannot be the deployment
-  entrypoint even though it remains the release and Docker bundle.
+- Keep one artifact builder: Wrangler runs the custom command before processing
+  `dist/worker.js` during dev/deploy/types, while Docker and release checks run
+  the same `scripts/build.mjs` output directly.
+- The production esbuild entry is `src/worker-entry.ts` and exports only the
+  default handler. Named diagnostic helpers stay in `dist/harness.js`; workerd
+  rejects non-handler named module exports such as `VERSION`.
 - Do not put D1 database IDs in Deploy Button secret templates or GitHub
   Secrets. `ADMIN_KEY` and optional `API_KEYS` remain Worker secrets.
 - The sync job requests only `contents: write`, requires
@@ -741,22 +743,21 @@ upgrading an existing one-click deployment.
   rerun the Deploy Button and create a duplicate Worker.
 - Draft D1 binding cannot be parsed -> `wrangler deploy --dry-run` or Worker
   binding type checks fail before release.
-- `main` points at ignored `dist/worker.js` -> a fresh Deploy Button clone fails
-  during project setup with a Wrangler configuration parsing error before the
-  build command can generate the file.
+- Custom build missing/failing -> Wrangler cannot load `dist/worker.js` and
+  deploy/dev/types fail before upload or serving.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: a true Fork fast-forwards weekly and its Cloudflare Git integration
   deploys the same Worker.
-- Good: `main` points at tracked `src/index.ts`; the build may still generate
-  `dist/worker.js` for release assets and Docker.
+- Good: `main` points at `dist/worker.js`; the custom command, Docker, smoke,
+  and release paths all invoke the same canonical builder.
 - Base: the Fork is already current and the scheduled run exits idempotently.
 - Bad: rerun the Deploy Button to upgrade and create a duplicate Worker.
 - Bad: commit a user-specific D1 UUID or generate `wrangler.jsonc` from a GitHub
   secret.
-- Bad: point `main` at an ignored build artifact and assume Deploy Button runs
-  `pnpm build` before resolving the Wrangler configuration.
+- Bad: prepend `pnpm build` in package `dev`, `deploy`, or type scripts and then
+  let Wrangler run the same custom build a second time.
 - Bad: `git reset --hard upstream/gemini-account-pool` followed by force push.
 - Bad: promise that every Deploy Button repository contains GitHub Actions
   workflows without verifying the generated repository.
@@ -765,8 +766,8 @@ upgrading an existing one-click deployment.
 
 - Assert `GEMINI_DB` keeps its stable `database_name` and has no `database_id`
   property.
-- Assert `wrangler.jsonc` `main` is `src/index.ts` and the file exists in the
-  repository.
+- Assert package and Wrangler `main` are `dist/worker.js`, custom build is
+  `pnpm build`, and `git ls-files src/generated` is empty.
 - Assert the migration script continues referencing the binding name.
 - Assert weekly and manual triggers, `contents: write`, the true-Fork guard,
   action version, upstream/target repository and branch inputs, `GITHUB_TOKEN`,
@@ -786,7 +787,7 @@ upgrading an existing one-click deployment.
 
 ```jsonc
 {
-  "main": "dist/worker.js",
+  "main": "src/index.ts",
   "d1_databases": [{
     "binding": "GEMINI_DB",
     "database_name": "web2gem-gemini-accounts",
@@ -804,7 +805,11 @@ git push --force origin HEAD
 
 ```jsonc
 {
-  "main": "src/index.ts",
+  "main": "dist/worker.js",
+  "build": {
+    "command": "pnpm build",
+    "watch_dir": ["src", "scripts"]
+  },
   "d1_databases": [{
     "binding": "GEMINI_DB",
     "database_name": "web2gem-gemini-accounts"

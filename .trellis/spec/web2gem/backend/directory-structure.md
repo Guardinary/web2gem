@@ -5,6 +5,7 @@
 - The root `package.json` / `src/` tree is the default `web2gem` package. The Cloudflare Worker build and architecture guard are scoped to this root package unless a task explicitly expands the scope.
 - `src/app.ts` is the application composition root. It owns the declarative `APP_ROUTES` table (route matching, admin-exempt vs public ordering, per-route JSON body policy and error envelope, session requirements), CORS wrapping, the public auth gate, provider composition, and top-level error conversion using Web-standard `Request` / `Response` types. Adding a route means adding one table entry, not a new dispatch branch.
 - `src/index.ts` is the thin Cloudflare Worker entrypoint. It delegates `fetch` to `handleApplicationRequest` and exports only stable public helpers; protocol route branches must not be added there.
+- `src/worker-entry.ts` is the default-only production bundle entry used by Wrangler and Docker. Keep diagnostic/public helper exports in `src/index.ts` / `src/harness-exports.ts`; raw workerd entry bundles must not expose non-handler named exports.
 - `src/http/` owns HTTP boundary concerns. Generic, protocol- and completion-neutral helpers live under `http/core/` (enforced by check:arch), stream framing helpers under `http/stream/`, protocol adapters under `http/openai/` and `http/google/`, and business-aware shared modules at the `src/http/` root: `route-body.ts` (completion-aware JSON body policy) and `generation.ts` (shared prepare/generate orchestration, stage logging, and the `GenerationProtocol` strategy consumed by both adapters).
 - `src/http/openai/images.ts` owns OpenAI image route orchestration and generation response flow. JSON and multipart image-edit input normalization, upload-size enforcement, and image-part coercion belong in `src/http/openai/images-input.ts`; keep provider calls and response formatting out of that input owner.
 - HTTP protocol adapters import `http/core/*`, `http/stream/*`, and `src/http/*` owner modules directly. There is no `src/http/index.ts` barrel; `src/app.ts` also imports owner modules directly. New generation endpoints run through `runPreparedCompletion`/`generateTextLogged`/`generateRichLogged` with their protocol's `*_GENERATION_PROTOCOL` constant instead of hand-rolling prepare/generate/log/error pipelines.
@@ -27,7 +28,8 @@
 - `src/promptcompat/token-accounting.ts` owns prompt/completion token estimates, counters, and prepared-text accounting. `src/shared/text-metrics.ts` owns only provider-neutral UTF-8 byte, code-point, and continuation-overlap primitives.
 - `src/shared/` must stay leaf-level and provider-neutral. Production code imports concrete owners such as `encoding.ts`, `logging.ts`, `abort.ts`, `errors.ts`, `crypto.ts`, `strings.ts`, `text-metrics.ts`, and `json-schema.ts`; broad `runtime.ts` / `tokens.ts` compatibility barrels do not exist. Generic string selection and JSON-Schema subset validation belong here, while completion-specific structured-output parsing belongs in `src/completion/structured-output.ts`. Gemini SAPISID hashing belongs to `src/gemini/auth.ts`.
 - Media and attachment helpers live under `src/attachments/**`; do not add compatibility shims under `src/shared/`.
-- `scripts/docker-server.mjs` adapts Node HTTP requests to the Worker `fetch` entrypoint. It owns Node header/body/response-stream translation and propagates client disconnects into the Web `Request.signal`; it must not duplicate route, auth, completion, or provider logic.
+- `src/admin-ui/html.ts` is the authored compile-time HTML injection boundary; `build-admin-ui.mjs` returns HTML in memory and no generated source directory is tracked. `admin-ui/session.ts` owns browser session cancellation, stale-result guards, feedback, and confirmation lifecycle; `actions.ts` owns account/model/import/edit use cases.
+- `server/docker-server.mjs` adapts Node HTTP requests to the Worker `fetch` entrypoint. It owns Node header/body/response-stream translation and propagates client disconnects into the Web `Request.signal`; `server/d1-http-binding.mjs` and `server/io.mjs` are its production runtime siblings. Development commands remain under `scripts/`.
 
 ## Scenario: Shared Application Routing Boundary
 
@@ -75,14 +77,14 @@ Use this contract when adding or moving routes, changing route-level authenticat
 #### Wrong
 
 ```javascript
-// scripts/docker-server.mjs
+// server/docker-server.mjs
 if (req.url === "/v1/models") return sendModels(res);
 ```
 
 #### Correct
 
 ```typescript
-// src/index.ts
+// src/worker-entry.ts
 export default { fetch: handleApplicationRequest };
 ```
 

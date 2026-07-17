@@ -700,7 +700,8 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
   assert the active fetch signal aborts and no remaining chunks are requested.
 - UI route headers/zero-D1 behavior, non-GET 404, no external assets, and no
   credential examples or query-string admin key.
-- Rebuild `src/generated/admin-ui.ts` through `pnpm build`; never hand-edit it.
+- Build the in-memory Admin UI injection through `pnpm build`; never add or
+  hand-edit a generated source module.
 - Run the full package quality gate after UI changes.
 
 ### 7. Wrong vs Correct
