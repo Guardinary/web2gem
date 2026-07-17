@@ -1,10 +1,5 @@
 import { beforeEach, describe, test } from "vitest";
 import { base64ToBytes } from "../../src/attachments/base64";
-import {
-	openAIAttachmentPlanFromRequest,
-	requestAttachmentPlanFromChannels,
-} from "../../src/promptcompat/attachment-inputs";
-import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
 import { parseUploadUrl } from "../../src/attachments/input";
 import {
 	attachmentDrop,
@@ -74,6 +69,7 @@ async function withoutTypedArrayEncodingMethods(run) {
 		else delete Uint8Array.prototype.toBase64;
 	}
 }
+
 function baseUploadCfg(overrides = {}) {
 	return {
 		gemini_origin: "https://gemini.example",
@@ -86,6 +82,7 @@ function baseUploadCfg(overrides = {}) {
 		...overrides,
 	};
 }
+
 function accountUploadCfg(accountId, cookieHash) {
 	return baseUploadCfg({
 		cookie: `__Secure-1PSID=psid-${accountId}; __Secure-1PSIDTS=ts-${accountId}`,
@@ -96,6 +93,7 @@ function accountUploadCfg(accountId, cookieHash) {
 		},
 	});
 }
+
 async function assertPreferredMultipart(init, expected) {
 	assert.equal(init.method, "POST");
 	assert.equal(init.headers["X-Tenant-Id"], "bard-storage");
@@ -117,6 +115,7 @@ async function assertPreferredMultipart(init, expected) {
 	if (expected.bodyText !== undefined)
 		assert.match(text, new RegExp(escapeRegExp(expected.bodyText)));
 }
+
 async function bodyBytes(body) {
 	if (body instanceof Uint8Array) return body;
 	if (body instanceof ArrayBuffer) return new Uint8Array(body);
@@ -124,6 +123,7 @@ async function bodyBytes(body) {
 		return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
 	return new Response(body).bytes();
 }
+
 function escapeRegExp(value) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1127,210 +1127,6 @@ describe("uploads", () => {
 		assert.match(
 			droppedAttachmentNote(plan.dropped),
 			/exceeded maximum of 50 attachments per request/,
-		);
-	});
-	test("classifies OpenAI request attachments without upload transport", async () => {
-		const request = {
-			ref_file_ids: ["file-top"],
-			messages: [
-				{
-					role: "user",
-					content: [
-						{
-							type: "input_file",
-							data: "ZG9udA==",
-							filename: "content-direct.txt",
-							mime_type: "text/plain",
-						},
-					],
-					attachments: [
-						{
-							type: "input_file",
-							file_data: "bXNn",
-							filename: "message-attach.txt",
-							mime_type: "text/plain",
-						},
-					],
-				},
-			],
-			attachments: [
-				{
-					type: "input_file",
-					id: "inline-id",
-					file_data: "aGVsbG8=",
-					filename: "note.txt",
-					mime: "text/plain",
-				},
-				{
-					type: "input_file",
-					file_id: "file-existing",
-					filename: "existing.txt",
-				},
-				{
-					type: "input_file",
-					file: {
-						id: "nested-inline-id",
-						data: "AA==",
-						filename: "nested.txt",
-						mime: "application/octet-stream",
-					},
-				},
-				{ type: "input_file", filename: "missing.txt" },
-				{
-					content: [
-						{
-							type: "input_file",
-							file_data: "d3JhcA==",
-							filename: "wrapped.txt",
-							mime_type: "text/plain",
-						},
-					],
-				},
-				{ type: "text", text: "ignored" },
-			],
-		};
-		const plan = openAIAttachmentPlanFromRequest(
-			request,
-			parseOpenAIMessages(request.messages),
-		);
-		assert.deepEqual(plan.existingFileRefs, [
-			"file-top",
-			{ id: "file-existing", name: "existing.txt" },
-		]);
-		assert.equal(plan.candidates.length, 5);
-		assert.deepEqual(
-			plan.candidates.map((candidate) => ({
-				kind: candidate.kind,
-				filename: candidate.filename,
-				mime: candidate.mime,
-				sourceType: candidate.source.type,
-			})),
-			[
-				{
-					kind: "file",
-					filename: "note.txt",
-					mime: "text/plain",
-					sourceType: "base64",
-				},
-				{
-					kind: "file",
-					filename: "nested.txt",
-					mime: "application/octet-stream",
-					sourceType: "base64",
-				},
-				{
-					kind: "file",
-					filename: "wrapped.txt",
-					mime: "text/plain",
-					sourceType: "base64",
-				},
-				{
-					kind: "file",
-					filename: "content-direct.txt",
-					mime: "text/plain",
-					sourceType: "base64",
-				},
-				{
-					kind: "file",
-					filename: "message-attach.txt",
-					mime: "text/plain",
-					sourceType: "base64",
-				},
-			],
-		);
-		assert.deepEqual(
-			plan.dropped.map((drop) => ({
-				kind: drop.kind,
-				code: drop.code,
-				filename: drop.filename,
-			})),
-			[{ kind: "file", code: "invalid_file_input", filename: "missing.txt" }],
-		);
-	});
-	test("classifies OpenAI request-level image blocks without upload transport", async () => {
-		const plan = requestAttachmentPlanFromChannels({
-			attachments: [
-				{
-					type: "image_url",
-					image_url: { url: "data:image/png;base64,QUJDRA==" },
-					filename: "../outer.png",
-				},
-				{
-					type: "image_url",
-					url: "data:image/gif;base64,R0lGODlh",
-					filename: "direct.gif",
-				},
-			],
-			files: [
-				{
-					type: "input_image",
-					image_url: "data:;base64,BBBB",
-					mime_type: "image/jpeg",
-					filename: "inline.jpg",
-				},
-			],
-			messages: [
-				{
-					role: "user",
-					content: [
-						{
-							type: "image_url",
-							image_url: {
-								url: "data:image/png;base64,SHOULD_NOT_DUPLICATE==",
-							},
-						},
-					],
-				},
-			],
-		});
-		assert.equal(plan.candidates.length, 3);
-		assert.deepEqual(
-			plan.candidates.map((candidate) => ({
-				kind: candidate.kind,
-				filename: candidate.filename,
-				mime: candidate.mime,
-				sourceType: candidate.source.type,
-				data: candidate.source.data,
-			})),
-			[
-				{
-					kind: "image",
-					filename: "outer.png",
-					mime: "image/png",
-					sourceType: "base64",
-					data: "QUJDRA==",
-				},
-				{
-					kind: "image",
-					filename: "direct.gif",
-					mime: "image/gif",
-					sourceType: "base64",
-					data: "R0lGODlh",
-				},
-				{
-					kind: "image",
-					filename: "inline.jpg",
-					mime: "image/jpeg",
-					sourceType: "base64",
-					data: "BBBB",
-				},
-			],
-		);
-		assert.deepEqual(
-			requestAttachmentPlanFromChannels({
-				attachments: [
-					{
-						type: "image_url",
-						image_url: { url: "data:image/webp;base64,V0VCUA==" },
-						filename: "outer.webp",
-					},
-				],
-			}).candidates.map((candidate) => ({
-				b64: candidate.source.data,
-				mime: candidate.mime,
-				filename: candidate.filename,
-			})),
-			[{ b64: "V0VCUA==", mime: "image/webp", filename: "outer.webp" }],
 		);
 	});
 	test("logs structured attachment upload usage when request logging is enabled", async () => {

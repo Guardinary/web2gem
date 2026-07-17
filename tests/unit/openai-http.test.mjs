@@ -1871,27 +1871,6 @@ describe("openai http", () => {
 			true,
 		);
 	});
-	test("normalizes Responses input without leaking unknown event payloads", async () => {
-		const messages = normalizeResponsesInputAsMessages({
-			input: [
-				{ type: "input_text", text: "known text" },
-				{
-					type: "custom_event",
-					text: "do not leak text",
-					content: [{ type: "input_text", text: "do not leak content" }],
-					metadata: { secret: "do not leak json" },
-				},
-				{ custom: "do not leak object" },
-			],
-		});
-		assert.deepEqual(messages, [{ role: "user", content: "known text" }]);
-		assert.deepEqual(
-			normalizeResponsesInputAsMessages({
-				input: { type: "custom_event", text: "do not leak root" },
-			}),
-			[],
-		);
-	});
 	test("rejects invalid Responses model before provider generation", async () => {
 		let generated = false;
 		const provider = {

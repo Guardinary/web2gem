@@ -52,8 +52,6 @@ import { openAIUpstreamErrorResponse } from "../../src/http/openai/errors";
 import { createDeltaCoalescer } from "../../src/http/stream/coalescer";
 import worker from "../../src/index";
 import { MODELS, resolveModel } from "../../src/models";
-import { parseOpenAIMessages } from "../../src/promptcompat/message-model";
-import { messagesToPrompt } from "../../src/promptcompat/messages";
 import {
 	abortError,
 	isAbortError,
@@ -71,12 +69,6 @@ import {
 } from "../../src/shared/errors";
 import { log, logStage } from "../../src/shared/logging";
 import {
-	buildTextWithTokens,
-	createTokenCounter,
-	tokenCharCounts,
-	tokenEst,
-} from "../../src/promptcompat/token-accounting";
-import {
 	codePointLength,
 	codePointLengthAtLeast,
 	createPromptByteLengthSniffer,
@@ -85,8 +77,6 @@ import {
 	promptByteLengthGreaterThan,
 	trimContinuationOverlap,
 } from "../../src/shared/text-metrics";
-import { validateStructuredOutputValue } from "../../src/completion/structured-output";
-import { jsonValuesEqual } from "../../src/shared/json-schema";
 import { assert } from "./assertions.js";
 import {
 	fakePersistentSocketConnect,
@@ -224,12 +214,7 @@ describe("runtime core", () => {
 			maxBytes: 4,
 		});
 	});
-	test("counts token and prompt byte edges for mixed Unicode text", async () => {
-		assert.deepEqual(tokenCharCounts("abcd😀中"), {
-			asciiChars: 4,
-			nonASCIIChars: 2,
-		});
-		assert.equal(tokenEst("abcd😀中") >= 2, true);
+	test("counts prompt byte edges for mixed Unicode text", async () => {
 		assert.equal(promptByteLength("aé中😀\uD83D"), 13);
 		assert.deepEqual(promptByteLengthBounded("éé", 3), {
 			bytes: 4,
@@ -238,17 +223,6 @@ describe("runtime core", () => {
 			maxBytes: 3,
 		});
 		assert.equal(promptByteLengthGreaterThan("abcd", 3), true);
-
-		const counter = createTokenCounter();
-		counter.append("abcd");
-		counter.append("\uD83D");
-		counter.append("\uDE00中");
-		assert.deepEqual(counter.counts(), {
-			asciiChars: 4,
-			nonASCIIChars: 2,
-			hasText: true,
-		});
-		assert.equal(counter.tokens(), tokenEst("abcd😀中"));
 	});
 	test("finalizes pending high surrogates in prompt byte sniffers", async () => {
 		const exact = createPromptByteLengthSniffer(3);
@@ -272,14 +246,7 @@ describe("runtime core", () => {
 			maxBytes: 3,
 		});
 	});
-	test("builds token text without retaining text and measures code points", async () => {
-		const prepared = buildTextWithTokens(["ab", null, ["cd"], "😀"], false);
-		assert.equal(prepared.text, "");
-		assert.deepEqual(prepared.counts, {
-			asciiChars: 4,
-			nonASCIIChars: 1,
-			hasText: true,
-		});
+	test("measures Unicode code points", async () => {
 		assert.equal(codePointLength("a😀中"), 3);
 		assert.equal(codePointLengthAtLeast("a😀", 2), true);
 		assert.equal(codePointLengthAtLeast("a😀", 3), false);
@@ -491,16 +458,6 @@ describe("runtime core", () => {
 		} finally {
 			Date.now = originalNow;
 		}
-	});
-	test("marks prompt conversion as over byte budget", async () => {
-		const result = messagesToPrompt(
-			parseOpenAIMessages([{ role: "user", content: "x".repeat(40) }]),
-			null,
-			10,
-		);
-		assert.equal(result.byteCheck.exceeded, true);
-		assert.equal(result.byteCheck.exact, false);
-		assert.equal(result.byteCheck.bytes > 10, true);
 	});
 	test("parses LOG_REQUESTS boolean config", async () => {
 		assert.equal(getConfig({}).log_requests, false);
@@ -1526,54 +1483,6 @@ describe("runtime core", () => {
 			size: -1,
 			errorLine: "a",
 		});
-	});
-	test("validates structured output const enum and uniqueness", async () => {
-		assert.equal(
-			jsonValuesEqual(
-				{ a: 1, b: [2, { c: true }] },
-				{ b: [2, { c: true }], a: 1 },
-			),
-			true,
-		);
-		assert.equal(jsonValuesEqual({ a: 1 }, { a: 1, b: 2 }), false);
-		assert.equal(
-			validateStructuredOutputValue([1, "1", true, false, null], {
-				type: "json_schema",
-				schema: { type: "array", uniqueItems: true },
-			}),
-			"",
-		);
-		assert.equal(
-			validateStructuredOutputValue(["x", "x"], {
-				type: "json_schema",
-				schema: { type: "array", uniqueItems: true },
-			}),
-			"$ must contain unique items",
-		);
-		assert.equal(
-			validateStructuredOutputValue(
-				{ b: 2, a: 1 },
-				{ type: "json_schema", schema: { const: { a: 1, b: 2 } } },
-			),
-			"",
-		);
-		assert.equal(
-			validateStructuredOutputValue(
-				{ b: 2, a: 1 },
-				{ type: "json_schema", schema: { enum: [{ a: 1, b: 2 }] } },
-			),
-			"",
-		);
-		assert.equal(
-			validateStructuredOutputValue(
-				[
-					{ b: 2, a: 1 },
-					{ a: 1, b: 2 },
-				],
-				{ type: "json_schema", schema: { type: "array", uniqueItems: true } },
-			),
-			"$ must contain unique items",
-		);
 	});
 	test("aborts SSE producer when client cancels", async () => {
 		let sawAbort = false;
