@@ -923,68 +923,60 @@ Use this contract when changing completion stream event helpers, OpenAI or Googl
 
 ### 2. Signatures
 
-- `streamPlainCompletionEvents(provider, input, { signal, coalesceTextDeltas, minCoalescedTextChars, maxCoalescedTextWaitMs })` emits completion stream events.
-- `streamToolSieveCompletionEvents(...)` and the shared `streamSievedTextDeltas(...)` loop accept the same internal coalescing options.
-- `createDeltaCoalescer(sendDeltaFrame, minFlushChars = 64, maxFlushWaitMs = 20, { emitFirstImmediately })` buffers protocol deltas.
+- `streamPlainCompletionEvents(provider, input, { signal })` emits provider text as completion events without buffering.
+- `streamToolSieveCompletionEvents(..., { signal })` and `streamSievedTextDeltas(..., { signal }, ctx)` accept provider-supported options only.
+- `createDeltaCoalescer(sendDeltaFrame, minFlushChars = 64, maxFlushWaitMs = 20, { emitFirstImmediately })` is the single streaming delta buffer.
 - `MIN_DELTA_FLUSH_CHARS` and `MAX_DELTA_FLUSH_WAIT_MS` are the protocol-frame defaults.
 
 ### 3. Contracts
 
-- Completion coalescing options are owned by `src/completion/stream-coalesce.ts` and consumed by `stream-events.ts`; pass only provider-supported options such as `signal` into `provider.streamText`.
-- With `coalesceTextDeltas: true`, emit the first provider text delta immediately, then buffer later deltas until `minCoalescedTextChars` code points, `maxCoalescedTextWaitMs`, stream end, or a non-abort stream error.
-- On non-abort provider errors, flush pending text before yielding the warning/error event so partial output is preserved.
-- On abort/disconnect, do not flush buffered text as a synthetic final delta and do not emit noisy stream errors.
-- Protocol writers should use `createDeltaCoalescer(..., { emitFirstImmediately: true })` when user-visible streaming latency matters.
-- Always await promise-returning `append(...)` or `flush()` results before writing a finish frame, switching delta fields, or closing the stream.
-- Responses streaming should track accumulated output length separately from joined text so empty-output checks do not require repeated full-string concatenation.
-
+- Completion forwards provider delta boundaries unchanged while preserving abort/error conversion, tool sieving, lifecycle reduction, and token accounting.
+- HTTP protocol writers own the only timer-bearing coalescer because they understand protocol fields and terminal frame ordering.
+- Protocol writers use `createDeltaCoalescer(..., { emitFirstImmediately: true })` when user-visible first-token latency matters.
+- A non-abort provider error is classified after every already-yielded provider delta has reached the protocol writer; aborts are rethrown without a warning or synthetic final delta.
+- Always await `append(...)` and `flush()` before switching fields, writing a finish frame, or closing the stream.
+- Do not reintroduce completion-level size/time buffering; stacking two 64-character / 20-ms buffers adds latency without reducing final protocol writes.
 
 ### 4. Validation & Error Matrix
 
-- Provider yields `["he", "llo"]` with first-immediate coalescing -> first chunk may contain `he`, later flush contains `llo`.
-- Many tiny provider deltas after the first -> fewer protocol frames once buffered text reaches 64 code points or 20 ms.
-- Provider throws after pending non-abort text -> pending text is emitted, then warning/error handling runs.
-- Provider aborts after pending text -> stream stops without warning/error event and without forcing buffered text.
-- Delta field changes from `content` to `tool_calls` -> flush `content` before buffering `tool_calls`.
-- Finish frame written before `flush()` resolves -> ordering bug; await the flush.
+- Provider yields `["he", "llo"]` -> completion emits two text events; the HTTP coalescer may emit `he` immediately and flush `llo` later.
+- Many tiny provider deltas -> the HTTP writer emits fewer frames at 64 code points, 20 ms, or final flush.
+- Provider throws after text -> emitted text is preserved, then warning/error handling runs.
+- Provider aborts after text -> abort propagates without a warning/error event or synthetic flush.
+- Delta field changes -> flush the previous field before buffering the new field.
+- Finish frame written before awaited `flush()` -> ordering bug.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: OpenAI Chat, OpenAI Responses, and Google stream writers opt into completion coalescing and protocol-frame coalescing.
-- Base: keep the first user-visible token fast while reducing high-frequency tiny writes after that.
-- Bad: pass `coalesceTextDeltas` through to a provider adapter that does not understand it.
-- Bad: join the whole Responses output string on every delta just to decide whether output is empty.
+- Good: OpenAI Chat, OpenAI Responses, and Google writers share `createDeltaCoalescer`.
+- Base: completion exposes lifecycle events and HTTP decides frame pacing.
+- Bad: add `coalesceTextDeltas` or a timer under `src/completion/`.
+- Bad: call `append()` or `flush()` without awaiting it.
 
 ### 6. Tests Required
 
-- Unit test completion coalescing for first-delta emission and later buffered emission.
-- Unit test pending coalesced text flushes before non-abort stream warnings.
-- Unit test `createDeltaCoalescer` flushes on field changes.
-- Unit test `emitFirstImmediately` writes the first delta before throttling later deltas.
-- Route or stream writer tests should assert OpenAI and Google streaming still preserve finish frames and warning behavior.
-- Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke` after changing stream coalescing.
+- Unit-test completion event boundaries and warning/abort behavior.
+- Unit-test `createDeltaCoalescer` threshold, timer, field-change, first-immediate, and awaited-final-flush behavior.
+- Route tests must preserve OpenAI/Google finish frames, warnings, tool calls, and usage.
+- Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, `pnpm coverage:ci`, and `pnpm smoke`.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```typescript
-for await (const delta of provider.streamText(input, options)) {
-  await write(`data: ${JSON.stringify({ delta })}\n\n`);
+for await (const event of streamPlainCompletionEvents(provider, input, { signal })) {
+  await completionTimerBuffer.append(event);
 }
 ```
 
 #### Correct
 
 ```typescript
-for await (const event of streamPlainCompletionEvents(provider, input, { signal, coalesceTextDeltas: true })) {
-  if (event.type === "text_delta") {
-    const writeResult = coalescer.append("content", event.text);
-    if (writeResult) await writeResult;
-  }
+for await (const event of streamPlainCompletionEvents(provider, input, { signal })) {
+  if (event.type === "text_delta") await coalescer.append("content", event.text);
 }
-const flushResult = coalescer.flush();
-if (flushResult) await flushResult;
+await coalescer.flush();
 ```
 
 ## Scenario: Attachment Dedupe And In-Flight Memory
@@ -1047,43 +1039,45 @@ return `${materialized.mime}\0${materialized.filename}\0${bytesToHex(new Uint8Ar
 
 ### 1. Scope / Trigger
 
-Use this contract when changing `src/toolstream/index.ts`, DSML/XML tool-call parsing, streamed tool-call candidate holding, or markdown-protected tool-looking text behavior.
+Use this contract when changing `src/toolcall/sieve.ts`, DSML/XML parsing, streamed candidate holding, or markdown-protected tool-looking text.
 
 ### 2. Signatures
 
-- `processToolSieveChunk(state, chunk)` appends provider text and returns plain text chunks that are safe to emit.
-- `flushToolSieve(state, toolsRaw)` parses any final buffered tool candidate or releases buffered text.
-- `parseCanonicalDSMLToolCallsFast(text)` may parse straightforward canonical XML tool blocks before the tolerant DSML normalization path.
+- `createToolSieveState()` creates the only valid in-process sieve state.
+- `processToolSieveChunk(state, chunk)` returns plain text chunks that are safe to emit.
+- `flushToolSieve(state)` returns `{ text, toolCalls }`, where `toolCalls` is parsed `{ name, input }[] | null`.
+- `parseCanonicalDSMLToolCallsFast(text)` handles only straightforward canonical XML before the tolerant parser.
 
 ### 3. Contracts
 
-- A held candidate is confirmed by a complete tool opening tag prefix, not by `isPartialToolMarkupPrefix` on the whole buffer. `isPartialToolMarkupPrefix` intentionally remains broad and can return true for complete strings that start with `<tool_calls`.
-- Once a candidate is confirmed, `processToolSieveChunk` must not rescan the entire growing buffer for partial-prefix detection on every provider chunk.
-- `heldTail` is bounded to 128 characters. When an incoming held chunk is already at least 128 characters, derive the tail directly from that chunk instead of concatenating the previous tail only to slice it away.
-- Canonical DSML fast parsing may only accept plain canonical `<tool_calls>...<invoke ...>...</invoke></tool_calls>` XML. Confusable, alias, fenced, missing-wrapper, markdown-protected, or backtick-bearing inputs must fall back to the tolerant parser.
-- Malformed but real-looking tool syntax should not leak mid-stream; keep it buffered until flush unless it is proven to be ordinary stale/plain text.
-- Markdown-protected examples such as fenced `<tool_calls>` snippets must be released as plain text, not held as real tool calls.
+- `src/toolcall/sieve.ts` owns stream buffer state; completion consumes it, and HTTP adapters must not import it directly.
+- The sieve never formats OpenAI or Google wire objects. Schema normalization and wire formatting happen once at each protocol edge.
+- State fields are required and created by `createToolSieveState()`; do not add compatibility repair for hand-built legacy states.
+- A held candidate is confirmed by a complete opening tag, not by rescanning the whole growing buffer as a partial prefix.
+- `heldTail` is bounded to 128 characters, and held chunks avoid quadratic concatenation.
+- Canonical fast parsing rejects confusable, alias, fenced, missing-wrapper, markdown-protected, and backtick-bearing inputs so the tolerant parser handles them.
+- Malformed real-looking tool syntax remains buffered until flush; Markdown examples are released as plain text.
 
 ### 4. Validation & Error Matrix
 
-- 240 KB canonical held candidate split into 1 KB chunks -> no per-chunk full-buffer partial-prefix scan; benchmark should stay materially below the old ~25 ms median baseline.
-- `<tool_calls><invoke></invoke></tool_calls>` in a held state -> remains buffered until flush.
-- Fenced markdown example containing `<tool_calls>` -> released as plain text.
-- Stale holding state with no tool syntax -> releases through the bounded plain-text path.
-- Confusable or alias DSML -> parsed by tolerant path, not fast path.
+- 240 KB canonical candidate split into 1 KB chunks -> benchmark remains under the configured gate.
+- Valid split DSML -> parsed calls with structured `name` and `input`.
+- Malformed or oversized candidate -> released as text without leaking partial markup mid-stream.
+- Fenced Markdown example -> plain text, no tool call.
+- Confusable or alias DSML -> tolerant parser, not fast path.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: use a complete-opening-tag check to set `confirmedToolCandidate`.
-- Base: final parsing still delegates parameter handling to existing XML/DSML helpers.
-- Bad: call `isPartialToolMarkupPrefix(state.buffer)` for every chunk after a candidate has already been confirmed.
-- Bad: fast-parse markdown-protected examples or confusable markup.
+- Good: completion receives parsed calls and HTTP formats them once.
+- Base: final argument parsing delegates to existing XML/DSML helpers.
+- Bad: make the sieve depend on `openai-format.ts` or `ToolBundle`.
+- Bad: pass a hand-built partial state and add migration repair to support it.
 
 ### 6. Tests Required
 
-- Unit tests for canonical fast-path parsing and fast-path rejection of fenced, alias, confusable, and backtick-bearing inputs.
-- Unit tests for held malformed syntax, markdown-protected examples, and stale holding state recovery.
-- Benchmark `stream_sieve_held_tool` after changing held-candidate logic.
+- Unit-test canonical fast-path acceptance/rejection, split candidates, malformed/oversized candidates, Markdown protection, and parsed flush results.
+- Route-test OpenAI Chat, Responses, and Google wire output plus tool-policy violations.
+- Run `pnpm check:bench` and keep `stream_sieve_held_tool` below its configured threshold.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, `pnpm coverage:ci`, and `pnpm smoke`.
 
 ### 7. Wrong vs Correct
@@ -1091,14 +1085,16 @@ Use this contract when changing `src/toolstream/index.ts`, DSML/XML tool-call pa
 #### Wrong
 
 ```typescript
-if (isPartialToolMarkupPrefix(state.buffer)) return [];
+const toolCalls = formatOpenAIToolCalls(parsed.calls, tools);
+return { text: parsed.cleanText, toolCalls };
 ```
 
 #### Correct
 
 ```typescript
-if (!state.confirmedToolCandidate && isPartialToolMarkupPrefix(state.buffer)) return [];
+return { text: parsed.cleanText, toolCalls: parsed.calls };
 ```
+
 ## Scenario: Shared Completion Stream Lifecycle
 
 ### 1. Scope / Trigger
