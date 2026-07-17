@@ -6,7 +6,6 @@ import {
 } from "../../src/gemini/accounts/normalize";
 import { AccountPoolService } from "../../src/gemini/accounts/pool";
 import { basicRouteForFamily } from "../../src/gemini/accounts/routes";
-import { geminiAccountCacheScope } from "../../src/gemini/cache";
 import { resolveModel } from "../../src/models";
 import { assert } from "./assertions.js";
 import { baseConfig } from "./helpers.js";
@@ -30,6 +29,7 @@ function account(id, overrides = {}) {
 		...overrides,
 	};
 }
+
 function capabilityRow(
 	accountId,
 	modelId,
@@ -54,6 +54,7 @@ function capabilityRow(
 		...overrides,
 	};
 }
+
 class FakeStore {
 	constructor(rows) {
 		this.rows = new Map(rows.map((row) => [row.id, row]));
@@ -881,18 +882,5 @@ describe("gemini account runtime", () => {
 		]);
 		await lease.flushObservedCookies();
 		assert.equal(store.writes.length, 1);
-	});
-	test("keeps page and push token cache scopes account-specific without D1 page state", () => {
-		const first = geminiAccountCacheScope({
-			...baseConfig(),
-			gemini_account: { accountId: "a", cookieHash: "ha" },
-		});
-		const second = geminiAccountCacheScope({
-			...baseConfig(),
-			gemini_account: { accountId: "b", cookieHash: "hb" },
-		});
-		assert.match(first, /account:a.*cookie:ha/);
-		assert.match(second, /account:b.*cookie:hb/);
-		assert.equal(first === second, false);
 	});
 });

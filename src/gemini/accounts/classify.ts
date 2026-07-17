@@ -46,6 +46,11 @@ export function classifyGeminiAccountOutcome(
 	const lower = text.toLowerCase();
 	const semanticSource = stringField(error, "geminiSource");
 	const semanticCode = stringField(error, "geminiCode");
+	if (
+		code === "gemini_route_not_selected" ||
+		code === "gemini_upload_replay_failed"
+	)
+		return { kind: "failure", recoveryScope: "none", nowMs };
 	if (semanticSource === "account_status") {
 		if (semanticCode === "1014")
 			return {

@@ -603,6 +603,16 @@ describe("gemini accounts", () => {
 			classifyGeminiAccountOutcome(new Error("invalid model"), 1000),
 			{ kind: "failure", recoveryScope: "none", nowMs: 1000 },
 		);
+		for (const code of [
+			"gemini_route_not_selected",
+			"gemini_upload_replay_failed",
+		]) {
+			assert.deepEqual(classifyGeminiAccountOutcome({ code }, 1000), {
+				kind: "failure",
+				recoveryScope: "none",
+				nowMs: 1000,
+			});
+		}
 		assert.deepEqual(
 			classifyGeminiAccountOutcome(new Error("network reset"), 1000),
 			{

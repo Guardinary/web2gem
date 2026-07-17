@@ -1,6 +1,7 @@
 import type { RuntimeConfig } from "../config";
 import type { ResolvedModel } from "../models";
 import { logStage } from "../shared/logging";
+import type { ErrorWithMetadata } from "../shared/types";
 import { basicRouteForFamily, type GeminiRouteTuple } from "./accounts/routes";
 import type { GeminiAccountLease } from "./accounts/types";
 
@@ -26,8 +27,8 @@ export function routeForModelAndLease(
 ): GeminiRouteTuple {
 	if (lease?.selectedRoute) return lease.selectedRoute;
 	if (model.dynamicProviderId)
-		throw new Error("dynamic Gemini model route was not selected");
-	if (!model.family) throw new Error("model has no Gemini route");
+		throw routeNotSelectedError("dynamic Gemini model route was not selected");
+	if (!model.family) throw routeNotSelectedError("model has no Gemini route");
 	const route = basicRouteForFamily(model.family);
 	const capability = lease?.modelCapability;
 	if (
@@ -45,4 +46,11 @@ export function routeForModelAndLease(
 		capacity: capability.capacity,
 		capacityField: capability.capacityField,
 	};
+}
+
+function routeNotSelectedError(message: string): ErrorWithMetadata {
+	const error: ErrorWithMetadata = new Error(message);
+	error.code = "gemini_route_not_selected";
+	error.status = 502;
+	return error;
 }

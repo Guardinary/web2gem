@@ -117,6 +117,10 @@ Use this contract when changing account lease selection, model-header resolution
 - Generated attachment/text references may switch accounts only after every
   recorded recipe replays with the same reference count. Opaque external refs
   pin the request to the current account.
+- Replay `401`, `429`, and transient transport/upstream failures return to the
+  unified account outcome classification and may continue on another untried
+  account. Replay count/invalid-reference integrity failures use
+  `gemini_upload_replay_failed` and remain terminal.
 - Release the lease only after capturing the selected lease for persistence and
   maintenance. Abort never records failure; post-delta stream errors never
   fail over; `waitUntil` registration failure never changes a completed result.
@@ -132,6 +136,8 @@ Use this contract when changing account lease selection, model-header resolution
 - Strict + no fresh known capable -> `no_available_gemini_account`.
 - Dynamic model + no fresh exact-capable account in any mode ->
   `no_available_gemini_account`.
+- Runtime returns a lease without the prepared exact dynamic route ->
+  `gemini_route_not_selected` (502); release that lease and stop traversal.
 - Off-mode failover to a different account -> recompute route binding for the
   second account; never reuse the first account's route.
 - Static/global `1052`, StreamGenerate `1060`, abort, post-delta failure, or opaque refs -> no blind pool traversal.
@@ -158,6 +164,10 @@ Use this contract when changing account lease selection, model-header resolution
   global capability loading, and bounded D1 reads.
 - Default ten attempts, configured large value, natural pool exhaustion, and transport-retry separation.
 - Abort/post-delta/attachment/static-error guards.
+- Missing selected-route and invalid/count-mismatched upload replay errors must
+  assert terminal recovery with no extra account acquisition.
+- Replay `401`, `429`, and transient failures must assert classified recovery,
+  exact exclusions, replay order, and lease outcome ordering across accounts.
 - `waitUntil` registration, interval disable/freshness, lock/dedupe reuse, and background failure isolation.
 - Run focused HTTP/runtime tests, full unit, benchmark, size, Worker types, static, type, and architecture gates.
 

@@ -432,8 +432,8 @@ export * from "./harness-exports";
 #### Correct
 
 ```javascript
-// tests/unit/gemini-client.test.mjs
-import { buildPayload } from "../../src/gemini/client/protocol";
+// tests/unit/gemini/client/protocol.test.mjs
+import { buildPayload } from "../../../../src/gemini/client/protocol";
 ```
 
 ## Scenario: Coverage Reports

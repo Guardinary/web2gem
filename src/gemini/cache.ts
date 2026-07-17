@@ -138,7 +138,10 @@ export function createOriginScopedStringCache(
 		clearL1(scope);
 		const cache = workerCache();
 		if (!cache) return;
-		await cache.delete(cacheKey(scope)).catch(() => false);
+		await cache.delete(cacheKey(scope)).catch((e) => {
+			logCacheError(cfg, `failed to delete cached ${options.logLabel}`, e);
+			return false;
+		});
 	};
 
 	const setCached = async (
