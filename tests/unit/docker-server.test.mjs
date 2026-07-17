@@ -2,7 +2,7 @@ import { describe, test } from "vitest";
 import {
 	createD1HttpBinding,
 	resolveD1HttpConfig,
-} from "../../scripts/d1-http-binding.mjs";
+} from "../../server/d1-http-binding.mjs";
 import {
 	createDockerServer,
 	executionContext,
@@ -10,7 +10,7 @@ import {
 	requestUrl,
 	resolveDockerEnv,
 	startDockerServer,
-} from "../../scripts/docker-server.mjs";
+} from "../../server/docker-server.mjs";
 import worker from "../../src/index";
 import { assert } from "./assertions.js";
 

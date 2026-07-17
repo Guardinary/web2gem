@@ -393,7 +393,7 @@ wrangler d1 execute <database-name> --file migrations/0001_gemini_accounts.sql -
 
 The account-pool schema is still development-only and has no compatibility migration. If you created a local database from an earlier revision, recreate it before applying the current `0001` migration.
 
-For Docker, set all of `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` in `.env`. When all three are present, `scripts/docker-server.mjs` injects a D1-compatible `GEMINI_DB` binding backed by Cloudflare's D1 HTTP API. If only some are present, startup fails with a configuration error.
+For Docker, set all of `D1_ACCOUNT_ID`, `D1_DATABASE_ID`, and `D1_API_TOKEN` in `.env`. When all three are present, `server/docker-server.mjs` injects a D1-compatible `GEMINI_DB` binding backed by Cloudflare's D1 HTTP API. If only some are present, startup fails with a configuration error.
 
 Worker account imports accept at most 40 accounts per admin request so native D1 work stays below the Workers Free per-invocation query limit. For larger imports, the built-in `/admin` UI first tries the complete batch and, only after the Worker returns the stable limit error, automatically retries sequentially in groups of 40 and aggregates the results. Direct admin API clients must split their own requests. Docker does not apply this account-count ceiling, so its initial UI request remains a single request; Docker imports are bounded by the shared 256 KiB admin request-body limit.
 
@@ -478,7 +478,7 @@ The build script emits the production bundle plus an optional harness bundle:
 
 | Bundle            | Source                   | Purpose                                                     |
 | ----------------- | ------------------------ | ----------------------------------------------------------- |
-| `dist/worker.js`  | `src/index.ts`           | Production Worker deployed by Wrangler.                     |
+| `dist/worker.js`  | `src/worker-entry.ts`    | Canonical Worker artifact for Wrangler and Docker.           |
 | `dist/harness.js` | `src/harness-exports.ts` | Smoke/bench harness bundle (built with `--harness-bundle`). |
 
 ## Testing

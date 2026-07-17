@@ -2,6 +2,9 @@
 // Exports only what scripts/smoke.mjs and scripts/bench.mjs consume;
 // unit tests import src modules directly and must not use this surface.
 export { default } from "./index";
+export { VERSION, assertRuntimeConfig } from "./config";
+export { MODELS, resolveModel } from "./models";
+export { generate } from "./gemini/client";
 export { base64ToBytes } from "./attachments/base64";
 export { prepareOpenAIGeminiContext } from "./completion/context";
 export { getConfig } from "./config";

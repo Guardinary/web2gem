@@ -445,7 +445,7 @@ describe("quality scripts", () => {
 		);
 	});
 	test("copies every local Docker server runtime import into the final image", async () => {
-		const server = await readFile("scripts/docker-server.mjs", "utf8");
+		const server = await readFile("server/docker-server.mjs", "utf8");
 		const dockerfile = await readFile("Dockerfile", "utf8");
 		const runtimeImports = Array.from(
 			server.matchAll(/from\s+["']\.\/(.+?\.mjs)["']/g),
@@ -456,7 +456,7 @@ describe("quality scripts", () => {
 			assert.match(
 				dockerfile,
 				new RegExp(
-					`COPY --from=build /app/scripts/${filename.replace(".", "\\.")}`,
+					`COPY --from=build /app/server/${filename.replace(".", "\\.")}`,
 				),
 			);
 		}
@@ -597,8 +597,16 @@ describe("quality scripts", () => {
 	});
 	test("keeps the Deploy Button config portable across fresh clones", async () => {
 		const wrangler = parseJsoncObject(await readFile("wrangler.jsonc", "utf8"));
-		assert.equal(wrangler.main, "src/index.ts");
-		assert.match(await readFile(wrangler.main, "utf8"), /export default/);
+		const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+		assert.equal(packageJson.main, "dist/worker.js");
+		assert.equal(wrangler.main, packageJson.main);
+		assert.equal(wrangler.build?.command, "pnpm build");
+		assert.deepEqual(wrangler.build?.watch_dir, ["src", "scripts"]);
+		assert.equal(packageJson.scripts.dev, "wrangler dev");
+		assert.equal(
+			packageJson.scripts.deploy,
+			"pnpm db:migrations:apply && wrangler deploy",
+		);
 		const d1Bindings = wrangler.d1_databases || [];
 		const geminiDb = d1Bindings.find(
 			(binding) => binding.binding === "GEMINI_DB",
@@ -607,7 +615,6 @@ describe("quality scripts", () => {
 		assert.equal(geminiDb?.database_name, "web2gem-gemini-accounts");
 		assert.equal(Object.hasOwn(geminiDb || {}, "database_id"), false);
 
-		const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 		assert.equal(
 			packageJson.scripts["db:migrations:apply"],
 			"wrangler d1 migrations apply GEMINI_DB --remote",
@@ -806,14 +813,8 @@ describe("quality scripts", () => {
 	test("keeps generated Worker binding types aligned with runtime config", async () => {
 		const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 		const generatedTypes = await readFile("worker-configuration.d.ts", "utf8");
-		assert.match(
-			packageJson.scripts["worker:types"],
-			/^pnpm build && wrangler types/,
-		);
-		assert.match(
-			packageJson.scripts["check:worker-types"],
-			/^pnpm build && wrangler types/,
-		);
+		assert.match(packageJson.scripts["worker:types"], /^wrangler types/);
+		assert.match(packageJson.scripts["check:worker-types"], /^wrangler types/);
 		assert.match(generatedTypes, /interface WorkerBindings/);
 		assert.match(generatedTypes, /GEMINI_DB:\s*D1Database/);
 		for (const key of CONFIG_ENV_KEYS) {

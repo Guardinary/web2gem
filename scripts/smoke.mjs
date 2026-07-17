@@ -1,26 +1,17 @@
 const prod = await import("../dist/worker.js");
 const testMod = await import("../dist/harness.js");
 const { readFile } = await import("node:fs/promises");
-const { errorLine, outputLine } = await import("./io.mjs");
+const { errorLine, outputLine } = await import("../server/io.mjs");
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 
-if (prod.VERSION !== `${packageJson.version}-worker`) {
+if (testMod.VERSION !== `${packageJson.version}-worker`) {
 	errorLine(
-		`Smoke check failed: package version ${packageJson.version} does not match Worker version ${prod.VERSION}`,
+		`Smoke check failed: package version ${packageJson.version} does not match Worker version ${testMod.VERSION}`,
 	);
 	process.exit(1);
 }
 
-const expectedProductionExports = [
-	"MODELS",
-	"VERSION",
-	"default",
-	"generate",
-	"generateStream",
-	"assertRuntimeConfig",
-	"parseToolCalls",
-	"resolveModel",
-];
+const expectedProductionExports = ["default"];
 
 const productionExports = Object.keys(prod).sort();
 const missingProductionExports = expectedProductionExports.filter(
@@ -48,11 +39,14 @@ if (missingProductionExports.length || unexpectedProductionExports.length) {
 
 const checks = [
 	["default.fetch", prod.default && typeof prod.default.fetch === "function"],
-	["MODELS", prod.MODELS && typeof prod.MODELS === "object"],
-	["resolveModel", typeof prod.resolveModel === "function"],
-	["assertRuntimeConfig", typeof prod.assertRuntimeConfig === "function"],
+	["MODELS", testMod.MODELS && typeof testMod.MODELS === "object"],
+	["resolveModel", typeof testMod.resolveModel === "function"],
+	[
+		"default.assertRuntimeConfig",
+		typeof prod.default?.assertRuntimeConfig === "function",
+	],
 	["test.getConfig", typeof testMod.getConfig === "function"],
-	["parseToolCalls", typeof prod.parseToolCalls === "function"],
+	["test.parseToolCalls", typeof testMod.parseToolCalls === "function"],
 	["test.buildPayload", typeof testMod.buildPayload === "function"],
 	[
 		"test.buildToolCallInstructions",
@@ -80,7 +74,7 @@ if (health.status !== 200) {
 	process.exit(1);
 }
 const healthBody = await health.json();
-if (healthBody.version !== prod.VERSION) {
+if (healthBody.version !== testMod.VERSION) {
 	errorLine("Smoke check failed: health response version is stale");
 	process.exit(1);
 }
@@ -273,7 +267,7 @@ if (!toolInstructions.includes("Read-tool cache guard")) {
 	process.exit(1);
 }
 
-const [, toolCalls] = prod.parseToolCalls(
+const [, toolCalls] = testMod.parseToolCalls(
 	'<|DSML|tool_calls><|DSML|invoke name="Read"><|DSML|parameter name="file_path"><![CDATA[README.md]]></|DSML|parameter></|DSML|invoke></|DSML|tool_calls>',
 );
 if (!toolCalls.length || toolCalls[0].function.name !== "Read") {

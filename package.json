@@ -3,6 +3,7 @@
 	"version": "2.0.0",
 	"private": true,
 	"type": "module",
+	"main": "dist/worker.js",
 	"engines": {
 		"node": ">=22"
 	},
@@ -10,8 +11,8 @@
 	"scripts": {
 		"build": "node scripts/build.mjs",
 		"check:static": "biome check --assist-enabled=false --diagnostic-level=warn --error-on-warnings",
-		"worker:types": "pnpm build && wrangler types worker-configuration.d.ts --env-interface WorkerBindings --include-runtime false --strict-vars false --env-file .dev.vars.example",
-		"check:worker-types": "pnpm build && wrangler types worker-configuration.d.ts --env-interface WorkerBindings --include-runtime false --strict-vars false --env-file .dev.vars.example --check",
+		"worker:types": "wrangler types worker-configuration.d.ts --env-interface WorkerBindings --include-runtime false --strict-vars false --env-file .dev.vars.example",
+		"check:worker-types": "wrangler types worker-configuration.d.ts --env-interface WorkerBindings --include-runtime false --strict-vars false --env-file .dev.vars.example --check",
 		"format": "biome format --write",
 		"typecheck": "tsc --noEmit",
 		"check:arch": "node scripts/check-architecture.mjs",
@@ -25,10 +26,10 @@
 		"smoke": "node scripts/build.mjs --harness-bundle && node scripts/smoke.mjs",
 		"docker:smoke": "node scripts/docker-smoke.mjs",
 		"bench": "node scripts/build.mjs --harness-bundle && node scripts/bench.mjs",
-		"docker:start": "node scripts/docker-server.mjs",
-		"dev": "pnpm build && wrangler dev",
+		"docker:start": "node server/docker-server.mjs",
+		"dev": "wrangler dev",
 		"db:migrations:apply": "wrangler d1 migrations apply GEMINI_DB --remote",
-		"deploy": "pnpm build && pnpm db:migrations:apply && wrangler deploy"
+		"deploy": "pnpm db:migrations:apply && wrangler deploy"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.3",

@@ -168,9 +168,9 @@ export async function startDockerServer(options = {}) {
 	let worker = options.worker;
 	if (!worker) {
 		const mod = await defaultWorkerModule();
-		if (typeof mod.assertRuntimeConfig !== "function")
+		if (typeof mod.default?.assertRuntimeConfig !== "function")
 			throw new Error("worker bundle is missing assertRuntimeConfig");
-		mod.assertRuntimeConfig(resolvedEnv);
+		mod.default.assertRuntimeConfig(resolvedEnv);
 		worker = mod.default || mod;
 	}
 	const server = createDockerServer({ ...options, env: resolvedEnv, worker });

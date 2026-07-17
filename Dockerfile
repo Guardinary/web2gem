@@ -11,6 +11,7 @@ FROM deps AS build
 
 COPY tsconfig.json vitest.config.mjs wrangler.jsonc ./
 COPY scripts ./scripts
+COPY server ./server
 COPY src ./src
 RUN pnpm build
 
@@ -23,9 +24,9 @@ ENV NODE_ENV=production \
     UPSTREAM_SOCKET=false
 
 COPY --from=build /app/dist/worker.js ./dist/worker.js
-COPY --from=build /app/scripts/docker-server.mjs ./scripts/docker-server.mjs
-COPY --from=build /app/scripts/d1-http-binding.mjs ./scripts/d1-http-binding.mjs
-COPY --from=build /app/scripts/io.mjs ./scripts/io.mjs
+COPY --from=build /app/server/docker-server.mjs ./server/docker-server.mjs
+COPY --from=build /app/server/d1-http-binding.mjs ./server/d1-http-binding.mjs
+COPY --from=build /app/server/io.mjs ./server/io.mjs
 
 EXPOSE 52389
-CMD ["node", "scripts/docker-server.mjs"]
+CMD ["node", "server/docker-server.mjs"]

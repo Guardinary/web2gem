@@ -1,6 +1,6 @@
 import { appendFile } from "node:fs/promises";
 import { classifyChangedFiles } from "./ci-change-risk.mjs";
-import { outputLine } from "./io.mjs";
+import { outputLine } from "../server/io.mjs";
 
 const files = process.env.CI_CHANGED_FILES_JSON
 	? JSON.parse(process.env.CI_CHANGED_FILES_JSON)

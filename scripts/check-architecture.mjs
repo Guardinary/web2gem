@@ -1,7 +1,7 @@
 import { existsSync, globSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, normalize, relative, resolve } from "node:path";
-import { errorLine, outputLine } from "./io.mjs";
+import { errorLine, outputLine } from "../server/io.mjs";
 
 const root = process.cwd();
 const rules = [

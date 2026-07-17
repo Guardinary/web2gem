@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-coverage/
 coverage/
+src/generated/
 .wrangler/
 *.log
 AGENTS.md

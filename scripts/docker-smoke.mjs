@@ -1,4 +1,4 @@
-import { outputLine } from "./io.mjs";
+import { outputLine } from "../server/io.mjs";
 import { commandAvailable, outputCommand, runCommand } from "./process.mjs";
 
 if (!(await commandAvailable("docker"))) {

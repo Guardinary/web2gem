@@ -1,7 +1,11 @@
 {
 	"$schema": "./node_modules/wrangler/config-schema.json",
 	"name": "web2gem",
-	"main": "src/index.ts",
+	"main": "dist/worker.js",
+	"build": {
+		"command": "pnpm build",
+		"watch_dir": ["src", "scripts"]
+	},
 	"compatibility_date": "2026-07-08",
 	"compatibility_flags": ["nodejs_compat"],
 	"d1_databases": [

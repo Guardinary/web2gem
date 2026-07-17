@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 import { useEffect } from "preact/hooks";
-import { loadAccounts, restoreAdminKey } from "./actions";
+import { loadAccounts } from "./actions";
+import { restoreAdminKey } from "./session";
 import { ConfirmationModal, EditModal } from "./components";
 import { AuthPanel } from "./sections/AuthPanel";
 import { ImportPanel } from "./sections/ImportPanel";

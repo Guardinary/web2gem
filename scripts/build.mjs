@@ -2,7 +2,7 @@ import esbuild from "esbuild";
 import { mkdir, rm } from "node:fs/promises";
 import { buildAdminUi } from "./build-admin-ui.mjs";
 
-await buildAdminUi();
+const { html: adminUiHtml } = await buildAdminUi();
 
 const includeHarnessBundle =
 	process.argv.includes("--harness-bundle") ||
@@ -25,12 +25,15 @@ const common = {
 	sourcemap: false,
 	legalComments: "none",
 	external: ["cloudflare:sockets"],
+	define: {
+		__WEB2GEM_ADMIN_UI_HTML__: JSON.stringify(adminUiHtml),
+	},
 	logLevel: "info",
 };
 
 await esbuild.build({
 	...common,
-	entryPoints: ["src/index.ts"],
+	entryPoints: ["src/worker-entry.ts"],
 	outfile: `${outDir}/worker.js`,
 });
 

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { errorLine, outputLine } from "./io.mjs";
+import { errorLine, outputLine } from "../server/io.mjs";
 import { outputCommand } from "./process.mjs";
 
 const DEFAULT_CASE = "stream_sieve_held_tool";

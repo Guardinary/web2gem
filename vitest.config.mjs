@@ -1,6 +1,12 @@
 import { defineConfig } from "vitest/config";
+import { buildAdminUi } from "./scripts/build-admin-ui.mjs";
+
+const { html: adminUiHtml } = await buildAdminUi();
 
 export default defineConfig({
+	define: {
+		__WEB2GEM_ADMIN_UI_HTML__: JSON.stringify(adminUiHtml),
+	},
 	test: {
 		coverage: {
 			provider: "v8",
@@ -9,7 +15,6 @@ export default defineConfig({
 			all: true,
 			include: ["src/**/*.ts", "src/**/*.tsx"],
 			exclude: [
-				"src/generated/**",
 				"src/harness-exports.ts",
 				"src/public-exports.ts",
 				// Preact view modules ship in the browser admin-ui bundle and are

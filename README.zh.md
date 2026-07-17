@@ -390,7 +390,7 @@ wrangler d1 execute <database-name> --file migrations/0001_gemini_accounts.sql -
 
 账号池 schema 目前仍只用于开发，不提供兼容迁移。如果本地数据库由更早版本创建，请先重新创建数据库，再执行当前的 `0001` migration。
 
-Docker 部署时，在 `.env` 中同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`。三者都存在时，`scripts/docker-server.mjs` 会注入一个基于 Cloudflare D1 HTTP API 的 D1 兼容 `GEMINI_DB` binding。只设置一部分时，启动会以配置错误失败。
+Docker 部署时，在 `.env` 中同时设置 `D1_ACCOUNT_ID`、`D1_DATABASE_ID` 和 `D1_API_TOKEN`。三者都存在时，`server/docker-server.mjs` 会注入一个基于 Cloudflare D1 HTTP API 的 D1 兼容 `GEMINI_DB` binding。只设置一部分时，启动会以配置错误失败。
 
 Worker 的账号导入每个管理请求最多接受 40 个账号，以确保原生 D1 工作量低于 Workers Free 的单次调用查询上限。导入更多账号时，内置 `/admin` 页面会先提交完整批次；仅当 Worker 返回稳定的数量上限错误后，页面才会自动按每批 40 个顺序重试并汇总结果。直接调用管理 API 的客户端仍需自行拆分请求。Docker 不应用此账号数量上限，因此页面的首次完整请求会保持为单次请求；Docker 导入仍受统一的 256 KiB 管理请求体限制。
 
@@ -474,7 +474,7 @@ pnpm smoke
 
 | Bundle                | 来源                | 用途                              |
 | --------------------- | ------------------- | --------------------------------- |
-| `dist/worker.js`      | `src/index.ts`      | 由 Wrangler 部署的生产 Worker。   |
+| `dist/worker.js`      | `src/worker-entry.ts` | Wrangler 与 Docker 共用的 Worker 产物。 |
 | `dist/harness.js` | `src/harness-exports.ts` | smoke/bench harness bundle（用 `--harness-bundle` 构建）。 |
 
 ## 测试

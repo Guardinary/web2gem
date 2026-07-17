@@ -1,4 +1,4 @@
-import { GEMINI_ACCOUNT_ADMIN_HTML } from "../../generated/admin-ui";
+import { GEMINI_ACCOUNT_ADMIN_HTML } from "../../admin-ui/html";
 
 const ADMIN_UI_PATH = "/admin";
 

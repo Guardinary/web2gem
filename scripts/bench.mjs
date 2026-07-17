@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
-import { errorLine, outputLine } from "./io.mjs";
+import { errorLine, outputLine } from "../server/io.mjs";
 
 const benchmarkBundlePath = resolve(
 	process.cwd(),

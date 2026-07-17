@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import { resolveConfirmation } from "../actions";
+import { resolveConfirmation } from "../session";
 import { language, tr } from "../i18n";
 import { destructiveConfirmationText } from "../logic";
 import { confirmationDraft } from "../state";

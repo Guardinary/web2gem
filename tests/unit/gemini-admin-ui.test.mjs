@@ -4,8 +4,8 @@ import {
 	moveModelRoute,
 	saveModelRoutePriority,
 	submitImport,
-	updateAdminKey,
 } from "../../src/admin-ui/actions";
+import { updateAdminKey } from "../../src/admin-ui/session";
 import {
 	createAccountsWithLimitFallback,
 	getModelRoutingOverview,

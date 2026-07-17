@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { relative } from "node:path";
-import { errorLine, outputLine } from "./io.mjs";
+import { errorLine, outputLine } from "../server/io.mjs";
 
 const summaryPath = process.argv[2] || "coverage/coverage-summary.json";
 

@@ -1,10 +1,6 @@
 import type { JSX } from "preact";
-import {
-	clearAdminKey,
-	loadAccounts,
-	saveAdminKey,
-	updateAdminKey,
-} from "../actions";
+import { clearAdminKey, saveAdminKey, updateAdminKey } from "../session";
+import { loadAccounts } from "../actions";
 import { Icon } from "../icons";
 import { tr } from "../i18n";
 import {
