@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, test } from "vitest";
+import { afterEach, beforeEach, describe, test, vi } from "vitest";
 import {
 	getCachedGeminiPushId,
 	getFreshPageTokensForConfig,
@@ -40,7 +40,10 @@ function recordingMemoryCache() {
 
 describe("Gemini upload tokens", () => {
 	beforeEach(resetUploadState);
-	afterEach(resetUploadState);
+	afterEach(() => {
+		resetUploadState();
+		vi.useRealTimers();
+	});
 	test("caches Gemini push IDs in the Workers cache API", async () => {
 		const cfg = baseUploadConfig({ cookie: "__Secure-1PSID=psid" });
 		const cache = createMemoryCache();
@@ -73,6 +76,8 @@ describe("Gemini upload tokens", () => {
 		);
 	});
 	test("uses the 12-hour push-ID freshness window", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1_700_000_000_000);
 		const cfg = baseUploadConfig();
 		const cache = createMemoryCache();
 		const request = new Request(
