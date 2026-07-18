@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import worker from "../../../src/index";
 import { assert } from "../assertions.js";
-import { withConsoleLog, withFetch } from "../helpers.js";
+import { withConsoleLog, withFetch } from "../_support/globals.js";
 
 async function withNoUpstream(run) {
 	let upstreamCalls = 0;

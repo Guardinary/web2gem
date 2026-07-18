@@ -3,7 +3,7 @@ import { createAttachmentPlan } from "../../../src/attachments/plan";
 import { basicRouteForFamily } from "../../../src/gemini/accounts/routes";
 import { createGeminiCompletionProvider } from "../../../src/gemini/completion-provider";
 import { assert } from "../assertions.js";
-import { withConsoleLog } from "../helpers.js";
+import { withConsoleLog } from "../_support/globals.js";
 import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
 
 function flashModel(extended = false) {

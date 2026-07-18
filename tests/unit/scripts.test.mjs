@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -103,6 +102,17 @@ function runNodeScript(script, arg, env = {}, cwd = process.cwd()) {
 			},
 		);
 	});
+}
+
+function deterministicBytes(length) {
+	let state = 0x6d2b79f5;
+	const bytes = Buffer.alloc(length);
+	for (let index = 0; index < length; index++) {
+		state = Math.imul(state ^ (state >>> 15), 1 | state);
+		state ^= state + Math.imul(state ^ (state >>> 7), 61 | state);
+		bytes[index] = (state ^ (state >>> 14)) & 0xff;
+	}
+	return bytes;
 }
 function parseEnvExampleKeys(source) {
 	const keys = new Set();
@@ -304,17 +314,21 @@ describe("quality scripts", () => {
 		}
 	});
 	test("rejects bundle size over the configured budget", async () => {
-		await withTempFile("worker.js", randomBytes(512), async (bundlePath) => {
-			const result = await runNodeScript(
-				"scripts/check-bundle-size.mjs",
-				bundlePath,
-				{
-					BUNDLE_GZIP_SIZE_LIMIT_BYTES: "256",
-				},
-			);
-			assert.equal(result.code, 1);
-			assert.match(result.stderr, /Bundle size gate failed/);
-		});
+		await withTempFile(
+			"worker.js",
+			deterministicBytes(512),
+			async (bundlePath) => {
+				const result = await runNodeScript(
+					"scripts/check-bundle-size.mjs",
+					bundlePath,
+					{
+						BUNDLE_GZIP_SIZE_LIMIT_BYTES: "256",
+					},
+				);
+				assert.equal(result.code, 1);
+				assert.match(result.stderr, /Bundle size gate failed/);
+			},
+		);
 	});
 	test("accepts benchmark medians within the configured budget", async () => {
 		await withTempFile(

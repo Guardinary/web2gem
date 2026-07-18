@@ -3,7 +3,9 @@ import { handleChat } from "../../../../src/http/openai/chat";
 import { handleImageGenerations } from "../../../../src/http/openai/images";
 import { handleResponses } from "../../../../src/http/openai/responses";
 import { assert } from "../../assertions.js";
-import { attachmentResult, baseConfig, withConsoleLog } from "../../helpers.js";
+import { withConsoleLog } from "../../_support/globals.js";
+import { baseConfig } from "../../_support/runtime-config.js";
+import { attachmentResult } from "../../attachments/_support/result.js";
 import { strictProvider } from "../_support/provider.js";
 
 const TINY_PNG_BASE64 =

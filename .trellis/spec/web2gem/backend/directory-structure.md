@@ -383,7 +383,7 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
   through `scripts/check-bundle-size.mjs`; the default gzip ceiling is 3 MiB and
   `BUNDLE_GZIP_SIZE_LIMIT_BYTES` may override it.
 - `wrangler.jsonc` deploys `dist/worker.js`.
-- `tests/unit/**/*.test.mjs` are recursively Vitest-discovered files that import authored `src/**` modules directly (owner modules, bypassing compatibility barrels) plus shared fakes from `tests/unit/helpers.js`.
+- `tests/unit/**/*.test.mjs` are recursively Vitest-discovered files that import authored `src/**` modules directly (owner modules, bypassing compatibility barrels) plus narrow support modules owned under `tests/unit/_support/` or the relevant domain's `_support/` directory.
 - `tests/unit/assertions.js` provides Vitest-backed assertion helpers.
 
 ### 3. Contracts
@@ -437,6 +437,130 @@ export * from "./harness-exports";
 ```javascript
 // tests/unit/gemini/client/protocol.test.mjs
 import { buildPayload } from "../../../../src/gemini/client/protocol";
+```
+
+## Scenario: Unit Test Ownership And Support
+
+### 1. Scope / Trigger
+
+Use this contract when adding, moving, splitting, merging, or deleting unit
+tests, or when promoting setup, fixtures, doubles, global patches, caches,
+timers, or concurrency coordination into reusable test support.
+
+### 2. Signatures
+
+- `tests/unit/<owner>/**/*.test.mjs` contains focused owner behavior.
+- `tests/unit/<owner>/**/*.contract.test.mjs` contains an intentional stable
+  boundary spanning immediate collaborators.
+- `tests/unit/_support/` contains only proven owner-neutral mechanisms such as
+  deferred gates, scoped global patches, stream iterables, and base runtime
+  config.
+- `deferred()` returns `{ promise, settled, resolve(value), reject(error) }`;
+  only the first resolve/reject call settles the promise.
+- `chunks(items, throwAfter = null)` returns an `AsyncIterable` that yields in
+  input order and may throw immediately after the configured zero-based item.
+- `withPatchedGlobal(name, value, run)`, `withFetch(fn, run)`, and
+  `withConsoleLog(fn, run)` await `run` and restore the original property
+  descriptor in `finally`.
+- Domain support stays with its owner, for example:
+  - `tests/unit/attachments/_support/result.js`
+  - `tests/unit/gemini/_support/cache.js`
+  - `tests/unit/gemini/transport/_support/socket.js`
+  - `tests/unit/http/_support/provider.js`
+  - `tests/unit/http/_support/sse.js`
+- `vitest.config.mjs` discovers only `tests/unit/**/*.test.mjs`; support files
+  do not use the `.test.mjs` suffix.
+
+### 3. Contracts
+
+- A test file has one primary observable seam and one fixture lifecycle. Mirror
+  production ownership for navigation, but keep coherent facade/protocol/runtime
+  behavior together when the boundary itself is the contract.
+- A support module has one incidental mechanism. Do not create a root helper
+  barrel that loads unrelated provider, cache, socket, database, or browser
+  state into every consumer.
+- An unconfigured interaction fails immediately. Output-oriented tests may use
+  a small strict stub; interaction contracts record only calls, arguments, or
+  order that are observable requirements.
+- Mutable state cleanup is owner-specific and runs before and after where a
+  failed test could leak state. Global property patches restore descriptors in
+  `finally`; fake timers restore real timers in `afterEach`.
+- Concurrency tests wait on explicit started/release deferred gates. Scheduler
+  sleeps and bare microtask yields are not proof that an operation started.
+- File size is a review signal, not an owner boundary. A large suite remains
+  valid when it has one contract and one lifecycle; unrelated debugging paths
+  or reset requirements require a split.
+- Mechanical moves reconcile disk paths and full IDs through a generated
+  manifest. Split/merge/rewrite/delete/new semantic decisions use a ledger that
+  names every surviving observable target.
+
+### 4. Validation & Error Matrix
+
+- Disk `tests/unit/**/*.test.mjs` differs from `vitest list --filesOnly` -> fail
+  the migration; nested tests are missing or unrelated files are discovered.
+- Duplicate `file + describe path + test name` -> fail the manifest check.
+- Default parallel execution fails while serial execution passes -> treat as a
+  shared-state or resource-lifecycle defect; do not disable parallelism.
+- A provider/socket/store double accepts an unconfigured call -> make the
+  double fail at that interaction before accepting the test.
+- A test imports a compatibility projection or private mutable value instead of
+  the current owner contract -> rewrite it against the typed/public seam.
+- A removed or renamed case lacks a ledger target -> migration evidence is
+  incomplete even when the suite is green.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `http/openai/responses-stream.contract.test.mjs` owns Responses SSE
+  failure envelopes and uses a strict HTTP provider double.
+- Good: a shared deferred gate is promoted only after independent domains need
+  the same start/release mechanism.
+- Base: a pure owner test imports one concrete `src/**` module and the assertion
+  adapter, with no global reset.
+- Bad: keep HTTP streaming, completion context files, and tool prompt assembly
+  in a historical `toolcall.test.mjs` bucket.
+- Bad: add a universal `helpers.js` whose import transitively loads Gemini
+  cookie, upload, cache, and socket test seams.
+- Bad: split a coherent scripts/runtime invariant suite only because it crossed
+  a line-count threshold.
+
+### 6. Tests Required
+
+- Run focused owner/contract tests after every semantic move or support change.
+- Run `pnpm unit`, serial Vitest, and a fixed-seed shuffled run after changes to
+  globals, module state, timers, sockets, caches, or account/session lifecycle.
+- Run `pnpm coverage:ci` after semantic merges/deletions and compare critical
+  owner gates for lost contracts.
+- Run `pnpm check:static`, `pnpm typecheck`, `pnpm check:arch`, and `pnpm smoke`
+  before completing a repository-wide test architecture migration.
+- Capture final disk/list/test manifests, full-ID uniqueness, semantic ledger
+  reconciliation, largest test/support modules, and warm discovery/unit/coverage
+  medians.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+import { fakeProvider, resetTestState } from "../helpers.js";
+
+beforeEach(resetTestState);
+const provider = fakeProvider(); // Unexpected calls silently succeed.
+```
+
+#### Correct
+
+```javascript
+import { deferred } from "../_support/deferred.js";
+
+const started = deferred();
+const release = deferred();
+const provider = {
+  async *streamText() {
+    started.resolve();
+    await release.promise;
+    yield "done";
+  },
+};
 ```
 
 ## Scenario: Coverage Reports

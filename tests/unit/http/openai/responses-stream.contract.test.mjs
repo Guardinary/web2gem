@@ -1,18 +1,19 @@
-import { strictProvider, streamProvider } from "../_support/provider.js";
+import {
+	resolvedModel,
+	streamError,
+	strictProvider,
+	streamProvider,
+} from "../_support/provider.js";
 import { describe, test } from "vitest";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
 import { handleResponses } from "../../../../src/http/openai/responses";
 import { streamResponsesWithToolSieve } from "../../../../src/http/openai/responses-stream";
 import { createToolBundle } from "../../../../src/toolcall/tool-bundle";
 import { assert } from "../../assertions.js";
-import {
-	baseConfig,
-	chunks,
-	collectSSEData,
-	resolvedModel,
-	streamError,
-	withConsoleLog,
-} from "../../helpers.js";
+import { chunks } from "../../_support/async-stream.js";
+import { withConsoleLog } from "../../_support/globals.js";
+import { baseConfig } from "../../_support/runtime-config.js";
+import { collectSSEData } from "../_support/sse.js";
 
 describe("OpenAI Responses streaming", () => {
 	test("rejects unsupported streaming structured OpenAI Responses", async () => {
@@ -114,6 +115,43 @@ describe("OpenAI Responses streaming", () => {
 		assert.match(
 			failed.response.error.message,
 			/does not allow tool\(s\): Read/,
+		);
+	});
+	test("streams Responses failure for missing required tool call", async () => {
+		const writes = [];
+		await streamResponsesWithToolSieve(
+			(chunk) => writes.push(chunk),
+			baseConfig(),
+			{
+				provider: streamProvider(["plain answer"]),
+				rid: "resp_test",
+				rm: resolvedModel(),
+				prompt: "must call a tool",
+				fileRefs: null,
+				tools: createToolBundle([
+					{
+						type: "function",
+						function: { name: "Read", parameters: { type: "object" } },
+					},
+				]),
+				toolPolicy: {
+					mode: "required",
+					forcedName: "",
+					allowed: null,
+					hasAllowed: false,
+					declared: ["Read"],
+					error: "",
+				},
+				promptTokens: 1,
+				signal: new AbortController().signal,
+			},
+		);
+		const frames = collectSSEData(writes);
+		const failed = frames.find((frame) => frame.type === "response.failed");
+		assert.equal(failed.response.error.code, "tool_choice_violation");
+		assert.match(
+			failed.response.error.message,
+			/tool_choice requires at least one valid tool call/,
 		);
 	});
 	test("streams Responses warning after partial plain output", async () => {

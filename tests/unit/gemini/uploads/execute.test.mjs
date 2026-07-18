@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, test } from "vitest";
 import { uploadTextFile } from "../../../../src/gemini/uploads/execute";
 import { assert } from "../../assertions.js";
-import { withFetch } from "../../helpers.js";
+import { withFetch } from "../../_support/globals.js";
 import {
 	assertMultipartRequest,
 	baseUploadConfig,

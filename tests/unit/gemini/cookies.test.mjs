@@ -14,7 +14,7 @@ import {
 	resetGeminiUploadCachesForTest,
 } from "../../../src/gemini/uploads/tokens";
 import { assert } from "../assertions.js";
-import { withFetch } from "../helpers.js";
+import { withFetch } from "../_support/globals.js";
 
 describe("Gemini cookies", () => {
 	beforeEach(resetActiveGeminiCookieForTest);

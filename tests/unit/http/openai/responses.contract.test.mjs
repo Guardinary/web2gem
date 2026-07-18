@@ -2,12 +2,10 @@ import { describe, test } from "vitest";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
 import { handleResponses } from "../../../../src/http/openai/responses";
 import { assert } from "../../assertions.js";
-import {
-	attachmentResult,
-	baseConfig,
-	streamError,
-	withConsoleLog,
-} from "../../helpers.js";
+import { withConsoleLog } from "../../_support/globals.js";
+import { baseConfig } from "../../_support/runtime-config.js";
+import { attachmentResult } from "../../attachments/_support/result.js";
+import { streamError } from "../_support/provider.js";
 import { noWorkProvider, strictProvider } from "../_support/provider.js";
 
 describe("OpenAI Responses completion", () => {

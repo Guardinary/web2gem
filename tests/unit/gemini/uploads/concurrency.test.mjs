@@ -1,16 +1,7 @@
 import { describe, test } from "vitest";
 import { mapWithConcurrencyAndWeight } from "../../../../src/gemini/concurrency";
 import { assert } from "../../assertions.js";
-
-function deferred() {
-	let resolve;
-	let reject;
-	const promise = new Promise((onResolve, onReject) => {
-		resolve = onResolve;
-		reject = onReject;
-	});
-	return { promise, resolve, reject };
-}
+import { deferred } from "../../_support/deferred.js";
 
 describe("weighted upload concurrency", () => {
 	test("limits active mapper count independently of weight", async () => {

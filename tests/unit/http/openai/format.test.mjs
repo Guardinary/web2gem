@@ -13,7 +13,8 @@ import {
 	writeOpenAIChatUsageTokenChunk,
 } from "../../../../src/http/openai/format";
 import { assert } from "../../assertions.js";
-import { collectSSEData, streamError } from "../../helpers.js";
+import { streamError } from "../_support/provider.js";
+import { collectSSEData } from "../_support/sse.js";
 
 describe("OpenAI response format", () => {
 	test("formats OpenAI response helper payloads", () => {

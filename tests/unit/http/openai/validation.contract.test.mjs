@@ -3,7 +3,8 @@ import { handleChat } from "../../../../src/http/openai/chat";
 import { handleResponses } from "../../../../src/http/openai/responses";
 import worker from "../../../../src/index";
 import { assert } from "../../assertions.js";
-import { attachmentResult, baseConfig } from "../../helpers.js";
+import { baseConfig } from "../../_support/runtime-config.js";
+import { attachmentResult } from "../../attachments/_support/result.js";
 import { noWorkProvider, strictProvider } from "../_support/provider.js";
 
 describe("OpenAI request validation", () => {

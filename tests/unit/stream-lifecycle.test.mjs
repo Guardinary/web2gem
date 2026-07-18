@@ -1,4 +1,4 @@
-import { beforeEach, describe, test } from "vitest";
+import { describe, test } from "vitest";
 import {
 	createCompletionStreamLifecycle,
 	createSieveLoopContext,
@@ -9,7 +9,7 @@ import {
 } from "../../src/completion/stream-events";
 import { toolSieveBufferedText } from "../../src/toolcall/sieve";
 import { assert } from "./assertions.js";
-import { chunks, fakeStreamProvider, resetTestState } from "./helpers.js";
+import { chunks } from "./_support/async-stream.js";
 
 async function collectEvents(iterable) {
 	const events = [];
@@ -95,7 +95,6 @@ async function consumeSievedTextDeltas(deltas, onText) {
 }
 
 describe("completion stream lifecycle", () => {
-	beforeEach(resetTestState);
 	test("reduces completion stream lifecycle events consistently", () => {
 		const lifecycle = createCompletionStreamLifecycle();
 		const failure = new Error("late failure");
@@ -162,7 +161,7 @@ describe("completion stream lifecycle", () => {
 		};
 		const events = await collectEvents(
 			streamPlainCompletionEvents(
-				fakeStreamProvider([null, emptyTextObject, "ok"]),
+				streamProvider(chunks([null, emptyTextObject, "ok"])),
 				{
 					prompt: "plain prompt",
 					rm: { name: "gemini-3.5-flash" },
@@ -182,12 +181,7 @@ describe("completion stream lifecycle", () => {
 			() =>
 				collectEvents(
 					streamPlainCompletionEvents(
-						{
-							...fakeStreamProvider([]),
-							streamText() {
-								return abortingAsyncIterable(plainAbort);
-							},
-						},
+						streamProvider(abortingAsyncIterable(plainAbort)),
 						{
 							prompt: "plain prompt",
 							rm: { name: "gemini-3.5-flash" },
@@ -205,19 +199,11 @@ describe("completion stream lifecycle", () => {
 			throw new Error("coalesced stream broke");
 		}
 		const events = await collectEvents(
-			streamPlainCompletionEvents(
-				{
-					...fakeStreamProvider([]),
-					streamText() {
-						return brokenDeltas();
-					},
-				},
-				{
-					prompt: "plain prompt",
-					rm: { name: "gemini-3.5-flash" },
-					fileRefs: null,
-				},
-			),
+			streamPlainCompletionEvents(streamProvider(brokenDeltas()), {
+				prompt: "plain prompt",
+				rm: { name: "gemini-3.5-flash" },
+				fileRefs: null,
+			}),
 		);
 		assert.deepEqual(
 			events
@@ -264,7 +250,7 @@ describe("completion stream lifecycle", () => {
 	test("streams tool-sieve text deltas and buffered text boundaries", async () => {
 		const longText = "x".repeat(100);
 		const toolEvents = await collectEvents(
-			streamToolSieveCompletionEvents(fakeStreamProvider([longText]), {
+			streamToolSieveCompletionEvents(streamProvider(chunks([longText])), {
 				prompt: "tool prompt",
 				rm: { name: "gemini-3.5-flash" },
 				fileRefs: null,
@@ -284,7 +270,7 @@ describe("completion stream lifecycle", () => {
 		const bufferedCtx = createSieveLoopContext();
 		const bufferedEvents = await collectEvents(
 			streamSievedTextDeltas(
-				fakeStreamProvider([longText]),
+				streamProvider(chunks([longText])),
 				{
 					prompt: "buffered prompt",
 					rm: { name: "gemini-3.5-flash" },
@@ -306,7 +292,7 @@ describe("completion stream lifecycle", () => {
 		const emptyCtx = createSieveLoopContext();
 		const emptyBuffered = await collectEvents(
 			streamSievedTextDeltas(
-				fakeStreamProvider([]),
+				streamProvider(chunks([])),
 				{
 					prompt: "empty buffered prompt",
 					rm: { name: "gemini-3.5-flash" },
@@ -327,7 +313,7 @@ describe("completion stream lifecycle", () => {
 		const splitCtx = createSieveLoopContext();
 		const splitBufferedEvents = await collectEvents(
 			streamSievedTextDeltas(
-				fakeStreamProvider(splitHeldCandidate),
+				streamProvider(chunks(splitHeldCandidate)),
 				{
 					prompt: "split buffered prompt",
 					rm: { name: "gemini-3.5-flash" },

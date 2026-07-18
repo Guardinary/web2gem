@@ -8,14 +8,11 @@ import {
 import { parseGoogleToolChoicePolicy } from "../../../../src/toolcall/policy-google";
 import { createToolBundle } from "../../../../src/toolcall/tool-bundle";
 import { assert } from "../../assertions.js";
-import {
-	baseConfig,
-	chunks,
-	collectSSEData,
-	resolvedModel,
-	streamError,
-	withConsoleLog,
-} from "../../helpers.js";
+import { chunks } from "../../_support/async-stream.js";
+import { withConsoleLog } from "../../_support/globals.js";
+import { baseConfig } from "../../_support/runtime-config.js";
+import { resolvedModel, streamError } from "../_support/provider.js";
+import { collectSSEData } from "../_support/sse.js";
 import { streamProvider, strictProvider } from "../_support/provider.js";
 
 describe("Google streaming", () => {

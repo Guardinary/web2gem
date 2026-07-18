@@ -2,12 +2,10 @@ import { describe, test } from "vitest";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
 import { handleChat } from "../../../../src/http/openai/chat";
 import { assert } from "../../assertions.js";
-import {
-	attachmentResult,
-	baseConfig,
-	streamError,
-	withConsoleLog,
-} from "../../helpers.js";
+import { withConsoleLog } from "../../_support/globals.js";
+import { baseConfig } from "../../_support/runtime-config.js";
+import { attachmentResult } from "../../attachments/_support/result.js";
+import { streamError } from "../_support/provider.js";
 import { strictProvider } from "../_support/provider.js";
 
 function simplifyAttachmentCandidate(candidate) {

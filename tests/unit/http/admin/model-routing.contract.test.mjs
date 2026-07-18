@@ -1,7 +1,7 @@
 import { afterEach, describe, test, vi } from "vitest";
 import { handleGeminiModelRoutingAdminRequest } from "../../../../src/http/admin/gemini-model-routing";
 import { assert } from "../../assertions.js";
-import { baseConfig } from "../../helpers.js";
+import { baseConfig } from "../../_support/runtime-config.js";
 import { RecordingD1 } from "../../gemini/accounts/_support/store-fixtures.js";
 
 const nowMs = 10_000;

@@ -6,12 +6,8 @@ import {
 	setCachedGeminiPushId,
 } from "../../../../src/gemini/uploads/tokens";
 import { assert } from "../../assertions.js";
-import {
-	createMemoryCache,
-	withCaches,
-	withConsoleLog,
-	withFetch,
-} from "../../helpers.js";
+import { withConsoleLog, withFetch } from "../../_support/globals.js";
+import { createMemoryCache, withCaches } from "../_support/cache.js";
 import {
 	assertMultipartRequest,
 	baseUploadConfig,

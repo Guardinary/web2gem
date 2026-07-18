@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import { socketHttp } from "../../../../src/gemini/transport/socket";
 import { assert } from "../../assertions.js";
-import { fakeSocketConnect, joinedWriteText } from "../../helpers.js";
+import { fakeSocketConnect, joinedWriteText } from "./_support/socket.js";
 
 async function gzipText(text) {
 	const stream = new Blob([text])

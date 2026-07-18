@@ -2,6 +2,7 @@ import { describe, test } from "vitest";
 import { createAttachmentPlan } from "../../../src/attachments/plan";
 import { UploadReplayState } from "../../../src/gemini/upload-replay";
 import { assert } from "../assertions.js";
+import { deferred } from "../_support/deferred.js";
 import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
 
 function attachmentResult(refs) {
@@ -180,13 +181,12 @@ describe("Gemini upload replay state", () => {
 	test("serializes operations and recovers the queue after rejection", async () => {
 		const state = new UploadReplayState(failFastDelegates());
 		const events = [];
-		let releaseFirst;
-		const firstGate = new Promise((resolve) => {
-			releaseFirst = resolve;
-		});
+		const firstStarted = deferred();
+		const releaseFirst = deferred();
 		const first = state.serialize(async () => {
 			events.push("first:start");
-			await firstGate;
+			firstStarted.resolve();
+			await releaseFirst.promise;
 			events.push("first:reject");
 			throw new Error("first failed");
 		});
@@ -194,9 +194,9 @@ describe("Gemini upload replay state", () => {
 			events.push("second:start");
 			return "second result";
 		});
-		await Promise.resolve();
+		await firstStarted.promise;
 		assert.deepEqual(events, ["first:start"]);
-		releaseFirst();
+		releaseFirst.resolve();
 		await assert.rejects(first, /first failed/);
 		assert.equal(await second, "second result");
 		await state.waitForPending();

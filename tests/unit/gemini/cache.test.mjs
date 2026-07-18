@@ -4,12 +4,8 @@ import {
 	geminiAccountCacheScope,
 } from "../../../src/gemini/cache";
 import { assert } from "../assertions.js";
-import {
-	createMemoryCache,
-	withCaches,
-	withConsoleLog,
-	withPatchedGlobal,
-} from "../helpers.js";
+import { withConsoleLog, withPatchedGlobal } from "../_support/globals.js";
+import { createMemoryCache, withCaches } from "./_support/cache.js";
 
 const CACHE_PREFIX = "https://internal-cache/test-metadata/";
 

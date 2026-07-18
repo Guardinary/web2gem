@@ -1,4 +1,4 @@
-import { attachmentResult } from "../../helpers.js";
+import { attachmentResult } from "../../attachments/_support/result.js";
 
 function unexpected(method) {
 	return () => {
@@ -51,4 +51,14 @@ export function streamProvider(items, overrides = {}) {
 		},
 		...overrides,
 	});
+}
+
+export function resolvedModel(name = "gemini-3.5-flash") {
+	return { name };
+}
+
+export function streamError(message = "stream broke", code = "stream_broke") {
+	const error = new Error(message);
+	error.code = code;
+	return error;
 }

@@ -11,6 +11,7 @@ import {
 	resolveDockerEnv,
 	startDockerServer,
 } from "../../server/docker-server.mjs";
+import { assertRuntimeConfig } from "../../src/config";
 import worker from "../../src/index";
 import { assert } from "./assertions.js";
 
@@ -22,6 +23,16 @@ function listen(server) {
 			resolve();
 		});
 	});
+}
+
+async function withStderrWrite(write, run) {
+	const original = process.stderr.write;
+	process.stderr.write = write;
+	try {
+		return await run();
+	} finally {
+		process.stderr.write = original;
+	}
 }
 function close(server) {
 	return new Promise((resolve, reject) => {
@@ -231,17 +242,31 @@ describe("docker server", () => {
 			},
 		});
 		await listen(server);
-		try {
-			const port = server.address().port;
-			const resp = await fetch(`http://127.0.0.1:${port}/`);
-			assert.equal(resp.status, 500);
-			assert.match(resp.headers.get("content-type"), /^application\/json\b/);
-			assert.deepEqual(await resp.json(), {
-				error: { message: "internal server error" },
-			});
-		} finally {
-			await close(server);
-		}
+		const loggedErrors = [];
+		await withStderrWrite(
+			(chunk) => {
+				loggedErrors.push(String(chunk));
+				return true;
+			},
+			async () => {
+				try {
+					const port = server.address().port;
+					const resp = await fetch(`http://127.0.0.1:${port}/`);
+					assert.equal(resp.status, 500);
+					assert.match(
+						resp.headers.get("content-type"),
+						/^application\/json\b/,
+					);
+					assert.deepEqual(await resp.json(), {
+						error: { message: "internal server error" },
+					});
+				} finally {
+					await close(server);
+				}
+			},
+		);
+		assert.equal(loggedErrors.length, 1);
+		assert.match(loggedErrors[0], /boom/);
 	});
 	test("injects Docker D1 binding only for complete HTTP config", async () => {
 		assert.equal(resolveD1HttpConfig({}), null);
@@ -277,7 +302,12 @@ describe("docker server", () => {
 	});
 	test("rejects invalid runtime config before the Docker server listens", async () => {
 		await assert.rejects(
-			() => startDockerServer({ port: 0, env: { LOG_REQUESTS: "yes" } }),
+			() =>
+				startDockerServer({
+					port: 0,
+					env: { LOG_REQUESTS: "yes" },
+					worker: { ...worker, assertRuntimeConfig },
+				}),
 			/LOG_REQUESTS must be true or false/,
 		);
 	});

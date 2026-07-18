@@ -7,7 +7,7 @@ import {
 	hydrateGeneratedImages,
 } from "../../../../src/gemini/client/generated-images";
 import { assert } from "../../assertions.js";
-import { withFetch } from "../../helpers.js";
+import { withFetch } from "../../_support/globals.js";
 import { baseGeminiClientConfig } from "../_support/client-fixtures.js";
 
 const TINY_PNG_BASE64 =

@@ -1,13 +1,8 @@
 import { describe, test } from "vitest";
-import { mergeFileRefs } from "../../src/completion/context";
-import { firstNonEmptyString } from "../../src/shared/strings";
-import { assert } from "./assertions.js";
+import { mergeFileRefs } from "../../../src/completion/context";
+import { assert } from "../assertions.js";
 
-describe("prompt compatibility", () => {
-	test("selects the first non-empty shared string", () => {
-		assert.equal(firstNonEmptyString(null, "  ", " ok "), "ok");
-	});
-
+describe("completion context", () => {
 	test("deduplicates merged completion file references", () => {
 		assert.deepEqual(
 			mergeFileRefs(

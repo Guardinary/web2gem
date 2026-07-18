@@ -6,7 +6,7 @@ import {
 } from "../../../../src/gemini/client";
 import { resetGeminiBuildLabelCacheForTest } from "../../../../src/gemini/client/retry";
 import { assert } from "../../assertions.js";
-import { withFetch } from "../../helpers.js";
+import { withFetch } from "../../_support/globals.js";
 import { baseGeminiClientConfig } from "../_support/client-fixtures.js";
 
 function fatalWrbLine(code, location = "inner") {

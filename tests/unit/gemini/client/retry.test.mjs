@@ -10,12 +10,8 @@ import {
 	waitBeforeRetry,
 } from "../../../../src/gemini/client/retry";
 import { assert } from "../../assertions.js";
-import {
-	createMemoryCache,
-	withCaches,
-	withConsoleLog,
-	withFetch,
-} from "../../helpers.js";
+import { withConsoleLog, withFetch } from "../../_support/globals.js";
+import { createMemoryCache, withCaches } from "../_support/cache.js";
 import { baseGeminiClientConfig } from "../_support/client-fixtures.js";
 
 function accountConfig(base, accountId, cookieHash) {

@@ -3,12 +3,11 @@ import { httpFetch } from "../../../../src/gemini/transport/http";
 import { closeIdleSocketPool } from "../../../../src/gemini/transport/pool";
 import { _setConnectForTest } from "../../../../src/gemini/transport/socket";
 import { assert } from "../../assertions.js";
+import { withConsoleLog, withFetch } from "../../_support/globals.js";
 import {
 	fakePersistentSocketConnect,
 	joinedWriteText,
-	withConsoleLog,
-	withFetch,
-} from "../../helpers.js";
+} from "./_support/socket.js";
 
 function resetHttpTransportOwner() {
 	_setConnectForTest(null);

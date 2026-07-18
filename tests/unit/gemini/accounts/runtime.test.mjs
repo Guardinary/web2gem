@@ -13,7 +13,7 @@ import {
 	rejectUnexpectedCookieRotation,
 	runtimeCall,
 } from "./_support/runtime-fixtures.js";
-import { baseConfig } from "../../helpers.js";
+import { baseConfig } from "../../_support/runtime-config.js";
 
 describe("gemini account public runtime facade", () => {
 	test("exposes an ordered catalog and dynamic resolution through the runtime facade", async () => {

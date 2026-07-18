@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import { buildMultipartFileBody } from "../../../../src/gemini/uploads/multipart";
 import { assert } from "../../assertions.js";
-import { withPatchedGlobal } from "../../helpers.js";
+import { withPatchedGlobal } from "../../_support/globals.js";
 import { bodyBytes } from "./_support/upload-fixtures.js";
 
 function escapeRegExp(value) {

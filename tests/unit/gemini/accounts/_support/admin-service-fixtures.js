@@ -1,5 +1,5 @@
 import { GeminiAccountAdminService } from "../../../../../src/gemini/accounts/admin";
-import { baseConfig } from "../../../helpers.js";
+import { baseConfig } from "../../../_support/runtime-config.js";
 
 export function createService(store, overrides = {}) {
 	return new GeminiAccountAdminService({

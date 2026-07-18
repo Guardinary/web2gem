@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import worker from "../../../src/index";
 import { assert } from "../assertions.js";
-import { withFetch } from "../helpers.js";
+import { withFetch } from "../_support/globals.js";
 
 function geminiTextResponse(text) {
 	const inner = [null, null, null, null, [[null, [text]]], "x".repeat(160)];

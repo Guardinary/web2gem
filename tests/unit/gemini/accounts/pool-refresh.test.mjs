@@ -6,7 +6,8 @@ import {
 } from "../../../../src/gemini/accounts/normalize";
 import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
 import { assert } from "../../assertions.js";
-import { baseConfig } from "../../helpers.js";
+import { deferred } from "../../_support/deferred.js";
+import { baseConfig } from "../../_support/runtime-config.js";
 import {
 	account,
 	createRuntimeStore,
@@ -91,11 +92,14 @@ describe("gemini account runtime", () => {
 			]),
 		]);
 		let rotateCalls = 0;
+		const rotationStarted = deferred();
+		const releaseRotation = deferred();
 		const pool = new AccountPoolService(store, {
 			nowMs: () => 120000,
 			rotateCookie: async () => {
 				rotateCalls++;
-				await Promise.resolve();
+				rotationStarted.resolve();
+				await releaseRotation.promise;
 				return new Response(null, {
 					status: 200,
 					headers: { "set-cookie": "__Secure-1PSIDTS=rotated" },
@@ -104,10 +108,11 @@ describe("gemini account runtime", () => {
 			verifyAccount: async () => ({ ok: true, at: "fresh-at" }),
 		});
 		const lease = await pool.acquireLease(baseConfig());
-		const [first, second] = await Promise.all([
-			lease.refreshForRetry("auth"),
-			lease.refreshForRetry("auth"),
-		]);
+		const firstRefresh = lease.refreshForRetry("auth");
+		await rotationStarted.promise;
+		const secondRefresh = lease.refreshForRetry("auth");
+		releaseRotation.resolve();
+		const [first, second] = await Promise.all([firstRefresh, secondRefresh]);
 		assert.deepEqual(first, second);
 		assert.equal(first.changed, true);
 		assert.equal(rotateCalls, 1);

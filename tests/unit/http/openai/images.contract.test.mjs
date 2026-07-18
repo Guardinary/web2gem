@@ -8,7 +8,9 @@ import {
 } from "../../../../src/http/openai/images";
 import worker from "../../../../src/index";
 import { assert } from "../../assertions.js";
-import { attachmentResult, baseConfig, withConsoleLog } from "../../helpers.js";
+import { withConsoleLog } from "../../_support/globals.js";
+import { baseConfig } from "../../_support/runtime-config.js";
+import { attachmentResult } from "../../attachments/_support/result.js";
 
 const TINY_PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";

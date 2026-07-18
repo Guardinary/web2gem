@@ -17,7 +17,8 @@ import {
 	toastItems,
 } from "../../../src/admin-ui/state";
 import { assert } from "../assertions.js";
-import { deferred, withAdminEnvironment } from "./_support/environment.js";
+import { deferred } from "../_support/deferred.js";
+import { withAdminEnvironment } from "./_support/environment.js";
 import {
 	emptyStats,
 	uiAccount,

@@ -5,12 +5,10 @@ import { handleGoogleGenerate } from "../../../../src/http/google/handlers";
 import { parseGoogleGenerationPath } from "../../../../src/http/google/model-path";
 import worker from "../../../../src/index";
 import { assert } from "../../assertions.js";
-import {
-	attachmentResult,
-	baseConfig,
-	streamError,
-	withConsoleLog,
-} from "../../helpers.js";
+import { withConsoleLog } from "../../_support/globals.js";
+import { baseConfig } from "../../_support/runtime-config.js";
+import { attachmentResult } from "../../attachments/_support/result.js";
+import { streamError } from "../_support/provider.js";
 import { noWorkProvider, strictProvider } from "../_support/provider.js";
 
 describe("Google generate handler", () => {

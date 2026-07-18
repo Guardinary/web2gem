@@ -4,7 +4,8 @@ import {
 	sha256Hex,
 } from "../../../../src/gemini/accounts/normalize";
 import { assert } from "../../assertions.js";
-import { baseConfig } from "../../helpers.js";
+import { deferred } from "../../_support/deferred.js";
+import { baseConfig } from "../../_support/runtime-config.js";
 import {
 	createService,
 	mutationCounts,
@@ -13,7 +14,6 @@ import {
 	accountSqlRow,
 	accountSummary,
 	createAccountStoreDouble,
-	deferred,
 } from "./_support/store-fixtures.js";
 
 describe("Gemini account admin service imports", () => {

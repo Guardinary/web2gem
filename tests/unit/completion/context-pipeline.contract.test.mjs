@@ -3,7 +3,8 @@ import { prepareOpenAIGeminiContext } from "../../../src/completion/context";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
-import { attachmentResult, withConsoleLog } from "../helpers.js";
+import { withConsoleLog } from "../_support/globals.js";
+import { attachmentResult } from "../attachments/_support/result.js";
 
 function createContextProvider({ resolveAttachments, uploadTextFile }) {
 	if (typeof resolveAttachments !== "function") {

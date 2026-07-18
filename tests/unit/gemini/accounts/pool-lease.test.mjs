@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
 import { assert } from "../../assertions.js";
-import { baseConfig } from "../../helpers.js";
+import { baseConfig } from "../../_support/runtime-config.js";
 import {
 	account,
 	createRuntimeStore,

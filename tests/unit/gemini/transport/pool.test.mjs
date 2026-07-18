@@ -10,7 +10,10 @@ import {
 } from "../../../../src/gemini/transport/pool";
 import { socketHttp } from "../../../../src/gemini/transport/socket";
 import { assert } from "../../assertions.js";
-import { fakePersistentSocketConnect, joinedWriteText } from "../../helpers.js";
+import {
+	fakePersistentSocketConnect,
+	joinedWriteText,
+} from "./_support/socket.js";
 
 describe.sequential("socket pools", () => {
 	afterEach(() => {

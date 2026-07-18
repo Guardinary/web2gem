@@ -1,4 +1,9 @@
-import { strictProvider, streamProvider } from "../_support/provider.js";
+import {
+	resolvedModel,
+	streamError,
+	strictProvider,
+	streamProvider,
+} from "../_support/provider.js";
 import { describe, test } from "vitest";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
 import { handleChat } from "../../../../src/http/openai/chat";
@@ -8,14 +13,10 @@ import {
 } from "../../../../src/http/openai/chat-stream";
 import { createToolBundle } from "../../../../src/toolcall/tool-bundle";
 import { assert } from "../../assertions.js";
-import {
-	baseConfig,
-	chunks,
-	collectSSEData,
-	resolvedModel,
-	streamError,
-	withConsoleLog,
-} from "../../helpers.js";
+import { chunks } from "../../_support/async-stream.js";
+import { withConsoleLog } from "../../_support/globals.js";
+import { baseConfig } from "../../_support/runtime-config.js";
+import { collectSSEData } from "../_support/sse.js";
 
 describe("OpenAI Chat streaming", () => {
 	test("rejects unsupported streaming structured OpenAI chat responses", async () => {

@@ -5,9 +5,10 @@ import {
 	isImageGenerationRequest,
 } from "../../../../src/http/openai/image-generation";
 import { parseOpenAIMessages } from "../../../../src/promptcompat/message-model";
-import { normalizeResponsesInputAsMessages } from "../../../../src/promptcompat/responses-input";
+import { parseResponsesInput } from "../../../../src/promptcompat/responses-input";
 import { assert } from "../../assertions.js";
-import { attachmentResult, baseConfig } from "../../helpers.js";
+import { baseConfig } from "../../_support/runtime-config.js";
+import { attachmentResult } from "../../attachments/_support/result.js";
 import { strictProvider } from "../_support/provider.js";
 
 function prepareOpenAIImageGenerationCompletion(
@@ -17,17 +18,19 @@ function prepareOpenAIImageGenerationCompletion(
 	route,
 	forced,
 ) {
-	const messages =
+	const parsed =
 		route === "responses"
-			? parseOpenAIMessages(normalizeResponsesInputAsMessages(req, true))
-			: parseOpenAIMessages(req.messages);
+			? parseResponsesInput(req, "image-generation")
+			: { messages: parseOpenAIMessages(req.messages) };
+	if (parsed.error)
+		throw new Error(`invalid image-generation fixture: ${parsed.error}`);
 	return prepareOpenAIImageGenerationFromMessages(
 		cfg,
 		provider,
 		req,
 		route,
 		forced,
-		messages,
+		parsed.messages,
 	);
 }
 

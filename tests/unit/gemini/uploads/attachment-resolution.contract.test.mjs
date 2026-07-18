@@ -2,23 +2,14 @@ import { afterEach, beforeEach, describe, test } from "vitest";
 import { createAttachmentPlan } from "../../../../src/attachments/plan";
 import { resolveAttachments } from "../../../../src/gemini/uploads/execute";
 import { assert } from "../../assertions.js";
-import { withConsoleLog, withFetch } from "../../helpers.js";
+import { deferred } from "../../_support/deferred.js";
+import { withConsoleLog, withFetch } from "../../_support/globals.js";
 import {
 	assertMultipartRequest,
 	baseUploadConfig,
 	multipartRequestText,
 	resetUploadState,
 } from "./_support/upload-fixtures.js";
-
-function deferred() {
-	let resolve;
-	let reject;
-	const promise = new Promise((onResolve, onReject) => {
-		resolve = onResolve;
-		reject = onReject;
-	});
-	return { promise, resolve, reject };
-}
 
 describe("AttachmentPlan to Gemini resolution", () => {
 	beforeEach(resetUploadState);

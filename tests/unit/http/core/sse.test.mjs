@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import { sseResponse } from "../../../../src/http/core/sse";
 import { assert } from "../../assertions.js";
-import { withPatchedGlobal } from "../../helpers.js";
+import { withPatchedGlobal } from "../../_support/globals.js";
 
 describe.sequential("sseResponse", () => {
 	test("aborts SSE producer when client cancels", async () => {

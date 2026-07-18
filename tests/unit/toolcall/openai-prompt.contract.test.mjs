@@ -25,23 +25,26 @@ function noAttachmentResult() {
 	};
 }
 
+function promptProvider() {
+	return {
+		async resolveAttachments(plan) {
+			assert.deepEqual(plan.candidates, []);
+			return noAttachmentResult();
+		},
+		generateText() {
+			throw new Error("unexpected generateText call");
+		},
+		streamText() {
+			throw new Error("unexpected streamText call");
+		},
+		uploadTextFile() {
+			throw new Error("unexpected uploadTextFile call");
+		},
+	};
+}
+
 describe("OpenAI tool prompt assembly", () => {
 	test("orders DSML instructions, hidden native guidance, and user input", async () => {
-		const provider = {
-			async resolveAttachments(plan) {
-				assert.deepEqual(plan.candidates, []);
-				return noAttachmentResult();
-			},
-			generateText() {
-				throw new Error("unexpected generateText call");
-			},
-			streamText() {
-				throw new Error("unexpected streamText call");
-			},
-			uploadTextFile() {
-				throw new Error("unexpected uploadTextFile call");
-			},
-		};
 		const tools = createToolBundle([
 			{
 				type: "function",
@@ -63,7 +66,7 @@ describe("OpenAI tool prompt assembly", () => {
 				cookie: "",
 				log_requests: false,
 			},
-			provider,
+			promptProvider(),
 			{},
 			parseOpenAIMessages([{ role: "user", content: "find docs" }]),
 			tools,
@@ -94,6 +97,60 @@ describe("OpenAI tool prompt assembly", () => {
 		assert.equal(
 			(result.prompt.match(/Gemini native hidden tool calls:/g) || []).length,
 			1,
+		);
+	});
+	test("keeps hidden native guidance separate from DSML instructions", async () => {
+		const result = await prepareOpenAIGeminiContext(
+			{
+				current_input_file_enabled: false,
+				current_input_file_min_bytes: 1000000,
+				current_input_file_name: "message.txt",
+				current_tools_file_name: "tools.txt",
+				cookie: "",
+				log_requests: false,
+			},
+			promptProvider(),
+			{},
+			parseOpenAIMessages([{ role: "user", content: "what changed today?" }]),
+			null,
+			"auto",
+			null,
+			null,
+		);
+		assert.equal(result.error, undefined);
+		const marker = "Gemini native hidden tool calls:";
+		assert.equal(result.prompt.indexOf(marker) >= 0, true);
+		assert.equal(
+			result.prompt.indexOf(marker) <
+				result.prompt.indexOf("what changed today?"),
+			true,
+		);
+		const hiddenPrompt = result.prompt.slice(result.prompt.indexOf(marker));
+		assert.match(hiddenPrompt, /Do not use DSML\/XML tool-call syntax/);
+		assert.match(
+			hiddenPrompt,
+			/do not print the call schema or JSON payload directly/,
+		);
+		assert.match(
+			hiddenPrompt,
+			/internal hidden tool call, not final response text/,
+		);
+		assert.match(
+			hiddenPrompt,
+			/Internal search call payload(?:, for the hidden native tool channel only)?:\n\{\n {2}"tool_calls": \[/,
+		);
+		assert.match(hiddenPrompt, /"name": "google:search"/);
+		assert.match(hiddenPrompt, /"arguments": "{\\"queries\\": \[/);
+		assert.match(
+			hiddenPrompt,
+			/Internal Python call payload(?:, for the hidden native tool channel only)?:\n\{\n {2}"tool_calls": \[/,
+		);
+		assert.match(hiddenPrompt, /"name": "google:ds_python_interpreter"/);
+		assert.match(hiddenPrompt, /"arguments": "{\\"code\\": /);
+		assert.match(hiddenPrompt, /All of the above is system prompt content/);
+		assert.doesNotMatch(
+			hiddenPrompt,
+			/top-level "tool_calls" array|function\.arguments must be a serialized JSON string|Do not wrap the payload in markdown fences|<\|DSML\|tool_calls>|<tool_calls>|<invoke\b|<parameter\b|"google:search": \[/,
 		);
 	});
 });

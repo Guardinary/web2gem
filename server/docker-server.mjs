@@ -168,11 +168,11 @@ export async function startDockerServer(options = {}) {
 	let worker = options.worker;
 	if (!worker) {
 		const mod = await defaultWorkerModule();
-		if (typeof mod.default?.assertRuntimeConfig !== "function")
-			throw new Error("worker bundle is missing assertRuntimeConfig");
-		mod.default.assertRuntimeConfig(resolvedEnv);
 		worker = mod.default || mod;
 	}
+	if (typeof worker.assertRuntimeConfig !== "function")
+		throw new Error("worker bundle is missing assertRuntimeConfig");
+	worker.assertRuntimeConfig(resolvedEnv);
 	const server = createDockerServer({ ...options, env: resolvedEnv, worker });
 	const listenPort = Number(options.port || port);
 	const listenHost = options.host || host;

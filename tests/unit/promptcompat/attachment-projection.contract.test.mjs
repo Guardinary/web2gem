@@ -6,40 +6,28 @@ import {
 import { parseGoogleRequest } from "../../../src/promptcompat/google";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { messagesToPrompt } from "../../../src/promptcompat/messages";
-import { normalizeResponsesInputValueAsMessages } from "../../../src/promptcompat/responses-input";
+import { parseResponsesInput } from "../../../src/promptcompat/responses-input";
 import { assert } from "../assertions.js";
 
 describe("prompt compatibility", () => {
-	test("preserves top-level Responses input_file items for upload collection", async () => {
-		const messages = normalizeResponsesInputValueAsMessages([
-			{ type: "input_text", text: "review this" },
-			{
-				type: "input_file",
-				filename: "../note.txt",
-				data: "aGVsbG8=",
-				mime_type: "text/plain",
-			},
-		]);
-		assert.deepEqual(messages, [
-			{ role: "user", content: "review this" },
-			{
-				role: "user",
-				content: [
-					{
-						type: "input_file",
-						filename: "../note.txt",
-						data: "aGVsbG8=",
-						mime_type: "text/plain",
-					},
-				],
-			},
-		]);
+	test("projects top-level Responses input_file items into upload candidates", async () => {
+		const parsed = parseResponsesInput({
+			input: [
+				{ type: "input_text", text: "review this" },
+				{
+					type: "input_file",
+					filename: "../note.txt",
+					data: "aGVsbG8=",
+					mime_type: "text/plain",
+				},
+			],
+		});
+		assert.equal(parsed.error, undefined);
 
-		const parsed = parseOpenAIMessages(messages);
-		const result = messagesToPrompt(parsed, null, 1000000);
+		const result = messagesToPrompt(parsed.messages, null, 1000000);
 		assert.match(result.text, /\[file input note\.txt\]/);
 		assert.deepEqual(
-			attachmentPlanFromMessages(parsed).candidates.map((c) => ({
+			attachmentPlanFromMessages(parsed.messages).candidates.map((c) => ({
 				mime: c.mime,
 				filename: c.filename,
 				data: c.source.type === "base64" ? c.source.data : undefined,

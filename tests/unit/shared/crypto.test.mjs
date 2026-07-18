@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import { randHex, randomBytes, uuid } from "../../../src/shared/crypto";
 import { assert } from "../assertions.js";
-import { withPatchedGlobal } from "../helpers.js";
+import { withPatchedGlobal } from "../_support/globals.js";
 
 async function withoutTypedArrayHexMethod(run) {
 	const toHexDescriptor = Object.getOwnPropertyDescriptor(

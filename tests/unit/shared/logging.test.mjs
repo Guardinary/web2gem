@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import { log, logStage } from "../../../src/shared/logging";
 import { assert } from "../assertions.js";
-import { withConsoleLog } from "../helpers.js";
+import { withConsoleLog } from "../_support/globals.js";
 
 describe("shared logging", () => {
 	test.sequential("logs runtime messages and stage metadata behind config flag", async () => {

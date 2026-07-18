@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
 import { handleGeminiAccountAdminRequest } from "../../../../src/http/admin/gemini-accounts";
 import { assert } from "../../assertions.js";
-import { baseConfig } from "../../helpers.js";
+import { baseConfig } from "../../_support/runtime-config.js";
 
 const cfg = { ...baseConfig(), admin_key: "admin-secret" };
 

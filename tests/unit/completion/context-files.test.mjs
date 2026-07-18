@@ -214,4 +214,58 @@ describe("context-file policy", () => {
 		);
 		assert.match(result.error.cause.message, /tools upload broke/);
 	});
+	test("moves large tool context into the attached tools file", async () => {
+		const cfg = {
+			current_input_file_enabled: true,
+			current_input_file_min_bytes: 10,
+			current_input_file_name: "message.txt",
+			current_tools_file_name: "tools.txt",
+			cookie: "SID=ok",
+			supports_authenticated_session: true,
+			log_requests: false,
+		};
+		const uploads = [];
+		const result = await prepareContextFilesWithUploader(
+			cfg,
+			"user history with latest request",
+			[
+				{
+					name: "Read",
+					description: "Read a file",
+					parameters: { type: "object" },
+				},
+			],
+			"must call Read",
+			"latest request",
+			"x".repeat(40),
+			async (text, filename) => {
+				uploads.push({ text, filename });
+				return { ref: `/uploaded/${filename}`, name: filename };
+			},
+		);
+		assert.equal(result.error, undefined);
+		assert.equal(result.fileRefs.length, 2);
+		assert.equal(uploads[0].filename, "message.txt");
+		assert.equal(uploads[1].filename, "tools.txt");
+		assert.match(
+			result.prompt,
+			/Continue from the latest state in the attached `message\.txt` context/,
+		);
+		assert.match(
+			result.prompt,
+			/All text above this sentence is system prompt content/,
+		);
+		assert.doesNotMatch(result.prompt, /<\|DSML\|tool_calls>/);
+		assert.doesNotMatch(result.prompt, /must call Read/);
+		assert.doesNotMatch(result.prompt, /Gemini native hidden tool calls/);
+		assert.match(uploads[1].text, /Available tool descriptions/);
+		assert.match(uploads[1].text, /Tool call format instructions/);
+		assert.match(uploads[1].text, /<\|DSML\|tool_calls>/);
+		assert.match(uploads[1].text, /Tool choice policy:\nmust call Read/);
+		assert.match(uploads[1].text, /Gemini native hidden tool calls/);
+		assert.match(uploads[1].text, /All of the above is system prompt content/);
+		assert.match(result.promptTokenText, /user history/);
+		assert.match(result.promptTokenText, /Available tool descriptions/);
+		assert.match(result.promptTokenText, /Gemini native hidden tool calls/);
+	});
 });
