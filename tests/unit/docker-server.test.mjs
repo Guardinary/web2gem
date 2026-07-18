@@ -310,8 +310,6 @@ describe("docker server", () => {
 				}),
 			/LOG_REQUESTS must be true or false/,
 		);
-	});
-	test("starts with an injected worker that has no bundle validator", async () => {
 		const server = await startDockerServer({
 			host: "127.0.0.1",
 			port: 0,
