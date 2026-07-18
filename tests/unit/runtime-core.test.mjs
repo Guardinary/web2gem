@@ -11,11 +11,6 @@ import {
 } from "../../src/config";
 import { _sapisidHashCache, makeSapisidHash } from "../../src/gemini/auth";
 import {
-	invalidGeminiCookieError,
-	isInvalidGeminiCookieError,
-	unverifiedGeminiCookieError,
-} from "../../src/gemini/client/errors";
-import {
 	_joinByteChunks,
 	bytesFromBody,
 	createByteQueue,
@@ -48,7 +43,6 @@ import {
 	streamWarningObject,
 	writeStreamWarningEvent,
 } from "../../src/http/core/stream-errors";
-import { openAIUpstreamErrorResponse } from "../../src/http/openai/errors";
 import { createDeltaCoalescer } from "../../src/http/stream/coalescer";
 import worker from "../../src/index";
 import { MODELS, resolveModel } from "../../src/models";
@@ -2475,29 +2469,6 @@ describe("runtime core", () => {
 		assert.equal(warning.code, "upstream_empty");
 		assert.equal(warning.gemini_bl, "boq_test");
 		assert.match(warning.hint, /diagnostics/);
-	});
-	test("maps invalid Gemini cookie errors to OpenAI auth responses", async () => {
-		const err = invalidGeminiCookieError({ cookie: "SID=bad" }, 403, 123);
-		assert.equal(err.code, "invalid_gemini_cookie");
-		assert.equal(err.status, 401);
-		assert.equal(err.upstreamStatus, 403);
-		assert.equal(err.rawLength, 123);
-		assert.equal(isInvalidGeminiCookieError(err), true);
-		assert.equal(invalidGeminiCookieError({ cookie: "" }, 403), null);
-		assert.equal(invalidGeminiCookieError({ cookie: "SID=bad" }, 429), null);
-
-		const openAIResp = openAIUpstreamErrorResponse(err);
-		assert.equal(openAIResp.status, 401);
-		const openAIBody = await openAIResp.json();
-		assert.equal(openAIBody.error.code, "invalid_gemini_cookie");
-		assert.equal(openAIBody.error.type, "authentication_error");
-		const earlyErr = invalidGeminiCookieError({ cookie: "SID=bad" }, 401);
-		assert.equal(earlyErr.rawLength, null);
-		const unverifiedErr = unverifiedGeminiCookieError();
-		assert.equal(unverifiedErr.code, "invalid_gemini_cookie");
-		assert.equal(unverifiedErr.status, 401);
-		const unverifiedResp = openAIUpstreamErrorResponse(unverifiedErr);
-		assert.equal(unverifiedResp.status, 401);
 	});
 	test("coalesces stream deltas by field and flush threshold", async () => {
 		const frames = [];

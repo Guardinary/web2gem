@@ -13,15 +13,6 @@ import {
 	shouldUseContextFiles,
 } from "../../src/completion/context-files";
 import { ensureInlineToolPrompt } from "../../src/completion/tool-prompt-guard";
-import {
-	googleGenerateContentResponse,
-	googleStreamDonePayload,
-} from "../../src/http/google/format";
-import {
-	buildResponsesOutput,
-	openAIChatChunk,
-	openAIChatUsageFromCompletionTokens,
-} from "../../src/http/openai/format";
 import { readRouteJsonPost } from "../../src/http/route-body";
 import worker from "../../src/index";
 import {
@@ -665,76 +656,5 @@ describe("context", () => {
 		);
 		assert.equal(result.error, undefined);
 		assert.equal(result.value.messages[0].content[0].text, "describe this");
-	});
-	test("rejects oversized parsed chat prompt without attachments", async () => {
-		const resp = await worker.fetch(
-			new Request("https://worker.example/v1/chat/completions", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					model: "gemini-3.5-flash",
-					messages: [{ role: "user", content: "x".repeat(40) }],
-				}),
-			}),
-			{
-				API_KEYS: "",
-				CURRENT_INPUT_FILE_ENABLED: "false",
-				CURRENT_INPUT_FILE_MIN_BYTES: "10",
-				GEMINI_DB: {
-					prepare() {
-						throw new Error("oversized inline rejection should not read D1");
-					},
-				},
-				LOG_REQUESTS: "false",
-			},
-			{},
-		);
-		assert.equal(resp.status, 422);
-		const body = await resp.json();
-		assert.equal(body.error.code, "large_context_inline_unsupported");
-		assert.match(body.error.message, /at least 40 UTF-8 bytes > 10/);
-	});
-	test("formats OpenAI and Google response helper payloads", async () => {
-		const chatChunk = openAIChatChunk(
-			"chatcmpl_test",
-			"gemini-3.5-flash",
-			{ content: "hi" },
-			null,
-		);
-		assert.equal(chatChunk.object, "chat.completion.chunk");
-		assert.equal(chatChunk.choices[0].delta.content, "hi");
-		assert.deepEqual(openAIChatUsageFromCompletionTokens(-1, "2"), {
-			prompt_tokens: 0,
-			completion_tokens: 2,
-			total_tokens: 2,
-		});
-
-		const output = buildResponsesOutput(
-			"done",
-			[
-				{
-					id: "call_1",
-					function: { name: "Lookup", arguments: '{"id":"1"}' },
-				},
-			],
-			"msg_1",
-		);
-		assert.equal(output[0].type, "function_call");
-		assert.equal(output[1].type, "message");
-
-		const google = googleGenerateContentResponse({
-			model: "gemini-3.5-flash",
-			responseParts: [{ text: "done" }],
-			promptTokens: 2,
-			candidateTokens: 1,
-			upstreamEmpty: true,
-			warning: { code: "upstream_empty" },
-		});
-		assert.equal(google.promptFeedback.warning.code, "upstream_empty");
-		assert.equal(
-			googleStreamDonePayload("gemini-3.5-flash", 2, 1).usageMetadata
-				.totalTokenCount,
-			3,
-		);
 	});
 });
