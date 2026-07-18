@@ -1,10 +1,16 @@
 import { describe, test } from "vitest";
-import { makeSapisidHash } from "../../../src/gemini/auth";
+import {
+	_sapisidHashCache,
+	makeSapisidHash,
+} from "../../../src/gemini/auth";
 import { assert } from "../assertions.js";
 import { withPatchedGlobal } from "../_support/globals.js";
 
 describe("Gemini SAPISID authorization", () => {
 	test.sequential("builds and caches SAPISIDHASH authorization headers", async () => {
+		const cacheSnapshot = { ..._sapisidHashCache };
+		_sapisidHashCache.key = "";
+		_sapisidHashCache.value = "";
 		const originalNow = Date.now;
 		Date.now = () => 1_700_000_000_000;
 		let digestCalls = 0;
@@ -42,6 +48,8 @@ describe("Gemini SAPISID authorization", () => {
 			);
 		} finally {
 			Date.now = originalNow;
+			_sapisidHashCache.key = cacheSnapshot.key;
+			_sapisidHashCache.value = cacheSnapshot.value;
 		}
 	});
 });

@@ -160,6 +160,7 @@ export function createDockerServer(options = {}) {
 }
 
 export async function startDockerServer(options = {}) {
+	const usesDefaultWorker = !options.worker;
 	const resolvedEnv =
 		options.env ||
 		resolveDockerEnv(options.processEnv || process.env, {
@@ -170,9 +171,10 @@ export async function startDockerServer(options = {}) {
 		const mod = await defaultWorkerModule();
 		worker = mod.default || mod;
 	}
-	if (typeof worker.assertRuntimeConfig !== "function")
+	if (usesDefaultWorker && typeof worker.assertRuntimeConfig !== "function")
 		throw new Error("worker bundle is missing assertRuntimeConfig");
-	worker.assertRuntimeConfig(resolvedEnv);
+	if (typeof worker.assertRuntimeConfig === "function")
+		worker.assertRuntimeConfig(resolvedEnv);
 	const server = createDockerServer({ ...options, env: resolvedEnv, worker });
 	const listenPort = Number(options.port || port);
 	const listenHost = options.host || host;

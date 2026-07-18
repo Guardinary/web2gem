@@ -30,6 +30,7 @@ export default defineConfig({
 		environment: "node",
 		fileParallelism: true,
 		include: ["tests/unit/**/*.test.mjs"],
+		pool: "threads",
 		testTimeout: 30000,
 	},
 });

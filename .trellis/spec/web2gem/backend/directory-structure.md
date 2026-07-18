@@ -470,6 +470,10 @@ timers, or concurrency coordination into reusable test support.
   - `tests/unit/http/_support/sse.js`
 - `vitest.config.mjs` discovers only `tests/unit/**/*.test.mjs`; support files
   do not use the `.test.mjs` suffix.
+- Vitest uses the `threads` pool with file isolation and file parallelism left
+  enabled. Owner-granular suites must not pay one child-process module-graph
+  startup cost per file, and tests must still restore every mutable global or
+  module owner they touch.
 
 ### 3. Contracts
 
@@ -501,6 +505,9 @@ timers, or concurrency coordination into reusable test support.
 - Duplicate `file + describe path + test name` -> fail the manifest check.
 - Default parallel execution fails while serial execution passes -> treat as a
   shared-state or resource-lifecycle defect; do not disable parallelism.
+- Thread-pool execution fails while fork-pool execution passes -> identify the
+  process-global assumption and restore or isolate that owner; do not silently
+  switch the whole suite back to forks.
 - A provider/socket/store double accepts an unconfigured call -> make the
   double fail at that interaction before accepting the test.
 - A test imports a compatibility projection or private mutable value instead of
@@ -522,6 +529,8 @@ timers, or concurrency coordination into reusable test support.
   cookie, upload, cache, and socket test seams.
 - Bad: split a coherent scripts/runtime invariant suite only because it crossed
   a line-count threshold.
+- Bad: disable file isolation or merge unrelated owners only to reduce runner
+  startup time.
 
 ### 6. Tests Required
 

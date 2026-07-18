@@ -311,6 +311,27 @@ describe("docker server", () => {
 			/LOG_REQUESTS must be true or false/,
 		);
 	});
+	test("starts with an injected worker that has no bundle validator", async () => {
+		const server = await startDockerServer({
+			host: "127.0.0.1",
+			port: 0,
+			env: {},
+			worker: {
+				async fetch() {
+					return new Response("ok");
+				},
+			},
+		});
+		try {
+			await new Promise((resolve) => {
+				if (server.listening) resolve();
+				else server.once("listening", resolve);
+			});
+			assert.equal(server.listening, true);
+		} finally {
+			await close(server);
+		}
+	});
 	test("maps D1 HTTP first all and run without leaking params or tokens in errors", async () => {
 		const requests = [];
 		const responses = [
