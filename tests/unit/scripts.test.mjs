@@ -743,6 +743,13 @@ describe("quality scripts", () => {
 			assert.doesNotMatch(readme, /Vitest V8 text/);
 		}
 		assert.match(vitestConfig, /reporter:\s*\["lcov", "json-summary"\]/);
+		assert.match(
+			vitestConfig,
+			/include:\s*\["tests\/unit\/\*\*\/\*\.test\.mjs"\]/,
+		);
+		assert.match(vitestConfig, /fileParallelism:\s*true/);
+		assert.match(vitestConfig, /pool:\s*"threads"/);
+		assert.doesNotMatch(vitestConfig, /isolate:\s*false/);
 	});
 	test("keeps the account-pool release control plane on main", async () => {
 		const packageJson = JSON.parse(await readFile("package.json", "utf8"));
