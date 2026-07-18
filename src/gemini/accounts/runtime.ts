@@ -1,17 +1,17 @@
 import type { RuntimeConfig, WorkerEnv } from "../../config";
 import type { GeminiModelCatalog, ResolvedModel } from "../../models";
 import { rotateGeminiAccountCookie } from "./cookie-rotator";
+import type { GeminiModelRoutingOverview } from "./admin-types";
+import type { GeminiAccountLease } from "./lease-types";
 import { AccountPoolService } from "./pool";
-import type { GeminiRouteTuple } from "./routes";
+import type { GeminiRouteTuple } from "./route-types";
 import { verifyGeminiAccount } from "./probe";
-import { D1GeminiAccountStore } from "./store-d1";
 import type {
-	D1DatabaseLike,
 	GeminiAccountAcquireOptions,
-	GeminiAccountLease,
 	GeminiAccountRuntimeOptions,
-	GeminiModelRoutingOverview,
-} from "./types";
+} from "./runtime-types";
+import { D1GeminiAccountStore } from "./store-d1";
+import type { D1DatabaseLike } from "./storage-types";
 
 const DEFAULT_RUNTIME_BY_DB = new WeakMap<
 	D1DatabaseLike,
@@ -58,7 +58,7 @@ export class GeminiAccountRuntime {
 	}
 }
 
-export function createGeminiAccountRuntimeFromEnv(
+function createGeminiAccountRuntimeFromEnv(
 	env: WorkerEnv | null | undefined,
 	options: GeminiAccountRuntimeOptions = {},
 ): GeminiAccountRuntime | null {

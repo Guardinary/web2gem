@@ -1,8 +1,8 @@
 import type { RuntimeConfig, WorkerEnv } from "../../config";
+import type { GeminiPublicFamily } from "../../models";
 import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
-import type { GeminiPublicFamily } from "../../models";
 import { mapWithConcurrency } from "../concurrency";
 import type { GeminiAccountAdminFilterInput } from "./admin-input";
 import {
@@ -16,34 +16,39 @@ import {
 	updateFromBody,
 	WORKER_ACCOUNT_IMPORT_MAX_ACCOUNTS,
 } from "./admin-input";
+import type {
+	GeminiAccountAdminOverview,
+	GeminiAccountAdminStore,
+	GeminiAccountBulkCreateEntry,
+	GeminiAccountBulkCreateResult,
+	GeminiAccountMutationError,
+	GeminiAccountMutationResult,
+	GeminiAccountSummary,
+	GeminiModelRoutingOverview,
+} from "./admin-types";
 import { rotateGeminiAccountCookie } from "./cookie-rotator";
-import { type GeminiRouteTuple, geminiRouteKey } from "./routes";
-import { verifyGeminiAccount } from "./probe";
+import type {
+	GeminiAccountCookieRotator,
+	GeminiAccountRefreshReason,
+} from "./lease-types";
 import {
 	identityHashFromCookie,
 	normalizeGeminiCookieHeader,
 	sha256Hex,
 } from "./normalize";
 import { AccountPoolService } from "./pool";
+import { verifyGeminiAccount } from "./probe";
+import type { GeminiAccountVerifier } from "./probe-types";
+import type { GeminiRouteTuple } from "./route-types";
+import { geminiRouteKey } from "./routes";
 import { d1BindingFromEnv } from "./runtime";
-import { D1GeminiAccountStore, isD1UniqueConstraintError } from "./store-d1";
-import type {
-	D1DatabaseLike,
-	GeminiAccountAdminOverview,
-	GeminiAccountAdminStore,
-	GeminiAccountBulkCreateEntry,
-	GeminiAccountBulkCreateResult,
-	GeminiAccountCookieRotator,
-	GeminiAccountVerifier,
-	GeminiAccountMutationError,
-	GeminiAccountMutationResult,
-	GeminiAccountRefreshReason,
-	GeminiAccountRuntimeStore,
-	GeminiAccountStore,
-	GeminiModelRoutingOverview,
-} from "./types";
+import type { GeminiAccountRuntimeStore } from "./runtime-types";
+import type { D1DatabaseLike } from "./storage-types";
+import { D1GeminiAccountStore } from "./store-d1";
 
 export { GeminiAccountAdminError } from "./admin-input";
+
+type GeminiAccountStore = GeminiAccountAdminStore & GeminiAccountRuntimeStore;
 
 export type GeminiAccountAdminServiceOptions = {
 	store?: GeminiAccountStore;
@@ -152,7 +157,6 @@ export class GeminiAccountAdminService {
 		const accounts = normalizeCreateAccounts(body, this.maxCreateAccounts);
 		const nowMs = this.nowMs();
 		const uniqueEntries = new Map<string, GeminiAccountBulkCreateEntry>();
-		const orderedCookieHashes: string[] = [];
 		for (const account of accounts) {
 			const input = createInputFromAccount(account, nowMs);
 			const cookieHash = await sha256Hex(
@@ -160,22 +164,17 @@ export class GeminiAccountAdminService {
 			);
 			const identityHash = await identityHashFromCookie(input.cookieHeader);
 			input.identityHash = identityHash;
-			orderedCookieHashes.push(cookieHash);
 			uniqueEntries.set(identityHash, { cookieHash, identityHash, input });
 		}
 
 		const entries = Array.from(uniqueEntries.values());
 		const stored = this.adminStore.createAccountsBulk
 			? await this.adminStore.createAccountsBulk(entries)
-			: await createAccountsOneByOne(this.adminStore, entries, nowMs);
-		const changed = stored.addedCookieHashes.size;
-		const result = mutationResult(orderedCookieHashes.length, changed, [], 0);
-		const createdAccountIds = entries.flatMap((entry) => {
-			if (!stored.addedCookieHashes.has(entry.cookieHash)) return [];
-			const item = stored.itemsByCookieHash.get(entry.cookieHash);
-			return item ? [item.id] : [];
-		});
-		await this.scheduleImportedAccountProbes(createdAccountIds);
+			: await createAccountsOneByOne(this.adminStore, entries);
+		const changed =
+			stored.createdAccountIds.size + stored.changedCredentialCookieHashes.size;
+		const result = mutationResult(accounts.length, changed, [], 0);
+		await this.scheduleImportedAccountProbes([...stored.createdAccountIds]);
 		return result;
 	}
 
@@ -313,7 +312,7 @@ export class GeminiAccountAdminService {
 				);
 			}
 		});
-		if (!this.cfg.execution_ctx) {
+		if (!this.cfg.execution_ctx || this.cfg.runtime_profile === "docker") {
 			await probes;
 			return;
 		}
@@ -331,33 +330,30 @@ export class GeminiAccountAdminService {
 async function createAccountsOneByOne(
 	store: GeminiAccountAdminStore,
 	entries: GeminiAccountBulkCreateEntry[],
-	nowMs: number,
 ): Promise<GeminiAccountBulkCreateResult> {
-	const itemsByCookieHash = new Map();
-	const addedCookieHashes = new Set<string>();
+	if (!store.importAccountByIdentity)
+		throw new Error(
+			"Gemini account import store requires identity import support",
+		);
+	const itemsByCookieHash = new Map<string, GeminiAccountSummary>();
+	const createdAccountIds = new Set<string>();
+	const changedCredentialCookieHashes = new Set<string>();
 	for (const entry of entries) {
-		const existing = store.findAccountByIdentityHash
-			? await store.findAccountByIdentityHash(entry.identityHash, nowMs)
-			: await store.findAccountByCookieHash(entry.cookieHash, nowMs);
-		if (existing) {
-			itemsByCookieHash.set(entry.cookieHash, existing);
-			continue;
-		}
-		try {
-			const created = await store.createAccount(entry.input);
-			itemsByCookieHash.set(entry.cookieHash, created);
-			addedCookieHashes.add(entry.cookieHash);
-		} catch (error) {
-			if (!isD1UniqueConstraintError(error)) throw error;
-			const duplicate = await store.findAccountByCookieHash(
-				entry.cookieHash,
-				nowMs,
+		const imported = await store.importAccountByIdentity(entry);
+		itemsByCookieHash.set(entry.cookieHash, imported.item);
+		if (imported.outcome === "created") createdAccountIds.add(imported.item.id);
+		else if (imported.outcome === "credentials_changed")
+			changedCredentialCookieHashes.add(entry.cookieHash);
+		else if (imported.outcome !== "unchanged")
+			throw new Error(
+				"Gemini account import store returned an invalid outcome",
 			);
-			if (!duplicate) throw error;
-			itemsByCookieHash.set(entry.cookieHash, duplicate);
-		}
 	}
-	return { itemsByCookieHash, addedCookieHashes };
+	return {
+		itemsByCookieHash,
+		createdAccountIds,
+		changedCredentialCookieHashes,
+	};
 }
 
 export function createGeminiAccountAdminServiceFromEnv(
@@ -375,7 +371,7 @@ export function createGeminiAccountAdminServiceFromEnv(
 	return createGeminiAccountAdminServiceFromD1(db, cfg, options);
 }
 
-export function createGeminiAccountAdminServiceFromD1(
+function createGeminiAccountAdminServiceFromD1(
 	db: D1DatabaseLike,
 	cfg: RuntimeConfig,
 	options: GeminiAccountAdminFactoryOptions = {},

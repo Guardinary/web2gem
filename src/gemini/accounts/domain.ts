@@ -17,14 +17,13 @@ export const GEMINI_ACCOUNT_STATES = [
 
 export type GeminiAccountState = (typeof GEMINI_ACCOUNT_STATES)[number];
 
-const ISSUE_SET = new Set<string>(GEMINI_ACCOUNT_ISSUES);
 const STATE_SET = new Set<string>(GEMINI_ACCOUNT_STATES);
 export const GEMINI_DURABLE_ACCOUNT_ISSUES = [
 	"auth",
 	"user_action",
 	"location",
 ] as const satisfies readonly GeminiAccountIssue[];
-export const GEMINI_TEMPORARY_ACCOUNT_ISSUES = [
+const GEMINI_TEMPORARY_ACCOUNT_ISSUES = [
 	"rate_limit",
 	"transient",
 ] as const satisfies readonly GeminiAccountIssue[];
@@ -35,12 +34,6 @@ const DURABLE_BLOCKING_ISSUES = new Set<GeminiAccountIssue>(
 const TEMPORARY_ISSUES = new Set<GeminiAccountIssue>(
 	GEMINI_TEMPORARY_ACCOUNT_ISSUES,
 );
-
-export function isGeminiAccountIssue(
-	value: string,
-): value is GeminiAccountIssue {
-	return ISSUE_SET.has(value);
-}
 
 export function isGeminiAccountState(
 	value: string,
@@ -54,7 +47,7 @@ export function isDurableGeminiAccountIssue(
 	return issue != null && DURABLE_BLOCKING_ISSUES.has(issue);
 }
 
-export function isTemporaryGeminiAccountIssue(
+function isTemporaryGeminiAccountIssue(
 	issue: GeminiAccountIssue | null | undefined,
 ): boolean {
 	return issue != null && TEMPORARY_ISSUES.has(issue);

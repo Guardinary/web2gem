@@ -1,13 +1,15 @@
 import type { RuntimeConfig } from "../../config";
 import { extractCookieValue } from "../cookies";
 import { normalizeGeminiCookieHeader } from "./normalize";
-import type { GeminiRouteTuple } from "./routes";
 import type {
 	GeminiAccountLease,
-	GeminiAccountModelCapability,
 	GeminiAccountRefreshResult,
-	GeminiAccountSnapshotRow,
-} from "./types";
+} from "./lease-types";
+import type {
+	GeminiAccountModelCapability,
+	GeminiRouteTuple,
+} from "./route-types";
+import type { GeminiAccountSnapshotRow } from "./runtime-types";
 
 const MAX_OBSERVED_SET_COOKIE_HEADERS = 64;
 const MAX_OBSERVED_SET_COOKIE_CHARS = 8192;
@@ -28,7 +30,6 @@ export interface PoolLeaseHost {
 
 export class PoolLease implements GeminiAccountLease {
 	readonly accountId: string;
-	readonly selectedCookieHash: string;
 	readonly selectedRoute: GeminiRouteTuple | null;
 	readonly modelCapability: GeminiAccountModelCapability | null;
 	config: RuntimeConfig;
@@ -46,7 +47,6 @@ export class PoolLease implements GeminiAccountLease {
 		selectedRoute: GeminiRouteTuple | null = null,
 	) {
 		this.accountId = row.id;
-		this.selectedCookieHash = row.cookie_hash;
 		this.modelCapability = modelCapability;
 		this.selectedRoute = selectedRoute;
 		this.cookieHeader = row.cookie_header;

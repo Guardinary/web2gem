@@ -20,7 +20,8 @@ Use this contract when changing account import, D1 account schema, Cookie refres
 ### 3. Contracts
 
 - This is a pre-release schema: edit `migrations/0001_gemini_accounts.sql` directly and reset older development databases. Do not add backfill, compatibility gates, or nullable legacy identity states.
-- Re-importing the same PSID with a changed PSIDTS updates the canonical account ID and credential version.
+- Re-importing the same PSID with a changed PSIDTS updates the canonical
+  account's credential version without replacing its ID.
 - Concurrent same-identity imports converge through the unique identity constraint and canonical re-read/upsert behavior.
 - Raw Cookies, identity hashes, Cookie hashes, RPC arrays, localized model descriptions, and raw status payloads never enter admin DTOs or logs.
 - Replace capability rows only after a complete successful probe. Failed/empty/unknown probes preserve the previous snapshot as stale.
@@ -209,6 +210,10 @@ initialization.
   `79=modelNumber`, and `80=extended ? 2 : 1`.
 - `RuntimeConfig.gemini_account.observeSetCookie(values)` is an internal
   in-memory response observer.
+- `verifyGeminiAccount({ config, level })` returns only the verification status
+  and optional bounded probe; the page-token `at` value is an internal verifier
+  input for the status RPC and is never a public result field or persisted
+  account data.
 - Account import schedules one full `refreshAccountForAdmin` for each newly
   created canonical account ID with concurrency `4`.
 

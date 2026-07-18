@@ -2,8 +2,9 @@ import type { RuntimeConfig } from "../config";
 import type { ResolvedModel } from "../models";
 import { logStage } from "../shared/logging";
 import type { ErrorWithMetadata } from "../shared/types";
-import { basicRouteForFamily, type GeminiRouteTuple } from "./accounts/routes";
-import type { GeminiAccountLease } from "./accounts/types";
+import type { GeminiAccountLease } from "./accounts/lease-types";
+import type { GeminiRouteTuple } from "./accounts/route-types";
+import { basicRouteForFamily } from "./accounts/routes";
 
 type ResolvedModelOK = Extract<ResolvedModel, { name: string }>;
 

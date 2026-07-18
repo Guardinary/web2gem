@@ -1,66 +1,14 @@
-import {
-	isGeminiProviderModelId,
-	type GeminiModelCatalogSource,
-	type GeminiPublicFamily,
-} from "../../models";
+import { type GeminiPublicFamily, isGeminiProviderModelId } from "../../models";
+import type {
+	GeminiAccountCapabilityRow,
+	GeminiAccountModelCapability,
+	GeminiCatalogRoute,
+	GeminiKnownTierLabel,
+	GeminiModelRoutePriorityRow,
+	GeminiRouteTuple,
+} from "./route-types";
 
-type AccountCapabilityRow = {
-	account_id: string;
-	model_id: string;
-	display_name: string;
-	description: string;
-	available: number;
-	capacity: number;
-	capacity_field: number;
-	model_number: number;
-	discovery_order: number;
-	checked_at_ms: number;
-};
-
-type AccountModelCapability = {
-	modelId: string;
-	displayName: string;
-	description: string;
-	available: boolean;
-	capacity: 1 | 2 | 3 | 4;
-	capacityField: 12 | 13;
-	modelNumber: number;
-	discoveryOrder: number;
-	checkedAtMs: number;
-};
-
-type ModelRoutePriorityRow = {
-	family: GeminiPublicFamily;
-	provider_model_id: string;
-	capacity: number;
-	capacity_field: number;
-	model_number: number;
-};
-
-export type GeminiRouteTuple = {
-	providerModelId: string;
-	capacity: 1 | 2 | 3 | 4;
-	capacityField: 12 | 13;
-	modelNumber: number;
-};
-
-export type GeminiInternalRoute = GeminiRouteTuple & {
-	family: GeminiPublicFamily | null;
-	displayName: string;
-	description: string;
-	available: boolean;
-	checkedAtMs: number;
-	discoveryOrder: number;
-};
-
-export type GeminiKnownTierLabel = "Basic" | "Plus" | "Advanced";
-
-export type GeminiCatalogRoute = GeminiInternalRoute &
-	GeminiModelCatalogSource & {
-		accountId: string;
-	};
-
-export const MAX_GEMINI_MODEL_NUMBER = 64;
+const MAX_GEMINI_MODEL_NUMBER = 64;
 
 const KNOWN_PROVIDER_MODELS = {
 	"9d8ca3786ebdfbea": { family: "pro", modelNumber: 3, tier: "Basic" },
@@ -107,7 +55,7 @@ const BASIC_ROUTES = {
 	},
 } as const satisfies Record<GeminiPublicFamily, GeminiRouteTuple>;
 
-export function familyForProviderModelId(
+function familyForProviderModelId(
 	providerModelId: string,
 ): GeminiPublicFamily | null {
 	return (
@@ -190,8 +138,8 @@ export function parseGeminiRouteKey(value: unknown): GeminiRouteTuple | null {
 }
 
 export function capabilityFromRow(
-	row: AccountCapabilityRow,
-): AccountModelCapability | null {
+	row: GeminiAccountCapabilityRow,
+): GeminiAccountModelCapability | null {
 	const route = {
 		providerModelId: row.model_id,
 		capacity: row.capacity,
@@ -213,9 +161,9 @@ export function capabilityFromRow(
 }
 
 export function capabilitiesByAccount(
-	rows: readonly AccountCapabilityRow[],
-): Map<string, Map<string, AccountModelCapability>> {
-	const out = new Map<string, Map<string, AccountModelCapability>>();
+	rows: readonly GeminiAccountCapabilityRow[],
+): Map<string, Map<string, GeminiAccountModelCapability>> {
+	const out = new Map<string, Map<string, GeminiAccountModelCapability>>();
 	for (const row of rows) {
 		const capability = capabilityFromRow(row);
 		if (!capability) continue;
@@ -231,7 +179,7 @@ export function capabilitiesByAccount(
 
 export function catalogRoute(
 	accountId: string,
-	capability: AccountModelCapability,
+	capability: GeminiAccountModelCapability,
 ): GeminiCatalogRoute {
 	return {
 		accountId,
@@ -249,7 +197,7 @@ export function catalogRoute(
 }
 
 export function routePrioritiesByFamily(
-	rows: readonly ModelRoutePriorityRow[],
+	rows: readonly GeminiModelRoutePriorityRow[],
 ): Map<GeminiPublicFamily, GeminiRouteTuple[]> {
 	const out = new Map<GeminiPublicFamily, GeminiRouteTuple[]>();
 	for (const row of rows) {
@@ -347,7 +295,7 @@ export function reconcileRoutePriority(
 }
 
 export function capabilityMatchesRoute(
-	capability: AccountModelCapability,
+	capability: GeminiAccountModelCapability,
 	route: GeminiRouteTuple,
 ): boolean {
 	return (

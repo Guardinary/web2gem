@@ -1,18 +1,19 @@
-import { isRecord, type UnknownRecord } from "../../shared/types";
 import type { GeminiPublicFamily } from "../../models";
-import { boundedGeminiAccountPageLimit, isGeminiAccountState } from "./domain";
-import {
-	type GeminiRouteTuple,
-	geminiRouteKey,
-	isGeminiRouteTuple,
-} from "./routes";
+import { isRecord, type UnknownRecord } from "../../shared/types";
 import type {
 	GeminiAccountAdminFilter,
 	GeminiAccountBulkAction,
 	GeminiAccountCreateInput,
-	GeminiAccountState,
 	GeminiAccountUpdate,
-} from "./types";
+} from "./admin-types";
+import {
+	boundedGeminiAccountPageLimit,
+	type GeminiAccountState,
+	isGeminiAccountState,
+} from "./domain";
+import { cleanAccountString } from "./normalize";
+import type { GeminiRouteTuple } from "./route-types";
+import { geminiRouteKey, isGeminiRouteTuple } from "./routes";
 
 const SAFE_CREATE_KEYS = new Set([
 	"provider",
@@ -241,7 +242,7 @@ export function normalizeCreateAccounts(
 ): UnknownRecord[] {
 	if (
 		Array.isArray(body.tokens) &&
-		body.tokens.some((token) => cleanOptionalString(token))
+		body.tokens.some((token) => cleanAccountString(token))
 	) {
 		throw dualCookieOnlyError();
 	}
@@ -302,7 +303,7 @@ export function createInputFromAccount(
 		cookieHeader: `__Secure-1PSID=${psid}; __Secure-1PSIDTS=${psidts}`,
 		nowMs,
 	};
-	const label = cleanOptionalString(item.label);
+	const label = cleanAccountString(item.label);
 	if (label) input.label = label;
 	return input;
 }
@@ -343,9 +344,9 @@ export function normalizeListFilter(
 	const normalized: GeminiAccountAdminFilter = {
 		limit: boundedGeminiAccountPageLimit(filter.limit),
 	};
-	const cursor = cleanOptionalString(filter.cursor);
+	const cursor = cleanAccountString(filter.cursor);
 	if (cursor) normalized.cursor = cursor.slice(0, 200);
-	const q = cleanOptionalString(filter.q);
+	const q = cleanAccountString(filter.q);
 	if (q) normalized.q = q.slice(0, 200);
 	const state = normalizeState(filter.state);
 	if (state) normalized.state = state;
@@ -396,7 +397,7 @@ function cleanRequiredString(value: unknown, name: string): string {
 			"gemini_import_invalid_field_type",
 			`${name} must be a string`,
 		);
-	const text = cleanOptionalString(value);
+	const text = cleanAccountString(value);
 	if (!text)
 		throw new GeminiAccountAdminError(
 			400,
@@ -404,14 +405,6 @@ function cleanRequiredString(value: unknown, name: string): string {
 			`${name} is required`,
 		);
 	return text;
-}
-
-function cleanOptionalString(value: unknown): string {
-	return String(value ?? "")
-		.trim()
-		.replace(/^['"]|['"]$/g, "")
-		.replace(/;+$/g, "")
-		.trim();
 }
 
 function optionalInputString(value: unknown, name: string): string {
@@ -422,7 +415,7 @@ function optionalInputString(value: unknown, name: string): string {
 			"invalid_admin_field_type",
 			`${name} must be a string`,
 		);
-	return cleanOptionalString(value);
+	return cleanAccountString(value);
 }
 
 function nullableInputString(value: unknown, name: string): string | null {
@@ -456,7 +449,7 @@ function validateBareCookieValue(value: string): void {
 }
 
 function normalizeState(value: unknown): GeminiAccountState | undefined {
-	const text = cleanOptionalString(value);
+	const text = cleanAccountString(value);
 	if (!text) return undefined;
 	if (!isGeminiAccountState(text))
 		throw new GeminiAccountAdminError(

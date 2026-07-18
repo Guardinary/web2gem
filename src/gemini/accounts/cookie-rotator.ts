@@ -1,10 +1,8 @@
 import type { RuntimeConfig } from "../../config";
 import { GEMINI_WEB_USER_AGENT } from "../constants";
 import { httpFetch } from "../transport";
-import type {
-	GeminiAccountRotateResponse,
-	GeminiAccountSecretRow,
-} from "./types";
+import type { GeminiAccountRotateResponse } from "./lease-types";
+import type { GeminiAccountSecretRow } from "./storage-types";
 
 export async function rotateGeminiAccountCookie(input: {
 	config: RuntimeConfig;

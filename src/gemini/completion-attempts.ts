@@ -12,10 +12,8 @@ import type { ErrorWithMetadata } from "../shared/types";
 import { classifyGeminiAccountOutcome } from "./accounts/classify";
 import { basicRouteForFamily } from "./accounts/routes";
 import type { GeminiAccountRuntime } from "./accounts/runtime";
-import type {
-	GeminiAccountLease,
-	GeminiAccountRouteRequirement,
-} from "./accounts/types";
+import type { GeminiAccountLease } from "./accounts/lease-types";
+import type { GeminiAccountRouteRequirement } from "./accounts/runtime-types";
 import type { UploadReplayState } from "./upload-replay";
 
 type ResolvedModelOK = Extract<ResolvedModel, { name: string }>;

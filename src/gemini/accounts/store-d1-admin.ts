@@ -7,10 +7,10 @@ import {
 import type {
 	GeminiAccountAdminFilter,
 	GeminiAccountAdminStats,
-	GeminiAccountIssue,
 	GeminiAccountSummary,
 	GeminiAccountSummaryPage,
-} from "./types";
+} from "./admin-types";
+import type { GeminiAccountIssue } from "./domain";
 
 export const ADMIN_ACCOUNT_SELECT = `
   id, label, enabled, issue, cooldown_until_ms, last_issue_at_ms,

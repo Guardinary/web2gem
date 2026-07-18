@@ -13,8 +13,14 @@ import {
 	parseCookieHeader,
 	setCookieHeaders,
 } from "../cookies";
+import type { GeminiModelRoutingOverview } from "./admin-types";
 import { classifyGeminiAccountOutcome } from "./classify";
 import { createAccountRuntimeConfig, PoolLease } from "./lease";
+import type {
+	GeminiAccountCookieRotator,
+	GeminiAccountLease,
+	GeminiAccountRefreshResult,
+} from "./lease-types";
 import {
 	identityHashFromCookie,
 	normalizeGeminiCookieHeader,
@@ -34,29 +40,29 @@ import {
 	positiveIntOption,
 } from "./pool-state";
 import { verifyGeminiAccount } from "./probe";
+import type {
+	GeminiAccountVerificationLevel,
+	GeminiAccountVerifier,
+} from "./probe-types";
+import type {
+	GeminiAccountCapabilityRow,
+	GeminiAccountModelCapability,
+	GeminiRouteTuple,
+} from "./route-types";
 import {
 	capabilitiesByAccount,
-	type GeminiRouteTuple,
 	reconcileRoutePriority,
 	routePrioritiesByFamily,
 	uniqueRouteTuples,
 } from "./routes";
 import type {
 	GeminiAccountAcquireOptions,
-	GeminiAccountCapabilityRow,
-	GeminiAccountCookieRotator,
-	GeminiAccountLease,
-	GeminiAccountModelCapability,
 	GeminiAccountOutcome,
-	GeminiAccountRefreshResult,
 	GeminiAccountRuntimeOptions,
 	GeminiAccountRuntimeStore,
-	GeminiAccountSecretRow,
 	GeminiAccountSnapshotRow,
-	GeminiAccountVerificationLevel,
-	GeminiAccountVerifier,
-	GeminiModelRoutingOverview,
-} from "./types";
+} from "./runtime-types";
+import type { GeminiAccountSecretRow } from "./storage-types";
 
 const DEFAULT_SNAPSHOT_TTL_MS = 30 * 1000;
 const DEFAULT_VERSION_PROBE_TTL_MS = 1 * 1000;
@@ -477,7 +483,6 @@ export class AccountPoolService {
 						response.status === 401 || response.status === 403
 							? "rotation_rejected"
 							: "rotation_failed",
-					upstreamStatus: response.status,
 				};
 			}
 			const nextCookieHeader = normalizeGeminiCookieHeader(
@@ -496,7 +501,6 @@ export class AccountPoolService {
 				return {
 					changed: false,
 					reason: "rotation_failed",
-					upstreamStatus: response.status,
 				};
 			}
 			const nextCookieHash = await sha256Hex(nextCookieHeader);
@@ -528,7 +532,6 @@ export class AccountPoolService {
 				return {
 					changed: false,
 					reason: "rotation_duplicate",
-					upstreamStatus: response.status,
 				};
 			}
 			lease.updateCookie(nextCookieHeader, nextCookieHash, nowMs, nextConfig);
@@ -561,7 +564,6 @@ export class AccountPoolService {
 					return {
 						changed: writeback.changed,
 						reason: "status_restricted",
-						statusCode: verification.probe.statusCode,
 					};
 				}
 				await this.markSuccess(lease.accountId, nowMs);
@@ -569,7 +571,6 @@ export class AccountPoolService {
 			return {
 				changed: writeback.changed,
 				reason: writeback.changed ? "rotation_updated" : "rotation_no_update",
-				upstreamStatus: response.status,
 			};
 		} catch (error) {
 			if (recordFailure)

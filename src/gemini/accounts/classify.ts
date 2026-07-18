@@ -1,4 +1,4 @@
-import type { GeminiAccountOutcome } from "./types";
+import type { GeminiAccountOutcome } from "./runtime-types";
 
 const AUTH_STATUSES = new Set([401, 403]);
 const RATE_LIMIT_STATUSES = new Set([402, 429]);

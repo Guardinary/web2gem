@@ -1,4 +1,7 @@
-import type { GeminiAccountOutcome, GeminiAccountSnapshotRow } from "./types";
+import type {
+	GeminiAccountOutcome,
+	GeminiAccountSnapshotRow,
+} from "./runtime-types";
 
 export type AccountRuntimeState = {
 	cookieHeader: string;

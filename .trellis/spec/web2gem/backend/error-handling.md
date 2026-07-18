@@ -167,8 +167,8 @@ Use this contract when changing managed-account Cookie rotation, `/app` token fe
 
 - `getFreshPageTokensForConfig(cfg)` always fetches `/app`; it never reads the ten-minute page-token cache.
 - Account verification level is `session|status`.
-- `verifyGeminiAccount({ config, level })` returns fresh `at` and optionally a bounded `GeminiAccountProbe`.
-- `GeminiAccountProbe` contains derived `statusCode`, mapped `issue`, `selectable`, and bounded normalized model capability rows.
+- `verifyGeminiAccount({ config, level })` returns verification status and optionally a bounded `GeminiAccountProbe`.
+- `GeminiAccountProbe` contains derived `statusCode`, mapped `issue`, and bounded normalized model capability rows.
 
 ### 3. Contracts
 

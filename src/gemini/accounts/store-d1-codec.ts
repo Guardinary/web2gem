@@ -1,15 +1,12 @@
 import { uuid } from "../../shared/crypto";
+import type { GeminiAccountCreateInput } from "./admin-types";
 import {
 	changedRows,
 	identityHashFromCookie,
 	normalizeGeminiCookieHeader,
 	sha256Hex,
 } from "./normalize";
-import type {
-	D1Result,
-	GeminiAccountCreateInput,
-	GeminiAccountRow,
-} from "./types";
+import type { D1Result, GeminiAccountRow } from "./storage-types";
 
 export const ACCOUNT_INSERT_COLUMNS = [
 	"id",
@@ -31,7 +28,7 @@ export const ACCOUNT_INSERT_COLUMNS = [
 	"updated_at_ms",
 ] as const satisfies readonly (keyof GeminiAccountRow)[];
 
-export const ACCOUNT_INSERT_SQL = `
+const ACCOUNT_INSERT_SQL = `
   INSERT INTO gemini_accounts (${ACCOUNT_INSERT_COLUMNS.join(", ")})
   VALUES (${ACCOUNT_INSERT_COLUMNS.map(() => "?").join(", ")})
 `;
@@ -42,6 +39,7 @@ export const ACCOUNT_UPSERT_IDENTITY_SQL = `${ACCOUNT_INSERT_SQL}
 		cookie_header = excluded.cookie_header,
 		cookie_hash = excluded.cookie_hash,
 		updated_at_ms = excluded.updated_at_ms
+	WHERE gemini_accounts.cookie_hash <> excluded.cookie_hash
 `;
 
 export async function buildAccountInsertRow(

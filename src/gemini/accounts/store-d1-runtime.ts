@@ -4,29 +4,34 @@ import {
 	GEMINI_DURABLE_ACCOUNT_ISSUES,
 } from "./domain";
 import { normalizeGeminiCookieHeader, sha256Hex } from "./normalize";
-import {
-	type GeminiRouteTuple,
-	geminiRouteKey,
-	isGeminiRouteTuple,
-} from "./routes";
-import { isD1UniqueConstraintError, resultChanged } from "./store-d1-codec";
+import type { GeminiAccountProbe } from "./probe-types";
+import type {
+	GeminiAccountCapabilityRow,
+	GeminiModelRoutePriorityRow,
+	GeminiRouteTuple,
+} from "./route-types";
+import { geminiRouteKey, isGeminiRouteTuple } from "./routes";
+import type {
+	GeminiAccountOutcome,
+	GeminiAccountSnapshotRow,
+	GeminiRefreshedCookieWrite,
+	GeminiRefreshedCookieWriteResult,
+} from "./runtime-types";
 import type {
 	D1DatabaseLike,
 	D1PreparedStatementLike,
 	D1Result,
-	GeminiAccountCapabilityRow,
-	GeminiAccountOutcome,
-	GeminiAccountProbe,
 	GeminiAccountRow,
 	GeminiAccountSecretRow,
-	GeminiAccountSnapshotRow,
-	GeminiModelRoutePriorityRow,
-	GeminiRefreshedCookieWrite,
-	GeminiRefreshedCookieWriteResult,
-} from "./types";
+} from "./storage-types";
+import { isD1UniqueConstraintError, resultChanged } from "./store-d1-codec";
 
 const POOL_VERSION_KEY = "pool_version";
 const MAX_D1_BOUND_PARAMETERS = 100;
+const ACCOUNT_CAPABILITY_SELECT = `
+  account_id, model_id, display_name, description, available,
+  capacity, capacity_field, model_number, discovery_order, checked_at_ms
+`;
 
 export abstract class D1GeminiAccountRuntimeStore {
 	constructor(protected readonly db: D1DatabaseLike) {}
@@ -47,7 +52,7 @@ export abstract class D1GeminiAccountRuntimeStore {
 		const result = await this.db
 			.prepare(`
       SELECT id, enabled, cookie_header, cookie_hash, issue,
-				 cooldown_until_ms, last_used_at_ms, status_checked_at_ms,
+				 cooldown_until_ms, last_used_at_ms,
 				 last_refresh_success_at_ms
       FROM gemini_accounts
       WHERE enabled = 1
@@ -225,9 +230,8 @@ export abstract class D1GeminiAccountRuntimeStore {
 		const placeholders = uniqueIds.map(() => "?").join(", ");
 		const result = await this.db
 			.prepare(`
-        SELECT account_id, model_id, display_name, description, available,
-               capacity, capacity_field, model_number, discovery_order, checked_at_ms
-        FROM gemini_account_models
+						SELECT ${ACCOUNT_CAPABILITY_SELECT}
+						FROM gemini_account_models
         WHERE account_id IN (${placeholders})
 				ORDER BY account_id ASC, discovery_order ASC
       `)
@@ -242,9 +246,8 @@ export abstract class D1GeminiAccountRuntimeStore {
 		const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 12800);
 		const result = await this.db
 			.prepare(`
-        SELECT account_id, model_id, display_name, description, available,
-               capacity, capacity_field, model_number, discovery_order, checked_at_ms
-        FROM gemini_account_models
+						SELECT ${ACCOUNT_CAPABILITY_SELECT}
+						FROM gemini_account_models
         ORDER BY checked_at_ms DESC, account_id ASC, discovery_order ASC
 				LIMIT ?
       `)
@@ -385,10 +388,30 @@ export abstract class D1GeminiAccountRuntimeStore {
 	protected async getAccountRow(
 		accountId: string,
 	): Promise<GeminiAccountRow | null> {
-		return this.db
-			.prepare("SELECT * FROM gemini_accounts WHERE id = ? LIMIT 1")
-			.bind(accountId)
-			.first<GeminiAccountRow>();
+		return (await this.getAccountRowsByIds([accountId]))[0] || null;
+	}
+
+	protected async getAccountRowsByIds(
+		accountIds: readonly string[],
+	): Promise<GeminiAccountRow[]> {
+		if (!accountIds.length) return [];
+		if (accountIds.length === 1) {
+			const row = await this.db
+				.prepare("SELECT * FROM gemini_accounts WHERE id = ? LIMIT 1")
+				.bind(accountIds[0])
+				.first<GeminiAccountRow>();
+			return row ? [row] : [];
+		}
+		const placeholders = accountIds.map(() => "?").join(", ");
+		const result = await this.db
+			.prepare(`SELECT * FROM gemini_accounts WHERE id IN (${placeholders})`)
+			.bind(...accountIds)
+			.all<GeminiAccountRow>();
+		const byId = new Map((result.results || []).map((row) => [row.id, row]));
+		return accountIds.flatMap((id) => {
+			const row = byId.get(id);
+			return row ? [row] : [];
+		});
 	}
 
 	protected async runMutationWithPoolVersion(
@@ -417,17 +440,29 @@ export abstract class D1GeminiAccountRuntimeStore {
 		nowMs: number,
 		condition = "",
 		conditionValues: readonly unknown[] = [],
+		options: {
+			prefix?: string;
+			prefixValues?: readonly unknown[];
+			returning?: string;
+		} = {},
 	): D1PreparedStatementLike {
 		return this.db
 			.prepare(`
+			${options.prefix || ""}
       INSERT INTO gemini_pool_meta (key, value, updated_at_ms)
       SELECT ?, '1', ?
       ${condition}
       ON CONFLICT(key) DO UPDATE SET
         value = CAST(CAST(gemini_pool_meta.value AS INTEGER) + 1 AS TEXT),
         updated_at_ms = MAX(gemini_pool_meta.updated_at_ms, excluded.updated_at_ms)
+      ${options.returning || ""}
     `)
-			.bind(POOL_VERSION_KEY, nowMs, ...conditionValues);
+			.bind(
+				...(options.prefixValues || []),
+				POOL_VERSION_KEY,
+				nowMs,
+				...conditionValues,
+			);
 	}
 
 	private async findAccountIdByCookieHash(

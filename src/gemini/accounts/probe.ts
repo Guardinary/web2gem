@@ -17,7 +17,7 @@ import type {
 	GeminiAccountProbe,
 	GeminiAccountVerificationLevel,
 	GeminiAccountVerificationResult,
-} from "./types";
+} from "./probe-types";
 
 const GET_USER_STATUS_RPC_ID = "otAQ7b";
 const MAX_PROBE_RESPONSE_CHARS = 512 * 1024;
@@ -32,10 +32,10 @@ export async function verifyGeminiAccount(input: {
 	const tokens = await getFreshPageTokensForConfig(input.config);
 	const at = typeof tokens.at === "string" ? tokens.at.trim() : "";
 	if (!at) return { ok: false, reason: "missing_page_at_token" };
-	if (input.level === "session") return { ok: true, at };
+	if (input.level === "session") return { ok: true };
 	try {
 		const probe = await fetchGeminiAccountProbe(input.config, at);
-		return { ok: true, at, probe };
+		return { ok: true, probe };
 	} catch (error) {
 		log(
 			input.config,
@@ -45,7 +45,7 @@ export async function verifyGeminiAccount(input: {
 	}
 }
 
-export async function fetchGeminiAccountProbe(
+async function fetchGeminiAccountProbe(
 	cfg: RuntimeConfig,
 	at: string,
 ): Promise<GeminiAccountProbe> {
@@ -113,7 +113,6 @@ export function decodeGeminiAccountProbe(raw: unknown): GeminiAccountProbe {
 		return {
 			statusCode,
 			issue: status.issue,
-			selectable: status.selectable,
 			models,
 		};
 	}
@@ -122,13 +121,13 @@ export function decodeGeminiAccountProbe(raw: unknown): GeminiAccountProbe {
 
 function accountStatus(
 	statusCode: number,
-): { issue: GeminiAccountIssue | null; selectable: boolean } | null {
-	if (statusCode === 1000) return { issue: null, selectable: true };
-	if (statusCode === 1014) return { issue: "transient", selectable: false };
-	if (statusCode === 1016) return { issue: "auth", selectable: false };
+): { issue: GeminiAccountIssue | null } | null {
+	if (statusCode === 1000) return { issue: null };
+	if (statusCode === 1014) return { issue: "transient" };
+	if (statusCode === 1016) return { issue: "auth" };
 	if ([1021, 1033, 1040, 1042, 1054, 1057].includes(statusCode))
-		return { issue: "user_action", selectable: false };
-	if (statusCode === 1060) return { issue: "location", selectable: false };
+		return { issue: "user_action" };
+	if (statusCode === 1060) return { issue: "location" };
 	return null;
 }
 

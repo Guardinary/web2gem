@@ -596,8 +596,12 @@ D1 insert/query shape, pool-version updates, or Worker/Docker import behavior.
 ### 2. Signatures
 
 - `GeminiAccountAdminStore.createAccountsBulk?(entries)` accepts unique
-  `{ cookieHash, input }` entries and returns `itemsByCookieHash` plus
-  `addedCookieHashes`.
+  `{ cookieHash, identityHash, input }` entries and returns canonical
+  `itemsByCookieHash`, `createdAccountIds`, and
+  `changedCredentialCookieHashes` as separate facts.
+- `GeminiAccountAdminStore.importAccountByIdentity?(entry)` is the required
+  one-by-one primitive when the bulk method is absent. It returns one canonical
+  item and an explicit `created | credentials_changed | unchanged` outcome.
 - `D1GeminiAccountStore.createAccountsBulk(entries)` is the native D1 owner.
 - `normalizeCreateAccounts(body, maxAccounts)` enforces the runtime-specific
   account-count ceiling before cookie hashing or store access.
@@ -607,28 +611,59 @@ D1 insert/query shape, pool-version updates, or Worker/Docker import behavior.
 ### 3. Contracts
 
 - Workers accept at most 40 accounts per admin import. A 40-account all-new
-  import uses 40 conflict-ignoring insert statements, one hash lookup query, and
-  one conditional pool-version update: 42 D1 queries total.
+  import uses 40 identity-conflict-aware upsert statements, one canonical
+  identity lookup query, and one conditional pool-version update: 42 D1
+  statements total.
 - Docker has no account-count ceiling. It remains bounded by the shared 256 KiB
   admin request-body limit, writes accounts in transactional groups of at most
-  40, and reconstructs imported rows in chunks of at most 100 cookie-hash bind
-  parameters.
+  40, and reconstructs canonical rows in chunks of at most 100 identity-hash
+  bind parameters.
 - The Docker distinction is request-local adapter metadata, not a public
   environment variable or user-controlled HTTP header.
-- Normalize and hash each input, collapse duplicate cookie hashes before store
-  access, then project sanitized items back into original input order.
-- D1 inserts use `ON CONFLICT(cookie_hash) DO NOTHING`; a duplicate cookie must
-  not roll back unrelated inserts in the same native batch.
+- Normalize and hash each input, collapse duplicate identity hashes before store
+  access, and retain the original input count for the compact mutation result.
+- D1 imports use `ON CONFLICT(identity_hash) DO UPDATE` with a
+  credential-hash change predicate; a duplicate full Cookie under another
+  identity remains a unique-constraint error and is never merged silently. A
+  native batch rolls its leading version write and every account upsert in that
+  group back together when any statement fails.
 - Native Worker D1 and Docker's HTTP adapter use `db.batch(statements)`.
   D1-compatible adapters without `batch` execute the same prepared statements
-  sequentially and publish one post-reconstruction version increment when rows
-  were added.
-- Determine added rows by matching the prepared row ID with the post-insert row
-  selected by cookie hash. A transactional group appends one conditional version
-  statement whose `EXISTS` predicate checks those generated IDs. All-conflict
-  groups execute the condition but do not change `pool_version`.
-- Stores without `createAccountsBulk` retain the bounded compatibility path;
-  Worker validation still caps that path before hashing or store calls.
+  sequentially.
+- In a native batch, the conditional `pool_version` statement is the first
+  statement. Under the D1 write transaction it counts which requested
+  `(identity_hash, cookie_hash)` pairs already exist before the upserts; it
+  publishes once when that count is short, then the identity upserts execute in
+  the same transaction. This prevents concurrent stale-snapshot double bumps
+  and rolls the version write back if an upsert fails. The JSON CTE uses three
+  binds for the leading statement: the serialized identity/cookie pair list,
+  the `pool_version` key, and `nowMs`; pair values are not expanded into
+  individual placeholders, so the 40-row group remains below D1's parameter
+  limit.
+- The leading statement's `RETURNING preexisting_ids` payload records the
+  identity-to-canonical-ID state before the following upserts. Use that
+  prestate together with each upsert's changed-row metadata to classify
+  `created` versus `credentials_changed`; after the batch, re-read canonical
+  rows by stable identity. Do not infer mutations from final Cookie hashes,
+  timestamps, or candidate-ID equality: an unchanged re-import may share the
+  request clock and a changed identity must retain its canonical ID.
+- D1-compatible adapters without `batch` preflight identities, execute upserts
+  sequentially, and publish one version increment after inspecting real
+  changed-row results; this fallback is not a cross-statement transaction and
+  recovers canonical rows by stable identity after each import.
+- Every import statement must report a recognized non-negative changed-row
+  count in D1 metadata. An adapter that omits this metadata fails explicitly;
+  import classification must not apply the generic mutation fallback that
+  assumes an unknown result changed one row.
+- A changed upsert with an absent pre-upsert identity is `created`; a changed
+  upsert with an existing pre-upsert identity is `credentials_changed`. A
+  zero-change upsert is `unchanged`. The canonical identity ID is never
+  replaced.
+- Stores without `createAccountsBulk` must implement
+  `importAccountByIdentity`; missing capability or an unknown outcome fails
+  explicitly instead of falling back to cookie-hash preflight/create behavior.
+  Worker validation still applies the same count cap before hashing or store
+  calls.
 - The built-in admin UI submits the full import first. It retries sequentially
   in groups of 40 only after HTTP 413
   `gemini_import_account_limit_exceeded`; direct API callers retain the explicit
@@ -643,21 +678,26 @@ D1 insert/query shape, pool-version updates, or Worker/Docker import behavior.
 - Admin UI payload with more than 40 accounts on Worker -> one rejected full
   request followed by ordered requests of at most 40; merge successful results.
 - Admin UI import with any other error -> no automatic retry.
-- Existing, repeated-in-payload, or concurrently inserted cookie -> sanitized
-  duplicate item, increment `skipped` and `duplicates`.
-- All rows in a group conflict -> conditional version statement changes zero rows.
-- Mixed new/conflicting rows -> add independent new rows and increment the pool
-  version once for that changed group.
-- Post-insert cookie-hash lookup lacks an expected row -> fail with a generic
+- Existing identity with the same credential -> canonical unchanged item, no
+  compact changed count, no pool-version publish, and no import probe.
+- Existing identity with a new credential -> preserve canonical ID, update the
+  credential, increment compact changed once, publish the group version once,
+  and do not schedule an import probe.
+- Concurrent same-identity imports -> exactly one mutation outcome; every caller
+  re-reads the same canonical identity row.
+- Post-import identity lookup lacks an expected row -> fail with a generic
   internal admin error; never include Cookie values or hashes in the response.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: 40 Worker inserts run through one `batch()` call and stay at 42 queries.
-- Good: 101 Docker imports use three transactional insert groups plus two
+- Good: 40 Worker imports run through one 41-statement `batch()` call (the
+  leading conditional version statement plus 40 upserts) and one canonical
+  identity read: 42 D1 statements total.
+- Good: 101 Docker imports use three bounded upsert groups plus two
   100-parameter-bounded reconstruction queries.
-- Base: duplicate input positions return the same sanitized account item while
-  only the first newly inserted position contributes to `added`.
+- Base: duplicate input identities collapse before storage; original input count
+  still drives compact `processed`, while only a real creation or credential
+  rotation contributes to `changed`.
 - Bad: perform `findAccountByCookieHash` plus `createAccount` plus a version bump
   for every D1-backed input.
 - Bad: apply the 40-account Worker ceiling to Docker or expose a public runtime
@@ -665,17 +705,24 @@ D1 insert/query shape, pool-version updates, or Worker/Docker import behavior.
 
 ### 6. Tests Required
 
-- Assert 40 all-new Worker accounts produce one native batch, 42 recorded D1
-  statements, and one pool-version update.
+- Assert 40 all-new Worker accounts produce one native 41-statement batch, 42
+  recorded D1 statements, and one pool-version update.
 - Assert 41 Worker accounts fail before any D1 statement.
 - Assert the Docker adapter marks its execution context and a 101-account Docker
   import uses three batches, three version increments, and two reconstruction
   queries.
-- Assert a compatibility D1-like adapter without `batch` still imports accounts
-  and increments once after reconstruction.
-- Assert mixed existing/new/in-payload duplicates preserve order and counts.
-- Assert an all-duplicate batch does not update the pool version.
-- Assert a store without bulk capability preserves compatibility semantics.
+- Assert a D1-like adapter without `batch` still imports accounts and increments
+  once per changed group.
+- Assert missing or malformed changed-row metadata fails explicitly instead of
+  classifying an unchanged import as a credential change.
+- Assert mixed existing/new/in-payload identities preserve compact counts and
+  canonical mappings.
+- Assert all-unchanged imports do not update the pool version even when the
+  stored `updated_at_ms` equals the import clock.
+- Assert concurrent same-identity batches serialize their leading pair-count
+  predicate so only the first mutation publishes a version.
+- Assert a store without bulk capability requires the explicit identity import
+  primitive and validates its three-state outcome.
 - Assert the admin UI retries only the stable Worker limit error in ordered
   40-account chunks, keeps Docker to one request, and preserves merged items.
 - Search complete response JSON for Cookie/session fragments and run
@@ -700,10 +747,8 @@ for (const input of inputs) {
 const entries = Array.from(uniqueEntries.values());
 const stored = this.adminStore.createAccountsBulk
   ? await this.adminStore.createAccountsBulk(entries)
-  : await createAccountsCompatibility(this.adminStore, entries);
-for (const cookieHash of orderedCookieHashes) {
-  items.push(stored.itemsByCookieHash.get(cookieHash));
-}
+  : await createAccountsOneByOne(this.adminStore, entries);
+await this.scheduleImportedAccountProbes([...stored.createdAccountIds]);
 ```
 
 ## Scenario: Account-aware Gemini Provider Lease And Caches

@@ -1,4 +1,4 @@
-import type { GeminiRouteTuple } from "../accounts/routes";
+import type { GeminiRouteTuple } from "../accounts/route-types";
 import { isGeminiRouteTuple } from "../accounts/routes";
 
 export const GEMINI_MODEL_HEADER_KEY = "x-goog-ext-525001261-jspb";
