@@ -26,8 +26,8 @@ type ContentPushUploadTokens = {
 
 const GEMINI_UPLOAD_USER_AGENT = GEMINI_WEB_USER_AGENT;
 const GEMINI_PUSH_ID_CACHE_TTL_SEC = 12 * 60 * 60;
-export let _pageTokens: PageTokenCache = { key: "", tokens: null, ts: 0 };
-export let _pageTokensPending: PageTokenPending = { key: "", promise: null };
+let _pageTokens: PageTokenCache = { key: "", tokens: null, ts: 0 };
+let _pageTokensPending: PageTokenPending = { key: "", promise: null };
 
 const PAGE_TOKEN_CACHE_TTL_MS = 600000;
 const EMPTY_PAGE_TOKEN_CACHE_TTL_MS = 30000;
@@ -50,7 +50,7 @@ export async function getPageTokens(cfg: RuntimeConfig): Promise<PageTokens> {
 	return getPageTokensForConfig(activeCfg);
 }
 
-export async function getPageTokensForConfig(
+async function getPageTokensForConfig(
 	activeCfg: RuntimeConfig,
 ): Promise<PageTokens> {
 	const now = Date.now();

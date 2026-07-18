@@ -10,6 +10,7 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 
 - `httpFetch(url, { method, headers, body, bodyLength, timeoutMs, socket, signal, cfg, acceptCompressed })` is the unified upstream entrypoint.
 - `socketHttp(connect, url, { method, headers, body, bodyLength, timeoutMs, signal, keepAlive, pool, acceptCompressed })` owns HTTP/1.1 over `cloudflare:sockets`.
+- `resolveSocketCompression(acceptCompressed)` constructs one request-local contract containing the advertised encoding and, only when supported and requested, the gzip decoder used for that response.
 - `createSocketPool()`, `getDefaultSocketPool()`, and `closeIdleSocketPool(pool?)` own reusable idle sockets.
 - `parseHttpChunkSizeLine(line: Uint8Array)` returns a safe integer chunk size or `-1`.
 
@@ -20,6 +21,7 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 - Errors with upstream response metadata, such as `upstreamStatus`, must not fall back because the request may already have reached Gemini.
 - `httpFetch` defaults socket `acceptCompressed` to `true` for `GET` and `false` for other methods unless explicitly provided.
 - `socketHttp` sends `Accept-Encoding: gzip` only when `acceptCompressed` is true and `DecompressionStream("gzip")` is supported. Otherwise it sends `identity`.
+- Resolve compression once before writing request headers. Missing, non-callable, or rejecting `DecompressionStream` constructors produce an identity contract; response decoding must use the same resolved contract rather than probing capability again.
 - Streaming request bodies must provide a safe integer `bodyLength`. Socket transport uses it for `Content-Length` and writes chunks sequentially; fetch transport may use fixed-length Worker streams.
 - Socket fallback with a streaming request body is allowed only before socket transport starts reading the body stream. Once the body stream has been read or written, do not retry through `fetch` because the body is no longer safely replayable.
 - When a supported gzip response is decoded, remove `content-encoding` and `content-length` from the response headers exposed to callers.
@@ -36,12 +38,13 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 - `signal.aborted` or socket abort error -> throw abort, no fallback.
 - `acceptCompressed=true`, gzip support present, gzip response -> caller sees decompressed body and no compression headers.
 - `acceptCompressed=true`, gzip support absent -> request advertises `identity`; a gzip response remains raw.
+- `acceptCompressed=false`, unsolicited gzip response -> response bytes and `content-encoding` / `content-length` remain unchanged.
 - Chunk size line `5;foo=bar` -> parse as `5`.
 - Chunk size line `a ;ext=1`, `Z`, or an unsafe integer -> stream error with `socket: invalid chunk size`.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: add a new response parser behavior in `socket.ts` and cover both split-buffer and normal-buffer reads.
+- Good: pass one resolved compression contract from request-header construction to response-body handling, then cover both supported decoding and raw-response paths.
 - Base: socket transport preserves method, headers, body, timeout, auth cookies, model selection, and file references when falling back through `httpFetch`.
 - Bad: fall back to anonymous or header-stripped fetch after a socket failure.
 - Bad: send `Accept-Encoding: gzip` from socket code when the runtime cannot build a gzip `DecompressionStream`.
@@ -51,7 +54,8 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 
 - Unit test `parseHttpChunkSizeLine` for valid extensions, invalid hex, whitespace edge cases, and unsafe sizes.
 - Unit test socket gzip decoding when `CompressionStream` and `DecompressionStream` are present.
-- Unit test unsupported decompression behavior by patching `DecompressionStream` away.
+- Unit test unsupported decompression behavior by patching `DecompressionStream` away and by using a constructor that rejects gzip.
+- Unit test unsolicited gzip with `acceptCompressed=false` and assert raw bytes plus both compression headers remain intact.
 - Unit test keep-alive reuse and expiry/cap behavior after changing socket pooling.
 - Unit test a long chunk extension split across one-byte queue pushes and assert the parsed size plus remaining body bytes.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke` after changing transport fallback or socket response parsing.
@@ -986,12 +990,14 @@ Use this contract when changing request-local attachment materialization, dedupl
 
 - `mapWithConcurrencyAndWeight(items, concurrency, maxWeight, weightOf, mapper)` preserves input ordering while limiting item count and aggregate active weight.
 - Attachment uploads use four workers and a 32 MiB normal in-flight materialized-byte budget.
+- `AttachmentExecutionState` owns request-local completed/pending/inline maps and unique counters; `resolveAttachmentCandidate(...)` owns materialization and authenticated/anonymous policy; `aggregateAttachmentResults(...)` owns ordered partitions, per-reference bytes, prompt notes, usage, logs, and stage telemetry.
 
 ### 3. Contracts
 
 - Hash `materialized.bytes` directly; never prepend metadata into a payload-sized temporary buffer.
 - Include normalized MIME and filename alongside the payload digest.
 - Preserve pending-promise deduplication and result ordering.
+- Install pending work before awaiting and remove only that promise in `finally`; a failed pending upload must not poison later candidates.
 - Weight admission is FIFO. An attachment above the normal budget may run only when no other weighted item is active, so valid large files still make progress.
 
 ### 4. Validation & Error Matrix
@@ -1004,6 +1010,7 @@ Use this contract when changing request-local attachment materialization, dedupl
 ### 5. Good/Base/Bad Cases
 
 - Good: digest the existing `Uint8Array`, then format a small metadata-plus-hex key.
+- Good: keep the executor as orchestration while state, candidate policy, and aggregation expose narrow domain APIs.
 - Base: output arrays retain input order when completion order differs.
 - Bad: allocate `new Uint8Array(prefix.length + payload.length)` solely for hashing.
 - Bad: permanently queue a valid attachment because it exceeds the normal aggregate budget.

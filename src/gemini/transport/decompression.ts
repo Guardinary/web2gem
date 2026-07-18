@@ -1,8 +1,28 @@
 type SupportedCompressionFormat = "gzip";
 
-export function socketAcceptEncoding(acceptCompressed: boolean): string {
-	if (!acceptCompressed) return "identity";
-	return "gzip";
+type SocketDecompressionStream = ReadableWritablePair<Uint8Array, Uint8Array>;
+
+type SocketCompressionContract = {
+	readonly acceptEncoding: "gzip" | "identity";
+	readonly gzipDecoder: SocketDecompressionStream | null;
+};
+
+export function resolveSocketCompression(
+	acceptCompressed: boolean,
+): SocketCompressionContract {
+	if (!acceptCompressed) return identityCompressionContract();
+	try {
+		if (typeof DecompressionStream !== "function")
+			return identityCompressionContract();
+		return {
+			acceptEncoding: "gzip",
+			gzipDecoder: new DecompressionStream(
+				"gzip",
+			) as unknown as SocketDecompressionStream,
+		};
+	} catch (_) {
+		return identityCompressionContract();
+	}
 }
 
 export function contentDecompressionFormat(
@@ -20,17 +40,18 @@ export function maybeDecompressSocketBody(
 	headers: Headers,
 	noBody: boolean,
 	contentLength: number | null,
+	compression: SocketCompressionContract,
 ): ReadableStream<Uint8Array> {
 	const decompressionFormat =
 		noBody || contentLength === 0
 			? null
 			: contentDecompressionFormat(headers.get("content-encoding"));
-	if (!decompressionFormat) return stream;
+	if (!decompressionFormat || !compression.gzipDecoder) return stream;
 	headers.delete("content-encoding");
 	headers.delete("content-length");
-	return stream.pipeThrough(
-		new DecompressionStream(
-			decompressionFormat,
-		) as unknown as ReadableWritablePair<Uint8Array, Uint8Array>,
-	);
+	return stream.pipeThrough(compression.gzipDecoder);
+}
+
+function identityCompressionContract(): SocketCompressionContract {
+	return { acceptEncoding: "identity", gzipDecoder: null };
 }

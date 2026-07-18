@@ -15,7 +15,7 @@ export { buildPayload } from "./gemini/client/protocol";
 export { getFreshGeminiBuildLabel } from "./gemini/client/retry";
 export { createByteQueue } from "./gemini/transport/byte-queue";
 export { socketHttp } from "./gemini/transport/socket";
-export { attachmentDedupeKeyForTest } from "./gemini/uploads/execute";
+export { attachmentDedupeKey as attachmentDedupeKeyForTest } from "./gemini/uploads/attachment-execution-state";
 export { buildMultipartFileBody } from "./gemini/uploads/multipart";
 export {
 	getPageTokens,

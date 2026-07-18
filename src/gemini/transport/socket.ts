@@ -4,7 +4,7 @@ import { bytesFromBody } from "./byte-queue";
 import { createSocketBodyStream } from "./body-stream";
 import {
 	maybeDecompressSocketBody,
-	socketAcceptEncoding,
+	resolveSocketCompression,
 } from "./decompression";
 import { parseSocketHeaderBlock, readSocketHeaderBlock } from "./http-parse";
 import {
@@ -48,7 +48,7 @@ export {
 	withSocketTimeout,
 } from "./timeout";
 
-export let _connect: SocketConnect | null | undefined = undefined;
+let _connect: SocketConnect | null | undefined = undefined;
 
 export function _setConnectForTest(
 	connect: SocketConnect | null | undefined,
@@ -90,6 +90,7 @@ export async function socketHttp(
 	const bodyStream = readableByteStreamFromBody(body);
 	const bodyBytes = bodyStream ? null : bytesFromBody(body);
 	const declaredBodyLength = safeBodyLength(bodyLength);
+	const compression = resolveSocketCompression(acceptCompressed);
 	if (bodyStream && declaredBodyLength == null)
 		throw socketStreamBodyLengthError();
 	const secure = u.protocol !== "http:";
@@ -109,7 +110,7 @@ export async function socketHttp(
 
 	const reqHeaders: Record<string, string> = {
 		Host: u.host,
-		"Accept-Encoding": socketAcceptEncoding(acceptCompressed),
+		"Accept-Encoding": compression.acceptEncoding,
 		Connection: useKeepAlive ? "keep-alive" : "close",
 	};
 	for (const [k, v] of Object.entries(headers)) {
@@ -235,6 +236,7 @@ export async function socketHttp(
 		respHeaders,
 		noBody,
 		clen,
+		compression,
 	);
 	return {
 		status,

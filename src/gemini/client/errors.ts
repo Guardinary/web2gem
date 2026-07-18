@@ -2,19 +2,17 @@ import type { ErrorWithMetadata } from "../../shared/types";
 import { promptByteLength } from "../../shared/text-metrics";
 import type { GeminiFatalCode } from "./parse-parts";
 
-export const LARGE_PROMPT_EMPTY_RESPONSE_MIN_BYTES = 95000;
-export const LARGE_PROMPT_EMPTY_RESPONSE_CODE = "large_prompt_empty_response";
-export const DATA_ANALYSIS_EMPTY_RESPONSE_CODE = "data_analysis_empty_response";
-export const INVALID_GEMINI_COOKIE_CODE = "invalid_gemini_cookie";
-export const UPSTREAM_EMPTY_RESPONSE_CODE = "upstream_empty_response";
-export const UPSTREAM_IMAGE_GENERATION_EMPTY_CODE =
-	"upstream_image_generation_empty";
-export const UPSTREAM_IMAGE_FETCH_FAILED_CODE = "upstream_image_fetch_failed";
-export const UPSTREAM_IMAGE_PROVIDER_ERROR_CODE =
-	"upstream_image_provider_error";
-export const GEMINI_SEMANTIC_ERROR_CODE = "gemini_semantic_error";
+const LARGE_PROMPT_EMPTY_RESPONSE_MIN_BYTES = 95000;
+const LARGE_PROMPT_EMPTY_RESPONSE_CODE = "large_prompt_empty_response";
+const DATA_ANALYSIS_EMPTY_RESPONSE_CODE = "data_analysis_empty_response";
+const INVALID_GEMINI_COOKIE_CODE = "invalid_gemini_cookie";
+const UPSTREAM_EMPTY_RESPONSE_CODE = "upstream_empty_response";
+const UPSTREAM_IMAGE_GENERATION_EMPTY_CODE = "upstream_image_generation_empty";
+const UPSTREAM_IMAGE_FETCH_FAILED_CODE = "upstream_image_fetch_failed";
+const UPSTREAM_IMAGE_PROVIDER_ERROR_CODE = "upstream_image_provider_error";
+const GEMINI_SEMANTIC_ERROR_CODE = "gemini_semantic_error";
 
-export type GeminiSemanticSource = "stream_generate" | "account_status";
+type GeminiSemanticSource = "stream_generate" | "account_status";
 
 type GeminiSemanticError = ErrorWithMetadata & {
 	geminiSource: GeminiSemanticSource;

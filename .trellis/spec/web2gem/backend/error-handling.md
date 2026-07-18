@@ -100,6 +100,8 @@ Use this contract when changing Gemini text, stream, or rich WRB parsing, same-a
 ### 2. Signatures
 
 - `extractResponseFatalCode(raw)` returns known fatal code `1013|1037|1050|1052|1060` or `undefined`.
+- `createSameAccountAttemptState(cfg)` owns the active config, at-most-one applied build-label update, cookie rotation, retry classification, last error, and one output-started fact for a logical client call.
+- `consumeGeminiWrbStream(body, signal)` emits non-empty delta events followed by one bounded diagnostic summary; fatal lines throw before their deltas are exposed.
 - Semantic errors carry internal `geminiSource: "stream_generate"`, `geminiCode`, and a stable sanitized `reason`.
 - `GeminiAccountOutcome.recoveryScope` is `none|retry_same_account|try_next_account` and is independent from the optional durable account `issue`.
 
@@ -107,6 +109,8 @@ Use this contract when changing Gemini text, stream, or rich WRB parsing, same-a
 
 - Inspect `[5,2,0,1,0]` on both WRB envelopes and decoded inner payloads before classifying a response as empty.
 - Text, stream, and rich generation must use the same fatal-code semantics. Streaming checks each complete WRB line before emitting its text delta.
+- Text, rich, and stream entrypoints share the same same-account recovery owner while retaining result-specific parsing. Mark output started immediately before exposing the first non-empty stream delta; after that point no build-label refresh, cookie rotation, delay retry, or same-account restart may begin.
+- WRB stream consumption owns reader pulls, streaming UTF-8 decode, split/multiple line handling, decoder tail, final unterminated line, cumulative extractor delegation, and a 500-character diagnostic sample. The sample may feed shape classification but must never be logged raw.
 - `1013` is a temporary model error: client transport policy may retry the same account, then account recovery may cool and switch before output.
 - `1037` is an account usage limit: do not keep retrying the same account; mark rate-limit cooldown and permit an untried account before output.
 - `1050` is model/conversation inconsistency: permit another account/context without marking credentials unhealthy.
@@ -117,12 +121,14 @@ Use this contract when changing Gemini text, stream, or rich WRB parsing, same-a
 
 - Fatal code before any delta -> typed semantic error; account recovery follows `recoveryScope`.
 - Fatal code after a visible delta -> preserve stream pinning and surface the existing partial-output failure behavior; never switch accounts.
+- Any non-abort failure after a visible delta -> preserve emitted deltas and propagate the original failure without same-account recovery.
 - Unknown fatal code -> safe upstream failure/empty handling; never infer authentication or durable location failure.
 - Caller abort -> propagate abort with no semantic classification, account mutation, or failover.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: `1050` retires the attempt and tries an untried compatible account without setting an account issue.
+- Good: one client attempt state survives pre-output retries, while `client/index.ts` keeps only request/result orchestration.
 - Base: successful WRB parts continue through existing text/rich parsing.
 - Bad: search error message text for `1060` and permanently mark the account as location-blocked.
 
@@ -130,6 +136,7 @@ Use this contract when changing Gemini text, stream, or rich WRB parsing, same-a
 
 - Parser fixtures for inner and envelope fatal locations.
 - Text and stream tests proving fatal detection happens before empty-response handling.
+- Stream-consumer tests for split UTF-8, split/multiple lines, decoder tail, final unterminated lines, cumulative suffixes, bounded diagnostics, abort-before-pull, and no retry after the first delta.
 - Classification tests for every known code and source.
 - Provider tests for `1050` alternate-account recovery, `1052` no blind switching, post-delta pinning, attachment replay guards, and abort behavior.
 - Run focused Gemini client/account tests, static checks, typecheck, and architecture checks.

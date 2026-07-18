@@ -1,26 +1,16 @@
 import type { RuntimeConfig } from "../../config";
-import { abortError, isAbortError, throwIfAborted } from "../../shared/abort";
+import { throwIfAborted } from "../../shared/abort";
 import { uuid } from "../../shared/crypto";
 import { log } from "../../shared/logging";
-import type { ErrorWithMetadata } from "../../shared/types";
-import {
-	configWithFreshGeminiCookie,
-	observeGeminiAccountResponseCookies,
-	rotateGeminiCookieForRetryWithReason,
-} from "../cookies";
+import { observeGeminiAccountResponseCookies } from "../cookies";
 import { httpFetch } from "../transport";
 import { getPageTokens } from "../uploads/index";
 import {
 	dataAnalysisEmptyResponseError,
 	geminiSemanticError,
 	invalidGeminiCookieError,
-	isDataAnalysisEmptyResponseError,
-	isGeminiSemanticError,
-	isInvalidGeminiCookieError,
-	isLargePromptEmptyResponseError,
 	largePromptEmptyResponseError,
 	largePromptEmptyResponseThreshold,
-	shouldRetryGeminiSemanticErrorOnSameAccount,
 	unverifiedGeminiCookieError,
 	upstreamEmptyResponseError,
 	upstreamImageGenerationEmptyError,
@@ -35,13 +25,9 @@ import {
 	richResponseShapeSummary,
 } from "./parse-parts";
 import { wrbResponseShapeSummary } from "./parse-envelope";
-import { createStreamTextExtractor } from "./parse-stream";
 import { buildHeaders, buildPayload, getUrl } from "./protocol";
-import {
-	configWithCachedGeminiBuildLabel,
-	refreshGeminiBuildLabelForRetry,
-	waitBeforeRetry,
-} from "./retry";
+import { createSameAccountAttemptState } from "./same-account-attempt";
+import { consumeGeminiWrbStream } from "./stream-consumer";
 
 type GeminiFileRef =
 	| string
@@ -67,20 +53,6 @@ export type GeminiRichOutput = {
 	text: string;
 	images: GeminiRichImage[];
 };
-
-export {
-	extractTextsFromLine,
-	wrbResponseShapeSummary,
-} from "./parse-envelope";
-export {
-	cleanText,
-	extractResponseFatalCode,
-	extractResponseParts,
-	extractResponseText,
-	richResponseShapeSummary,
-} from "./parse-parts";
-export { buildHeaders, buildPayload, getUrl } from "./protocol";
-export { getFreshGeminiBuildLabel } from "./retry";
 
 async function appendGeminiPageToken(
 	cfg: RuntimeConfig,
@@ -128,12 +100,7 @@ export async function generate(
 	fileRefs: GeminiFileRef[] | null | undefined,
 	modelHeaders: Record<string, string> | null = null,
 ): Promise<string> {
-	let lastErr: unknown;
-	let activeCfg = await configWithCachedGeminiBuildLabel(
-		await configWithFreshGeminiCookie(cfg),
-	);
-	let refreshedBL = false;
-	let refreshedCookie = false;
+	const attemptState = await createSameAccountAttemptState(cfg);
 	const requestId = uuid().toUpperCase();
 	const body = buildPayload(
 		prompt,
@@ -146,7 +113,7 @@ export async function generate(
 		try {
 			const resp = await fetchGeminiStreamGenerate(
 				cfg,
-				activeCfg,
+				attemptState.activeConfig,
 				body,
 				undefined,
 				modelHeaders,
@@ -176,45 +143,17 @@ export async function generate(
 					largePromptEmptyResponseThreshold(cfg),
 				);
 				if (largePromptErr) throw largePromptErr;
-				const refreshedCfg = await refreshGeminiBuildLabelForRetry(
-					cfg,
-					activeCfg,
-					refreshedBL,
-					"",
-				);
-				if (refreshedCfg) {
-					refreshedBL = true;
-					activeCfg = refreshedCfg;
-					continue;
-				}
+				if (await attemptState.tryRefreshBuildLabel("")) continue;
 				throw upstreamEmptyResponseError(resp.status, raw.length, "non-stream");
 			}
 			return text;
 		} catch (e) {
-			if (isInvalidGeminiCookieError(e) && !refreshedCookie) {
-				const rotated = await rotateGeminiCookieForRetryWithReason(activeCfg);
-				if (rotated.config) {
-					refreshedCookie = true;
-					activeCfg = await configWithCachedGeminiBuildLabel(rotated.config);
-					continue;
-				}
-				throw invalidCookieErrorWithRotationReason(cfg, e, rotated.reason);
-			}
-			if (isInvalidGeminiCookieError(e) && refreshedCookie)
-				throw invalidCookieErrorWithRotationReason(cfg, e, "rotation_updated");
-			if (
-				isLargePromptEmptyResponseError(e) ||
-				isDataAnalysisEmptyResponseError(e) ||
-				isInvalidGeminiCookieError(e) ||
-				(isGeminiSemanticError(e) &&
-					!shouldRetryGeminiSemanticErrorOnSameAccount(e))
-			)
-				throw e;
-			lastErr = e;
-			if (!(await waitBeforeRetry(cfg, attempt, e, "Retry"))) throw e;
+			if (await attemptState.recoverFromError(e, { attempt, label: "Retry" }))
+				continue;
+			throw e;
 		}
 	}
-	throw lastErr;
+	throw attemptState.lastError;
 }
 
 export async function generateRich(
@@ -226,12 +165,7 @@ export async function generateRich(
 	modelHeaders: Record<string, string> | null = null,
 	options: GeminiRichOptions = {},
 ): Promise<GeminiRichOutput> {
-	let lastErr: unknown;
-	let activeCfg = await configWithCachedGeminiBuildLabel(
-		await configWithFreshGeminiCookie(cfg),
-	);
-	let refreshedBL = false;
-	let refreshedCookie = false;
+	const attemptState = await createSameAccountAttemptState(cfg);
 	const requestId = uuid().toUpperCase();
 	const body = buildPayload(
 		prompt,
@@ -244,7 +178,7 @@ export async function generateRich(
 		try {
 			const resp = await fetchGeminiStreamGenerate(
 				cfg,
-				activeCfg,
+				attemptState.activeConfig,
 				body,
 				undefined,
 				modelHeaders,
@@ -274,17 +208,7 @@ export async function generateRich(
 					largePromptEmptyResponseThreshold(cfg),
 				);
 				if (largePromptErr) throw largePromptErr;
-				const refreshedCfg = await refreshGeminiBuildLabelForRetry(
-					cfg,
-					activeCfg,
-					refreshedBL,
-					"",
-				);
-				if (refreshedCfg) {
-					refreshedBL = true;
-					activeCfg = refreshedCfg;
-					continue;
-				}
+				if (await attemptState.tryRefreshBuildLabel("")) continue;
 				throw upstreamImageGenerationEmptyError(
 					resp.status,
 					raw.length,
@@ -294,33 +218,24 @@ export async function generateRich(
 			const images =
 				options.hydrateGeneratedImageBytes === false
 					? parts.images
-					: await hydrateGeneratedImages(cfg, activeCfg, parts.images);
+					: await hydrateGeneratedImages(
+							cfg,
+							attemptState.activeConfig,
+							parts.images,
+						);
 			return { text: parts.text, images };
 		} catch (e) {
-			if (isInvalidGeminiCookieError(e) && !refreshedCookie) {
-				const rotated = await rotateGeminiCookieForRetryWithReason(activeCfg);
-				if (rotated.config) {
-					refreshedCookie = true;
-					activeCfg = await configWithCachedGeminiBuildLabel(rotated.config);
-					continue;
-				}
-				throw invalidCookieErrorWithRotationReason(cfg, e, rotated.reason);
-			}
-			if (isInvalidGeminiCookieError(e) && refreshedCookie)
-				throw invalidCookieErrorWithRotationReason(cfg, e, "rotation_updated");
 			if (
-				isLargePromptEmptyResponseError(e) ||
-				isDataAnalysisEmptyResponseError(e) ||
-				isInvalidGeminiCookieError(e) ||
-				(isGeminiSemanticError(e) &&
-					!shouldRetryGeminiSemanticErrorOnSameAccount(e))
+				await attemptState.recoverFromError(e, {
+					attempt,
+					label: "Rich retry",
+				})
 			)
-				throw e;
-			lastErr = e;
-			if (!(await waitBeforeRetry(cfg, attempt, e, "Rich retry"))) throw e;
+				continue;
+			throw e;
 		}
 	}
-	throw lastErr;
+	throw attemptState.lastError;
 }
 
 export async function* generateStream(
@@ -332,13 +247,7 @@ export async function* generateStream(
 	options: GeminiStreamOptions = {},
 	modelHeaders: Record<string, string> | null = null,
 ): AsyncIterable<string> {
-	let lastErr: unknown;
-	let yielded = false;
-	let activeCfg = await configWithCachedGeminiBuildLabel(
-		await configWithFreshGeminiCookie(cfg),
-	);
-	let refreshedBL = false;
-	let refreshedCookie = false;
+	const attemptState = await createSameAccountAttemptState(cfg);
 	const requestId = uuid().toUpperCase();
 	const body = buildPayload(
 		prompt,
@@ -354,7 +263,7 @@ export async function* generateStream(
 			throwIfAborted(signal);
 			const resp = await fetchGeminiStreamGenerate(
 				cfg,
-				activeCfg,
+				attemptState.activeConfig,
 				body,
 				signal,
 				modelHeaders,
@@ -368,7 +277,7 @@ export async function* generateStream(
 				if (fatalCode) throw geminiSemanticError("stream_generate", fatalCode);
 				const text = extractResponseText(raw);
 				if (text) {
-					yielded = true;
+					attemptState.markOutputStarted();
 					yield text;
 				}
 				if (!text) {
@@ -388,17 +297,8 @@ export async function* generateStream(
 						largePromptEmptyResponseThreshold(cfg),
 					);
 					if (largePromptErr) throw largePromptErr;
-					const refreshedCfg = await refreshGeminiBuildLabelForRetry(
-						cfg,
-						activeCfg,
-						refreshedBL,
-						"stream without body",
-					);
-					if (refreshedCfg) {
-						refreshedBL = true;
-						activeCfg = refreshedCfg;
+					if (await attemptState.tryRefreshBuildLabel("stream without body"))
 						continue;
-					}
 					throw upstreamEmptyResponseError(
 						resp.status,
 						raw.length,
@@ -407,76 +307,18 @@ export async function* generateStream(
 				}
 				return;
 			}
-			const reader = resp.body.getReader();
-			const decoder = new TextDecoder();
-			const extractor = createStreamTextExtractor();
-			const lineChunks: string[] = [];
-			let lineLength = 0;
 			let rawSnippet = "";
 			let rawLength = 0;
-			const takeLine = (piece: string): string => {
-				if (!lineChunks.length) return piece;
-				if (piece) {
-					lineChunks.push(piece);
-					lineLength += piece.length;
-				}
-				const line = lineChunks.join("");
-				lineChunks.length = 0;
-				lineLength = 0;
-				return line;
-			};
-			const appendLineRemainder = (piece: string): void => {
-				if (!piece) return;
-				lineChunks.push(piece);
-				lineLength += piece.length;
-			};
-			const consumeLine = function* (line: string): Generator<string> {
-				const fatalCode = extractResponseFatalCode(line);
-				if (fatalCode) throw geminiSemanticError("stream_generate", fatalCode);
-				for (const delta of extractor.consumeLine(line)) yield delta;
-			};
-			const consumeDecoded = function* (decoded: string): Generator<string> {
-				let lineStart = 0;
-				let idx = decoded.indexOf("\n", lineStart);
-				while (idx >= 0) {
-					const line = takeLine(decoded.slice(lineStart, idx));
-					for (const delta of consumeLine(line)) yield delta;
-					lineStart = idx + 1;
-					idx = decoded.indexOf("\n", lineStart);
-				}
-				if (lineStart < decoded.length)
-					appendLineRemainder(decoded.slice(lineStart));
-			};
-			while (true) {
-				throwIfAborted(signal);
-				const { done, value } = await reader.read();
-				if (done) break;
-				const decoded = decoder.decode(value, { stream: true });
-				rawLength += decoded.length;
-				if (rawSnippet.length < 500)
-					rawSnippet += decoded.slice(0, 500 - rawSnippet.length);
-				for (const delta of consumeDecoded(decoded)) {
-					yielded = true;
-					yield delta;
+			for await (const event of consumeGeminiWrbStream(resp.body, signal)) {
+				if (event.type === "delta") {
+					attemptState.markOutputStarted();
+					yield event.text;
+				} else {
+					rawSnippet = event.rawSnippet;
+					rawLength = event.rawLength;
 				}
 			}
-			const tail = decoder.decode();
-			if (tail) {
-				rawLength += tail.length;
-				if (rawSnippet.length < 500)
-					rawSnippet += tail.slice(0, 500 - rawSnippet.length);
-				for (const delta of consumeDecoded(tail)) {
-					yielded = true;
-					yield delta;
-				}
-			}
-			if (lineLength > 0) {
-				for (const delta of consumeLine(takeLine(""))) {
-					yielded = true;
-					yield delta;
-				}
-			}
-			if (!yielded) {
+			if (!attemptState.outputStarted) {
 				const shape = cfg.log_requests
 					? ` ${wrbResponseShapeSummary(rawSnippet)}`
 					: "";
@@ -496,67 +338,21 @@ export async function* generateStream(
 					largePromptEmptyResponseThreshold(cfg),
 				);
 				if (largePromptErr) throw largePromptErr;
-				const refreshedCfg = await refreshGeminiBuildLabelForRetry(
-					cfg,
-					activeCfg,
-					refreshedBL,
-					"stream",
-				);
-				if (refreshedCfg) {
-					refreshedBL = true;
-					activeCfg = refreshedCfg;
-					continue;
-				}
+				if (await attemptState.tryRefreshBuildLabel("stream")) continue;
 				throw upstreamEmptyResponseError(resp.status, rawLength, "stream");
 			}
 			return;
 		} catch (e) {
-			if (isAbortError(e) || signal?.aborted) throw abortError(signal);
-			if (isInvalidGeminiCookieError(e) && !yielded && !refreshedCookie) {
-				const rotated = await rotateGeminiCookieForRetryWithReason(activeCfg);
-				if (rotated.config) {
-					refreshedCookie = true;
-					activeCfg = await configWithCachedGeminiBuildLabel(rotated.config);
-					continue;
-				}
-				throw invalidCookieErrorWithRotationReason(cfg, e, rotated.reason);
-			}
-			if (isInvalidGeminiCookieError(e) && !yielded && refreshedCookie)
-				throw invalidCookieErrorWithRotationReason(cfg, e, "rotation_updated");
 			if (
-				isLargePromptEmptyResponseError(e) ||
-				isDataAnalysisEmptyResponseError(e) ||
-				isInvalidGeminiCookieError(e) ||
-				(isGeminiSemanticError(e) &&
-					!shouldRetryGeminiSemanticErrorOnSameAccount(e))
+				await attemptState.recoverFromError(e, {
+					attempt,
+					label: "Stream retry",
+					signal,
+				})
 			)
-				throw e;
-			lastErr = e;
-			if (
-				!yielded &&
-				(await waitBeforeRetry(cfg, attempt, e, "Stream retry", signal))
-			) {
 				continue;
-			}
 			throw e;
 		}
 	}
-	if (lastErr) throw lastErr;
-}
-
-function invalidCookieErrorWithRotationReason(
-	cfg: RuntimeConfig,
-	err: unknown,
-	reason: unknown,
-): unknown {
-	const meta =
-		err && typeof err === "object" ? (err as Partial<ErrorWithMetadata>) : {};
-	return (
-		invalidGeminiCookieError(
-			cfg,
-			meta.upstreamStatus || meta.status || 401,
-			typeof meta.rawLength === "number" ? meta.rawLength : null,
-			reason,
-		) || err
-	);
+	if (attemptState.lastError) throw attemptState.lastError;
 }

@@ -3,6 +3,7 @@ import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
 import type { GeminiPublicFamily } from "../../models";
+import { mapWithConcurrency } from "../concurrency";
 import type { GeminiAccountAdminFilterInput } from "./admin-input";
 import {
 	createInputFromAccount,
@@ -444,22 +445,4 @@ function refreshFailureMessage(reason: GeminiAccountRefreshReason): string {
 	if (reason === "status_restricted")
 		return "Gemini account status restricts access";
 	return "account refresh failed";
-}
-
-async function mapWithConcurrency<T, R>(
-	items: readonly T[],
-	concurrency: number,
-	worker: (item: T) => Promise<R>,
-): Promise<R[]> {
-	const results = new Array<R>(items.length);
-	let nextIndex = 0;
-	await Promise.all(
-		Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-			while (nextIndex < items.length) {
-				const index = nextIndex++;
-				results[index] = await worker(items[index] as T);
-			}
-		}),
-	);
-	return results;
 }

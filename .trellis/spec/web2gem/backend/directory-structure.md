@@ -12,7 +12,7 @@
 - `src/completion/` owns provider-neutral completion contracts and shared business behavior: prompt/context preparation, provider text-generation ports, empty-output handling, stream/tool-sieve event generation, one `CompletionStreamLifecycle` reducer plus terminal outcome classifier, and completion turn finalization. Protocol adapters must not mirror reducer-owned issue/empty/tool-call/policy/count state, and callback-style stream consumption APIs are not part of the contract.
 - `src/promptcompat/` owns the typed `InternalMessage` boundary. `message-model.ts` owns canonical parts, the single raw content-part parser, and explicit prompt/history/latest-input/reasoning projections; `responses-input.ts` parses Responses items directly into that model; `attachment-inputs.ts` projects parsed messages plus request-level attachment channels into `AttachmentPlan`. HTTP adapters parse OpenAI Responses, OpenAI chat, and Google wire shapes once; prompt, history, attachment, and image-generation consumers receive the parsed model instead of re-walking raw content parts.
 - `src/toolcall/` owns tool-call prompt formatting, parsing, policy validation, schema normalization, and streamed sieve state. Import concrete owners such as `toolcall/sieve`, `toolcall/tool-bundle`, `toolcall/policy-openai`, `toolcall/policy-google`, `toolcall/dsml`, or `toolcall/openai-format`; there is no broad compatibility barrel.
-- `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. `gemini/client/index.ts` stays an orchestration layer; model headers live in `client/model-headers.ts`, WRB envelopes/parts/images/streams live in concrete `client/parse-*.ts` owners, and no catch-all parser barrel exists.
+- `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. `gemini/client/index.ts` stays an orchestration layer; `client/same-account-attempt.ts` owns request-local active config, build-label/cookie recovery, retry classification, and the stream output-started gate; `client/stream-consumer.ts` owns WRB reader pulls, streaming UTF-8 decode, line buffering, fatal-first parsing, and bounded diagnostics. Model headers live in `client/model-headers.ts`, WRB envelopes/parts/images/cumulative delta extraction live in concrete `client/parse-*.ts` owners, and no catch-all parser barrel exists.
 - `src/gemini/client/generated-images.ts` owns generated-image URL candidates, browser/cookie download headers, byte hydration, supported output-format mapping, and URL fallback. It must reuse MIME detection from `src/attachments/mime.ts` and encoding from `src/attachments/base64.ts`.
 - `src/gemini/accounts/admin-input.ts` owns admin request normalization and validation. `admin.ts` owns account-admin use-case orchestration and depends on capability-specific admin/runtime store contracts.
 - `src/gemini/accounts/domain.ts` is the single owner for account issue/state
@@ -165,6 +165,7 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 - `src/attachments/notes.ts` owns dropped-attachment records and deterministic prompt notes.
 - `CompletionProvider.resolveAttachments(plan)` resolves request-local candidates to provider file refs and prompt notes.
 - `CompletionProvider.uploadTextFile(text, filename)` uploads required large-context text files.
+- `src/gemini/uploads/execute.ts` orchestrates request-local attachment execution; `attachment-execution-state.ts` owns limits, weighted scheduling, completed/pending/inline dedupe and counters; `attachment-candidate.ts` owns materialization plus authenticated/anonymous policy; `attachment-results.ts` owns error mapping, ordered partitioning, prompt notes, usage and stage telemetry.
 
 ### 3. Contracts
 
@@ -174,6 +175,7 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 - Chat/Responses image generation parses messages at the HTTP edge and passes `readonly InternalMessage[]` into completion. Completion image preparation must not accept or dispatch raw content-part arrays.
 - `src/gemini/uploads/**` owns Gemini Web upload protocol details. Preferred content-push upload is multipart and must not include Gemini cookie or SAPISID authorization headers.
 - Request-local candidate dedupe is scoped to one request and keyed by MIME/content type, filename, and bytes.
+- Install a pending upload before awaiting it and delete that exact promise in `finally`. Successful duplicates reuse the same ref while preserving per-reference byte accounting; only the first successful upload contributes unique uploaded bytes and multipart count.
 - Large-context `message.txt` / `tools.txt` uploads use the upload transport but keep hard-failure semantics through `prepareContextFiles`.
 
 ### 4. Validation & Error Matrix
@@ -187,7 +189,7 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 
 ### 5. Good/Base/Bad Cases
 
-- Good: prompt conversion emits markers, attachment planning owns candidates/refs, completion calls `resolveAttachments(plan)`, and Gemini adapter executes the plan.
+- Good: prompt conversion emits markers, attachment planning owns candidates/refs, completion calls `resolveAttachments(plan)`, and the Gemini executor coordinates state, candidate policy, and ordered result aggregation without reimplementing them.
 - Bad: `src/completion/context.ts` imports `src/gemini/uploads`.
 - Bad: add a broad attachment barrel instead of importing the concrete owner.
 - Bad: adding a second resolver path for images or files outside `AttachmentPlan`.
@@ -196,6 +198,7 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 ### 6. Tests Required
 
 - Unit tests for attachment planning, max count, existing ref consolidation, dedupe, invalid base64, remote URL non-fetch behavior, multipart request construction, upload failure degradation, upload protocol telemetry, and final file-ref ordering.
+- Cover completed and in-flight dedupe, failed-pending cleanup, FIFO weighted scheduling, oversized-alone progress, unique-versus-per-reference bytes, anonymous text inline policy, and one safe failure log per dropped candidate.
 - HTTP/context tests should assert provider handoff through `resolveAttachments(plan)`, not `resolveImages` / `resolveFiles`.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke`.
 
