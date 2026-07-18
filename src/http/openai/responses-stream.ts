@@ -1,5 +1,6 @@
 import type { CompletionProvider } from "../../completion";
 import {
+	classifyCompletionStreamOutcome,
 	createCompletionStreamLifecycle,
 	EMPTY_UPSTREAM_MSG,
 	recordCompletionStreamEvent,
@@ -210,36 +211,6 @@ export async function streamResponsesWithToolSieve(
 				await emitText(event.text);
 			}
 		}
-		if (lifecycle.issue) {
-			if (!lifecycle.emittedText && !lifecycle.toolCalls) {
-				log(
-					cfg,
-					`openai responses stream failed before output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "upstream_error"} error=${errorLogSummary(lifecycle.issue.error)}`,
-				);
-				await fail(
-					`upstream error: ${upstreamErrorMessage(lifecycle.issue.error)}`,
-					upstreamErrorCode(lifecycle.issue.error) || "upstream_error",
-					upstreamErrorReason(lifecycle.issue.error),
-				);
-				return;
-			}
-			const warning = `\n\n${streamInterruptedWarningText(lifecycle.issue.error)}`;
-			log(
-				cfg,
-				`openai responses stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "stream_interrupted"} error=${errorLogSummary(lifecycle.issue.error)}`,
-			);
-			await writeResponsesEvent(write, "response.warning", {
-				warning: streamWarningObject(lifecycle.issue.error, warning.trim()),
-			});
-		}
-		if (lifecycle.violation) {
-			log(
-				cfg,
-				`openai responses stream tool policy violation model=${rm.name} code=${lifecycle.violation.code}`,
-			);
-			await fail(lifecycle.violation.message, lifecycle.violation.code);
-			return;
-		}
 	} else {
 		for await (const event of streamPlainCompletionEvents(
 			provider,
@@ -251,33 +222,45 @@ export async function streamResponsesWithToolSieve(
 				await emitText(event.text);
 			}
 		}
-		if (lifecycle.issue) {
-			if (!lifecycle.emittedText) {
-				log(
-					cfg,
-					`openai responses stream failed before output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "upstream_error"} error=${errorLogSummary(lifecycle.issue.error)}`,
-				);
-				await fail(
-					`upstream error: ${upstreamErrorMessage(lifecycle.issue.error)}`,
-					upstreamErrorCode(lifecycle.issue.error) || "upstream_error",
-					upstreamErrorReason(lifecycle.issue.error),
-				);
-				return;
-			}
-			const warning = `\n\n${streamInterruptedWarningText(lifecycle.issue.error)}`;
-			log(
-				cfg,
-				`openai responses stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "stream_interrupted"} error=${errorLogSummary(lifecycle.issue.error)}`,
-			);
-			await writeResponsesEvent(write, "response.warning", {
-				warning: streamWarningObject(lifecycle.issue.error, warning.trim()),
-			});
-		}
 	}
-	if (!lifecycle.emittedText && !lifecycle.toolCalls) {
+	await textDeltaCoalescer.flush();
+	const outcome = classifyCompletionStreamOutcome(lifecycle);
+	if (outcome.type === "failed_before_output") {
+		const error = outcome.issue.error;
+		log(
+			cfg,
+			`openai responses stream failed before output model=${rm.name} code=${upstreamErrorCode(error) || "upstream_error"} error=${errorLogSummary(error)}`,
+		);
+		await fail(
+			`upstream error: ${upstreamErrorMessage(error)}`,
+			upstreamErrorCode(error) || "upstream_error",
+			upstreamErrorReason(error),
+		);
+		return;
+	}
+	if (outcome.type === "policy_violation") {
+		log(
+			cfg,
+			`openai responses stream tool policy violation model=${rm.name} code=${outcome.violation.code}`,
+		);
+		await fail(outcome.violation.message, outcome.violation.code);
+		return;
+	}
+	if (outcome.type === "empty") {
 		log(cfg, `openai responses stream produced no content model=${rm.name}`);
 		await fail(EMPTY_UPSTREAM_MSG, "upstream_empty");
 		return;
+	}
+	if (outcome.type === "interrupted_after_output") {
+		const error = outcome.issue.error;
+		const warning = `\n\n${streamInterruptedWarningText(error)}`;
+		log(
+			cfg,
+			`openai responses stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(error) || "stream_interrupted"} error=${errorLogSummary(error)}`,
+		);
+		await writeResponsesEvent(write, "response.warning", {
+			warning: streamWarningObject(error, warning.trim()),
+		});
 	}
 	await finishMessage();
 

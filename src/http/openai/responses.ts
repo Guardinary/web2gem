@@ -1,5 +1,4 @@
 import type { CompletionProvider } from "../../completion";
-import { EMPTY_UPSTREAM_MSG } from "../../completion";
 import {
 	OPENAI_COMPLETION_DIALECT,
 	prepareCompletion,
@@ -115,6 +114,7 @@ async function runResponsesGeneration(
 		bundle,
 		toolPolicy,
 		tools,
+		streamMode,
 		promptToolChoice,
 		prompt,
 		fileRefs,
@@ -131,9 +131,8 @@ async function runResponsesGeneration(
 
 	if (req.stream) {
 		const rid = `resp_${randHex(16)}`;
-		let streamTools: ToolBundle | null = null;
-		if (tools && promptToolChoice !== "none") streamTools = tools;
-		else if (promptToolChoice === "none") streamTools = bundle;
+		const streamTools: ToolBundle | null =
+			streamMode.type === "tool_sieve" ? streamMode.tools : null;
 		return sseResponse(
 			async (write, signal) => {
 				const generationStart = stageLog.now();
@@ -201,21 +200,23 @@ async function runResponsesGeneration(
 		structured,
 		toolPolicy,
 	});
-	if (finalized.error)
+	if (finalized.error) {
+		if (finalized.error.code === "upstream_empty")
+			log(
+				cfg,
+				`openai responses generate produced no content model=${rm.name}`,
+			);
 		return openAIErrorResponse(
 			finalized.error.message,
 			finalized.error.status,
 			finalized.error.code,
 		);
+	}
 	const { toolCalls } = finalized;
 	text = finalized.text;
 
 	const rid = `resp_${randHex(16)}`;
 	const mid = `msg_${randHex(12)}`;
-	if (!text && !toolCalls) {
-		log(cfg, `openai responses generate produced no content model=${rm.name}`);
-		return openAIErrorResponse(EMPTY_UPSTREAM_MSG, 502, "upstream_empty");
-	}
 	const output = buildResponsesOutput(text, toolCalls, mid);
 
 	const usage = openAIResponsesUsage(promptTokens, text);

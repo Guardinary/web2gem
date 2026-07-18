@@ -1,6 +1,5 @@
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
-import { EMPTY_UPSTREAM_MSG } from "../../completion";
 import type { CompletionProvider } from "../../completion";
 import type { RuntimeConfig } from "../../config";
 import {
@@ -77,6 +76,7 @@ async function runGoogleGeneration(
 	const {
 		rm,
 		tools,
+		streamMode,
 		toolPolicy,
 		promptToolChoice,
 		prompt,
@@ -85,7 +85,7 @@ async function runGoogleGeneration(
 	} = prepared;
 	const hasTools = !!tools && promptToolChoice !== "none";
 
-	if (stream && !hasTools) {
+	if (stream && streamMode.type === "plain") {
 		return sseResponse(
 			async (write, signal) => {
 				const generationStart = stageLog.now();
@@ -107,7 +107,8 @@ async function runGoogleGeneration(
 		);
 	}
 
-	if (stream && hasTools) {
+	if (stream && streamMode.type === "tool_sieve") {
+		const streamTools = streamMode.tools;
 		return sseResponse(
 			async (write, signal) => {
 				const generationStart = stageLog.now();
@@ -116,7 +117,7 @@ async function runGoogleGeneration(
 					prompt,
 					rm,
 					fileRefs,
-					tools,
+					tools: streamTools,
 					toolPolicy,
 					promptTokens,
 					signal,
@@ -151,25 +152,20 @@ async function runGoogleGeneration(
 	});
 	if (generated.response) return generated.response;
 	const text = generated.text;
-	const upstreamEmpty = !text;
-	if (upstreamEmpty) {
-		log(cfg, `google generate produced no content model=${rm.name}`);
-		return jsonResponse(
-			googleErrorResponseBody(EMPTY_UPSTREAM_MSG, "upstream_empty"),
-			502,
-		);
-	}
 
 	const finalized = finalizeGoogleCompletionResult(text, {
 		tools,
 		toolPolicy,
 		hasTools,
 	});
-	if (finalized.error)
+	if (finalized.error) {
+		if (finalized.error.code === "upstream_empty")
+			log(cfg, `google generate produced no content model=${rm.name}`);
 		return jsonResponse(
 			googleErrorResponseBody(finalized.error.message, finalized.error.code),
 			finalized.error.status,
 		);
+	}
 
 	const candidateTokens = tokenEst(text);
 	const responseObj = googleGenerateContentResponse({
@@ -177,7 +173,7 @@ async function runGoogleGeneration(
 		responseParts: finalized.responseParts,
 		promptTokens,
 		candidateTokens,
-		upstreamEmpty,
+		upstreamEmpty: false,
 	});
 
 	return jsonResponse(responseObj);

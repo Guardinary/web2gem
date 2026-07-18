@@ -1,8 +1,4 @@
-export {
-	EMPTY_UPSTREAM_MSG,
-	finalizeOpenAICompletionResult,
-	upstreamEmptyWarning,
-} from "./turn";
+export { EMPTY_UPSTREAM_MSG } from "./turn";
 export type {
 	CompletionProvider,
 	CompletionProviderOptions,
@@ -12,9 +8,13 @@ export type {
 } from "./ports";
 export type {
 	CompletionStreamEvent,
+	CompletionStreamIssue,
 	CompletionStreamLifecycle,
+	CompletionStreamOutcome,
+	CompletionStreamOutcomeFacts,
 } from "./stream-events";
 export {
+	classifyCompletionStreamOutcome,
 	createCompletionStreamLifecycle,
 	recordCompletionStreamEvent,
 	streamPlainCompletionEvents,

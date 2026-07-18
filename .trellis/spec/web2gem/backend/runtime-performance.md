@@ -1104,19 +1104,25 @@ Responses, or Google streaming adapters.
 - `createCompletionStreamLifecycle()` creates protocol-neutral stream state.
 - `recordCompletionStreamEvent(lifecycle, event)` records output, terminal issue,
   empty output, tool calls, policy violation, and completion counts.
+- `classifyCompletionStreamOutcome(facts)` returns `failed_before_output`,
+  `interrupted_after_output`, `policy_violation`, `empty`, or `ok`.
 
 ### 3. Contracts
 
-- Completion owns lifecycle state; HTTP adapters own JSON and SSE framing.
+- Completion owns lifecycle state and terminal outcome precedence; HTTP adapters
+  map outcomes to protocol JSON/SSE framing.
 - Record every completion event exactly once before protocol-specific handling.
-- Abort propagation, warning/error classification, coalescer flushes, and terminal
-  frame ordering remain protocol-specific and behavior-compatible.
+- A terminal issue wins over policy validation; policy validation runs only after
+  normal completion. Abort propagation, coalescer flushes, and terminal frame
+  ordering remain protocol-specific and behavior-compatible.
 
 ### 4. Validation & Error Matrix
 
 - text then warning -> `emittedText=true` and terminal issue retained.
 - empty event -> `empty=true`; adapter emits its existing fallback.
 - done event -> completion counts replace initial empty counts.
+- issue plus policy violation -> issue outcome; policy is not validated after an
+  upstream issue.
 - abort -> event producer throws; no lifecycle error conversion occurs.
 
 ### 5. Good/Base/Bad Cases
@@ -1128,6 +1134,8 @@ Responses, or Google streaming adapters.
 ### 6. Tests Required
 
 - Unit-test lifecycle reduction for text, empty, issue, tool, and done events.
+- Unit-test outcome precedence for issue, policy violation, visible output, and
+  normal empty completion.
 - Run OpenAI and Google streaming route tests plus smoke and coverage gates.
 
 ### 7. Wrong vs Correct
@@ -1142,6 +1150,9 @@ else if (event.type === "done") completionCounts = event.completionCounts;
 #### Correct
 
 ```typescript
-recordCompletionStreamEvent(lifecycle, event);
-if (event.type === "text_delta") await writeProtocolDelta(event.text);
+for await (const event of completionEvents) {
+  recordCompletionStreamEvent(lifecycle, event);
+  if (event.type === "text_delta") await writeProtocolDelta(event.text);
+}
+const outcome = classifyCompletionStreamOutcome(lifecycle);
 ```

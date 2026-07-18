@@ -3,7 +3,10 @@ import {
 	GEMINI_AUTHENTICATED_SESSION_REQUIRED_STATUS,
 	geminiAuthenticatedSessionRequiredMessage,
 } from "../shared/errors";
-import { contextFileThreshold } from "../completion/context-files";
+import {
+	contextFileConfigUnavailableReason,
+	contextFileThreshold,
+} from "../completion/context-files";
 import { elapsedMs, logStage, nowMs } from "../shared/logging";
 import type { UnknownRecord } from "../shared/types";
 import { readJsonRequest, requestContentLength } from "./core/json";
@@ -68,7 +71,7 @@ function oversizedInlineBodyRejection(
 	code: string;
 	reason?: string;
 } | null {
-	const unavailable = inlineContextUnavailableReason(cfg);
+	const unavailable = contextFileConfigUnavailableReason(cfg);
 	if (!unavailable) return null;
 	const contentLength = requestContentLength(request);
 	if (contentLength == null) return null;
@@ -136,7 +139,7 @@ function oversizedInlineBodyReadOptions(
 	cfg: RouteJsonConfig,
 ): ReadJsonRequestOptions | undefined {
 	const requestBodyLimit = positiveIntegerOrNull(cfg.request_body_max_bytes);
-	const unavailable = inlineContextUnavailableReason(cfg);
+	const unavailable = contextFileConfigUnavailableReason(cfg);
 	if (!unavailable) return requestBodyReadOptions(requestBodyLimit);
 	const threshold = contextFileThreshold(cfg);
 	const bodyLimit = inlineContextBodyReadLimit(cfg, threshold);
@@ -191,12 +194,4 @@ export function inlineContextBodyReadLimit(
 		(Math.floor(attachmentMaxBytes) * 4) / 3,
 	);
 	return threshold + encodedAttachmentBytes + JSON_ATTACHMENT_OVERHEAD_BYTES;
-}
-
-function inlineContextUnavailableReason(cfg: RouteJsonConfig): string {
-	if (!cfg.current_input_file_enabled)
-		return "CURRENT_INPUT_FILE_ENABLED is disabled";
-	if (!cfg.supports_authenticated_session)
-		return "Gemini account pool is not configured";
-	return "";
 }

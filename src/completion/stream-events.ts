@@ -51,6 +51,25 @@ export type CompletionStreamEvent =
 			completionCounts: TokenCharCounts & { hasText: boolean };
 	  };
 
+export type CompletionStreamIssue = {
+	error: unknown;
+	message?: string;
+};
+
+export type CompletionStreamOutcomeFacts = {
+	emittedText: boolean;
+	issue: CompletionStreamIssue | null;
+	toolCalls: readonly unknown[] | null;
+	violation: ToolPolicyViolation | null;
+};
+
+export type CompletionStreamOutcome =
+	| { type: "failed_before_output"; issue: CompletionStreamIssue }
+	| { type: "interrupted_after_output"; issue: CompletionStreamIssue }
+	| { type: "policy_violation"; violation: ToolPolicyViolation }
+	| { type: "empty" }
+	| { type: "ok" };
+
 export type CompletionStreamLifecycle = {
 	emittedText: boolean;
 	empty: boolean;
@@ -72,6 +91,22 @@ export function createCompletionStreamLifecycle(): CompletionStreamLifecycle {
 		violation: null,
 		completionCounts: emptyTokenCounts(),
 	};
+}
+
+export function classifyCompletionStreamOutcome(
+	facts: CompletionStreamOutcomeFacts,
+): CompletionStreamOutcome {
+	const hasVisibleOutput =
+		facts.emittedText || Boolean(facts.toolCalls?.length);
+	if (facts.issue) {
+		return hasVisibleOutput
+			? { type: "interrupted_after_output", issue: facts.issue }
+			: { type: "failed_before_output", issue: facts.issue };
+	}
+	if (facts.violation)
+		return { type: "policy_violation", violation: facts.violation };
+	if (!hasVisibleOutput) return { type: "empty" };
+	return { type: "ok" };
 }
 
 export function recordCompletionStreamEvent(
@@ -201,7 +236,9 @@ export async function* streamToolSieveCompletionEvents(
 		yield { type: "text_delta", text: flushed.text };
 	}
 	const toolCalls = flushed.toolCalls;
-	const violation = validateRequiredToolCalls(input.toolPolicy, toolCalls);
+	const violation = ctx.streamErr
+		? null
+		: validateRequiredToolCalls(input.toolPolicy, toolCalls);
 
 	if (ctx.streamErr)
 		yield streamErrorEvent(

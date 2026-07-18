@@ -53,10 +53,15 @@ export type StructuredOutputRequirementResult = ReturnType<
 
 export type PromptToolChoice = "auto" | "none" | "required";
 
+export type CompletionStreamMode =
+	| { type: "plain" }
+	| { type: "tool_sieve"; tools: ToolBundle };
+
 export type PreparedCompletion = {
 	rm: ResolvedModelOk;
 	bundle: ToolBundle;
 	tools: ToolBundle | null;
+	streamMode: CompletionStreamMode;
 	toolPolicy: ToolChoicePolicy;
 	promptToolChoice: PromptToolChoice;
 	structured: StructuredOutputRequirementResult;
@@ -201,6 +206,14 @@ export async function prepareCompletion(
 	else if (toolPolicy.mode === "required" || toolPolicy.mode === "forced")
 		promptToolChoice = "required";
 	const hasTools = !!tools && promptToolChoice !== "none";
+	const streamMode: CompletionStreamMode =
+		toolPolicy.mode === "none"
+			? bundle.openAIFunctionTools.length
+				? { type: "tool_sieve", tools: bundle }
+				: { type: "plain" }
+			: tools
+				? { type: "tool_sieve", tools }
+				: { type: "plain" };
 	const choiceInstruction = dialect.choiceInstruction(toolPolicy);
 
 	const ctx = await dialect.prepareContext({
@@ -249,6 +262,7 @@ export async function prepareCompletion(
 		rm,
 		bundle,
 		tools,
+		streamMode,
 		toolPolicy,
 		promptToolChoice,
 		structured,

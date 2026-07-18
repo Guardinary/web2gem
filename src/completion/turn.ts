@@ -28,7 +28,6 @@ export type OpenAICompletionTurn =
 	| {
 			text: string;
 			toolCalls: OpenAIToolCall[] | null;
-			upstreamEmpty: boolean;
 			error?: undefined;
 	  }
 	| {
@@ -39,7 +38,6 @@ export type OpenAICompletionTurn =
 			};
 			text?: undefined;
 			toolCalls?: undefined;
-			upstreamEmpty?: undefined;
 	  };
 
 export function upstreamEmptyWarning(
@@ -87,10 +85,18 @@ export function finalizeOpenAICompletionResult(
 	if (violation) {
 		return { error: violationError(violation) };
 	}
+	if (!outText && !toolCalls) {
+		return {
+			error: {
+				message: EMPTY_UPSTREAM_MSG,
+				status: 502,
+				code: "upstream_empty",
+			},
+		};
+	}
 	return {
 		text: outText,
 		toolCalls,
-		upstreamEmpty: !outText && !toolCalls,
 	};
 }
 
@@ -107,7 +113,6 @@ export type GoogleCompletionTurnOptions = {
 export type GoogleCompletionTurn =
 	| {
 			responseParts: GoogleResponsePart[];
-			upstreamEmpty: boolean;
 			error?: undefined;
 	  }
 	| {
@@ -117,7 +122,6 @@ export type GoogleCompletionTurn =
 				code?: string;
 			};
 			responseParts?: undefined;
-			upstreamEmpty?: undefined;
 	  };
 
 export function finalizeGoogleCompletionResult(
@@ -126,6 +130,15 @@ export function finalizeGoogleCompletionResult(
 ): GoogleCompletionTurn {
 	const source = String(text || "");
 	const responseParts: GoogleResponsePart[] = [];
+	if (!source) {
+		return {
+			error: {
+				message: EMPTY_UPSTREAM_MSG,
+				status: 502,
+				code: "upstream_empty",
+			},
+		};
+	}
 	if (options.hasTools && source) {
 		const [clean, fcs] = parseGoogleFunctionCalls(source, options.tools);
 		const violation = validateGoogleToolPolicyCalls(options.toolPolicy, fcs);
@@ -140,13 +153,9 @@ export function finalizeGoogleCompletionResult(
 	} else {
 		const violation = validateGoogleToolPolicyCalls(options.toolPolicy, []);
 		if (violation) return { error: violationError(violation) };
-		responseParts.push({
-			text:
-				source ||
-				"I apologize, but I was unable to generate a response. Please try again.",
-		});
+		responseParts.push({ text: source });
 	}
-	return { responseParts, upstreamEmpty: !source };
+	return { responseParts };
 }
 
 function violationError(violation: ToolPolicyViolation): {

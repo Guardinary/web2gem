@@ -1,5 +1,7 @@
 import {
+	classifyCompletionStreamOutcome,
 	createCompletionStreamLifecycle,
+	EMPTY_UPSTREAM_MSG,
 	recordCompletionStreamEvent,
 	streamPlainCompletionEvents,
 } from "../../completion";
@@ -68,25 +70,40 @@ export async function streamGooglePlain(
 		}
 	}
 	await textCoalescer.flush();
-	if (lifecycle.issue) {
-		if (!lifecycle.emittedText) {
-			log(
-				cfg,
-				`google stream failed before output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "upstream_error"} error=${errorLogSummary(lifecycle.issue.error)}`,
-			);
-			await writeGoogleStreamError(write, rm.name, lifecycle.issue.error);
-			return;
-		}
-		const warning = `\n\n${streamInterruptedWarningText(lifecycle.issue.error)}`;
+	const outcome = classifyCompletionStreamOutcome(lifecycle);
+	if (outcome.type === "failed_before_output") {
+		const error = outcome.issue.error;
 		log(
 			cfg,
-			`google stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(lifecycle.issue.error) || "stream_interrupted"} error=${errorLogSummary(lifecycle.issue.error)}`,
+			`google stream failed before output model=${rm.name} code=${upstreamErrorCode(error) || "upstream_error"} error=${errorLogSummary(error)}`,
 		);
-		await writeStreamWarningEvent(write, lifecycle.issue.error, warning.trim());
+		await writeGoogleStreamError(write, rm.name, error);
+		return;
+	}
+	if (outcome.type === "policy_violation") {
+		await writeGoogleStreamError(write, rm.name, outcome.violation);
+		return;
+	}
+	if (outcome.type === "empty") {
+		log(cfg, `google stream produced no content model=${rm.name}`);
+		await writeGoogleStreamError(write, rm.name, {
+			message: EMPTY_UPSTREAM_MSG,
+			code: "upstream_empty",
+		});
+		return;
+	}
+	if (outcome.type === "interrupted_after_output") {
+		const error = outcome.issue.error;
+		const warning = `\n\n${streamInterruptedWarningText(error)}`;
+		log(
+			cfg,
+			`google stream interrupted after partial output model=${rm.name} code=${upstreamErrorCode(error) || "stream_interrupted"} error=${errorLogSummary(error)}`,
+		);
+		await writeStreamWarningEvent(write, error, warning.trim());
 	}
 	const candidateTokens = tokenCountFromCounts(lifecycle.completionCounts);
 	await write(
-		`data: ${JSON.stringify(googleStreamDonePayload(rm.name, promptTokens, candidateTokens, lifecycle.issue ? lifecycle.issue.error : null))}\n\n`,
+		`data: ${JSON.stringify(googleStreamDonePayload(rm.name, promptTokens, candidateTokens, outcome.type === "interrupted_after_output" ? outcome.issue.error : null))}\n\n`,
 	);
 }
 

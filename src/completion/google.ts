@@ -14,6 +14,7 @@ import type { GoogleFunctionCall } from "../toolcall/google";
 import type { ToolBundle } from "../toolcall/tool-bundle";
 import { flushToolSieve } from "../toolcall/sieve";
 import {
+	classifyCompletionStreamOutcome,
 	createSieveLoopContext,
 	streamSievedTextDeltas,
 } from "./stream-events";
@@ -72,8 +73,6 @@ export async function* streamGoogleToolCompletionEvents(
 			};
 		}
 	}
-	const issue = ctx.streamErr ? { error: ctx.streamErr } : null;
-
 	const flushed = flushToolSieve(ctx.state);
 	const clean = flushed.text;
 	const functionCalls: GoogleFunctionCall[] = formatGoogleFunctionCalls(
@@ -85,13 +84,40 @@ export async function* streamGoogleToolCompletionEvents(
 		yield { type: "candidate", parts: [{ text: clean }], finishReason: null };
 	}
 
-	const violation = validateGoogleToolPolicyCalls(toolPolicy, functionCalls);
-	if (violation) {
-		yield { type: "tool_policy_violation", violation };
+	const issue = ctx.streamErr ? { error: ctx.streamErr } : null;
+	const violation = ctx.streamErr
+		? null
+		: validateGoogleToolPolicyCalls(toolPolicy, functionCalls);
+	const outcome = classifyCompletionStreamOutcome({
+		emittedText: ctx.emittedText || !!clean,
+		issue,
+		toolCalls: functionCalls,
+		violation,
+	});
+	if (outcome.type === "failed_before_output") {
+		yield { type: "error", error: outcome.issue.error };
 		return;
 	}
+	if (outcome.type === "policy_violation") {
+		yield {
+			type: "tool_policy_violation",
+			violation: outcome.violation,
+		};
+		return;
+	}
+	if (outcome.type === "empty") {
+		yield {
+			type: "error",
+			error: {
+				message: EMPTY_UPSTREAM_MSG,
+				code: "upstream_empty",
+			},
+		};
+		return;
+	}
+	if (outcome.type === "interrupted_after_output")
+		yield { type: "warning", error: outcome.issue.error };
 	if (functionCalls?.length) {
-		if (issue) yield { type: "warning", error: issue.error };
 		yield {
 			type: "candidate",
 			parts: functionCalls.map((fc) => ({
@@ -99,17 +125,6 @@ export async function* streamGoogleToolCompletionEvents(
 			})),
 			finishReason: null,
 		};
-	} else if (!ctx.emittedText && !clean) {
-		yield {
-			type: "error",
-			error: issue?.error || {
-				message: EMPTY_UPSTREAM_MSG,
-				code: "upstream_empty",
-			},
-		};
-		return;
-	} else if (issue) {
-		yield { type: "warning", error: issue.error };
 	}
 	const candidateTokens = combinedTokenCount(
 		ctx.counter.counts(),

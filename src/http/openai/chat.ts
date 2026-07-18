@@ -1,5 +1,4 @@
 import type { CompletionProvider } from "../../completion";
-import { EMPTY_UPSTREAM_MSG } from "../../completion";
 import {
 	OPENAI_COMPLETION_DIALECT,
 	prepareCompletion,
@@ -91,6 +90,7 @@ async function runChatGeneration(
 		structured,
 		bundle,
 		tools,
+		streamMode,
 		toolPolicy,
 		promptToolChoice,
 		prompt,
@@ -111,17 +111,8 @@ async function runChatGeneration(
 		? req.stream_options
 		: null;
 	const includeStreamUsage = !!streamOptions?.include_usage;
-	const detectForbiddenToolCalls = !!(
-		stream &&
-		promptToolChoice === "none" &&
-		bundle.openAIFunctionTools.length
-	);
 
-	if (
-		stream &&
-		(!tools || promptToolChoice === "none") &&
-		!detectForbiddenToolCalls
-	) {
+	if (stream && streamMode.type === "plain") {
 		return sseResponse(
 			async (write, signal) => {
 				const generationStart = stageLog.now();
@@ -149,11 +140,8 @@ async function runChatGeneration(
 		);
 	}
 
-	if (
-		stream &&
-		((tools && promptToolChoice !== "none") || detectForbiddenToolCalls)
-	) {
-		const sieveTools = tools || bundle;
+	if (stream && streamMode.type === "tool_sieve") {
+		const sieveTools = streamMode.tools;
 		return sseResponse(
 			async (write, signal) => {
 				const generationStart = stageLog.now();
@@ -208,18 +196,17 @@ async function runChatGeneration(
 		structured,
 		toolPolicy,
 	});
-	if (finalized.error)
+	if (finalized.error) {
+		if (finalized.error.code === "upstream_empty")
+			log(cfg, `openai chat generate produced no content model=${rm.name}`);
 		return openAIErrorResponse(
 			finalized.error.message,
 			finalized.error.status,
 			finalized.error.code,
 		);
+	}
 	const { toolCalls } = finalized;
 	text = finalized.text;
-	if (!text && !toolCalls) {
-		log(cfg, `openai chat generate produced no content model=${rm.name}`);
-		return openAIErrorResponse(EMPTY_UPSTREAM_MSG, 502, "upstream_empty");
-	}
 	const msg: Record<string, unknown> = {
 		role: "assistant",
 		content: text || null,
