@@ -1,0 +1,161 @@
+import { afterEach, describe, test } from "vitest";
+import { resetImport, submitImport } from "../../../src/admin-ui/actions";
+import { updateAdminKey } from "../../../src/admin-ui/session";
+import {
+	connectionVerified,
+	importBatch,
+	importBusy,
+	importLabel,
+	importPsid,
+	importPsidts,
+} from "../../../src/admin-ui/state";
+import { assert } from "../assertions.js";
+import { deferred, withAdminEnvironment } from "./_support/environment.js";
+import {
+	uiAccountOverview,
+	uiImportBatchText,
+	uiMutation,
+} from "./_support/fixtures.js";
+import { resetAdminSessionState, resetImportState } from "./_support/state.js";
+
+describe("admin UI import actions", () => {
+	afterEach(() => {
+		resetImportState();
+		resetAdminSessionState();
+	});
+
+	test("blocks account import until the admin session is verified", async () => {
+		let requests = 0;
+		await withAdminEnvironment(
+			async () => {
+				requests++;
+				return Response.json(uiMutation());
+			},
+			async () => {
+				updateAdminKey("admin-secret");
+				connectionVerified.value = false;
+				importPsid.value = "psid-value";
+				importPsidts.value = "psidts-value";
+
+				await submitImport({ preventDefault() {} });
+			},
+		);
+
+		assert.equal(requests, 0);
+	});
+
+	test("submits a single import, clears its draft, and reloads accounts", async () => {
+		const requests = [];
+		await withAdminEnvironment(
+			async (path, init = {}) => {
+				requests.push({ path: String(path), init });
+				return init.method === "POST"
+					? Response.json(uiMutation())
+					: Response.json(uiAccountOverview());
+			},
+			async () => {
+				updateAdminKey("admin-secret");
+				connectionVerified.value = true;
+				importLabel.value = "  Primary  ";
+				importPsid.value = " psid-value ";
+				importPsidts.value = " psidts-value ";
+
+				await submitImport({ preventDefault() {} });
+
+				assert.equal(importBusy.value, false);
+				assert.deepEqual(
+					[
+						importLabel.value,
+						importPsid.value,
+						importPsidts.value,
+						importBatch.value,
+					],
+					["", "", "", ""],
+				);
+			},
+		);
+
+		assert.deepEqual(
+			requests.map(({ path, init }) => [path, init.method || "GET"]),
+			[
+				["/admin/accounts", "POST"],
+				["/admin/accounts?limit=200", "GET"],
+			],
+		);
+		assert.deepEqual(JSON.parse(requests[0].init.body), {
+			provider: "gemini",
+			label: "Primary",
+			"__Secure-1PSID": "psid-value",
+			"__Secure-1PSIDTS": "psidts-value",
+		});
+	});
+
+	test("resets single and batch import drafts together", () => {
+		importLabel.value = "Label";
+		importPsid.value = "psid";
+		importPsidts.value = "psidts";
+		importBatch.value = "batch";
+
+		resetImport();
+
+		assert.deepEqual(
+			[
+				importLabel.value,
+				importPsid.value,
+				importPsidts.value,
+				importBatch.value,
+			],
+			["", "", "", ""],
+		);
+	});
+
+	test("aborts the full import request tree when the admin session changes", async () => {
+		const requestSizes = [];
+		const chunkStarted = deferred();
+		const chunkResponse = deferred();
+		let activeChunkSignal;
+		try {
+			await withAdminEnvironment(
+				async (_path, init = {}) => {
+					const payload = JSON.parse(String(init.body || "{}"));
+					requestSizes.push(payload.accounts.length);
+					if (requestSizes.length === 1)
+						return Response.json(
+							{
+								error: {
+									message: "Worker import limit exceeded",
+									code: "gemini_import_account_limit_exceeded",
+								},
+							},
+							{ status: 413 },
+						);
+					activeChunkSignal = init.signal;
+					activeChunkSignal.addEventListener(
+						"abort",
+						() => chunkResponse.resolve(Response.json(uiMutation())),
+						{ once: true },
+					);
+					chunkStarted.resolve();
+					return chunkResponse.promise;
+				},
+				async () => {
+					updateAdminKey("old-admin-key");
+					connectionVerified.value = true;
+					importBatch.value = uiImportBatchText(81);
+
+					const importing = submitImport({ preventDefault() {} });
+					await chunkStarted.promise;
+					updateAdminKey("new-admin-key");
+					await importing;
+
+					assert.deepEqual(requestSizes, [81, 40]);
+					assert.equal(activeChunkSignal.aborted, true);
+					assert.equal(connectionVerified.value, false);
+				},
+			);
+		} finally {
+			chunkStarted.resolve();
+			chunkResponse.resolve(Response.json(uiMutation()));
+		}
+	});
+});
