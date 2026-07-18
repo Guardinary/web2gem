@@ -1,8 +1,5 @@
 import { describe, test } from "vitest";
-import {
-	_sapisidHashCache,
-	makeSapisidHash,
-} from "../../../src/gemini/auth";
+import { _sapisidHashCache, makeSapisidHash } from "../../../src/gemini/auth";
 import { assert } from "../assertions.js";
 import { withPatchedGlobal } from "../_support/globals.js";
 
