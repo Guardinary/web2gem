@@ -1,14 +1,15 @@
 import { droppedAttachmentNote } from "../attachments/notes";
+import { recognizedFileRefKey } from "../attachments/refs";
 import type { AttachmentPlan } from "../attachments/types";
 import type { RuntimeConfig } from "../config";
-import {
-	buildOpenAIHistoryTranscript,
-	latestOpenAIUserInputText,
-} from "../promptcompat/history";
 import {
 	attachmentPlanFromMessages,
 	openAIAttachmentPlanFromRequest,
 } from "../promptcompat/attachment-inputs";
+import {
+	buildOpenAIHistoryTranscript,
+	latestOpenAIUserInputText,
+} from "../promptcompat/history";
 import type { InternalMessage } from "../promptcompat/message-model";
 import type { PromptToolContext } from "../promptcompat/messages";
 import { messagesToPrompt } from "../promptcompat/messages";
@@ -19,13 +20,15 @@ import {
 	withGeminiNativeHiddenToolsPromptForPrepared,
 	withGeminiNativeHiddenToolsPromptWithTokens,
 } from "../promptcompat/prompt-build";
+import {
+	buildTextWithTokens,
+	type PreparedTokenText,
+} from "../promptcompat/token-accounting";
 import { logStage } from "../shared/logging";
-import { buildTextWithTokens } from "../promptcompat/token-accounting";
 import {
 	createPromptByteLengthSniffer,
 	type PromptByteLengthBounded,
 } from "../shared/text-metrics";
-import { isRecord } from "../shared/types";
 import type { ToolChoicePolicy } from "../toolcall/policy-openai";
 import { buildToolChoiceInstructionFromPolicy } from "../toolcall/policy-openai";
 import type { ToolBundle } from "../toolcall/tool-bundle";
@@ -47,7 +50,6 @@ import type {
 	GeminiContextPrepareResult,
 	LooseRequest,
 	PromptMetadata,
-	PromptWithTokens,
 	ToolDef,
 } from "./types";
 import { hasCompletionError } from "./types";
@@ -177,7 +179,7 @@ type PromptWithAttachmentParams = {
 	cfg: RuntimeConfig;
 	provider: CompletionProvider;
 	basePrompt: string;
-	basePromptPrepared?: PromptWithTokens | null;
+	basePromptPrepared?: PreparedTokenText | null;
 	basePromptByteCheck?: ContextFilePromptByteCheck | null;
 	hiddenPromptInsertOffset?: number | undefined;
 	attachmentPlan: AttachmentPlan;
@@ -242,18 +244,15 @@ async function preparePromptWithAttachments(
 	const attachmentPromptText =
 		(attachmentResult.promptText || "") + (attachmentResult.droppedNote || "");
 	const preparedBase = params.basePromptPrepared
-		? (appendTextToPreparedWithTokens(params.basePromptPrepared, [
+		? appendTextToPreparedWithTokens(params.basePromptPrepared, [
 				attachmentPromptText,
-			]) as PromptWithTokens)
-		: (buildTextWithTokens([
-				params.basePrompt,
-				attachmentPromptText,
-			]) as PromptWithTokens);
+			])
+		: buildTextWithTokens([params.basePrompt, attachmentPromptText]);
 	const inlineHiddenToolsPrompt = withGeminiNativeHiddenToolsPromptForPrepared(
 		preparedBase,
 		true,
 		params.hiddenPromptInsertOffset,
-	) as PromptWithTokens;
+	);
 	const inlinePreparedPrompt = prepareStructuredPrompt(
 		inlineHiddenToolsPrompt,
 		params.structured,
@@ -343,10 +342,7 @@ async function preparePromptWithAttachments(
 		: null;
 	const livePreparedPrompt = contextFiles
 		? prepareStructuredPrompt(
-				buildTextWithTokens([
-					contextFiles.prompt,
-					attachmentPromptText,
-				]) as PromptWithTokens,
+				buildTextWithTokens([contextFiles.prompt, attachmentPromptText]),
 				params.structured,
 			)
 		: inlinePreparedPrompt;
@@ -356,7 +352,7 @@ async function preparePromptWithAttachments(
 					{ text: "", tokens: 0, counts: contextFiles.promptTokenCounts },
 					[attachmentPromptText],
 					false,
-				) as PromptWithTokens,
+				),
 				params.structured,
 				false,
 			)
@@ -388,11 +384,7 @@ export function mergeFileRefs<T>(
 		if (!Array.isArray(group)) continue;
 		for (const ref of group) {
 			if (!ref) continue;
-			let key: unknown;
-			if (typeof ref === "string") key = ref;
-			else if (isRecord(ref))
-				key = ref.ref || ref.fileRef || ref.id || JSON.stringify(ref);
-			else key = JSON.stringify(ref);
+			const key = recognizedFileRefKey(ref) || JSON.stringify(ref);
 			if (!key || seen.has(key)) continue;
 			seen.add(key);
 			out.push(ref);
@@ -474,27 +466,22 @@ async function prepareContextFilesForDecision(
 }
 
 function prepareStructuredPrompt(
-	prompt: PromptWithTokens,
+	prompt: PreparedTokenText,
 	structured: unknown,
 	keepText = true,
-): PromptWithTokens {
+): PreparedTokenText {
 	return structured
-		? (appendStructuredOutputInstructionToPrepared(
-				prompt,
-				structured,
-				keepText,
-			) as PromptWithTokens)
+		? appendStructuredOutputInstructionToPrepared(prompt, structured, keepText)
 		: prompt;
 }
 
 function promptResultToPrepared(
-	promptResult: { tokens?: number; counts?: unknown },
+	promptResult: Pick<PreparedTokenText, "tokens" | "counts">,
 	text: string,
-): PromptWithTokens | null {
-	if (!promptResult?.counts) return null;
+): PreparedTokenText {
 	return {
 		text,
-		tokens: promptResult.tokens || 0,
+		tokens: promptResult.tokens,
 		counts: promptResult.counts,
 	};
 }

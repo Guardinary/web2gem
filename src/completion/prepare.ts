@@ -11,20 +11,12 @@ import { log } from "../shared/logging";
 import {
 	googleToolChoiceInstructionFromPolicy,
 	parseGoogleToolChoicePolicy,
-	validateGoogleToolChoiceConfig,
 } from "../toolcall/policy-google";
-import type {
-	ToolChoicePolicy,
-	ToolPolicyViolation,
-} from "../toolcall/policy-openai";
+import type { ToolChoicePolicy } from "../toolcall/policy-openai";
 import {
 	buildToolChoiceInstructionFromPolicy,
 	parseOpenAIToolChoicePolicy,
 } from "../toolcall/policy-openai";
-import {
-	buildStructuredOutputRequirement,
-	getStructuredResponseFormat,
-} from "./structured-output";
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,
@@ -35,6 +27,10 @@ import {
 	prepareOpenAIGeminiContext,
 } from "./context";
 import { type CompletionProvider, resolveCompletionModel } from "./ports";
+import {
+	buildStructuredOutputRequirement,
+	getStructuredResponseFormat,
+} from "./structured-output";
 import { ensureInlineToolPrompt } from "./tool-prompt-guard";
 import type {
 	ContextFileResult,
@@ -88,10 +84,6 @@ export type CompletionDialect = {
 	stage: "openai" | "google";
 	modelLogLabel(model: unknown): string;
 	structured(req: LooseRequest): StructuredOutputRequirementResult;
-	validateToolConfig(
-		req: LooseRequest,
-		bundle: ToolBundle,
-	): ToolPolicyViolation | null;
 	parsePolicy(req: LooseRequest, bundle: ToolBundle): ToolChoicePolicy;
 	choiceInstruction(policy: ToolChoicePolicy): string;
 	emptyPromptMessage: string;
@@ -109,7 +101,6 @@ export const OPENAI_COMPLETION_DIALECT: CompletionDialect = {
 	modelLogLabel: (model) => String(model ?? "(default)"),
 	structured: (req) =>
 		buildStructuredOutputRequirement(getStructuredResponseFormat(req)),
-	validateToolConfig: () => null,
 	parsePolicy: (req, bundle) =>
 		parseOpenAIToolChoicePolicy(
 			req.tool_choice != null ? req.tool_choice : "auto",
@@ -139,8 +130,6 @@ export const GOOGLE_COMPLETION_DIALECT: CompletionDialect = {
 	stage: "google",
 	modelLogLabel: (model) => String(model || "(empty)"),
 	structured: () => null,
-	validateToolConfig: (req, bundle) =>
-		validateGoogleToolChoiceConfig(req, bundle),
 	parsePolicy: (req, bundle) => parseGoogleToolChoicePolicy(req, bundle),
 	choiceInstruction: (policy) => googleToolChoiceInstructionFromPolicy(policy),
 	emptyPromptMessage: "empty content",
@@ -194,16 +183,6 @@ export async function prepareCompletion(
 	}
 
 	const bundle = createToolBundle(req.tools);
-	const toolConfigViolation = dialect.validateToolConfig(req, bundle);
-	if (toolConfigViolation) {
-		return {
-			error: {
-				message: toolConfigViolation.message,
-				status: 400,
-				code: "invalid_tool_choice",
-			},
-		};
-	}
 	const toolPolicy = dialect.parsePolicy(req, bundle);
 	if (toolPolicy.error) {
 		return {

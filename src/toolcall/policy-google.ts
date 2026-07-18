@@ -1,12 +1,12 @@
+import type { UnknownRecord } from "../shared/types";
+import { firstRecord, isRecord } from "../shared/types";
+import type { ToolChoicePolicy, ToolPolicyViolation } from "./policy-openai";
 import {
 	extractToolNames,
 	namesToSet,
 	policyHasAllowed,
 	validateToolPolicyCalls,
 } from "./policy-openai";
-import type { ToolChoicePolicy, ToolPolicyViolation } from "./policy-openai";
-import { firstRecord, isRecord } from "../shared/types";
-import type { UnknownRecord } from "../shared/types";
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,
@@ -75,6 +75,27 @@ export function parseGoogleToolChoicePolicy(
 		declared,
 		error: "",
 	};
+	const allowed = googleAllowedFunctionNames(fc);
+
+	if (mode !== "AUTO" && mode !== "ANY" && mode !== "NONE") {
+		policy.error = `unsupported functionCallingConfig.mode: ${mode}`;
+		return policy;
+	}
+	for (const name of allowed) {
+		if (!declaredSet[name]) {
+			policy.error = `functionCallingConfig allowed unknown function: ${name}`;
+			return policy;
+		}
+	}
+	if (mode === "ANY" && !declared.length) {
+		policy.error = "functionCallingConfig.mode=ANY requires at least one tool";
+		return policy;
+	}
+	if (allowed.length && !allowed.some((name) => declaredSet[name])) {
+		policy.error =
+			"functionCallingConfig.allowedFunctionNames did not match any declared functions";
+		return policy;
+	}
 
 	if (mode === "NONE") {
 		policy.mode = "none";
@@ -85,13 +106,8 @@ export function parseGoogleToolChoicePolicy(
 	if (mode === "ANY") policy.mode = "required";
 	else policy.mode = "auto";
 
-	const allowed = googleAllowedFunctionNames(fc);
 	if (allowed.length) {
-		const kept: string[] = [];
-		for (const name of allowed) {
-			if (declaredSet[name]) kept.push(name);
-		}
-		policy.allowed = namesToSet(kept);
+		policy.allowed = namesToSet(allowed);
 		policy.hasAllowed = true;
 	}
 	return policy;
@@ -101,43 +117,10 @@ export function validateGoogleToolChoiceConfig(
 	req: unknown,
 	tools: ToolBundle | null | undefined,
 ): ToolPolicyViolation | null {
-	const fc = googleFunctionCallingConfig(req);
-	const mode = String(fc.mode || "AUTO")
-		.trim()
-		.toUpperCase();
-	if (mode !== "AUTO" && mode !== "ANY" && mode !== "NONE") {
-		return {
-			message: `unsupported functionCallingConfig.mode: ${mode}`,
-			code: "tool_choice_violation",
-		};
-	}
-
-	const declared = extractToolNames(tools);
-	const declaredSet = namesToSet(declared);
-	const allowed = googleAllowedFunctionNames(fc);
-	for (const name of allowed) {
-		if (!declaredSet[name]) {
-			return {
-				message: `functionCallingConfig allowed unknown function: ${name}`,
-				code: "tool_choice_violation",
-			};
-		}
-	}
-
-	if (mode === "ANY" && !declared.length) {
-		return {
-			message: "functionCallingConfig.mode=ANY requires at least one tool",
-			code: "tool_choice_violation",
-		};
-	}
-	if (allowed.length && !allowed.some((name) => declaredSet[name])) {
-		return {
-			message:
-				"functionCallingConfig.allowedFunctionNames did not match any declared functions",
-			code: "tool_choice_violation",
-		};
-	}
-	return null;
+	const policy = parseGoogleToolChoicePolicy(req, tools);
+	return policy.error
+		? { message: policy.error, code: "tool_choice_violation" }
+		: null;
 }
 
 export function filterGoogleToolsByConfig(

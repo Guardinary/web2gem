@@ -7,10 +7,13 @@ import {
 	createAttachmentPlan,
 	mergeAttachmentPlans,
 } from "../attachments/plan";
-import { appendExistingFileRefs } from "../attachments/refs";
+import {
+	appendExistingFileRefs,
+	recognizedFileRefID,
+} from "../attachments/refs";
 import type { AttachmentFileRef, AttachmentPlan } from "../attachments/types";
 import { isRecord } from "../shared/types";
-import { parseMessagePart, type InternalMessage } from "./message-model";
+import { type InternalMessage, parseMessagePart } from "./message-model";
 
 type MessageImageInput = { b64: string; mime: string; filename: string };
 type MessageAttachmentInputs = {
@@ -142,8 +145,8 @@ function appendRequestAttachmentInputs(
 		out.files.push(upload);
 		return;
 	}
-	const directID = raw.ref ?? raw.fileRef ?? raw.id ?? raw.file_id;
-	if (directID != null) {
+	const directID = recognizedFileRefID(raw, true);
+	if (directID) {
 		const name = uploadFilenameFromObject(raw);
 		appendExistingFileRefs(
 			out.existingFileRefs,
@@ -166,8 +169,8 @@ function appendRequestRefs(out: AttachmentFileRef[], raw: unknown): void {
 		if (part.fileRef) appendExistingFileRefs(out, part.fileRef);
 		return;
 	}
-	const id = raw.ref ?? raw.fileRef ?? raw.id ?? raw.file_id;
-	if (id != null) appendExistingFileRefs(out, String(id));
+	const id = recognizedFileRefID(raw, true);
+	if (id) appendExistingFileRefs(out, id);
 	else
 		for (const key of REFERENCE_NESTED_KEYS) {
 			if (key in raw) appendRequestRefs(out, raw[key]);

@@ -5,6 +5,7 @@ import {
 	latestOpenAIUserInputText,
 } from "../../../src/promptcompat/history";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
+import { messagesToPrompt } from "../../../src/promptcompat/messages";
 import { assert } from "../assertions.js";
 
 describe("prompt compatibility", () => {
@@ -190,5 +191,26 @@ describe("prompt compatibility", () => {
 			latestOpenAIUserInputText(messages),
 			"[file input notes.txt]\n[file input readme.md]",
 		);
+	});
+
+	test("renders content reasoning once and restores string-array projections", async () => {
+		const messages = parseOpenAIMessages([
+			{
+				role: "assistant",
+				content: [
+					{ type: "reasoning", text: "checked once" },
+					{ type: "text", text: "answer" },
+				],
+			},
+			{ role: "user", content: ["first", "second"] },
+		]);
+		const prompt = messagesToPrompt(messages, null).text;
+		const transcript = buildOpenAIHistoryTranscript(messages);
+
+		assert.equal((prompt.match(/checked once/g) || []).length, 1);
+		assert.equal((transcript.match(/checked once/g) || []).length, 1);
+		assert.match(prompt, /first\nsecond/);
+		assert.match(transcript, /first\nsecond/);
+		assert.equal(latestOpenAIUserInputText(messages), "first\nsecond");
 	});
 });

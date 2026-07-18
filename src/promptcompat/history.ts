@@ -1,8 +1,8 @@
 import { formatPromptToolCallBlock } from "../toolcall/prompt-format";
 import {
-	historyContentText,
 	type InternalMessage,
-	messageReasoningText,
+	latestUserInputText,
+	renderMessageBody,
 } from "./message-model";
 
 type HistoryTranscriptEntry = {
@@ -18,15 +18,7 @@ export function buildOpenAIHistoryTranscript(
 	for (const msg of messages) {
 		let content = "";
 		if (msg.role === "assistant") {
-			const reasoning = messageReasoningText(msg);
-			content = [
-				reasoning
-					? `[reasoning_content]\n${reasoning}\n[/reasoning_content]`
-					: "",
-				historyContentText(msg),
-			]
-				.filter(Boolean)
-				.join("\n\n");
+			content = renderMessageBody(msg, "history");
 			if (msg.toolCalls.length) {
 				const blocks = msg.toolCalls.map((tc) =>
 					formatPromptToolCallBlock(tc.name, tc.args),
@@ -37,12 +29,12 @@ export function buildOpenAIHistoryTranscript(
 			const meta: string[] = [];
 			if (msg.toolName) meta.push(`name=${msg.toolName}`);
 			if (msg.toolCallId) meta.push(`tool_call_id=${msg.toolCallId}`);
-			const toolContent = historyContentText(msg).trim() || "null";
+			const toolContent = renderMessageBody(msg, "history").trim() || "null";
 			content = [meta.length ? `[${meta.join(" ")}]` : "", toolContent]
 				.filter(Boolean)
 				.join("\n");
 		} else {
-			content = historyContentText(msg);
+			content = renderMessageBody(msg, "history");
 		}
 		content = String(content || "").trim();
 		if (content) entries.push({ role: msg.roleLabel, content });
@@ -58,11 +50,5 @@ export function buildOpenAIHistoryTranscript(
 export function latestOpenAIUserInputText(
 	messages: readonly InternalMessage[],
 ): string {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const msg = messages[i];
-		if (msg?.roleLabel !== "user") continue;
-		const text = historyContentText(msg).trim();
-		if (text) return text;
-	}
-	return "";
+	return latestUserInputText(messages);
 }

@@ -13,12 +13,6 @@ export type ToolDef = {
 	parameters?: unknown;
 };
 
-export type PromptWithTokens = {
-	text: string;
-	tokens: number;
-	counts?: unknown;
-};
-
 export type PromptMetadata = {
 	hasToolPrompt: boolean;
 	hasToolInstructions: boolean;

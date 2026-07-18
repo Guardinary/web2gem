@@ -3,12 +3,162 @@ import {
 	normalizeResponsesInputAsMessages,
 	normalizeResponsesInputAsMessagesStrict,
 	normalizeResponsesInputValueAsMessages,
+	parseResponsesInput,
 	responsesMessagesFromRequest,
 	stringifyToolCallArguments,
 } from "../../../src/promptcompat/responses-input";
 import { assert } from "../assertions.js";
 
 describe("prompt compatibility", () => {
+	test("parses Responses items directly into typed messages in order", async () => {
+		const objectArgs = { id: 7 };
+		const result = parseResponsesInput({
+			instructions: "be brief",
+			input: [
+				{ type: "reasoning", text: "first thought" },
+				{
+					type: "thinking",
+					content: [{ type: "summary_text", text: "second thought" }],
+				},
+				{
+					type: "function_call",
+					call_id: "call_1",
+					name: "Lookup",
+					arguments: objectArgs,
+				},
+				{
+					type: "function_call",
+					call_id: "call_2",
+					function: { name: "Read", arguments: '{"path":"README.md"}' },
+				},
+				{
+					type: "function_call_output",
+					call_id: "call_1",
+					output: { ok: true },
+				},
+				"follow",
+				"up",
+			],
+		});
+
+		assert.equal(result.error, undefined);
+		assert.equal(result.messages[0].role, "system");
+		assert.equal(result.messages[0].parts[0].text, "be brief");
+		assert.equal(result.messages[1].role, "assistant");
+		assert.equal(
+			result.messages[1].reasoningText,
+			"first thought\nsecond thought",
+		);
+		assert.equal(result.messages[1].toolCalls.length, 2);
+		assert.equal(result.messages[1].toolCalls[0].args, objectArgs);
+		assert.deepEqual(result.messages[1].toolCalls[1].args, {
+			path: "README.md",
+		});
+		assert.deepEqual(
+			{
+				role: result.messages[2].role,
+				toolCallId: result.messages[2].toolCallId,
+				toolName: result.messages[2].toolName,
+				text: result.messages[2].parts[0].text,
+			},
+			{
+				role: "tool",
+				toolCallId: "call_1",
+				toolName: "Lookup",
+				text: '{"ok":true}',
+			},
+		);
+		assert.equal(result.messages[3].parts[0].text, "follow\nup");
+	});
+
+	test("uses explicit Responses modes and ignores unknown top-level items", async () => {
+		const imageInput = {
+			type: "input_image",
+			image_url: "data:image/png;base64,QUJD",
+		};
+		assert.match(
+			parseResponsesInput({ input: [imageInput] }, "completion").error,
+			/unsupported type: input_image/,
+		);
+		const image = parseResponsesInput(
+			{ input: [imageInput] },
+			"image-generation",
+		);
+		assert.equal(image.messages[0].parts[0].kind, "image");
+		assert.equal(image.messages[0].parts[0].b64, "QUJD");
+
+		const mixed = parseResponsesInput({
+			input: [
+				{ type: "custom_event", text: "hidden" },
+				{ type: "input_text", text: "visible" },
+			],
+		});
+		assert.equal(mixed.messages.length, 1);
+		assert.equal(mixed.messages[0].parts[0].text, "visible");
+		assert.deepEqual(
+			parseResponsesInput({ input: { type: "custom_event", text: "hidden" } }),
+			{ messages: [] },
+		);
+		assert.deepEqual(parseResponsesInput({ input: null }), { messages: [] });
+		assert.deepEqual(parseResponsesInput({ input: "   " }), { messages: [] });
+		assert.match(parseResponsesInput({ input: true }).error, /string, object/);
+	});
+
+	test("preserves typed role messages and rejects malformed recognized items", async () => {
+		const assistant = parseResponsesInput({
+			input: {
+				role: "assistant",
+				content: [
+					{ type: "reasoning", summary: "checked" },
+					{ type: "output_text", text: "visible" },
+					{ type: "function_call", name: "Search", input: { q: "docs" } },
+				],
+				tool_calls: [
+					null,
+					{
+						id: "call_existing",
+						function: { name: "Existing", arguments: "{}" },
+					},
+				],
+			},
+		});
+		assert.equal(assistant.messages[0].parts[0].kind, "reasoning");
+		assert.equal(assistant.messages[0].parts[1].text, "visible");
+		assert.deepEqual(
+			assistant.messages[0].toolCalls.map((call) => call.name),
+			["Existing", "Search"],
+		);
+
+		const reasoning = parseResponsesInput({
+			input: {
+				role: "assistant",
+				content: [{ type: "reasoning", text: "only" }],
+			},
+		});
+		assert.equal(reasoning.messages[0].reasoningText, "only");
+		const tool = parseResponsesInput({
+			input: { role: "tool", call_id: "call_9", name: "Lookup", output: 0 },
+		});
+		assert.equal(tool.messages[0].parts[0].text, "0");
+		assert.equal(tool.messages[0].toolCallId, "call_9");
+
+		const invalidInputs = [
+			[[""], /item 0 is empty/],
+			[[42], /item 0 must be a supported object or string/],
+			[[{ type: "tool_result" }], /tool result requires output/],
+			[[{ type: "function_call" }], /function call requires name/],
+			[[{ type: "reasoning" }], /reasoning item requires text/],
+			[[{ type: "input_text", text: "" }], /text item requires text/],
+			[{ role: "user" }, /message requires content/],
+			[
+				{ role: "assistant" },
+				/assistant message requires content or tool calls/,
+			],
+		];
+		for (const [input, pattern] of invalidInputs)
+			assert.match(parseResponsesInput({ input }).error, pattern);
+	});
+
 	test("normalizes Responses reasoning tool calls and outputs in order", async () => {
 		const messages = normalizeResponsesInputValueAsMessages([
 			{

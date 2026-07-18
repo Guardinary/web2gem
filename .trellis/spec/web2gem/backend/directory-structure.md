@@ -10,7 +10,7 @@
 - `src/http/openai/images.ts` owns OpenAI image route orchestration and generation response flow. JSON and multipart image-edit input normalization, upload-size enforcement, and image-part coercion belong in `src/http/openai/images-input.ts`; keep provider calls and response formatting out of that input owner.
 - HTTP protocol adapters import `http/core/*`, `http/stream/*`, and `src/http/*` owner modules directly. There is no `src/http/index.ts` barrel; `src/app.ts` also imports owner modules directly. New generation endpoints run through `runPreparedCompletion`/`generateTextLogged`/`generateRichLogged` with their protocol's `*_GENERATION_PROTOCOL` constant instead of hand-rolling prepare/generate/log/error pipelines.
 - `src/completion/` owns provider-neutral completion contracts and shared business behavior: prompt/context preparation, provider text-generation ports, empty-output handling, stream/tool-sieve event generation, one `CompletionStreamLifecycle` reducer, and completion turn finalization. Protocol adapters must not mirror reducer-owned issue/empty/tool-call/policy/count state, and callback-style stream consumption APIs are not part of the contract.
-- `src/promptcompat/` owns the typed `InternalMessage` boundary. `message-model.ts` owns the single raw content-part parser; `attachment-inputs.ts` projects parsed messages plus request-level attachment channels into `AttachmentPlan`. HTTP adapters parse OpenAI Responses, OpenAI chat, and Google wire shapes once; prompt, history, attachment, and image-generation consumers receive the parsed model instead of re-walking raw content parts.
+- `src/promptcompat/` owns the typed `InternalMessage` boundary. `message-model.ts` owns canonical parts, the single raw content-part parser, and explicit prompt/history/latest-input/reasoning projections; `responses-input.ts` parses Responses items directly into that model; `attachment-inputs.ts` projects parsed messages plus request-level attachment channels into `AttachmentPlan`. HTTP adapters parse OpenAI Responses, OpenAI chat, and Google wire shapes once; prompt, history, attachment, and image-generation consumers receive the parsed model instead of re-walking raw content parts.
 - `src/toolcall/` owns tool-call prompt formatting, parsing, policy validation, schema normalization, and streamed sieve state. Import concrete owners such as `toolcall/sieve`, `toolcall/tool-bundle`, `toolcall/policy-openai`, `toolcall/policy-google`, `toolcall/dsml`, or `toolcall/openai-format`; there is no broad compatibility barrel.
 - `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. `gemini/client/index.ts` stays an orchestration layer; model headers live in `client/model-headers.ts`, WRB envelopes/parts/images/streams live in concrete `client/parse-*.ts` owners, and no catch-all parser barrel exists.
 - `src/gemini/client/generated-images.ts` owns generated-image URL candidates, browser/cookie download headers, byte hydration, supported output-format mapping, and URL fallback. It must reuse MIME detection from `src/attachments/mime.ts` and encoding from `src/attachments/base64.ts`.
@@ -161,7 +161,7 @@ Use this contract when changing OpenAI/Google file or image input handling, requ
 - `src/attachments/plan.ts` owns `createAttachmentPlan({ images, files, existingFileRefs, maxFiles })`, `mergeAttachmentPlans(...)`, candidate ordering, max-count enforcement, and request-local candidate normalization.
 - `src/promptcompat/message-model.ts` owns `InternalMessage`, `MessagePart`, `parseOpenAIMessages(...)`, and the single `parseMessagePart(...)` raw content-part walker.
 - `src/promptcompat/attachment-inputs.ts` owns `attachmentInputsFromMessages(...)`, `attachmentPlanFromMessages(...)`, `openAIAttachmentPlanFromRequest(...)`, and request-level `attachments`, `files`, `ref_file_ids`, `file_ids`, and Responses `input` reference-channel planning. Consumers import this concrete owner directly; `message-model.ts` does not re-export attachment planning.
-- `src/attachments/refs.ts` only consolidates already-parsed provider file-reference values for `AttachmentPlan`; it does not inspect raw OpenAI messages.
+- `src/attachments/refs.ts` owns recognized `file_id`, `fileId`, `file_ref`, `fileRef`, `ref`, and context-sensitive `id` extraction, naming, and dedupe keys. Raw message walking remains in `promptcompat`; completion may retain an opaque-object fallback after recognized-key lookup.
 - `src/attachments/notes.ts` owns dropped-attachment records and deterministic prompt notes.
 - `CompletionProvider.resolveAttachments(plan)` resolves request-local candidates to provider file refs and prompt notes.
 - `CompletionProvider.uploadTextFile(text, filename)` uploads required large-context text files.
@@ -721,13 +721,13 @@ jsonValuesEqual(schemaValue, outputValue)
 
 ### 1. Scope / Trigger
 
-Use this contract when changing `src/promptcompat/responses-input.ts` or any OpenAI Responses route behavior that converts `req.input` into chat-style messages.
+Use this contract when changing `src/promptcompat/responses-input.ts` or any OpenAI Responses route behavior that parses `req.input` into the canonical typed message model.
 
 ### 2. Signatures
 
-- `normalizeResponsesInputAsMessages(req)` returns an array of chat-style messages or `[]`.
-- `normalizeResponsesInputValueAsMessages(input)` accepts string, array, and recognized object-shaped Responses input values.
-- `normalizeResponsesInputItem(item, callNameByID)` converts one recognized Responses item into one chat-style message or returns `null`.
+- `parseResponsesInput(req, mode)` returns `InternalMessage[]` or a parse error, where mode is `completion | image-generation`.
+- `normalizeResponsesInputAsMessages(req)` remains a harness/test compatibility projection; production routes do not consume its chat-style wire records.
+- `parseToolCallArguments(value)` preserves object arguments and parses string arguments once into the internal object shape.
 
 ### 3. Contracts
 
@@ -735,7 +735,9 @@ Use this contract when changing `src/promptcompat/responses-input.ts` or any Ope
 - Recognized message shapes with `role` or `type: "message" | "input_message"` remain supported.
 - Recognized item types remain supported: `function_call_output`, `tool_result`, `function_call`, `tool_call`, `reasoning`, `thinking`, `input_text`, `text`, `output_text`, and `summary_text`.
 - Unknown object items must be ignored. Do not serialize unknown objects into prompt text with `JSON.stringify`, and do not treat bare `text` or `content` fields on unknown item types as user text.
-- Known message content parts are still converted later by prompt/content helpers; this rule only forbids unknown top-level Responses input item fallback injection.
+- Completion mode rejects top-level `input_image` with `unsupported_responses_input`; image-generation mode retains it as a typed user image part.
+- Reasoning/call/result order, pending reasoning, call-name lookup, generated IDs, instruction prepend, role normalization, and adjacent call merging are part of the parser contract.
+- Tool argument objects do not cross an internal stringify/parse boundary.
 
 ### 4. Validation & Error Matrix
 
@@ -743,16 +745,19 @@ Use this contract when changing `src/promptcompat/responses-input.ts` or any Ope
 - `input: [{ type: "custom_event", text: "secret" }]` -> no message for that item.
 - `input: [{ custom: "secret" }]` -> no message for that item.
 - `input: [{ role: "user", content: "x" }]` -> user message containing `x`.
+- Completion `input: [{ type: "input_image", ... }]` -> parse error; image-generation mode -> typed image part.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: add support for a new Responses item by naming its `type` explicitly in `normalizeResponsesInputItem`.
+- Good: add support for a new Responses item by naming its `type` explicitly in the direct typed parser.
 - Base: unknown future Responses metadata is ignored until the project intentionally supports it.
+- Bad: convert typed input back to OpenAI wire messages and parse it a second time.
 - Bad: fallback to `JSON.stringify(item)` for unrecognized items, which leaks opaque metadata into the model prompt.
 
 ### 6. Tests Required
 
-- Unit test `normalizeResponsesInputAsMessages` for known `input_text` plus unknown object omission.
+- Unit test `parseResponsesInput` for known text, direct object/string tool arguments, unknown omission, and both image modes.
+- Keep the compatibility normalizer covered as a harness contract.
 - Unit or route-level test that `handleResponses` prompt text includes known text and excludes unknown object `text`, nested `content`, and serialized metadata.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke`.
 
@@ -761,13 +766,14 @@ Use this contract when changing `src/promptcompat/responses-input.ts` or any Ope
 #### Wrong
 
 ```typescript
-try { return JSON.stringify(item); } catch (_) { return String(item); }
+const wire = normalizeResponsesInputAsMessages(req);
+return parseOpenAIMessages(wire);
 ```
 
 #### Correct
 
 ```typescript
-const type = String(item.type || "").trim().toLowerCase();
-if (type === "input_text" && typeof item.text === "string") return { role: "user", content: item.text };
-return null;
+const parsed = parseResponsesInput(req, "completion");
+if (parsed.error) return protocolError(parsed.error);
+return prepareCompletion(parsed.messages);
 ```

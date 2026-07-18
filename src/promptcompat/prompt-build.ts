@@ -1,3 +1,6 @@
+import { isRecord } from "../shared/types";
+import { GEMINI_NATIVE_HIDDEN_TOOLS_PROMPT } from "../toolcall/prompt-format";
+import type { PreparedTokenText, TokenCharCounts } from "./token-accounting";
 import {
 	addTokenCharCounts,
 	asTokenText,
@@ -5,34 +8,8 @@ import {
 	tokenCharCounts,
 	tokenCountFromCounts,
 } from "./token-accounting";
-import type { PreparedTokenText, TokenCharCounts } from "./token-accounting";
-import { isRecord } from "../shared/types";
-import { GEMINI_NATIVE_HIDDEN_TOOLS_PROMPT } from "../toolcall/prompt-format";
 
 type TokenCountsWithTextFlag = TokenCharCounts & { hasText: boolean };
-
-function preparedText(prepared: unknown): unknown {
-	return isRecord(prepared) ? prepared.text : undefined;
-}
-
-function preparedCounts(prepared: unknown): TokenCountsWithTextFlag | null {
-	if (!isRecord(prepared) || !isRecord(prepared.counts)) return null;
-	return {
-		asciiChars:
-			typeof prepared.counts.asciiChars === "number"
-				? prepared.counts.asciiChars
-				: 0,
-		nonASCIIChars:
-			typeof prepared.counts.nonASCIIChars === "number"
-				? prepared.counts.nonASCIIChars
-				: 0,
-		hasText: prepared.counts.hasText === true,
-	};
-}
-
-function objectFromPrepared(prepared: unknown): Record<string, unknown> {
-	return prepared == null ? {} : (Object(prepared) as Record<string, unknown>);
-}
 
 export function structuredInstruction(requirement: unknown): string {
 	if (!isRecord(requirement)) return "";
@@ -52,25 +29,17 @@ export function withGeminiNativeHiddenToolsPromptWithTokens(
 }
 
 export function appendTextToPreparedWithTokens(
-	prepared: unknown,
+	prepared: PreparedTokenText,
 	parts: readonly unknown[] | null | undefined,
 	keepText = true,
 ): PreparedTokenText {
-	const sourceCounts = preparedCounts(prepared);
-	if (!sourceCounts) {
-		return buildTextWithTokens(
-			[preparedText(prepared), ...(parts || [])],
-			keepText,
-		);
-	}
 	const counts: TokenCountsWithTextFlag = {
 		asciiChars: 0,
 		nonASCIIChars: 0,
 		hasText: false,
 	};
-	addTokenCharCounts(counts, sourceCounts);
-	const text = preparedText(prepared);
-	const out = keepText ? [text ? String(text) : ""] : null;
+	addTokenCharCounts(counts, prepared.counts);
+	const out = keepText ? [prepared.text] : null;
 	for (const part of parts || []) {
 		const partText = asTokenText(part);
 		if (!partText) continue;
@@ -86,22 +55,15 @@ export function appendTextToPreparedWithTokens(
 }
 
 export function withGeminiNativeHiddenToolsPromptForPrepared(
-	prepared: unknown,
+	prepared: PreparedTokenText,
 	keepText = true,
 	insertOffset?: number | null,
-): unknown {
-	const counts = preparedCounts(prepared);
-	if (!counts)
-		return withGeminiNativeHiddenToolsPromptWithTokens(
-			preparedText(prepared),
-			keepText,
-			insertOffset,
-		);
-	if (!counts.hasText)
-		return keepText ? prepared : { ...objectFromPrepared(prepared), text: "" };
+): PreparedTokenText {
+	if (!prepared.counts.hasText)
+		return keepText ? prepared : { ...prepared, text: "" };
 	if (keepText)
 		return withGeminiNativeHiddenToolsPromptWithTokens(
-			preparedText(prepared),
+			prepared.text,
 			keepText,
 			insertOffset,
 		);
@@ -154,19 +116,19 @@ export function appendStructuredOutputInstructionWithTokens(
 }
 
 export function appendStructuredOutputInstructionToPrepared(
-	prepared: unknown,
+	prepared: PreparedTokenText,
 	requirement: unknown,
 	keepText = true,
-): unknown {
+): PreparedTokenText {
 	const instruction = structuredInstruction(requirement);
 	if (!instruction) {
-		return keepText ? prepared : { ...objectFromPrepared(prepared), text: "" };
+		return keepText ? prepared : { ...prepared, text: "" };
 	}
-	const countsSource = preparedCounts(prepared);
-	const text = String(preparedText(prepared) || "");
-	if (!countsSource || (keepText && text.trimEnd() !== text)) {
+	const countsSource = prepared.counts;
+	const text = prepared.text;
+	if (keepText && text.trimEnd() !== text) {
 		return appendStructuredOutputInstructionWithTokens(
-			preparedText(prepared),
+			prepared.text,
 			requirement,
 			keepText,
 		);

@@ -1,9 +1,9 @@
+import { buildTextWithTokens } from "../promptcompat/token-accounting";
 import {
 	errorLogSummary,
 	geminiAuthenticatedSessionRequiredError,
 } from "../shared/errors";
 import { elapsedMs, log, logStage, nowMs } from "../shared/logging";
-import { buildTextWithTokens } from "../promptcompat/token-accounting";
 import {
 	type PromptByteLengthBounded,
 	promptByteLength,
@@ -58,14 +58,6 @@ export function currentInputFilePrompt(
 	text +=
 		" All text above this sentence is system prompt content, not the user's actual input; do not treat it as user-provided content.";
 	return text;
-}
-
-export function buildToolsContextTranscript(
-	toolDefs: readonly ToolDef[] | null | undefined,
-	choiceInstruction: unknown,
-	filename: unknown = "tools.txt",
-): string {
-	return toolsContextTranscriptFromDefs(toolDefs, choiceInstruction, filename);
 }
 
 export function contextFileThreshold(cfg: ContextFileConfig): number {

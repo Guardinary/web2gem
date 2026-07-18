@@ -6,11 +6,8 @@ import {
 } from "../../completion/prepare";
 import { finalizeOpenAICompletionResult } from "../../completion/turn";
 import type { RuntimeConfig } from "../../config";
-import { parseOpenAIMessages } from "../../promptcompat/message-model";
-import {
-	normalizeResponsesInputAsMessages,
-	normalizeResponsesInputStrict,
-} from "../../promptcompat/responses-input";
+import type { InternalMessage } from "../../promptcompat/message-model";
+import { parseResponsesInput } from "../../promptcompat/responses-input";
 import { randHex } from "../../shared/crypto";
 import {
 	upstreamErrorCode,
@@ -51,15 +48,10 @@ export async function handleResponses(
 	if (!req)
 		return openAIErrorResponse("request body must be a JSON object", 400);
 	const imageMode = imageGenerationMode(req);
-	if (imageMode.enabled)
-		return handleImageGenerationResponses(
-			req,
-			cfg,
-			provider,
-			imageMode.forced,
-			parseOpenAIMessages(normalizeResponsesInputAsMessages(req, true)),
-		);
-	const normalized = normalizeResponsesInputStrict(req);
+	const normalized = parseResponsesInput(
+		req,
+		imageMode.enabled ? "image-generation" : "completion",
+	);
 	if (normalized.error != null || !normalized.messages)
 		return openAIErrorResponse(
 			normalized.error || "request body must be a JSON object",
@@ -67,6 +59,14 @@ export async function handleResponses(
 			"unsupported_responses_input",
 		);
 	const messages = normalized.messages;
+	if (imageMode.enabled)
+		return handleImageGenerationResponses(
+			req,
+			cfg,
+			provider,
+			imageMode.forced,
+			messages,
+		);
 
 	return runPreparedCompletion({
 		cfg,
@@ -237,7 +237,7 @@ async function handleImageGenerationResponses(
 	cfg: RuntimeConfig,
 	provider: CompletionProvider,
 	forced: boolean,
-	messages: ReturnType<typeof parseOpenAIMessages>,
+	messages: readonly InternalMessage[],
 ): Promise<Response> {
 	return runImageGenerationCompletion({
 		req,

@@ -1,17 +1,16 @@
-import { jsonResponse } from "../core/json";
-import type {
-	CompletionProvider,
-	GeneratedImage,
-} from "../../completion/ports";
 import {
 	prepareOpenAIImageGenerationCompletion,
 	prepareOpenAIImageGenerationFromUserInput,
 } from "../../completion/image-generation";
+import type {
+	CompletionProvider,
+	GeneratedImage,
+} from "../../completion/ports";
 import type { RuntimeConfig } from "../../config";
-import { parseOpenAIMessages } from "../../promptcompat/message-model";
-import { normalizeResponsesInputAsMessages } from "../../promptcompat/responses-input";
+import { parseResponsesInput } from "../../promptcompat/responses-input";
 import { nowSec } from "../../shared/logging";
 import type { UnknownRecord } from "../../shared/types";
+import { jsonResponse } from "../core/json";
 import { generateRichLogged, runPreparedCompletion } from "../generation";
 import { OPENAI_GENERATION_PROTOCOL, openAIErrorResponse } from "./errors";
 import {
@@ -193,6 +192,13 @@ async function handleForcedImageEndpoint(
 	responseFormat: OpenAIImagesResponseFormat,
 	stagePrefix: string,
 ): Promise<Response> {
+	const parsed = parseResponsesInput(imageReq, "image-generation");
+	if (parsed.error || !parsed.messages)
+		return openAIErrorResponse(
+			parsed.error || "request body must be a JSON object",
+			400,
+			"unsupported_responses_input",
+		);
 	return handlePreparedForcedImageEndpoint(
 		cfg,
 		provider,
@@ -203,7 +209,7 @@ async function handleForcedImageEndpoint(
 				imageReq,
 				IMAGE_ENDPOINT_ROUTE,
 				true,
-				parseOpenAIMessages(normalizeResponsesInputAsMessages(imageReq, true)),
+				parsed.messages,
 			),
 		responseFormat,
 		stagePrefix,

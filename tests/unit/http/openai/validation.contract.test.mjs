@@ -245,7 +245,8 @@ describe("OpenAI request validation", () => {
 		assert.match(uploads[1].text, /"name": "Search"/);
 		assert.match(uploads[1].text, /"query"/);
 	});
-	test("prevents unknown Responses input events from reaching prompt text", async () => {
+	test("ignores unknown Responses input events without leaking their payload", async () => {
+		const prompts = [];
 		const resp = await handleResponses(
 			{
 				model: "gemini-3.5-flash",
@@ -265,12 +266,20 @@ describe("OpenAI request validation", () => {
 				current_input_file_min_bytes: 1000000,
 				log_requests: false,
 			},
-			noWorkProvider(),
+			strictProvider({
+				async generateText(input) {
+					prompts.push(input.prompt);
+					return "done";
+				},
+			}),
 		);
-		assert.equal(resp.status, 400);
-		const body = await resp.json();
-		assert.equal(body.error.code, "unsupported_responses_input");
-		assert.match(body.error.message, /unsupported type: custom_event/);
+		assert.equal(resp.status, 200);
+		assert.equal(prompts.length, 1);
+		assert.match(prompts[0], /visible request/);
+		assert.doesNotMatch(prompts[0], /custom_event/);
+		assert.doesNotMatch(prompts[0], /do not leak text/);
+		assert.doesNotMatch(prompts[0], /do not leak content/);
+		assert.doesNotMatch(prompts[0], /do not leak json/);
 	});
 	test("rejects oversized parsed chat prompt before account work", async () => {
 		const resp = await worker.fetch(

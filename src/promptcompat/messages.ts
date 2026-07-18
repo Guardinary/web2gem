@@ -1,11 +1,6 @@
 import { formatPromptToolCallBlock } from "../toolcall/prompt-format";
 import type { ToolBundle } from "../toolcall/tool-bundle";
-import {
-	historyContentText,
-	type InternalMessage,
-	type MessagePart,
-	messageReasoningText,
-} from "./message-model";
+import { type InternalMessage, renderMessageBody } from "./message-model";
 import {
 	createPromptPartAccumulator,
 	type PromptBuildResult,
@@ -41,20 +36,11 @@ export function messagesToPrompt(
 		: null;
 
 	for (const msg of messages) {
-		let content = renderMessagePromptContent(msg);
+		const content = renderMessageBody(msg, "prompt");
 
 		if (msg.role === "system") {
 			prompt.add(`[System instruction]: ${content}`);
 		} else if (msg.role === "assistant") {
-			const reasoning = messageReasoningText(msg);
-			if (reasoning && !content.includes("[reasoning_content]")) {
-				content = [
-					`[reasoning_content]\n${reasoning}\n[/reasoning_content]`,
-					content,
-				]
-					.filter(Boolean)
-					.join("\n\n");
-			}
 			if (msg.toolCalls.length) {
 				const tcStrs = msg.toolCalls.map((tc) =>
 					formatPromptToolCallBlock(tc.name, tc.args),
@@ -71,7 +57,7 @@ export function messagesToPrompt(
 				`[Tool result${meta.length ? ` for ${meta.join(" ")}` : ""}]: ${content || "null"}`,
 			);
 		} else {
-			const latest = historyContentText(msg).trim();
+			const latest = renderMessageBody(msg, "latest-input").trim();
 			if (msg.roleLabel === "user" && latest) latestInputText = latest;
 			prompt.add(content ? content : "");
 		}
@@ -91,23 +77,4 @@ export function messagesToPrompt(
 			hasToolInstructions: hasToolPrompt,
 		},
 	};
-}
-
-function renderMessagePromptContent(msg: InternalMessage): string {
-	const textParts: string[] = [];
-	for (const part of msg.parts) {
-		const text = promptPartText(part);
-		if (text) textParts.push(text);
-	}
-	return textParts.join("\n");
-}
-
-function promptPartText(part: MessagePart): string {
-	if (part.kind === "text") return part.text;
-	if (part.kind === "reasoning")
-		return part.text
-			? `[reasoning_content]\n${part.text}\n[/reasoning_content]`
-			: "";
-	if (part.kind === "image") return "[image input]";
-	return `[file input${part.label ? ` ${part.label}` : ""}]`;
 }

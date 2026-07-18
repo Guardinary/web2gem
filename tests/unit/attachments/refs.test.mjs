@@ -1,5 +1,10 @@
 import { describe, test } from "vitest";
-import { appendExistingFileRefs } from "../../../src/attachments/refs";
+import {
+	appendExistingFileRefs,
+	existingFileRefFromRecord,
+	recognizedFileRefID,
+	recognizedFileRefKey,
+} from "../../../src/attachments/refs";
 import { assert } from "../assertions.js";
 
 describe("attachment references", () => {
@@ -25,5 +30,21 @@ describe("attachment references", () => {
 		const out = [];
 		appendExistingFileRefs(out, [null, 1, {}, { id: "  " }, [undefined]]);
 		assert.deepEqual(out, []);
+	});
+
+	test("recognizes every alias while keeping direct id context-sensitive", () => {
+		for (const key of ["file_id", "fileId", "file_ref", "fileRef", "ref"])
+			assert.equal(recognizedFileRefID({ [key]: " ref-1 " }, false), "ref-1");
+
+		assert.equal(recognizedFileRefID({ id: "direct" }, false), null);
+		assert.equal(recognizedFileRefID({ id: "direct" }, true), "direct");
+		assert.equal(recognizedFileRefKey({ file_ref: "keyed" }), "keyed");
+		assert.deepEqual(
+			existingFileRefFromRecord(
+				{ file: { id: "nested", filename: "../nested.txt" } },
+				false,
+			),
+			{ id: "nested", name: "nested.txt" },
+		);
 	});
 });

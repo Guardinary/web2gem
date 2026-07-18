@@ -5,9 +5,13 @@ import {
 	uploadFilenameFromObject,
 	uploadMimeFromObject,
 } from "../attachments/input";
-import { firstNonEmptyString } from "../shared/strings";
+import {
+	existingFileRefFromRecord,
+	recognizedFileRefID,
+} from "../attachments/refs";
 import type { AttachmentFileRef } from "../attachments/types";
 import { parseJsonObject } from "../shared/json";
+import { firstNonEmptyString } from "../shared/strings";
 import { firstRecord, isRecord, type UnknownRecord } from "../shared/types";
 
 export type MessageRole = "system" | "user" | "assistant" | "tool";
@@ -15,7 +19,6 @@ export type MessageRole = "system" | "user" | "assistant" | "tool";
 export type TextPart = {
 	kind: "text";
 	text: string;
-	historyText: string | null;
 	/**
 	 * True when the text came from direct input text (string parts and
 	 * text/input_text-typed parts); false for assistant output/summary echoes
@@ -28,8 +31,6 @@ export type TextPart = {
 export type ReasoningPart = {
 	kind: "reasoning";
 	text: string;
-	historyText: string | null;
-	liftText: string | null;
 };
 
 export type ImagePart = {
@@ -40,7 +41,6 @@ export type ImagePart = {
 	remoteUrl: string;
 	fileRef: AttachmentFileRef | null;
 	hasInline: boolean;
-	historyText: string | null;
 };
 
 export type FilePart = {
@@ -50,7 +50,6 @@ export type FilePart = {
 	remoteUrl: string;
 	fileRef: AttachmentFileRef | null;
 	label: string;
-	historyText: string | null;
 };
 
 export type MessagePart = TextPart | ReasoningPart | ImagePart | FilePart;
@@ -71,6 +70,12 @@ export type InternalMessage = {
 	reasoningText: string;
 };
 
+export type MessageProjectionMode =
+	| "prompt"
+	| "history"
+	| "latest-input"
+	| "reasoning";
+
 export function parseOpenAIMessages(messages: unknown): InternalMessage[] {
 	if (!Array.isArray(messages)) return [];
 	const out: InternalMessage[] = [];
@@ -81,24 +86,83 @@ export function parseOpenAIMessages(messages: unknown): InternalMessage[] {
 	return out;
 }
 
-/** Prompt-visible content text of a message rendered for history/latest-input. */
-export function historyContentText(message: InternalMessage): string {
+function projectMessageParts(
+	message: InternalMessage,
+	mode: Exclude<MessageProjectionMode, "reasoning">,
+): string {
 	const parts: string[] = [];
 	for (const part of message.parts) {
-		if (part.historyText !== null) parts.push(part.historyText);
+		const text = projectMessagePart(part, mode);
+		if (text) parts.push(text);
 	}
 	return parts.join("\n");
 }
 
-/** Direct reasoning field first, else content-embedded reasoning part text. */
-export function messageReasoningText(message: InternalMessage): string {
-	if (message.reasoningText) return message.reasoningText;
+export function projectMessageText(
+	message: InternalMessage,
+	mode: MessageProjectionMode,
+): string {
+	if (mode !== "reasoning") return projectMessageParts(message, mode);
 	const parts: string[] = [];
 	for (const part of message.parts) {
-		if (part.kind === "reasoning" && part.liftText !== null)
-			parts.push(part.liftText);
+		if (part.kind === "reasoning" && part.text) parts.push(part.text);
 	}
-	return parts.join("\n").trim();
+	const embedded = parts.join("\n").trim();
+	return embedded || message.reasoningText.trim();
+}
+
+export function renderMessageBody(
+	message: InternalMessage,
+	mode: Exclude<MessageProjectionMode, "reasoning">,
+): string {
+	const content = projectMessageParts(message, mode);
+	if (message.role !== "assistant") return content;
+	const hasEmbeddedReasoning = message.parts.some(
+		(part) => part.kind === "reasoning" && !!part.text,
+	);
+	const reasoning =
+		hasEmbeddedReasoning || content.includes("[reasoning_content]")
+			? ""
+			: message.reasoningText.trim();
+	if (!reasoning) return content;
+	return [reasoningBlock(reasoning), content].filter(Boolean).join("\n\n");
+}
+
+export function latestUserInputText(
+	messages: readonly InternalMessage[],
+): string {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message?.roleLabel !== "user") continue;
+		const text = renderMessageBody(message, "latest-input").trim();
+		if (text) return text;
+	}
+	return "";
+}
+
+function projectMessagePart(
+	part: MessagePart,
+	_mode: Exclude<MessageProjectionMode, "reasoning">,
+): string {
+	if (part.kind === "text") return part.text;
+	if (part.kind === "reasoning")
+		return part.text ? reasoningBlock(part.text) : "";
+	if (part.kind === "image") return "[image input]";
+	return `[file input${part.label ? ` ${part.label}` : ""}]`;
+}
+
+function reasoningBlock(text: string): string {
+	return `[reasoning_content]\n${text}\n[/reasoning_content]`;
+}
+
+/** Compatibility projection for direct consumers; envelopes use renderMessageBody. */
+export function historyContentText(message: InternalMessage): string {
+	return projectMessageText(message, "history");
+}
+
+/** Compatibility reasoning projection. */
+export function messageReasoningText(message: InternalMessage): string {
+	return projectMessageText(message, "reasoning");
 }
 
 export type ParsedAssistantContent = {
@@ -155,37 +219,58 @@ function parseContentToolCall(
 	return {
 		id,
 		name,
-		args: parseToolCallArgs(
+		args: parseToolCallArguments(
 			raw.arguments ?? raw.input ?? fn.arguments ?? fn.input,
 		),
 	};
 }
 
-function parseToolCallArgs(value: unknown): UnknownRecord {
+export function parseToolCallArguments(value: unknown): UnknownRecord {
 	return isRecord(value) ? value : parseJsonObject(String(value ?? "{}"));
 }
 
 function parseOpenAIMessage(msg: UnknownRecord): InternalMessage {
 	const roleLabel = normalizeMessageRole(msg.role);
 	const role = messageRoleBucket(roleLabel);
-	const message: InternalMessage = {
-		role,
+	return createInternalMessage(
 		roleLabel,
-		parts: [
+		[
 			...parseMessageContent(msg.content != null ? msg.content : msg.text),
 			...parseMessageContent(msg.attachments),
 		],
-		toolCalls:
-			role === "assistant" ? parseMessageToolCalls(msg.tool_calls) : [],
-		toolCallId: "",
-		toolName: "",
-		reasoningText: role === "assistant" ? directReasoningText(msg) : "",
+		{
+			toolCalls:
+				role === "assistant" ? parseMessageToolCalls(msg.tool_calls) : [],
+			toolCallId: role === "tool" ? msg.tool_call_id : "",
+			toolName: role === "tool" ? msg.name : "",
+			reasoningText: role === "assistant" ? directReasoningText(msg) : "",
+		},
+	);
+}
+
+export function createInternalMessage(
+	roleValue: unknown,
+	parts: MessagePart[],
+	options: {
+		toolCalls?: InternalToolCall[];
+		toolCallId?: unknown;
+		toolName?: unknown;
+		reasoningText?: unknown;
+	} = {},
+): InternalMessage {
+	const roleLabel = normalizeMessageRole(roleValue);
+	return {
+		role: messageRoleBucket(roleLabel),
+		roleLabel,
+		parts,
+		toolCalls: options.toolCalls || [],
+		toolCallId: options.toolCallId == null ? "" : String(options.toolCallId),
+		toolName: options.toolName == null ? "" : String(options.toolName),
+		reasoningText:
+			typeof options.reasoningText === "string"
+				? options.reasoningText.trim()
+				: "",
 	};
-	if (role === "tool") {
-		message.toolName = msg.name ? String(msg.name) : "";
-		message.toolCallId = msg.tool_call_id ? String(msg.tool_call_id) : "";
-	}
-	return message;
 }
 
 /**
@@ -259,7 +344,7 @@ function parseMessageToolCalls(raw: unknown): InternalToolCall[] {
 		calls.push({
 			id: toolCallID(record),
 			name: fn?.name ? String(fn.name) : "",
-			args: parseToolCallArgs(fn?.arguments),
+			args: parseToolCallArguments(fn?.arguments),
 		});
 	}
 	return calls;
@@ -272,15 +357,13 @@ function toolCallID(record: UnknownRecord | null): string {
 	return "";
 }
 
-function parseMessageContent(content: unknown): MessagePart[] {
+export function parseMessageContent(content: unknown): MessagePart[] {
 	if (content == null) return [];
 	if (typeof content === "string")
-		return [
-			{ kind: "text", text: content, historyText: content, inputText: true },
-		];
+		return [{ kind: "text", text: content, inputText: true }];
 	if (typeof content === "number" || typeof content === "boolean") {
 		const text = String(content);
-		return [{ kind: "text", text, historyText: text, inputText: true }];
+		return [{ kind: "text", text, inputText: true }];
 	}
 	if (Array.isArray(content)) {
 		const parts: MessagePart[] = [];
@@ -303,23 +386,19 @@ export function parseMessagePart(
 	mode: PartParseMode = "item",
 ): MessagePart | null {
 	if (typeof raw === "string")
-		return { kind: "text", text: raw, historyText: null, inputText: true };
+		return { kind: "text", text: raw, inputText: true };
 	if (!isRecord(raw)) return null;
-	const historyText =
-		mode === "content" ? stringifyContent(raw) : historyTextForRecord(raw);
 	const type = String(raw.type || "")
 		.trim()
 		.toLowerCase();
 	if (mode === "content") {
 		if (type === "image_url" || type === "image" || type === "input_image")
-			return imagePart(raw, contentImagePayload(raw), historyText);
-		if (type === "input_file" || type === "file")
-			return filePart(raw, historyText);
+			return imagePart(raw, contentImagePayload(raw));
+		if (type === "input_file" || type === "file") return filePart(raw);
 		const text = flattenText(raw);
 		return {
 			kind: "text",
 			text: text || stringifyContent(raw),
-			historyText,
 			inputText: true,
 		};
 	}
@@ -332,64 +411,37 @@ export function parseMessagePart(
 		return {
 			kind: "text",
 			text: flattenText(raw.text),
-			historyText,
 			inputText: type === "text" || type === "input_text",
 		};
 	if (type === "reasoning" || type === "thinking") {
-		const rawTypeLower = String(raw.type || "").toLowerCase();
 		return {
 			kind: "reasoning",
 			text: flattenText(raw.summary ?? raw.text ?? raw.content),
-			historyText,
-			liftText:
-				(rawTypeLower === "reasoning" || rawTypeLower === "thinking") &&
-				typeof raw.text === "string"
-					? raw.text
-					: null,
 		};
 	}
 	if (type === "image_url" || raw.image_url) {
 		const urlValue = raw.image_url != null ? raw.image_url : raw.url;
-		return imagePart(raw, parsedImagePayload(raw, urlValue), historyText);
+		return imagePart(raw, parsedImagePayload(raw, urlValue));
 	}
 	if (type === "image" || type === "input_image") {
 		const source = isRecord(raw.source) ? raw.source : null;
 		if (source?.data)
-			return imagePart(
-				raw,
-				{
-					b64: String(source.data),
-					mime: uploadMimeFromObject(raw) || "image/png",
-				},
-				historyText,
-			);
+			return imagePart(raw, {
+				b64: String(source.data),
+				mime: uploadMimeFromObject(raw) || "image/png",
+			});
 		const urlValue = raw.image_url != null ? raw.image_url : raw.url;
 		if (urlValue != null)
-			return imagePart(raw, parsedImagePayload(raw, urlValue), historyText);
-		return imagePart(raw, null, historyText);
+			return imagePart(raw, parsedImagePayload(raw, urlValue));
+		return imagePart(raw, null);
 	}
-	if (type === "input_file" || type === "file")
-		return filePart(raw, historyText);
+	if (type === "input_file" || type === "file") return filePart(raw);
 	if (raw.text != null || raw.content != null || raw.output != null)
 		return {
 			kind: "text",
 			text: flattenText(raw.text ?? raw.content ?? raw.output),
-			historyText,
 			inputText: false,
 		};
-	if (historyText !== null)
-		return { kind: "text", text: "", historyText, inputText: false };
-	return null;
-}
-
-/** Per-part history text; replicates contentTextForHistory array-item rules. */
-function historyTextForRecord(raw: UnknownRecord): string | null {
-	if (typeof raw.text === "string") return raw.text;
-	if (typeof raw.input_text === "string") return raw.input_text;
-	if (raw.type === "input_file" || raw.type === "file")
-		return filePlaceholder(raw);
-	if (raw.type === "image_url" || raw.image_url || raw.inlineData || raw.source)
-		return "[image input]";
 	return null;
 }
 
@@ -454,7 +506,6 @@ function parsedImagePayload(
 function imagePart(
 	raw: UnknownRecord,
 	payload: ImagePayload | null,
-	historyText: string | null,
 ): ImagePart {
 	return {
 		kind: "image",
@@ -464,11 +515,10 @@ function imagePart(
 		remoteUrl: remoteUrlFromRecord(raw),
 		fileRef: payload ? null : existingFileRefFromRecord(raw, false),
 		hasInline: !!payload,
-		historyText,
 	};
 }
 
-function filePart(raw: UnknownRecord, historyText: string | null): FilePart {
+function filePart(raw: UnknownRecord): FilePart {
 	const upload = normalizeUploadFileInput(raw);
 	return {
 		kind: "file",
@@ -477,17 +527,15 @@ function filePart(raw: UnknownRecord, historyText: string | null): FilePart {
 		remoteUrl: remoteUrlFromRecord(raw),
 		fileRef: upload?.b64 != null ? null : existingFileRefFromRecord(raw, true),
 		label: fileLabel(raw),
-		historyText,
 	};
 }
 
 function fileLabel(raw: UnknownRecord): string {
 	const fileData = firstRecord(raw.fileData, raw.file_data);
 	return firstNonEmptyString(
-		raw.file_id,
+		recognizedFileRefID(raw, true),
 		uploadFilenameFromObject(raw),
 		fileData && (fileData.fileUri || fileData.file_uri),
-		raw.id,
 	);
 }
 
@@ -527,36 +575,4 @@ function remoteUrlFromRecord(raw: UnknownRecord): string {
 
 function isRemoteUrl(value: unknown): boolean {
 	return typeof value === "string" && /^https?:\/\//i.test(value.trim());
-}
-
-function existingFileRefFromRecord(
-	raw: UnknownRecord,
-	includeDirectID: boolean,
-): AttachmentFileRef | null {
-	const id =
-		raw.file_id ??
-		raw.fileId ??
-		raw.file_ref ??
-		raw.fileRef ??
-		raw.ref ??
-		(includeDirectID ? raw.id : null);
-	if (id == null) {
-		const file = isRecord(raw.file) ? raw.file : null;
-		const nested = file
-			? (file.file_id ??
-				file.fileId ??
-				file.file_ref ??
-				file.fileRef ??
-				file.ref ??
-				file.id)
-			: null;
-		if (nested == null) return null;
-		const name = firstNonEmptyString(
-			uploadFilenameFromObject(file),
-			uploadFilenameFromObject(raw),
-		);
-		return name ? { id: String(nested), name } : String(nested);
-	}
-	const name = uploadFilenameFromObject(raw);
-	return name ? { id: String(id), name } : String(id);
 }
