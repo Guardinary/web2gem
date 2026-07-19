@@ -1,15 +1,13 @@
-// @ts-nocheck
 import { afterEach, beforeEach, describe, test, vi } from "vitest";
+import type { RuntimeConfig } from "../../../../src/config";
 import {
-	getCachedGeminiPushId,
 	getFreshPageTokensForConfig,
 	getGeminiPushId,
 	getPageTokens,
 	resetGeminiUploadCachesForTest,
-	setCachedGeminiPushId,
 } from "../../../../src/gemini/uploads/tokens";
-import { assert } from "../../assertions.js";
 import { withFetch } from "../../_support/globals.js";
+import { assert } from "../../assertions.js";
 import { createMemoryCache, withCaches } from "../_support/cache.js";
 import {
 	accountUploadConfig,
@@ -17,22 +15,56 @@ import {
 	resetUploadState,
 } from "./_support/upload-fixtures.js";
 
-function recordingMemoryCache() {
+type MemoryCache = ReturnType<typeof createMemoryCache>;
+type FetchInit = RequestInit & { headers: Record<string, string> };
+
+function pushIdCacheRequest(cfg: RuntimeConfig): Request {
+	const origin = (cfg.gemini_origin || "https://gemini.google.com").replace(
+		/\/$/,
+		"",
+	);
+	const account = cfg.gemini_account;
+	const scope = account
+		? `${origin}\x00account:${account.accountId || ""}\x00cookie:${account.cookieHash || ""}`
+		: origin;
+	return new Request(
+		`https://internal-cache/gemini-push-id/${encodeURIComponent(scope)}`,
+	);
+}
+
+async function seedCachedPushId(
+	cache: MemoryCache,
+	cfg: RuntimeConfig,
+	pushId: string,
+	createdAtMs: number = Date.now(),
+): Promise<void> {
+	await cache.put(
+		pushIdCacheRequest(cfg),
+		new Response(
+			JSON.stringify({ push_id: pushId, created_at_ms: createdAtMs }),
+		),
+	);
+}
+
+function recordingMemoryCache(): {
+	requestUrls: string[];
+	cache: MemoryCache;
+} {
 	const delegate = createMemoryCache();
-	const requestUrls = [];
+	const requestUrls: string[] = [];
 	return {
 		requestUrls,
 		cache: {
 			stats: delegate.stats,
-			async match(request) {
+			async match(request: Request) {
 				requestUrls.push(request.url);
 				return delegate.match(request);
 			},
-			async put(request, response) {
+			async put(request: Request, response: Response) {
 				requestUrls.push(request.url);
 				return delegate.put(request, response);
 			},
-			async delete(request) {
+			async delete(request: Request) {
 				requestUrls.push(request.url);
 				return delegate.delete(request);
 			},
@@ -49,14 +81,13 @@ describe("Gemini upload tokens", () => {
 	test("caches Gemini push IDs in the Workers cache API", async () => {
 		const cfg = baseUploadConfig({ cookie: "__Secure-1PSID=psid" });
 		const cache = createMemoryCache();
+		await seedCachedPushId(cache, cfg, "push-cached");
 		await withCaches(cache, async () => {
-			assert.equal(await getCachedGeminiPushId(cfg), "");
-			await setCachedGeminiPushId(cfg, "push-cached");
-			assert.equal(await getCachedGeminiPushId(cfg), "push-cached");
+			assert.equal(await getGeminiPushId(cfg), "push-cached");
 			assert.equal(cache.stats.match, 1);
 
 			resetGeminiUploadCachesForTest();
-			assert.equal(await getCachedGeminiPushId(cfg), "push-cached");
+			assert.equal(await getGeminiPushId(cfg), "push-cached");
 			assert.equal(cache.stats.match, 2);
 		});
 	});
@@ -64,12 +95,11 @@ describe("Gemini upload tokens", () => {
 		const cfgA = accountUploadConfig("account-a", "hash-a");
 		const cfgB = accountUploadConfig("account-b", "hash-b");
 		const { cache, requestUrls } = recordingMemoryCache();
+		await seedCachedPushId(cache, cfgA, "push-a");
+		await seedCachedPushId(cache, cfgB, "push-b");
 		await withCaches(cache, async () => {
-			await setCachedGeminiPushId(cfgA, "push-a");
-			await setCachedGeminiPushId(cfgB, "push-b");
-			resetGeminiUploadCachesForTest();
-			assert.equal(await getCachedGeminiPushId(cfgA), "push-a");
-			assert.equal(await getCachedGeminiPushId(cfgB), "push-b");
+			assert.equal(await getGeminiPushId(cfgA), "push-a");
+			assert.equal(await getGeminiPushId(cfgB), "push-b");
 		});
 		assert.equal(new Set(requestUrls).size, 2);
 		assert.doesNotMatch(
@@ -82,31 +112,27 @@ describe("Gemini upload tokens", () => {
 		vi.setSystemTime(1_700_000_000_000);
 		const cfg = baseUploadConfig();
 		const cache = createMemoryCache();
-		const request = new Request(
-			`https://internal-cache/gemini-push-id/${encodeURIComponent("https://gemini.example")}`,
-		);
-		await cache.put(
-			request,
-			new Response(
-				JSON.stringify({
-					push_id: "still-fresh",
-					created_at_ms: Date.now() - (12 * 60 * 60 * 1000 - 1),
-				}),
-			),
+		await seedCachedPushId(
+			cache,
+			cfg,
+			"still-fresh",
+			Date.now() - (12 * 60 * 60 * 1000 - 1),
 		);
 		await withCaches(cache, async () => {
-			assert.equal(await getCachedGeminiPushId(cfg), "still-fresh");
+			assert.equal(await getGeminiPushId(cfg), "still-fresh");
 			resetGeminiUploadCachesForTest();
-			await cache.put(
-				request,
-				new Response(
-					JSON.stringify({
-						push_id: "stale",
-						created_at_ms: Date.now() - (12 * 60 * 60 * 1000 + 1),
-					}),
-				),
+			await seedCachedPushId(
+				cache,
+				cfg,
+				"stale",
+				Date.now() - (12 * 60 * 60 * 1000 + 1),
 			);
-			assert.equal(await getCachedGeminiPushId(cfg), "");
+			await withFetch(
+				async () => new Response('{"qKIAYe":"after-stale"}', { status: 200 }),
+				async () => {
+					assert.equal(await getGeminiPushId(cfg), "after-stale");
+				},
+			);
 			assert.equal(cache.stats.delete, 1);
 		});
 	});
@@ -114,13 +140,13 @@ describe("Gemini upload tokens", () => {
 		const cfg = baseUploadConfig({ cookie: "SID=ok" });
 		const cache = createMemoryCache();
 		let calls = 0;
-		let release;
-		const gate = new Promise((resolve) => {
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
 			release = resolve;
 		});
 		await withCaches(cache, async () => {
 			await withFetch(
-				async (url, init = {}) => {
+				async (url: RequestInfo | URL, init = {} as FetchInit) => {
 					calls += 1;
 					assert.equal(String(url), "https://gemini.example/app");
 					assert.equal(init.headers.Cookie, "SID=ok");
@@ -136,7 +162,8 @@ describe("Gemini upload tokens", () => {
 						"push-fresh",
 					]);
 					assert.equal(calls, 1);
-					assert.equal(await getCachedGeminiPushId(cfg), "push-fresh");
+					resetGeminiUploadCachesForTest();
+					assert.equal(await getGeminiPushId(cfg), "push-fresh");
 				},
 			);
 		});
@@ -144,12 +171,12 @@ describe("Gemini upload tokens", () => {
 	test("deduplicates concurrent page-token fetches by cache key", async () => {
 		const cfg = baseUploadConfig({ cookie: "SID=page-token" });
 		let appCalls = 0;
-		let release;
-		const gate = new Promise((resolve) => {
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
 			release = resolve;
 		});
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				assert.equal(String(url), "https://gemini.example/app");
 				appCalls += 1;
 				await gate;
@@ -171,7 +198,7 @@ describe("Gemini upload tokens", () => {
 	test("short-caches successful app pages without token markers", async () => {
 		let appCalls = 0;
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				assert.equal(String(url), "https://gemini.example/app");
 				appCalls += 1;
 				return new Response("no token markers", { status: 200 });
@@ -186,7 +213,7 @@ describe("Gemini upload tokens", () => {
 	test("does not cache page-token fetch failures as successful empty token results", async () => {
 		let appCalls = 0;
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				if (href === "https://gemini.example/app") {
 					appCalls += 1;
@@ -205,7 +232,7 @@ describe("Gemini upload tokens", () => {
 		let appCalls = 0;
 		const cfg = baseUploadConfig({ cookie: "__Secure-1PSID=psid" });
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				if (String(url) !== "https://gemini.example/app")
 					throw new Error(`unexpected fetch ${url}`);
 				appCalls += 1;
@@ -222,19 +249,20 @@ describe("Gemini upload tokens", () => {
 		assert.equal(appCalls, 2);
 	});
 	test("observes managed account cookies from app page responses", async () => {
-		const observed = [];
+		const observed: string[][] = [];
 		const base = accountUploadConfig("observed", "hash-observed");
-		const cfg = {
+		const cfg: RuntimeConfig = {
 			...base,
 			gemini_account: {
-				...base.gemini_account,
-				observeSetCookie(values) {
+				accountId: "observed",
+				cookieHash: "hash-observed",
+				observeSetCookie(values: readonly string[]) {
 					observed.push([...values]);
 				},
 			},
 		};
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				assert.equal(String(url), "https://gemini.example/app");
 				return new Response('{"SNlM0e":"fresh-at"}', {
 					status: 200,
@@ -250,23 +278,24 @@ describe("Gemini upload tokens", () => {
 			},
 		);
 		assert.equal(observed.length, 1);
-		assert.match(observed[0][0], /from-app/);
+		assert.match(observed[0]?.[0] ?? "", /from-app/);
 	});
 	test("scopes Gemini page tokens by account context", async () => {
 		const cfgA = accountUploadConfig("account-a", "hash-a");
 		const cfgB = accountUploadConfig("account-b", "hash-b");
-		const appCookies = [];
+		const appCookies: string[] = [];
 		await withFetch(
-			async (url, init = {}) => {
+			async (url: RequestInfo | URL, init = {} as FetchInit) => {
 				const href = String(url);
 				if (href === "https://gemini.example/app") {
-					appCookies.push(init.headers.Cookie);
-					if (init.headers.Cookie.includes("psid-account-a")) {
+					const cookie = init.headers.Cookie || "";
+					appCookies.push(cookie);
+					if (cookie.includes("psid-account-a")) {
 						return new Response('{"SNlM0e":"at-a","qKIAYe":"push-a"}', {
 							status: 200,
 						});
 					}
-					if (init.headers.Cookie.includes("psid-account-b")) {
+					if (cookie.includes("psid-account-b")) {
 						return new Response('{"SNlM0e":"at-b","qKIAYe":"push-b"}', {
 							status: 200,
 						});

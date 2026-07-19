@@ -1,13 +1,13 @@
-import { GEMINI_WEB_USER_AGENT } from "../constants";
-import { httpFetch } from "../transport";
-import { extractGeminiBuildLabel } from "../app-page";
-import { createOriginScopedStringCache } from "../cache";
+import type { RuntimeConfig } from "../../config";
+import { sleep } from "../../shared/abort";
 import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
-import { sleep } from "../../shared/abort";
-import type { RuntimeConfig } from "../../config";
+import { extractGeminiBuildLabel } from "../app-page";
+import { createOriginScopedStringCache } from "../cache";
+import { GEMINI_WEB_USER_AGENT } from "../constants";
+import { httpFetch } from "../transport";
 
-export const GEMINI_BL_CACHE_TTL_SEC = 12 * 60 * 60;
+const GEMINI_BL_CACHE_TTL_SEC = 12 * 60 * 60;
 
 const buildLabelCache = createOriginScopedStringCache({
 	cachePrefix: "https://internal-cache/gemini-bl/",
@@ -16,17 +16,8 @@ const buildLabelCache = createOriginScopedStringCache({
 	logLabel: "Gemini BL",
 });
 
-export async function getCachedGeminiBuildLabel(
-	cfg: RuntimeConfig,
-): Promise<string> {
+async function getCachedGeminiBuildLabel(cfg: RuntimeConfig): Promise<string> {
 	return buildLabelCache.getCached(cfg);
-}
-
-export async function setCachedGeminiBuildLabel(
-	cfg: RuntimeConfig,
-	label: string,
-): Promise<void> {
-	await buildLabelCache.setCached(cfg, label);
 }
 
 export async function configWithCachedGeminiBuildLabel(

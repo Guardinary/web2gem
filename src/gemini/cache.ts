@@ -19,7 +19,7 @@ function geminiOrigin(cfg: RuntimeConfig): string {
 	return (cfg.gemini_origin || "https://gemini.google.com").replace(/\/$/, "");
 }
 
-export function geminiAccountCacheScope(
+function geminiAccountCacheScope(
 	cfg: RuntimeConfig,
 	accountScoped = true,
 ): string {

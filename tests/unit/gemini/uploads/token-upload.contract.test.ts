@@ -1,13 +1,13 @@
-// @ts-nocheck
 import { afterEach, beforeEach, describe, test } from "vitest";
+import type { RuntimeConfig } from "../../../../src/config";
 import { uploadTextFile } from "../../../../src/gemini/uploads/execute";
 import {
-	getCachedGeminiPushId,
+	getGeminiPushId,
 	resetGeminiUploadCachesForTest,
-	setCachedGeminiPushId,
 } from "../../../../src/gemini/uploads/tokens";
-import { assert } from "../../assertions.js";
+import { isRecord } from "../../../../src/shared/types";
 import { withConsoleLog, withFetch } from "../../_support/globals.js";
+import { assert } from "../../assertions.js";
 import { createMemoryCache, withCaches } from "../_support/cache.js";
 import {
 	assertMultipartRequest,
@@ -15,11 +15,44 @@ import {
 	resetUploadState,
 } from "./_support/upload-fixtures.js";
 
-async function captureError(run) {
+type MemoryCache = ReturnType<typeof createMemoryCache>;
+type FetchInit = RequestInit & { headers: Record<string, string> };
+
+function pushIdCacheRequest(cfg: RuntimeConfig): Request {
+	const origin = (cfg.gemini_origin || "https://gemini.google.com").replace(
+		/\/$/,
+		"",
+	);
+	const account = cfg.gemini_account;
+	const scope = account
+		? `${origin}\x00account:${account.accountId || ""}\x00cookie:${account.cookieHash || ""}`
+		: origin;
+	return new Request(
+		`https://internal-cache/gemini-push-id/${encodeURIComponent(scope)}`,
+	);
+}
+
+async function seedCachedPushId(
+	cache: MemoryCache,
+	cfg: RuntimeConfig,
+	pushId: string,
+): Promise<void> {
+	await cache.put(
+		pushIdCacheRequest(cfg),
+		new Response(
+			JSON.stringify({ push_id: pushId, created_at_ms: Date.now() }),
+		),
+	);
+}
+
+async function captureError(
+	run: () => unknown | PromiseLike<unknown>,
+): Promise<Record<string, unknown>> {
 	try {
 		await run();
 	} catch (error) {
-		return error;
+		if (isRecord(error)) return error;
+		throw error;
 	}
 	throw new Error("expected operation to fail");
 }
@@ -31,12 +64,11 @@ describe("Gemini push-token upload contract", () => {
 	test("uses a Workers-cached push ID without fetching the app page", async () => {
 		const cfg = baseUploadConfig({ cookie: "__Secure-1PSID=psid" });
 		const cache = createMemoryCache();
-		const requests = [];
+		const requests: string[] = [];
+		await seedCachedPushId(cache, cfg, "push-upload-cache");
 		await withCaches(cache, async () => {
-			await setCachedGeminiPushId(cfg, "push-upload-cache");
-			resetGeminiUploadCachesForTest();
 			await withFetch(
-				async (url, init = {}) => {
+				async (url: RequestInfo | URL, init = {} as FetchInit) => {
 					const href = String(url);
 					requests.push(href);
 					if (href !== "https://content-push.googleapis.com/upload") {
@@ -66,17 +98,16 @@ describe("Gemini push-token upload contract", () => {
 			resetUploadState();
 			const cfg = baseUploadConfig({ cookie: "__Secure-1PSID=psid" });
 			const cache = createMemoryCache();
-			const requests = [];
-			const pushIds = [];
+			const requests: string[] = [];
+			const pushIds: string[] = [];
+			await seedCachedPushId(cache, cfg, `push-stale-${status}`);
 			await withCaches(cache, async () => {
-				await setCachedGeminiPushId(cfg, `push-stale-${status}`);
-				resetGeminiUploadCachesForTest();
 				await withFetch(
-					async (url, init = {}) => {
+					async (url: RequestInfo | URL, init = {} as FetchInit) => {
 						const href = String(url);
 						requests.push(href);
 						if (href === "https://content-push.googleapis.com/upload") {
-							pushIds.push(init.headers["Push-ID"]);
+							pushIds.push(init.headers["Push-ID"] || "");
 							await assertMultipartRequest(init, {
 								filename: "message.txt",
 								mime: "text/plain; charset=utf-8",
@@ -102,7 +133,8 @@ describe("Gemini push-token upload contract", () => {
 						);
 					},
 				);
-				assert.equal(await getCachedGeminiPushId(cfg), `push-fresh-${status}`);
+				resetGeminiUploadCachesForTest();
+				assert.equal(await getGeminiPushId(cfg), `push-fresh-${status}`);
 			});
 			assert.deepEqual(requests, [
 				"https://content-push.googleapis.com/upload",
@@ -119,12 +151,11 @@ describe("Gemini push-token upload contract", () => {
 	test("does not refresh for unrelated upload status codes", async () => {
 		const cfg = baseUploadConfig({ cookie: "__Secure-1PSID=psid" });
 		const cache = createMemoryCache();
-		const requests = [];
+		const requests: string[] = [];
+		await seedCachedPushId(cache, cfg, "push-current");
 		await withCaches(cache, async () => {
-			await setCachedGeminiPushId(cfg, "push-current");
-			resetGeminiUploadCachesForTest();
 			await withFetch(
-				async (url, init = {}) => {
+				async (url: RequestInfo | URL, init = {} as FetchInit) => {
 					const href = String(url);
 					requests.push(href);
 					assert.equal(href, "https://content-push.googleapis.com/upload");
@@ -151,12 +182,11 @@ describe("Gemini push-token upload contract", () => {
 	test("does not retry an upload when refresh returns the same push ID", async () => {
 		const cfg = baseUploadConfig({ cookie: "__Secure-1PSID=psid" });
 		const cache = createMemoryCache();
-		const requests = [];
+		const requests: string[] = [];
+		await seedCachedPushId(cache, cfg, "push-same");
 		await withCaches(cache, async () => {
-			await setCachedGeminiPushId(cfg, "push-same");
-			resetGeminiUploadCachesForTest();
 			await withFetch(
-				async (url) => {
+				async (url: RequestInfo | URL) => {
 					const href = String(url);
 					requests.push(href);
 					if (href === "https://content-push.googleapis.com/upload") {
@@ -182,13 +212,13 @@ describe("Gemini push-token upload contract", () => {
 	});
 
 	test("rejects missing app-page markers without a fallback token", async () => {
-		const logs = [];
-		const requests = [];
+		const logs: string[] = [];
+		const requests: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				withFetch(
-					async (url) => {
+					async (url: RequestInfo | URL) => {
 						const href = String(url);
 						requests.push(href);
 						if (href === "https://gemini.example/app") {

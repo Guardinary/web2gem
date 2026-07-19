@@ -1,11 +1,8 @@
 // @ts-nocheck
 import { describe, test } from "vitest";
-import {
-	createOriginScopedStringCache,
-	geminiAccountCacheScope,
-} from "../../../src/gemini/cache";
-import { assert } from "../assertions.js";
+import { createOriginScopedStringCache } from "../../../src/gemini/cache";
 import { withConsoleLog, withPatchedGlobal } from "../_support/globals.js";
+import { assert } from "../assertions.js";
 import { createMemoryCache, withCaches } from "./_support/cache.js";
 
 const CACHE_PREFIX = "https://internal-cache/test-metadata/";
@@ -53,32 +50,29 @@ async function withNow(initialNow, run) {
 }
 
 describe("origin-scoped string cache", () => {
-	test("derives origin and optional account cache scopes", () => {
-		assert.equal(geminiAccountCacheScope({}), "https://gemini.google.com");
-		assert.equal(
-			geminiAccountCacheScope(cacheConfig()),
-			"https://gemini.example",
-		);
-		assert.equal(
-			geminiAccountCacheScope(accountConfig("account-a", "")),
-			"https://gemini.example\0account:account-a\0cookie:",
-		);
-		assert.equal(
-			geminiAccountCacheScope(accountConfig("", "hash-a")),
-			"https://gemini.example\0account:\0cookie:hash-a",
-		);
-		assert.equal(
-			geminiAccountCacheScope(accountConfig("account-a", "hash-a")),
-			"https://gemini.example\0account:account-a\0cookie:hash-a",
-		);
-		assert.equal(
-			geminiAccountCacheScope(accountConfig("  ", "  ")),
-			"https://gemini.example",
-		);
-		assert.equal(
-			geminiAccountCacheScope(accountConfig("account-a", "hash-a"), false),
-			"https://gemini.example",
-		);
+	test("uses origin and account context in cache URLs", async () => {
+		const writes = [];
+		const workerCache = {
+			async match() {
+				return undefined;
+			},
+			async put(request, response) {
+				writes.push(request.url);
+				await response.arrayBuffer();
+			},
+			async delete() {
+				return false;
+			},
+		};
+		await withCaches(workerCache, async () => {
+			const metadata = createMetadataCache({ accountScoped: true });
+			await metadata.setCached(accountConfig("account-a", "hash-a"), "value-a");
+			await metadata.setCached(accountConfig("account-b", "hash-b"), "value-b");
+		});
+		assert.deepEqual(writes, [
+			"https://internal-cache/test-metadata/https%3A%2F%2Fgemini.example%00account%3Aaccount-a%00cookie%3Ahash-a",
+			"https://internal-cache/test-metadata/https%3A%2F%2Fgemini.example%00account%3Aaccount-b%00cookie%3Ahash-b",
+		]);
 	});
 
 	test("keeps L1 entries bounded by least-recently-used order", async () => {
@@ -212,7 +206,7 @@ describe("origin-scoped string cache", () => {
 
 	test("rejects malformed invalid and stale Workers Cache payloads", async () => {
 		const cfg = cacheConfig();
-		const scope = geminiAccountCacheScope(cfg, false);
+		const scope = "https://gemini.example";
 		const payloads = [
 			"{",
 			JSON.stringify({ created_at_ms: Date.now() }),

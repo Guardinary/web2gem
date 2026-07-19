@@ -1,20 +1,20 @@
+import type { RuntimeConfig } from "../../config";
+import { bytesToHex } from "../../shared/crypto";
+import { TEXT_ENCODER } from "../../shared/encoding";
+import { errorLogSummary } from "../../shared/errors";
+import { log } from "../../shared/logging";
 import {
 	extractGeminiAppPageTokens,
 	extractGeminiPushId,
 	type GeminiAppPageTokens,
 } from "../app-page";
-import { GEMINI_WEB_USER_AGENT } from "../constants";
-import { httpFetch } from "../transport";
 import { createOriginScopedStringCache } from "../cache";
-import type { RuntimeConfig } from "../../config";
+import { GEMINI_WEB_USER_AGENT } from "../constants";
 import {
 	configWithFreshGeminiCookie,
 	observeGeminiAccountResponseCookies,
 } from "../cookies";
-import { TEXT_ENCODER } from "../../shared/encoding";
-import { bytesToHex } from "../../shared/crypto";
-import { errorLogSummary } from "../../shared/errors";
-import { log } from "../../shared/logging";
+import { httpFetch } from "../transport";
 import { contentPushUploadError } from "./errors";
 
 type PageTokens = GeminiAppPageTokens;
@@ -137,17 +137,8 @@ export async function getGeminiPushId(cfg: RuntimeConfig): Promise<string> {
 	return getFreshGeminiPushId(cfg);
 }
 
-export async function getCachedGeminiPushId(
-	cfg: RuntimeConfig,
-): Promise<string> {
+async function getCachedGeminiPushId(cfg: RuntimeConfig): Promise<string> {
 	return pushIdCache.getCached(cfg);
-}
-
-export async function setCachedGeminiPushId(
-	cfg: RuntimeConfig,
-	value: string,
-): Promise<void> {
-	await pushIdCache.setCached(cfg, value);
 }
 
 export async function refreshGeminiPushId(cfg: RuntimeConfig): Promise<string> {

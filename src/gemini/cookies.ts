@@ -68,25 +68,6 @@ export function extractCookieValue(
 	return parseCookieHeader(cookieHeader).get(name) || "";
 }
 
-export function splitSetCookieHeader(header: unknown): string[] {
-	const raw = String(header || "").trim();
-	if (!raw) return [];
-	const out: string[] = [];
-	let start = 0;
-	let inQuote = false;
-	for (let i = 0; i < raw.length; i++) {
-		const ch = raw[i];
-		if (ch === '"' && raw[i - 1] !== "\\") inQuote = !inQuote;
-		if (ch !== "," || inQuote || !looksLikeCookiePair(raw, i + 1)) continue;
-		const part = raw.slice(start, i).trim();
-		if (part) out.push(part);
-		start = i + 1;
-	}
-	const tail = raw.slice(start).trim();
-	if (tail) out.push(tail);
-	return out;
-}
-
 export function setCookieHeaders(headers: Headers): string[] {
 	return headers.getSetCookie();
 }
@@ -154,12 +135,6 @@ export async function configWithFreshGeminiCookie(
 			};
 	}
 	return configWithActiveGeminiCookie(cfg);
-}
-
-export async function rotateGeminiCookieForRetry(
-	cfg: RuntimeConfig,
-): Promise<RuntimeConfig | null> {
-	return (await rotateGeminiCookieForRetryWithReason(cfg)).config;
 }
 
 export async function rotateGeminiCookieForRetryWithReason(
@@ -327,19 +302,6 @@ export function resetActiveGeminiCookieForTest(): void {
 	setRotationReason("missing_cookie");
 }
 
-function looksLikeCookiePair(raw: string, from: number): boolean {
-	let i = from;
-	while (i < raw.length && /\s/.test(raw[i] || "")) i++;
-	const nameStart = i;
-	while (i < raw.length) {
-		const ch = raw[i] || "";
-		if (ch === "=") return i > nameStart;
-		if (ch === ";" || ch === "," || /\s/.test(ch)) return false;
-		i++;
-	}
-	return false;
-}
-
 function setRotationReason(
 	reason: CookieRotationReason,
 	upstreamStatus = 0,
@@ -358,8 +320,4 @@ function rotationRetryResult(
 	if (lastRotationUpstreamStatus)
 		result.upstreamStatus = lastRotationUpstreamStatus;
 	return result;
-}
-
-export function getLastGeminiCookieRotationReasonForTest(): CookieRotationRetryResult {
-	return rotationRetryResult(null);
 }

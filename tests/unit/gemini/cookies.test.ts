@@ -6,21 +6,19 @@ import {
 	observeGeminiAccountResponseCookies,
 	parseCookieHeader,
 	resetActiveGeminiCookieForTest,
-	rotateGeminiCookieForRetry,
 	rotateGeminiCookieForRetryWithReason,
-	splitSetCookieHeader,
 } from "../../../src/gemini/cookies";
 import {
 	getPageTokens,
 	resetGeminiUploadCachesForTest,
 } from "../../../src/gemini/uploads/tokens";
-import { assert } from "../assertions.js";
 import { withFetch } from "../_support/globals.js";
+import { assert } from "../assertions.js";
 
 describe("Gemini cookies", () => {
 	beforeEach(resetActiveGeminiCookieForTest);
 	afterEach(resetActiveGeminiCookieForTest);
-	test("parses and merges cookie headers with quoted values", () => {
+	test("parses and merges cookie headers", () => {
 		const parsed = Object.fromEntries(
 			parseCookieHeader("SID=ok; SAPISID=sapi; __Secure-1PSID=psid"),
 		);
@@ -30,35 +28,19 @@ describe("Gemini cookies", () => {
 			"__Secure-1PSID": "psid",
 		});
 
-		const split = splitSetCookieHeader(
-			[
-				"__Secure-1PSIDTS=new; Path=/; Secure",
-				"NID=x; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/",
-			].join(", "),
-		);
-		assert.equal(split.length, 2);
+		const setCookieValues = [
+			"__Secure-1PSIDTS=new; Path=/; Secure",
+			"NID=x; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/",
+		];
 
 		const merged = mergeSetCookieHeaders(
 			"__Secure-1PSID=psid; __Secure-1PSIDTS=old; SAPISID=sapi",
-			split,
+			setCookieValues,
 		);
 		assert.equal(
 			merged,
 			"__Secure-1PSID=psid; __Secure-1PSIDTS=new; SAPISID=sapi; NID=x",
 		);
-
-		const quoted = splitSetCookieHeader(
-			[
-				'A="x,y"; Path=/',
-				"B=2; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/",
-				"C=3; Path=/",
-			].join(", "),
-		);
-		assert.deepEqual(quoted, [
-			'A="x,y"; Path=/',
-			"B=2; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Path=/",
-			"C=3; Path=/",
-		]);
 	});
 	test("derives active Gemini cookie config without mutating input", () => {
 		const cfg = {
@@ -123,13 +105,13 @@ describe("Gemini cookies", () => {
 				});
 			},
 			async () => {
-				const rotated = await rotateGeminiCookieForRetry(cfg);
+				const rotated = await rotateGeminiCookieForRetryWithReason(cfg);
 				assert.equal(calls, 1);
 				assert.equal(
-					rotated.cookie,
+					rotated.config.cookie,
 					"__Secure-1PSID=psid; __Secure-1PSIDTS=new; SAPISID=sapi",
 				);
-				assert.equal(rotated.sapisid, "sapi");
+				assert.equal(rotated.config.sapisid, "sapi");
 			},
 		);
 	});
@@ -148,7 +130,10 @@ describe("Gemini cookies", () => {
 				return new Response("", { status: 401 });
 			},
 			async () => {
-				assert.equal(await rotateGeminiCookieForRetry(cfg), null);
+				assert.equal(
+					(await rotateGeminiCookieForRetryWithReason(cfg)).config,
+					null,
+				);
 				const rotated = await rotateGeminiCookieForRetryWithReason(cfg);
 				assert.equal(rotated.config, null);
 				assert.equal(rotated.reason, "recent_rotation");
@@ -170,7 +155,10 @@ describe("Gemini cookies", () => {
 				return new Response("", { status: 200 });
 			},
 			async () => {
-				assert.equal(await rotateGeminiCookieForRetry(cfg), null);
+				assert.equal(
+					(await rotateGeminiCookieForRetryWithReason(cfg)).config,
+					null,
+				);
 			},
 		);
 	});
@@ -199,17 +187,17 @@ describe("Gemini cookies", () => {
 				});
 			},
 			async () => {
-				const first = rotateGeminiCookieForRetry(cfg);
-				const second = rotateGeminiCookieForRetry(cfg);
+				const first = rotateGeminiCookieForRetryWithReason(cfg);
+				const second = rotateGeminiCookieForRetryWithReason(cfg);
 				release();
 				const results = await Promise.all([first, second]);
 				assert.equal(calls, 1);
 				assert.equal(
-					results[0].cookie,
+					results[0].config.cookie,
 					"__Secure-1PSID=psid; __Secure-1PSIDTS=new",
 				);
 				assert.equal(
-					results[1].cookie,
+					results[1].config.cookie,
 					"__Secure-1PSID=psid; __Secure-1PSIDTS=new",
 				);
 			},
@@ -269,9 +257,9 @@ describe("Gemini cookies", () => {
 				async () => {
 					const first = await getPageTokens(cfg);
 					assert.equal(first.at, "at-1");
-					const rotated = await rotateGeminiCookieForRetry(cfg);
+					const rotated = await rotateGeminiCookieForRetryWithReason(cfg);
 					assert.equal(
-						rotated.cookie,
+						rotated.config.cookie,
 						"__Secure-1PSID=psid; __Secure-1PSIDTS=new; SAPISID=sapi",
 					);
 					const second = await getPageTokens(cfg);
