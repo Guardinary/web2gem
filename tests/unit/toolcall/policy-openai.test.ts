@@ -1,5 +1,6 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import { isRecord } from "../../../src/shared/types";
+import type { ToolChoicePolicy } from "../../../src/toolcall/policy-openai";
 import {
 	allowedToolNameFromItem,
 	buildToolChoiceInstructionFromPolicy,
@@ -16,6 +17,25 @@ import {
 } from "../../../src/toolcall/policy-openai";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
+
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
+
+function completePolicy(
+	overrides: Partial<ToolChoicePolicy>,
+): ToolChoicePolicy {
+	return {
+		mode: "auto",
+		forcedName: "",
+		allowed: null,
+		hasAllowed: false,
+		declared: [],
+		error: "",
+		...overrides,
+	};
+}
 
 function policyTools() {
 	return createToolBundle([
@@ -77,7 +97,7 @@ describe("toolcall", () => {
 		);
 		assert.equal(policy.error, "");
 		assert.equal(policy.mode, "required");
-		assert.deepEqual(Object.keys(policy.allowed), ["Read", "Search"]);
+		assert.deepEqual(Object.keys(required(policy.allowed)), ["Read", "Search"]);
 	});
 	test("reports OpenAI tool choice shape errors without changing policy mode", async () => {
 		const tools = createToolBundle([
@@ -157,9 +177,9 @@ describe("toolcall", () => {
 			}),
 			{ names: ["Read", "Search"] },
 		);
-		assert.match(parseAllowedToolNames([]).error, /non-empty array/);
+		assert.match(required(parseAllowedToolNames([])).error, /non-empty array/);
 		assert.match(
-			parseAllowedToolNames([{}]).error,
+			required(parseAllowedToolNames([{}])).error,
 			/did not contain any valid tool names/,
 		);
 		assert.equal(parseForcedToolName({ name: "Read" }), "Read");
@@ -203,9 +223,14 @@ describe("toolcall", () => {
 		);
 		const none = parseOpenAIToolChoicePolicy({ type: "none" }, toolsBundle);
 		assert.equal(policyHasAllowed(null), false);
-		assert.equal(policyHasAllowed({ allowed: {}, hasAllowed: false }), false);
 		assert.equal(
-			policyHasAllowed({ allowed: { Read: true }, hasAllowed: false }),
+			policyHasAllowed(completePolicy({ allowed: {}, hasAllowed: false })),
+			false,
+		);
+		assert.equal(
+			policyHasAllowed(
+				completePolicy({ allowed: { Read: true }, hasAllowed: false }),
+			),
 			true,
 		);
 		assert.equal(toolPolicyAllows(null, "Anything"), true);
@@ -214,15 +239,19 @@ describe("toolcall", () => {
 		assert.equal(toolPolicyAllows(forced, "Search"), false);
 
 		assert.equal(filterToolsByPolicy(null, forced), null);
-		assert.equal(filterToolsByPolicy(toolsBundle, { mode: "none" }), null);
+		assert.equal(
+			filterToolsByPolicy(toolsBundle, completePolicy({ mode: "none" })),
+			null,
+		);
 		assert.equal(
 			filterToolsByPolicy(toolsBundle, null),
 			toolsBundle.openAIFunctionTools,
 		);
 		assert.deepEqual(
-			filterToolsByPolicy(toolsBundle, forced).map(
-				(tool) => tool.function.name,
-			),
+			required(filterToolsByPolicy(toolsBundle, forced)).map((tool) => {
+				if (!isRecord(tool.function)) throw new Error("expected function tool");
+				return tool.function.name;
+			}),
 			["Read", "Read"],
 		);
 	});
@@ -235,7 +264,10 @@ describe("toolcall", () => {
 		);
 		const none = parseOpenAIToolChoicePolicy({ type: "none" }, toolsBundle);
 		assert.equal(buildToolChoiceInstructionFromPolicy(null), "");
-		assert.equal(buildToolChoiceInstructionFromPolicy({ mode: "auto" }), "");
+		assert.equal(
+			buildToolChoiceInstructionFromPolicy(completePolicy({ mode: "auto" })),
+			"",
+		);
 		assert.match(
 			buildToolChoiceInstructionFromPolicy(none),
 			/Do NOT call any tools/,
@@ -245,17 +277,21 @@ describe("toolcall", () => {
 			/MUST call the tool "Read"/,
 		);
 		assert.match(
-			buildToolChoiceInstructionFromPolicy({
-				mode: "required",
-				allowed: { Read: true, Search: true },
-			}),
+			buildToolChoiceInstructionFromPolicy(
+				completePolicy({
+					mode: "required",
+					allowed: { Read: true, Search: true },
+				}),
+			),
 			/"Read", "Search"/,
 		);
 		assert.match(
-			buildToolChoiceInstructionFromPolicy({
-				mode: "required",
-				allowed: null,
-			}),
+			buildToolChoiceInstructionFromPolicy(
+				completePolicy({
+					mode: "required",
+					allowed: null,
+				}),
+			),
 			/MUST call at least one tool/,
 		);
 	});
@@ -265,27 +301,29 @@ describe("toolcall", () => {
 			{ type: "auto", name: "Read" },
 			policyTools(),
 		);
-		const required = {
+		const requiredPolicy = completePolicy({
 			mode: "required",
 			allowed: { Read: true },
 			hasAllowed: true,
-		};
+		});
 		assert.equal(validateRequiredToolCalls(null, []), null);
 		assert.match(
-			validateRequiredToolCalls(required, []).message,
+			required(validateRequiredToolCalls(requiredPolicy, [])).message,
 			/requires at least one valid tool call/,
 		);
 		assert.match(
-			validateRequiredToolCalls(required, [
-				{ function: { name: "Search" } },
-				{ name: "Search" },
-			]).message,
+			required(
+				validateRequiredToolCalls(requiredPolicy, [
+					{ function: { name: "Search" } },
+					{ name: "Search" },
+				]),
+			).message,
 			/Search/,
 		);
 		const forcedMissing = validateRequiredToolCalls(forced, [
 			{ function: { name: "" } },
 		]);
-		assert.match(forcedMissing.message, /requires the tool Read/);
+		assert.match(required(forcedMissing).message, /requires the tool Read/);
 		assert.equal(validateRequiredToolCalls(forced, [{ name: "Read" }]), null);
 		assert.deepEqual(
 			validateToolPolicyCalls(forced, [], {

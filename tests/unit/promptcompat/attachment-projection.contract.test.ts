@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { AttachmentSource } from "../../../src/attachments/types";
 import {
 	attachmentInputsFromMessages,
 	attachmentPlanFromMessages,
@@ -9,6 +9,12 @@ import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { messagesToPrompt } from "../../../src/promptcompat/messages";
 import { parseResponsesInput } from "../../../src/promptcompat/responses-input";
 import { assert } from "../assertions.js";
+
+function base64Data(source: AttachmentSource): unknown {
+	if (source.type !== "base64")
+		throw new TypeError("expected a base64 attachment source");
+	return source.data;
+}
 
 describe("prompt compatibility", () => {
 	test("projects top-level Responses input_file items into upload candidates", async () => {
@@ -24,6 +30,7 @@ describe("prompt compatibility", () => {
 			],
 		});
 		assert.equal(parsed.error, undefined);
+		if (!parsed.messages) throw new TypeError(parsed.error);
 
 		const result = messagesToPrompt(parsed.messages, null, 1000000);
 		assert.match(result.text, /\[file input note\.txt\]/);
@@ -269,7 +276,7 @@ describe("prompt compatibility", () => {
 				kind: candidate.kind,
 				filename: candidate.filename,
 				mime: candidate.mime,
-				data: candidate.source.data,
+				data: base64Data(candidate.source),
 			})),
 			[
 				{
@@ -284,7 +291,7 @@ describe("prompt compatibility", () => {
 			snakePlan.candidates.map((candidate) => ({
 				filename: candidate.filename,
 				mime: candidate.mime,
-				data: candidate.source.data,
+				data: base64Data(candidate.source),
 			})),
 			[
 				{
@@ -327,7 +334,7 @@ describe("prompt compatibility", () => {
 				kind: candidate.kind,
 				filename: candidate.filename,
 				mime: candidate.mime,
-				data: candidate.source.data,
+				data: base64Data(candidate.source),
 			})),
 			[
 				{

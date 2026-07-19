@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import { isRecord } from "../../../src/shared/types";
 import {
 	filterGoogleToolsByConfig,
 	googleToolChoiceInstructionFromPolicy,
@@ -9,6 +9,11 @@ import {
 } from "../../../src/toolcall/policy-google";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
+
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
 
 function googlePolicyTools() {
 	return [
@@ -38,13 +43,16 @@ describe("Google tool policy", () => {
 		const policy = parseGoogleToolChoicePolicy(request, bundle);
 		assert.equal(policy.mode, "required");
 		assert.equal(policy.hasAllowed, true);
-		assert.deepEqual(Object.keys(policy.allowed), ["Read"]);
+		assert.deepEqual(Object.keys(required(policy.allowed)), ["Read"]);
 		const instruction = googleToolChoiceInstructionFromPolicy(policy);
 		assert.match(instruction, /MUST call one of these tools: "Read"/);
 		assert.doesNotMatch(instruction, /"Search"/);
-		const filtered = filterGoogleToolsByConfig(tools, request);
+		const filtered = required(filterGoogleToolsByConfig(tools, request));
 		assert.deepEqual(
-			filtered.map((tool) => tool.function.name),
+			filtered.map((tool) => {
+				if (!isRecord(tool.function)) throw new Error("expected function tool");
+				return tool.function.name;
+			}),
 			["Read"],
 		);
 	});
@@ -63,13 +71,15 @@ describe("Google tool policy", () => {
 			/MUST call at least one tool/,
 		);
 		assert.match(
-			validateGoogleToolPolicyCalls(policy, []).message,
+			required(validateGoogleToolPolicyCalls(policy, [])).message,
 			/requires at least one valid function call/,
 		);
 		assert.match(
-			validateGoogleToolChoiceConfig(
-				{ toolConfig: { functionCallingConfig: { mode: "ANY" } } },
-				createToolBundle([]),
+			required(
+				validateGoogleToolChoiceConfig(
+					{ toolConfig: { functionCallingConfig: { mode: "ANY" } } },
+					createToolBundle([]),
+				),
 			).message,
 			/requires at least one tool/,
 		);
@@ -79,27 +89,31 @@ describe("Google tool policy", () => {
 		const tools = googlePolicyTools();
 		const bundle = createToolBundle(tools);
 		assert.match(
-			validateGoogleToolChoiceConfig(
-				{
-					tools,
-					toolConfig: { functionCallingConfig: { mode: "NEVER" } },
-				},
-				bundle,
+			required(
+				validateGoogleToolChoiceConfig(
+					{
+						tools,
+						toolConfig: { functionCallingConfig: { mode: "NEVER" } },
+					},
+					bundle,
+				),
 			).message,
 			/unsupported functionCallingConfig\.mode/,
 		);
 		assert.match(
-			validateGoogleToolChoiceConfig(
-				{
-					tools,
-					toolConfig: {
-						functionCallingConfig: {
-							mode: "AUTO",
-							allowedFunctionNames: ["Missing"],
+			required(
+				validateGoogleToolChoiceConfig(
+					{
+						tools,
+						toolConfig: {
+							functionCallingConfig: {
+								mode: "AUTO",
+								allowedFunctionNames: ["Missing"],
+							},
 						},
 					},
-				},
-				bundle,
+					bundle,
+				),
 			).message,
 			/allowed unknown function: Missing/,
 		);
@@ -112,12 +126,14 @@ describe("Google tool policy", () => {
 		});
 		assert.equal(filtered, null);
 		assert.match(
-			validateGoogleToolPolicyCalls(
-				parseGoogleToolChoicePolicy(
-					{ toolConfig: { functionCallingConfig: { mode: "NONE" } } },
-					createToolBundle(tools),
+			required(
+				validateGoogleToolPolicyCalls(
+					parseGoogleToolChoicePolicy(
+						{ toolConfig: { functionCallingConfig: { mode: "NONE" } } },
+						createToolBundle(tools),
+					),
+					[{ name: "Read", args: {} }],
 				),
-				[{ name: "Read", args: {} }],
 			).message,
 			/does not allow function\(s\): Read/,
 		);

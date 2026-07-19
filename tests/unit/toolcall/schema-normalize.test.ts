@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import { parseDSMLToolCallsDetailed } from "../../../src/toolcall/dsml";
 import {
 	buildToolSchemaIndex,
@@ -12,6 +12,16 @@ import {
 } from "../../../src/toolcall/schema-normalize";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
+
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
+
+function record(value: unknown): UnknownRecord {
+	if (!isRecord(value)) throw new Error("expected an object");
+	return value;
+}
 
 describe("toolcall", () => {
 	test("normalizes DSML arguments using top-level input_schema", async () => {
@@ -83,16 +93,20 @@ describe("toolcall", () => {
 			calls,
 			createToolBundle(tools),
 		);
-		assert.equal(normalized[0].input.query, '{"term":"docs"}');
-		assert.equal(normalized[0].input.maybe, "5");
-		assert.deepEqual(normalized[0].input.choices, ["7", { a: "1" }, false]);
-		assert.equal(normalized[0].input.extra, "true");
+		if (!Array.isArray(normalized))
+			throw new Error("expected normalized calls");
+		const first = record(required(normalized[0]));
+		const input = record(first.input);
+		assert.equal(input.query, '{"term":"docs"}');
+		assert.equal(input.maybe, "5");
+		assert.deepEqual(input.choices, ["7", { a: "1" }, false]);
+		assert.equal(input.extra, "true");
 		assert.equal(normalized[1], "not a call");
 		assert.deepEqual(normalized[2], calls[2]);
 		assert.deepEqual(normalized[3], calls[3]);
 		assert.deepEqual(
-			buildToolSchemaIndex(createToolBundle(tools)).lookup,
-			tools[0].function.parameters,
+			required(buildToolSchemaIndex(createToolBundle(tools))).lookup,
+			required(tools[0]).function.parameters,
 		);
 	});
 	test("keeps schema normalization conservative when no conversion is required", async () => {
@@ -132,7 +146,7 @@ describe("toolcall", () => {
 		);
 		assert.equal(looksLikeObjectSchema({ properties: {} }), true);
 		assert.equal(looksLikeArraySchema({ items: {} }), true);
-		const cyclic = {};
+		const cyclic: { self?: unknown } = {};
 		cyclic.self = cyclic;
 		assert.deepEqual(stringifySchemaValue(cyclic), [cyclic, false]);
 	});

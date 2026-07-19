@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import {
 	normalizeDSMLToolCallMarkup,
 	parseCanonicalDSMLToolCallsFast,
@@ -14,15 +14,26 @@ import {
 } from "../../../src/toolcall/dsml";
 import { assert } from "../assertions.js";
 
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
+
+function record(value: unknown): UnknownRecord {
+	if (!isRecord(value)) throw new Error("expected an object");
+	return value;
+}
+
 describe("toolcall", () => {
 	test("uses canonical DSML fast path for plain XML tool blocks", async () => {
 		const longPath = "x".repeat(16 * 1024);
 		const candidate = `<tool_calls><invoke name="Read"><parameter name="path"><![CDATA[${longPath}]]></parameter></invoke></tool_calls>`;
 		const fast = parseCanonicalDSMLToolCallsFast(candidate);
-		assert.equal(fast.cleanText, "");
-		assert.equal(fast.sawToolCallSyntax, true);
-		assert.equal(fast.calls[0].name, "Read");
-		assert.equal(fast.calls[0].input.path, longPath);
+		const fastResult = required(fast);
+		assert.equal(fastResult.cleanText, "");
+		assert.equal(fastResult.sawToolCallSyntax, true);
+		assert.equal(required(fastResult.calls[0]).name, "Read");
+		assert.equal(record(required(fastResult.calls[0]).input).path, longPath);
 
 		const [clean, toolCalls] = parseToolCalls(candidate, [
 			{
@@ -31,7 +42,10 @@ describe("toolcall", () => {
 			},
 		]);
 		assert.equal(clean, "");
-		assert.equal(JSON.parse(toolCalls[0].function.arguments).path, longPath);
+		assert.equal(
+			JSON.parse(required(toolCalls[0]).function.arguments).path,
+			longPath,
+		);
 	});
 	test("declines non-canonical DSML fast path inputs", async () => {
 		assert.equal(
@@ -69,7 +83,7 @@ describe("toolcall", () => {
 			},
 		]);
 		assert.equal(clean, "");
-		assert.equal(toolCalls[0].function.name, "Read");
+		assert.equal(required(toolCalls[0]).function.name, "Read");
 	});
 	test("keeps legacy fenced markdown tool call JSON as plain text", async () => {
 		const fenced =
@@ -93,9 +107,9 @@ describe("toolcall", () => {
 			},
 		]);
 		assert.equal(clean, "");
-		assert.equal(toolCalls[0].function.name, "Read");
+		assert.equal(required(toolCalls[0]).function.name, "Read");
 		assert.equal(
-			JSON.parse(toolCalls[0].function.arguments).file_path,
+			JSON.parse(required(toolCalls[0]).function.arguments).file_path,
 			"README.md",
 		);
 	});
@@ -108,8 +122,8 @@ describe("toolcall", () => {
 				function: { name: "Search", parameters: { type: "object" } },
 			},
 		]);
-		assert.equal(jsonCalls[0].function.name, "Search");
-		assert.deepEqual(JSON.parse(jsonCalls[0].function.arguments), {
+		assert.equal(required(jsonCalls[0]).function.name, "Search");
+		assert.deepEqual(JSON.parse(required(jsonCalls[0]).function.arguments), {
 			query: "docs",
 		});
 
@@ -127,7 +141,7 @@ describe("toolcall", () => {
 				function: { name: "MultiEdit", parameters: { type: "object" } },
 			},
 		]);
-		const args = JSON.parse(nestedCalls[0].function.arguments);
+		const args = JSON.parse(required(nestedCalls[0]).function.arguments);
 		assert.deepEqual(args.edits, [{ old_string: "foo", new_string: "bar" }]);
 		assert.deepEqual(args.flags, [true, null, 2]);
 		assert.deepEqual(args.pairs, [{ a: 1 }, { b: 2 }]);
@@ -150,11 +164,17 @@ describe("toolcall", () => {
 
 	test("unwraps markdown arguments and rejects invalid restoration inputs", async () => {
 		assert.deepEqual(
-			restoreToolCallProtectedMarkdown(null, () => ""),
+			Reflect.apply(restoreToolCallProtectedMarkdown, undefined, [
+				null,
+				() => "",
+			]),
 			[],
 		);
 		assert.deepEqual(
-			restoreToolCallProtectedMarkdown([{ name: "Read", input: {} }], null),
+			Reflect.apply(restoreToolCallProtectedMarkdown, undefined, [
+				[{ name: "Read", input: {} }],
+				null,
+			]),
 			[],
 		);
 		assert.equal(
@@ -179,7 +199,7 @@ describe("toolcall", () => {
 			},
 		]);
 		assert.equal(clean, "");
-		assert.equal(calls[0].function.name, "Read");
+		assert.equal(required(calls[0]).function.name, "Read");
 
 		assert.equal(
 			parseMarkupValue("&lt;item&gt;a&lt;/item&gt;&lt;item&gt;2&lt;/item&gt;"),

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	buildCorrectToolExamples,
@@ -15,6 +14,11 @@ import {
 	uniqueToolNames,
 } from "../../../src/toolcall/prompt-examples";
 import { assert } from "../assertions.js";
+
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
 
 describe("toolcall", () => {
 	test("builds prompt examples only for known tool shapes", async () => {
@@ -39,14 +43,17 @@ describe("toolcall", () => {
 			firstNBasicExamples(names, 2).map((example) => example.name),
 			["Read", "Glob"],
 		);
-		assert.equal(firstNestedExample(names).name, "Task");
-		assert.equal(firstScriptExample(names).name, "Bash");
+		assert.equal(required(firstNestedExample(names)).name, "Task");
+		assert.equal(required(firstScriptExample(names)).name, "Bash");
 		assert.equal(exampleBasicParams("Unknown"), null);
 		assert.equal(exampleNestedParams("Unknown"), null);
 		assert.equal(exampleScriptParams("Unknown"), null);
 
 		const block = renderToolExampleBlock([
-			{ name: 'Run"Now', params: exampleScriptParams("execute_command") },
+			{
+				name: 'Run"Now',
+				params: required(exampleScriptParams("execute_command")),
+			},
 		]);
 		assert.match(block, /<\|DSML\|invoke name="Run&quot;Now">/);
 		assert.match(block, /<!\[CDATA\[cat > \/tmp\/test_escape\.sh/);

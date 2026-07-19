@@ -104,6 +104,28 @@ production owner contracts:
 This preserves SQL/runtime call order and makes fixture changes fail at the
 same owner boundary as production contract changes.
 
+### Prompt and tool contract tests
+
+Prompt compatibility, completion, and tool-call tests must preserve the same
+discriminants as their production owners:
+
+- Narrow `ResponsesInputParseResult` through its `error` discriminant before
+  reading `messages`; require indexed messages and parts with a local guard.
+- Narrow `MessagePart` through `kind` before reading text, image, file, or
+  reasoning fields.
+- `normalizeResponsesInputAsMessages` intentionally returns unknown records for
+  wire compatibility. Tests must validate nested records and arrays before
+  reading legacy `tool_calls`/`function` fields.
+- Tool-choice and sieve state fixtures use complete production contracts. Do
+  not revive stale partial shapes with casts when a source owner adds required
+  fields.
+- Invalid JavaScript boundary calls may use `Reflect.apply` after the valid
+  typed path is covered; they must not weaken the callable's authored type.
+
+Run all three focused directories together after shared prompt/tool owner
+changes so ordering, formatting, policy, and completion projections stay
+compatible.
+
 ## Change Size
 
 When tightening external payload types, prefer small, behavior-preserving

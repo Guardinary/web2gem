@@ -1,7 +1,7 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { messagesToPrompt } from "../../../src/promptcompat/messages";
+import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,
@@ -12,6 +12,16 @@ import {
 	toolsContextTranscriptFor,
 } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
+
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
+
+function record(value: unknown): UnknownRecord {
+	if (!isRecord(value)) throw new Error("expected an object");
+	return value;
+}
 
 describe("toolcall", () => {
 	test("renders bundle artifacts through prompt and context consumers", async () => {
@@ -106,7 +116,8 @@ describe("toolcall", () => {
 		const bundle = createToolBundle(source);
 		assert.equal(createToolBundle(bundle), bundle);
 		assert.deepEqual(bundle.names, ["Search", "Read"]);
-		assert.equal(bundle.schemaIndex.search.properties.query.type, "string");
+		const searchSchema = required(required(bundle.schemaIndex).search);
+		assert.equal(record(record(searchSchema.properties).query).type, "string");
 		const instructions = bundle.promptArtifact.toolCallInstructions();
 		assert.match(instructions, /tool_calls/);
 		const block = bundle.promptArtifact.inlinePromptBlock("must call Read");
@@ -116,8 +127,9 @@ describe("toolcall", () => {
 			"bundle-tools.txt",
 		);
 		assert.match(transcript, /# bundle-tools\.txt/);
-		source.functionDeclarations[0].name = "Mutated";
-		source.functionDeclarations[0].description = "Changed after bundling";
+		required(source.functionDeclarations[0]).name = "Mutated";
+		required(source.functionDeclarations[0]).description =
+			"Changed after bundling";
 		assert.equal(bundle.promptArtifact.toolCallInstructions(), instructions);
 		assert.equal(
 			bundle.promptArtifact.inlinePromptBlock("must call Read"),
@@ -138,8 +150,9 @@ describe("toolcall", () => {
 			hasAllowed: true,
 		});
 		assert.deepEqual(filtered.names, ["Read"]);
-		assert.equal(filtered.schemaIndex.read.properties.path.type, "string");
-		assert.equal(nullableOpenAIFunctionTools(filtered).length, 1);
+		const readSchema = required(required(filtered.schemaIndex).read);
+		assert.equal(record(record(readSchema.properties).path).type, "string");
+		assert.equal(required(nullableOpenAIFunctionTools(filtered)).length, 1);
 		assert.equal(
 			nullableOpenAIFunctionTools(
 				filterToolBundleByPolicy(bundle, { mode: "none" }),

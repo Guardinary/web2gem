@@ -1,6 +1,9 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { prepareOpenAIGeminiContext } from "../../../src/completion/context";
+import type { CompletionProvider } from "../../../src/completion/ports";
+import { hasCompletionError } from "../../../src/completion/types";
+import type { RuntimeConfig } from "../../../src/config";
+import { createRuntimeConfig, getConfig } from "../../../src/config";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
@@ -26,7 +29,7 @@ function noAttachmentResult() {
 	};
 }
 
-function promptProvider() {
+function promptProvider(): CompletionProvider {
 	return {
 		async resolveAttachments(plan) {
 			assert.deepEqual(plan.candidates, []);
@@ -41,6 +44,18 @@ function promptProvider() {
 		uploadTextFile() {
 			throw new Error("unexpected uploadTextFile call");
 		},
+	};
+}
+
+function promptConfig(): RuntimeConfig {
+	return {
+		...createRuntimeConfig(getConfig()),
+		current_input_file_enabled: false,
+		current_input_file_min_bytes: 1000000,
+		current_input_file_name: "message.txt",
+		current_tools_file_name: "tools.txt",
+		cookie: "",
+		log_requests: false,
 	};
 }
 
@@ -59,14 +74,7 @@ describe("OpenAI tool prompt assembly", () => {
 			},
 		]);
 		const result = await prepareOpenAIGeminiContext(
-			{
-				current_input_file_enabled: false,
-				current_input_file_min_bytes: 1000000,
-				current_input_file_name: "message.txt",
-				current_tools_file_name: "tools.txt",
-				cookie: "",
-				log_requests: false,
-			},
+			promptConfig(),
 			promptProvider(),
 			{},
 			parseOpenAIMessages([{ role: "user", content: "find docs" }]),
@@ -83,7 +91,11 @@ describe("OpenAI tool prompt assembly", () => {
 			null,
 		);
 
-		assert.equal(result.error, undefined);
+		assert.equal(
+			hasCompletionError(result) ? result.error : undefined,
+			undefined,
+		);
+		if (hasCompletionError(result)) throw result.error;
 		assert.match(result.prompt, /Available tools/);
 		assert.match(result.prompt, /"name": "Search"/);
 		assert.match(result.prompt, /"query"/);
@@ -102,14 +114,7 @@ describe("OpenAI tool prompt assembly", () => {
 	});
 	test("keeps hidden native guidance separate from DSML instructions", async () => {
 		const result = await prepareOpenAIGeminiContext(
-			{
-				current_input_file_enabled: false,
-				current_input_file_min_bytes: 1000000,
-				current_input_file_name: "message.txt",
-				current_tools_file_name: "tools.txt",
-				cookie: "",
-				log_requests: false,
-			},
+			promptConfig(),
 			promptProvider(),
 			{},
 			parseOpenAIMessages([{ role: "user", content: "what changed today?" }]),
@@ -118,7 +123,11 @@ describe("OpenAI tool prompt assembly", () => {
 			null,
 			null,
 		);
-		assert.equal(result.error, undefined);
+		assert.equal(
+			hasCompletionError(result) ? result.error : undefined,
+			undefined,
+		);
+		if (hasCompletionError(result)) throw result.error;
 		const marker = "Gemini native hidden tool calls:";
 		assert.equal(result.prompt.indexOf(marker) >= 0, true);
 		assert.equal(

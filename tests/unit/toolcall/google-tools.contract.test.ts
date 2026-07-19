@@ -1,12 +1,27 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import { filterGoogleToolsByConfig } from "../../../src/toolcall/policy-google";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
+
+function record(value: unknown): UnknownRecord {
+	if (!isRecord(value)) throw new Error("expected an object");
+	return value;
+}
+
 describe("Google tool metadata contract", () => {
 	test("normalizes supported tool shapes before policy filtering", async () => {
-		const cases = [
+		const cases: Array<{
+			name: string;
+			tool: unknown;
+			expectedName: string;
+			expectedField: string;
+		}> = [
 			{
 				name: "OpenAI function",
 				tool: {
@@ -78,13 +93,18 @@ describe("Google tool metadata contract", () => {
 				toolConfig: { functionCallingConfig: { mode: "ANY" } },
 			};
 			const filtered = filterGoogleToolsByConfig(request.tools, request);
-			const bundle = createToolBundle(filtered);
-			assert.equal(filtered.length, 1, item.name);
-			assert.equal(filtered[0].function.name, item.expectedName, item.name);
-			assert.equal(bundle.promptArtifact.defs[0].name, item.expectedName);
+			const filteredTools = required(filtered);
+			const bundle = createToolBundle(filteredTools);
+			assert.equal(filteredTools.length, 1, item.name);
 			assert.equal(
-				item.expectedField in
-					bundle.promptArtifact.defs[0].parameters.properties,
+				record(required(filteredTools[0]).function).name,
+				item.expectedName,
+				item.name,
+			);
+			const definition = required(bundle.promptArtifact.defs[0]);
+			assert.equal(definition.name, item.expectedName);
+			assert.equal(
+				item.expectedField in record(record(definition.parameters).properties),
 				true,
 				item.name,
 			);

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	appendStructuredOutputInstructionToPrepared,
@@ -7,6 +6,7 @@ import {
 	withGeminiNativeHiddenToolsPromptForPrepared,
 	withGeminiNativeHiddenToolsPromptWithTokens,
 } from "../../../src/promptcompat/prompt-build";
+import type { PreparedTokenText } from "../../../src/promptcompat/token-accounting";
 import { buildTextWithTokens } from "../../../src/promptcompat/token-accounting";
 import { assert } from "../assertions.js";
 
@@ -38,8 +38,9 @@ describe("prompt compatibility", () => {
 			hasText: true,
 		});
 
-		const trailingPrepared = {
+		const trailingPrepared: PreparedTokenText = {
 			text: "base   ",
+			tokens: 1,
 			counts: { asciiChars: 7, nonASCIIChars: 0, hasText: true },
 		};
 		const trimmedHidden = withGeminiNativeHiddenToolsPromptForPrepared(
@@ -66,8 +67,9 @@ describe("prompt compatibility", () => {
 		const hiddenPromptOnly = hidden.text.replace(/\n\nbase$/, "");
 		assert.equal(anchored.text, `tools\n\n${hiddenPromptOnly}\n\nuser`);
 
-		const noTextPrepared = {
+		const noTextPrepared: PreparedTokenText & { marker: string } = {
 			text: "ignored",
+			tokens: 0,
 			counts: { asciiChars: 0, nonASCIIChars: 0, hasText: false },
 			marker: "kept",
 		};
@@ -76,7 +78,10 @@ describe("prompt compatibility", () => {
 			false,
 		);
 		assert.equal(noTextHidden.text, "");
-		assert.equal(noTextHidden.marker, "kept");
+		assert.equal(
+			"marker" in noTextHidden ? noTextHidden.marker : undefined,
+			"kept",
+		);
 	});
 	test("appends structured output instructions while preserving token counts", async () => {
 		const raw = appendStructuredOutputInstructionWithTokens("base  ", {
@@ -102,16 +107,18 @@ describe("prompt compatibility", () => {
 		assert.equal(appended.counts.asciiChars, "base\n\nReturn JSON".length);
 		assert.equal(appended.counts.hasText, true);
 
+		const unchangedPrepared: PreparedTokenText & { marker: string } = {
+			text: "keep",
+			tokens: 1,
+			counts: { asciiChars: 4, nonASCIIChars: 0, hasText: true },
+			marker: "kept",
+		};
 		const unchanged = appendStructuredOutputInstructionToPrepared(
-			{
-				text: "keep",
-				counts: { asciiChars: 4, nonASCIIChars: 0, hasText: true },
-				marker: "kept",
-			},
+			unchangedPrepared,
 			null,
 			false,
 		);
 		assert.equal(unchanged.text, "");
-		assert.equal(unchanged.marker, "kept");
+		assert.equal("marker" in unchanged ? unchanged.marker : undefined, "kept");
 	});
 });

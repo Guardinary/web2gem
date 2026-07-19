@@ -1,8 +1,12 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { finalizeOpenAICompletionResult } from "../../../src/completion/turn";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
+
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
 
 describe("toolcall", () => {
 	test("finalizes OpenAI text into tool calls", async () => {
@@ -21,7 +25,7 @@ describe("toolcall", () => {
 			},
 		);
 		assert.equal(finalized.error, undefined);
-		assert.equal(finalized.toolCalls[0].function.name, "Read");
+		assert.equal(required(finalized.toolCalls)[0]?.function.name, "Read");
 	});
 	test("rejects tool calls when OpenAI tool choice is none", async () => {
 		const finalized = finalizeOpenAICompletionResult(
@@ -46,8 +50,8 @@ describe("toolcall", () => {
 				},
 			},
 		);
-		assert.equal(finalized.error.code, "tool_choice_violation");
-		assert.equal(finalized.error.status, 422);
+		assert.equal(required(finalized.error).code, "tool_choice_violation");
+		assert.equal(required(finalized.error).status, 422);
 	});
 	test("normalizes schema-backed arguments during completion finalization", async () => {
 		const tools = createToolBundle([
@@ -78,8 +82,11 @@ describe("toolcall", () => {
 		);
 
 		assert.equal(finalized.error, undefined);
-		assert.deepEqual(JSON.parse(finalized.toolCalls[0].function.arguments), {
-			query: '{"term":"docs"}',
-		});
+		assert.deepEqual(
+			JSON.parse(required(finalized.toolCalls)[0]?.function.arguments ?? ""),
+			{
+				query: '{"term":"docs"}',
+			},
+		);
 	});
 });

@@ -1,13 +1,46 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
+	type FilePart,
 	flattenText,
 	historyContentText,
+	type ImagePart,
+	type InternalMessage,
 	parseMessageContent,
 	parseOpenAIMessages,
 	rawRecordReasoningText,
+	type TextPart,
 } from "../../../src/promptcompat/message-model";
 import { assert } from "../assertions.js";
+
+function messageAt(
+	messages: readonly InternalMessage[],
+	index: number,
+): InternalMessage {
+	const message = messages[index];
+	if (!message) throw new TypeError(`expected message at index ${index}`);
+	return message;
+}
+
+function textPartAt(message: InternalMessage, index: number): TextPart {
+	const part = message.parts[index];
+	if (part?.kind !== "text")
+		throw new TypeError(`expected text part at index ${index}`);
+	return part;
+}
+
+function imagePartAt(message: InternalMessage, index: number): ImagePart {
+	const part = message.parts[index];
+	if (part?.kind !== "image")
+		throw new TypeError(`expected image part at index ${index}`);
+	return part;
+}
+
+function filePartAt(message: InternalMessage, index: number): FilePart {
+	const part = message.parts[index];
+	if (part?.kind !== "file")
+		throw new TypeError(`expected file part at index ${index}`);
+	return part;
+}
 
 describe("prompt compatibility", () => {
 	test("keeps recognized singleton content parts equivalent to arrays", () => {
@@ -33,9 +66,12 @@ describe("prompt compatibility", () => {
 		);
 	});
 	test("renders history and flattened content fallbacks", async () => {
-		const cyclic = {};
+		const cyclic: Record<string, unknown> = {};
 		cyclic.self = cyclic;
-		const [message] = parseOpenAIMessages([{ role: "user", content: cyclic }]);
+		const message = messageAt(
+			parseOpenAIMessages([{ role: "user", content: cyclic }]),
+			0,
+		);
 		assert.equal(historyContentText(message), "[object Object]");
 		assert.equal(
 			flattenText([
@@ -49,7 +85,7 @@ describe("prompt compatibility", () => {
 	});
 
 	test("normalizes object-shaped message content at the content boundary", async () => {
-		const [imageMessage, fileMessage, textMessage] = parseOpenAIMessages([
+		const parsedMessages = parseOpenAIMessages([
 			{
 				role: "user",
 				content: {
@@ -76,13 +112,19 @@ describe("prompt compatibility", () => {
 				},
 			},
 		]);
+		const imageMessage = messageAt(parsedMessages, 0);
+		const fileMessage = messageAt(parsedMessages, 1);
+		const textMessage = messageAt(parsedMessages, 2);
+		const image = imagePartAt(imageMessage, 0);
+		const file = filePartAt(fileMessage, 0);
+		const text = textPartAt(textMessage, 0);
 
 		assert.deepEqual(
 			{
-				kind: imageMessage.parts[0].kind,
-				filename: imageMessage.parts[0].filename,
-				hasInline: imageMessage.parts[0].hasInline,
-				mime: imageMessage.parts[0].mime,
+				kind: image.kind,
+				filename: image.filename,
+				hasInline: image.hasInline,
+				mime: image.mime,
 			},
 			{
 				kind: "image",
@@ -91,11 +133,11 @@ describe("prompt compatibility", () => {
 				mime: "image/gif",
 			},
 		);
-		assert.deepEqual(fileMessage.parts[0].fileRef, {
+		assert.deepEqual(file.fileRef, {
 			id: "file-1",
 			name: "document.txt",
 		});
-		assert.equal(textMessage.parts[0].text, "fallback output");
+		assert.equal(text.text, "fallback output");
 	});
 	test("normalizes reasoning and object-shaped message parts", async () => {
 		assert.equal(
@@ -121,27 +163,30 @@ describe("prompt compatibility", () => {
 			"nested output",
 		);
 
-		const [message] = parseOpenAIMessages([
-			{
-				role: "user",
-				content: [
-					{
-						type: "input_image",
-						source: {
-							data: "CCCC",
-							mime_type: "image/gif",
-							file_name: "inline.gif",
+		const message = messageAt(
+			parseOpenAIMessages([
+				{
+					role: "user",
+					content: [
+						{
+							type: "input_image",
+							source: {
+								data: "CCCC",
+								mime_type: "image/gif",
+								file_name: "inline.gif",
+							},
 						},
-					},
-					{
-						type: "image_url",
-						image_url: { url: "https://cdn.example.com/assets/raw.png" },
-					},
-					{ type: "file" },
-					{ text: { type: "output_text", text: "fallback output" } },
-				],
-			},
-		]);
+						{
+							type: "image_url",
+							image_url: { url: "https://cdn.example.com/assets/raw.png" },
+						},
+						{ type: "file" },
+						{ text: { type: "output_text", text: "fallback output" } },
+					],
+				},
+			]),
+			0,
+		);
 		assert.deepEqual(
 			message.parts.map((part) => ({
 				kind: part.kind,
@@ -181,11 +226,12 @@ describe("prompt compatibility", () => {
 				},
 			],
 		);
-		const cyclic = {};
+		const cyclic: Record<string, unknown> = {};
 		cyclic.self = cyclic;
-		const [cyclicMessage] = parseOpenAIMessages([
-			{ role: "user", content: cyclic },
-		]);
-		assert.equal(cyclicMessage.parts[0].text, "[object Object]");
+		const cyclicMessage = messageAt(
+			parseOpenAIMessages([{ role: "user", content: cyclic }]),
+			0,
+		);
+		assert.equal(textPartAt(cyclicMessage, 0).text, "[object Object]");
 	});
 });

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { parseGoogleRequest } from "../../../src/promptcompat/google";
 import {

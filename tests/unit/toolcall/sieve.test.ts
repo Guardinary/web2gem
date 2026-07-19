@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import { isRecord } from "../../../src/shared/types";
 import {
 	createToolSieveState,
 	flushToolSieve,
@@ -14,6 +14,11 @@ import { assert } from "../assertions.js";
 
 const sieveState = (overrides = {}) =>
 	Object.assign(createToolSieveState(), overrides);
+
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
 
 describe("toolcall", () => {
 	test("releases partial DSML sentinel when it becomes plain text", async () => {
@@ -50,29 +55,29 @@ describe("toolcall", () => {
 	test("flushes only safe plain-text prefixes", async () => {
 		assert.equal(flushToolSievePlainPrefix(null), null);
 
-		const holding = {
+		const holding = sieveState({
 			buffer: "x".repeat(100),
 			holdingToolCandidate: true,
 			sawToolClose: false,
 			parsedToolCandidate: false,
-		};
+		});
 		assert.equal(flushToolSievePlainPrefix(holding), null);
 		assert.equal(holding.buffer.length, 100);
 
-		const sentinel = {
+		const sentinel = sieveState({
 			buffer: "plain <tool_calls>",
 			holdingToolCandidate: false,
 			sawToolClose: false,
 			parsedToolCandidate: false,
-		};
+		});
 		assert.equal(flushToolSievePlainPrefix(sentinel), null);
 
-		const plain = {
+		const plain = sieveState({
 			buffer: "p".repeat(100),
 			holdingToolCandidate: false,
 			sawToolClose: false,
 			parsedToolCandidate: false,
-		};
+		});
 		const flushedPlain = flushToolSievePlainPrefix(plain);
 		assert.deepEqual(flushedPlain, [
 			"p".repeat(100 - TOOL_SIEVE_PLAIN_TEXT_KEEP),
@@ -150,11 +155,16 @@ describe("toolcall", () => {
 			'<|DSML|tool_calls><|DSML|invoke name="Read"><|DSML|parameter name="path"><![CDATA[README.md]]></|DSML|parameter></|DSML|invoke></|DSML|tool_calls>';
 		assert.deepEqual(processToolSieveChunk(state, candidate.slice(0, 32)), []);
 		assert.deepEqual(processToolSieveChunk(state, candidate.slice(32)), []);
-		assert.equal(state.parsedToolCandidateResult.calls[0].name, "Read");
+		assert.equal(
+			required(state.parsedToolCandidateResult).calls[0]?.name,
+			"Read",
+		);
 		assert.equal(state.parsedToolCandidateLength, candidate.length);
 		const flushed = flushToolSieve(state);
-		assert.equal(flushed.toolCalls[0].name, "Read");
-		assert.equal(flushed.toolCalls[0].input.path, "README.md");
+		assert.equal(required(flushed.toolCalls)[0]?.name, "Read");
+		const input = required(flushed.toolCalls)[0]?.input;
+		if (!isRecord(input)) throw new Error("expected tool-call input");
+		assert.equal(input.path, "README.md");
 	});
 	test("reparses cached tool candidates when more text arrives before flush", async () => {
 		const state = createToolSieveState();
@@ -162,11 +172,14 @@ describe("toolcall", () => {
 			'<tool_calls><invoke name="Read"><parameter name="path">README.md</parameter></invoke></tool_calls>';
 		assert.deepEqual(processToolSieveChunk(state, candidate.slice(0, 32)), []);
 		assert.deepEqual(processToolSieveChunk(state, candidate.slice(32)), []);
-		assert.equal(state.parsedToolCandidateResult.calls[0].name, "Read");
+		assert.equal(
+			required(state.parsedToolCandidateResult).calls[0]?.name,
+			"Read",
+		);
 		assert.deepEqual(processToolSieveChunk(state, " trailing text"), []);
 		const flushed = flushToolSieve(state);
 		assert.equal(flushed.text, "trailing text");
-		assert.equal(flushed.toolCalls[0].name, "Read");
+		assert.equal(required(flushed.toolCalls)[0]?.name, "Read");
 	});
 	test("releases oversized unterminated tool candidates as plain text", async () => {
 		const state = createToolSieveState();

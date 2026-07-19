@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { createPromptPartAccumulator } from "../../../src/promptcompat/prompt-text";
 import { assert } from "../assertions.js";

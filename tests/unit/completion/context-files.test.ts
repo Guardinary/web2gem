@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	contextFilePromptByteCheck,
@@ -12,7 +11,46 @@ import {
 	shouldConsiderContextFiles,
 	shouldUseContextFiles,
 } from "../../../src/completion/context-files";
+import {
+	hasCompletionError,
+	type ContextFileFailure,
+	type ContextFileResult,
+} from "../../../src/completion/types";
 import { assert } from "../assertions.js";
+
+type RecordedUpload = { text: string; filename: string };
+
+function requireContextFileFailure(
+	result: ContextFileResult | ContextFileFailure | null,
+): ContextFileFailure {
+	if (!result || !hasCompletionError(result)) {
+		throw new Error("expected context-file preparation to fail");
+	}
+	return result;
+}
+
+function requireContextFileResult(
+	result: ContextFileResult | ContextFileFailure | null,
+): ContextFileResult & { error?: undefined } {
+	if (!result || hasCompletionError(result)) {
+		throw new Error("expected context-file preparation to succeed");
+	}
+	return result;
+}
+
+function requireError(value: unknown): Error {
+	if (!(value instanceof Error)) throw new Error("expected an Error cause");
+	return value;
+}
+
+function requireUpload(
+	uploads: readonly RecordedUpload[],
+	index: number,
+): RecordedUpload {
+	const upload = uploads[index];
+	if (!upload) throw new Error(`expected upload at index ${index}`);
+	return upload;
+}
 
 describe("context-file policy", () => {
 	test("builds oversized inline context failure metadata", async () => {
@@ -124,22 +162,24 @@ describe("context-file policy", () => {
 			supports_authenticated_session: true,
 		};
 		const check = contextFilePromptByteCheck(cfg, "x".repeat(40));
-		const result = await prepareContextFiles(
-			cfg,
-			"prior conversation",
-			null,
-			"",
-			"latest request",
-			"x".repeat(40),
-			undefined,
-			check,
+		const result = requireContextFileFailure(
+			await prepareContextFiles(
+				cfg,
+				"prior conversation",
+				null,
+				"",
+				"latest request",
+				"x".repeat(40),
+				undefined,
+				check,
+			),
 		);
 		assert.equal(result.error.code, "large_context_file_upload_failed");
 		assert.equal(result.error.promptBytes, 11);
 		assert.equal(result.error.promptBytesExact, false);
 		assert.equal(result.error.thresholdBytes, 10);
 		assert.match(
-			result.error.cause.message,
+			requireError(result.error.cause).message,
 			/text file uploader is not configured/,
 		);
 
@@ -159,23 +199,28 @@ describe("context-file policy", () => {
 			supports_authenticated_session: true,
 			log_requests: false,
 		};
-		const result = await prepareContextFilesWithUploader(
-			cfg,
-			"prior conversation",
-			null,
-			"",
-			"latest request",
-			"x".repeat(40),
-			async () => {
-				throw new Error("history upload broke");
-			},
+		const result = requireContextFileFailure(
+			await prepareContextFilesWithUploader(
+				cfg,
+				"prior conversation",
+				null,
+				"",
+				"latest request",
+				"x".repeat(40),
+				async () => {
+					throw new Error("history upload broke");
+				},
+			),
 		);
 		assert.equal(result.error.code, "large_context_file_upload_failed");
 		assert.match(
 			result.error.message,
 			/failed to upload history context text file/,
 		);
-		assert.match(result.error.cause.message, /history upload broke/);
+		assert.match(
+			requireError(result.error.cause).message,
+			/history upload broke/,
+		);
 	});
 	test("refuses oversized inline fallback when tools context upload fails", async () => {
 		const cfg = {
@@ -187,25 +232,27 @@ describe("context-file policy", () => {
 			supports_authenticated_session: true,
 			log_requests: false,
 		};
-		const uploads = [];
-		const result = await prepareContextFilesWithUploader(
-			cfg,
-			"prior conversation",
-			[
-				{
-					name: "Read",
-					description: "Read a file",
-					parameters: { type: "object" },
+		const uploads: RecordedUpload[] = [];
+		const result = requireContextFileFailure(
+			await prepareContextFilesWithUploader(
+				cfg,
+				"prior conversation",
+				[
+					{
+						name: "Read",
+						description: "Read a file",
+						parameters: { type: "object" },
+					},
+				],
+				"must call Read",
+				"latest request",
+				"x".repeat(40),
+				async (text, filename) => {
+					uploads.push({ text, filename });
+					if (filename === "tools.txt") throw new Error("tools upload broke");
+					return { ref: `/uploaded/${filename}`, name: filename };
 				},
-			],
-			"must call Read",
-			"latest request",
-			"x".repeat(40),
-			async (text, filename) => {
-				uploads.push({ text, filename });
-				if (filename === "tools.txt") throw new Error("tools upload broke");
-				return { ref: `/uploaded/${filename}`, name: filename };
-			},
+			),
 		);
 		assert.equal(uploads.length, 2);
 		assert.equal(result.error.code, "large_context_file_upload_failed");
@@ -213,7 +260,10 @@ describe("context-file policy", () => {
 			result.error.message,
 			/failed to upload tools context text file/,
 		);
-		assert.match(result.error.cause.message, /tools upload broke/);
+		assert.match(
+			requireError(result.error.cause).message,
+			/tools upload broke/,
+		);
 	});
 	test("moves large tool context into the attached tools file", async () => {
 		const cfg = {
@@ -225,29 +275,31 @@ describe("context-file policy", () => {
 			supports_authenticated_session: true,
 			log_requests: false,
 		};
-		const uploads = [];
-		const result = await prepareContextFilesWithUploader(
-			cfg,
-			"user history with latest request",
-			[
-				{
-					name: "Read",
-					description: "Read a file",
-					parameters: { type: "object" },
+		const uploads: RecordedUpload[] = [];
+		const result = requireContextFileResult(
+			await prepareContextFilesWithUploader(
+				cfg,
+				"user history with latest request",
+				[
+					{
+						name: "Read",
+						description: "Read a file",
+						parameters: { type: "object" },
+					},
+				],
+				"must call Read",
+				"latest request",
+				"x".repeat(40),
+				async (text, filename) => {
+					uploads.push({ text, filename });
+					return { ref: `/uploaded/${filename}`, name: filename };
 				},
-			],
-			"must call Read",
-			"latest request",
-			"x".repeat(40),
-			async (text, filename) => {
-				uploads.push({ text, filename });
-				return { ref: `/uploaded/${filename}`, name: filename };
-			},
+			),
 		);
 		assert.equal(result.error, undefined);
 		assert.equal(result.fileRefs.length, 2);
-		assert.equal(uploads[0].filename, "message.txt");
-		assert.equal(uploads[1].filename, "tools.txt");
+		assert.equal(requireUpload(uploads, 0).filename, "message.txt");
+		assert.equal(requireUpload(uploads, 1).filename, "tools.txt");
 		assert.match(
 			result.prompt,
 			/Continue from the latest state in the attached `message\.txt` context/,
@@ -259,12 +311,13 @@ describe("context-file policy", () => {
 		assert.doesNotMatch(result.prompt, /<\|DSML\|tool_calls>/);
 		assert.doesNotMatch(result.prompt, /must call Read/);
 		assert.doesNotMatch(result.prompt, /Gemini native hidden tool calls/);
-		assert.match(uploads[1].text, /Available tool descriptions/);
-		assert.match(uploads[1].text, /Tool call format instructions/);
-		assert.match(uploads[1].text, /<\|DSML\|tool_calls>/);
-		assert.match(uploads[1].text, /Tool choice policy:\nmust call Read/);
-		assert.match(uploads[1].text, /Gemini native hidden tool calls/);
-		assert.match(uploads[1].text, /All of the above is system prompt content/);
+		const toolsUpload = requireUpload(uploads, 1);
+		assert.match(toolsUpload.text, /Available tool descriptions/);
+		assert.match(toolsUpload.text, /Tool call format instructions/);
+		assert.match(toolsUpload.text, /<\|DSML\|tool_calls>/);
+		assert.match(toolsUpload.text, /Tool choice policy:\nmust call Read/);
+		assert.match(toolsUpload.text, /Gemini native hidden tool calls/);
+		assert.match(toolsUpload.text, /All of the above is system prompt content/);
 		assert.match(result.promptTokenText, /user history/);
 		assert.match(result.promptTokenText, /Available tool descriptions/);
 		assert.match(result.promptTokenText, /Gemini native hidden tool calls/);

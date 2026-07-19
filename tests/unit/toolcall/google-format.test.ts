@@ -1,8 +1,13 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import { isRecord } from "../../../src/shared/types";
 import { parseGoogleFunctionCalls } from "../../../src/toolcall/google";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
+
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
 
 describe("Google tool-call formatting", () => {
 	test("keeps Google legacy function-call syntaxes as plain text", async () => {
@@ -43,7 +48,9 @@ describe("Google tool-call formatting", () => {
 			'<tool_calls><invoke name="Lookup"><parameter name="query"><term>docs</term></parameter></invoke></tool_calls>',
 			tools,
 		);
-		assert.equal(dsmlCalls[0].args.query, '{"term":"docs"}');
+		const args = required(dsmlCalls[0]).args;
+		if (!isRecord(args)) throw new Error("expected function-call arguments");
+		assert.equal(args.query, '{"term":"docs"}');
 	});
 	test("keeps malformed Google function-call text as plain output", async () => {
 		const [clean, calls] = parseGoogleFunctionCalls(

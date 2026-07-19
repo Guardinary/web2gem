@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	appendMarkupValue,
@@ -14,6 +13,11 @@ import {
 	skipCDATAAt,
 } from "../../../src/toolcall/xml";
 import { assert } from "../assertions.js";
+
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
 
 describe("toolcall", () => {
 	test("parses CDATA entities nested tags and malformed XML boundaries", async () => {
@@ -44,9 +48,9 @@ describe("toolcall", () => {
 			'ignore <![CDATA[<item>skip</item>]]><item id="1"><item/>body</item><item>two</item><item>broken';
 		const blocks = findXmlElementBlocks(nested, "item");
 		assert.equal(blocks.length, 2);
-		assert.equal(blocks[0].attrs.trim(), 'id="1"');
-		assert.equal(blocks[0].body, "<item/>body");
-		assert.equal(blocks[1].body, "two");
+		assert.equal(required(blocks[0]).attrs.trim(), 'id="1"');
+		assert.equal(required(blocks[0]).body, "<item/>body");
+		assert.equal(required(blocks[1]).body, "two");
 		assert.deepEqual(findXmlElementBlocks("<item>unterminated", "item"), []);
 
 		const top = findTopLevelXmlElementBlocks(
@@ -56,18 +60,24 @@ describe("toolcall", () => {
 			top.map((block) => block.name),
 			["root", "solo"],
 		);
-		assert.equal(top[1].body, "");
+		assert.equal(required(top[1]).body, "");
 		assert.deepEqual(findTopLevelXmlElementBlocks("leading <root></root>"), []);
 		assert.deepEqual(
 			findTopLevelXmlElementBlocks("<root><child></root> trailing"),
 			[],
 		);
 
-		assert.equal(findNextXmlTag("<a></a>", "a", 0, false).closing, false);
-		assert.equal(findNextXmlTag("<a></a>", "a", 0, true).closing, true);
+		assert.equal(
+			required(findNextXmlTag("<a></a>", "a", 0, false)).closing,
+			false,
+		);
+		assert.equal(
+			required(findNextXmlTag("<a></a>", "a", 0, true)).closing,
+			true,
+		);
 		assert.equal(findNextXmlTag("<a></a>", "b", 0, null), null);
 		assert.equal(
-			findNextAnyXmlTag("x <![CDATA[<a>]]> <b/>", 0, false).name,
+			required(findNextAnyXmlTag("x <![CDATA[<a>]]> <b/>", 0, false)).name,
 			"b",
 		);
 		assert.equal(skipCDATAAt("<![CDATA[x]]><a>", 0), 13);
@@ -76,7 +86,7 @@ describe("toolcall", () => {
 		assert.equal(scanXmlTagAt("x<a>", 0), null);
 		assert.equal(scanXmlTagAt("<1bad>", 0), null);
 		assert.equal(
-			scanXmlTagAt('<bad:name attr="x>y">', 0).attrs.trim(),
+			required(scanXmlTagAt('<bad:name attr="x>y">', 0)).attrs.trim(),
 			'attr="x>y"',
 		);
 		assert.equal(scanXmlTagAt('<bad:name attr="unterminated>', 0), null);

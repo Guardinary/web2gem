@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { EMPTY_UPSTREAM_MSG } from "../../../src/completion/turn";
 import { assert } from "../assertions.js";

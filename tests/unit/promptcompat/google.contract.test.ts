@@ -1,7 +1,42 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { parseGoogleRequest } from "../../../src/promptcompat/google";
+import type {
+	FilePart,
+	ImagePart,
+	InternalMessage,
+	TextPart,
+} from "../../../src/promptcompat/message-model";
 import { assert } from "../assertions.js";
+
+function messageAt(
+	messages: readonly InternalMessage[],
+	index: number,
+): InternalMessage {
+	const message = messages[index];
+	if (!message) throw new TypeError(`expected message at index ${index}`);
+	return message;
+}
+
+function textPartAt(message: InternalMessage, index: number): TextPart {
+	const part = message.parts[index];
+	if (part?.kind !== "text")
+		throw new TypeError(`expected text part at index ${index}`);
+	return part;
+}
+
+function imagePartAt(message: InternalMessage, index: number): ImagePart {
+	const part = message.parts[index];
+	if (part?.kind !== "image")
+		throw new TypeError(`expected image part at index ${index}`);
+	return part;
+}
+
+function filePartAt(message: InternalMessage, index: number): FilePart {
+	const part = message.parts[index];
+	if (part?.kind !== "file")
+		throw new TypeError(`expected file part at index ${index}`);
+	return part;
+}
 
 describe("prompt compatibility", () => {
 	test("normalizes Google system image tool-call and tool-response parts", async () => {
@@ -49,30 +84,40 @@ describe("prompt compatibility", () => {
 			messages.map((message) => message.role),
 			["system", "user", "assistant", "user", "tool"],
 		);
-		assert.equal(messages[0].parts[0].text, "be concise cite sources");
-		assert.deepEqual(
-			messages[1].parts.map((part) => part.kind),
-			["text", "image", "file"],
+		assert.equal(
+			textPartAt(messageAt(messages, 0), 0).text,
+			"be concise cite sources",
 		);
 		assert.deepEqual(
+			messageAt(messages, 1).parts.map((part) => part.kind),
+			["text", "image", "file"],
+		);
+		const image = imagePartAt(messageAt(messages, 1), 1);
+		assert.deepEqual(
 			{
-				mime: messages[1].parts[1].mime,
-				filename: messages[1].parts[1].filename,
-				hasInline: messages[1].parts[1].hasInline,
+				mime: image.mime,
+				filename: image.filename,
+				hasInline: image.hasInline,
 			},
 			{ mime: "image/jpeg", filename: "diagram.jpg", hasInline: true },
 		);
-		assert.equal(messages[1].parts[2].label, "gemini://file/2");
-		assert.deepEqual(messages[2].toolCalls, [
+		assert.equal(
+			filePartAt(messageAt(messages, 1), 2).label,
+			"gemini://file/2",
+		);
+		assert.deepEqual(messageAt(messages, 2).toolCalls, [
 			{ id: "", name: "Search", args: { query: "docs" } },
 		]);
-		assert.equal(messages[3].parts[0].text, "tool output follows");
-		assert.equal(messages[4].toolName, "Search");
-		assert.equal(messages[4].parts[0].text, '{"ok":true}');
+		assert.equal(
+			textPartAt(messageAt(messages, 3), 0).text,
+			"tool output follows",
+		);
+		assert.equal(messageAt(messages, 4).toolName, "Search");
+		assert.equal(textPartAt(messageAt(messages, 4), 0).text, '{"ok":true}');
 	});
 
 	test("normalizes camelCase and snake_case Google file parts", async () => {
-		const [camelMessage] = parseGoogleRequest({
+		const camelMessages = parseGoogleRequest({
 			contents: [
 				{
 					role: "user",
@@ -95,7 +140,7 @@ describe("prompt compatibility", () => {
 				},
 			],
 		});
-		const [snakeMessage] = parseGoogleRequest({
+		const snakeMessages = parseGoogleRequest({
 			contents: [
 				{
 					role: "user",
@@ -119,13 +164,19 @@ describe("prompt compatibility", () => {
 			],
 		});
 
+		const camelMessage = messageAt(camelMessages, 0);
+		const snakeMessage = messageAt(snakeMessages, 0);
 		assert.deepEqual(
-			camelMessage.parts.map((part) => ({
-				kind: part.kind,
-				label: part.label,
-				remoteUrl: part.remoteUrl,
-				upload: part.upload,
-			})),
+			camelMessage.parts.map((part) => {
+				if (part.kind !== "file")
+					throw new TypeError("expected normalized Google file part");
+				return {
+					kind: part.kind,
+					label: part.label,
+					remoteUrl: part.remoteUrl,
+					upload: part.upload,
+				};
+			}),
 			[
 				{
 					kind: "file",
@@ -146,10 +197,14 @@ describe("prompt compatibility", () => {
 			],
 		);
 		assert.deepEqual(
-			snakeMessage.parts.map((part) => ({
-				label: part.label,
-				uploadMime: part.upload?.mime || "",
-			})),
+			snakeMessage.parts.map((part) => {
+				if (part.kind !== "file")
+					throw new TypeError("expected normalized Google file part");
+				return {
+					label: part.label,
+					uploadMime: part.upload?.mime || "",
+				};
+			}),
 			[
 				{ label: "notes.txt", uploadMime: "" },
 				{ label: "readme.md", uploadMime: "text/markdown" },

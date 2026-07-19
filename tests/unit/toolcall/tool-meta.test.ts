@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import {
@@ -10,6 +9,11 @@ import {
 	toolMetasFromTools,
 } from "../../../src/toolcall/tool-meta";
 import { assert } from "../assertions.js";
+
+function required<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a value");
+	return value;
+}
 
 describe("toolcall", () => {
 	test("normalizes tool metadata across OpenAI Google and Responses aliases", async () => {
@@ -116,8 +120,8 @@ describe("toolcall", () => {
 			const defs = createToolBundle([
 				{ type: "function", name: `Alias_${key}`, [key]: schema },
 			]).promptArtifact.defs;
-			assert.equal(defs[0].name, `Alias_${key}`);
-			assert.deepEqual(defs[0].parameters, schema);
+			assert.equal(required(defs[0]).name, `Alias_${key}`);
+			assert.deepEqual(required(defs[0]).parameters, schema);
 		}
 	});
 });

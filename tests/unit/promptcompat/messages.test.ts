@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { parseGoogleRequest } from "../../../src/promptcompat/google";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
@@ -211,8 +210,10 @@ describe("prompt compatibility", () => {
 			null,
 			10,
 		);
-		assert.equal(result.byteCheck.exceeded, true);
-		assert.equal(result.byteCheck.exact, false);
-		assert.equal(result.byteCheck.bytes > 10, true);
+		const byteCheck = result.byteCheck;
+		if (!byteCheck) throw new TypeError("expected bounded prompt byte check");
+		assert.equal(byteCheck.exceeded, true);
+		assert.equal(byteCheck.exact, false);
+		assert.equal(byteCheck.bytes > 10, true);
 	});
 });

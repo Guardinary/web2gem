@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	buildStructuredOutputRequirement,
@@ -17,7 +16,7 @@ describe("structured output", () => {
 		assert.equal(
 			getStructuredResponseFormat({
 				text: { format: { type: "json_object" } },
-			}).type,
+			})?.type,
 			"json_object",
 		);
 		assert.equal(getStructuredResponseFormat(null), null);
@@ -32,23 +31,34 @@ describe("structured output", () => {
 			name: " ",
 			schema: { type: "object" },
 		});
+		if (defaulted?.type !== "json_schema") {
+			throw new Error("expected a json_schema requirement");
+		}
 		assert.match(defaulted.instruction, /Schema name: response/);
 		assert.match(defaulted.instruction, /Strict mode: true/);
+		const invalid = buildStructuredOutputRequirement({
+			type: "json_schema",
+			json_schema: { name: "bad" },
+		});
+		if (!invalid || !("error" in invalid)) {
+			throw new Error("expected an invalid schema requirement");
+		}
 		assert.equal(
-			buildStructuredOutputRequirement({
-				type: "json_schema",
-				json_schema: { name: "bad" },
-			}).error,
+			invalid.error,
 			"response_format json_schema requires a schema object",
 		);
 
-		const cyclic = {};
+		const cyclic: Record<string, unknown> = {};
 		cyclic.self = cyclic;
+		const unserializable = buildStructuredOutputRequirement({
+			type: "json_schema",
+			json_schema: { schema: cyclic },
+		});
+		if (!unserializable || !("error" in unserializable)) {
+			throw new Error("expected an unserializable schema requirement");
+		}
 		assert.equal(
-			buildStructuredOutputRequirement({
-				type: "json_schema",
-				json_schema: { schema: cyclic },
-			}).error,
+			unserializable.error,
 			"response_format json_schema schema must be JSON serializable",
 		);
 	});
@@ -87,6 +97,9 @@ describe("structured output", () => {
 			strict: false,
 			schema: { type: "object", properties: { ok: { type: "boolean" } } },
 		});
+		if (requirement?.type !== "json_schema") {
+			throw new Error("expected a json_schema requirement");
+		}
 		assert.match(requirement.instruction, /Schema name: loose_result/);
 		assert.match(requirement.instruction, /Strict mode: false/);
 		assert.equal(canonicalizeStructuredOutputText(" raw ", null), " raw ");

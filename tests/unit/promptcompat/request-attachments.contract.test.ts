@@ -1,11 +1,17 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { AttachmentSource } from "../../../src/attachments/types";
 import {
 	openAIAttachmentPlanFromRequest,
 	requestAttachmentPlanFromChannels,
 } from "../../../src/promptcompat/attachment-inputs";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { assert } from "../assertions.js";
+
+function base64Data(source: AttachmentSource): unknown {
+	if (source.type !== "base64")
+		throw new TypeError("expected a base64 attachment source");
+	return source.data;
+}
 
 describe("prompt compatibility request attachments", () => {
 	test("classifies OpenAI request attachments without upload transport", async () => {
@@ -183,7 +189,7 @@ describe("prompt compatibility request attachments", () => {
 				filename: candidate.filename,
 				mime: candidate.mime,
 				sourceType: candidate.source.type,
-				data: candidate.source.data,
+				data: base64Data(candidate.source),
 			})),
 			[
 				{
@@ -219,7 +225,7 @@ describe("prompt compatibility request attachments", () => {
 					},
 				],
 			}).candidates.map((candidate) => ({
-				b64: candidate.source.data,
+				b64: base64Data(candidate.source),
 				mime: candidate.mime,
 				filename: candidate.filename,
 			})),
