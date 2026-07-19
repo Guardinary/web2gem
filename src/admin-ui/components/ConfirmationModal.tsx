@@ -1,6 +1,6 @@
 import type { JSX } from "preact";
 import { resolveConfirmation } from "../session";
-import { language, tr } from "../i18n";
+import { tr } from "../i18n";
 import { destructiveConfirmationText } from "../logic";
 import { confirmationDraft } from "../state";
 import { DialogSurface } from "./DialogSurface";
@@ -9,18 +9,6 @@ export function ConfirmationModal(): JSX.Element | null {
 	const draft = confirmationDraft.value;
 	if (!draft) return null;
 	const copy = destructiveConfirmationText(draft.count, draft.targetLabel);
-	const localizedCopy =
-		language.value === "zh-CN"
-			? {
-					title: tr(draft.count === 1 ? "Delete account?" : "Delete accounts?"),
-					description: tr(
-						"This action permanently deletes the selected account metadata and cannot be undone.",
-					),
-					confirmLabel: tr(
-						draft.count === 1 ? "Delete account" : "Delete accounts",
-					),
-				}
-			: copy;
 	return (
 		<DialogSurface
 			labelledBy="confirm-title"
@@ -30,10 +18,10 @@ export function ConfirmationModal(): JSX.Element | null {
 			<div class="dialog-head">
 				<div>
 					<div id="confirm-title" class="dialog-title">
-						{localizedCopy.title}
+						{copy.title}
 					</div>
 					<p id="confirm-description" class="dialog-copy">
-						{localizedCopy.description}
+						{copy.description}
 					</p>
 				</div>
 			</div>
@@ -43,7 +31,7 @@ export function ConfirmationModal(): JSX.Element | null {
 					class="danger danger-solid"
 					onClick={() => resolveConfirmation(true)}
 				>
-					{localizedCopy.confirmLabel}
+					{copy.confirmLabel}
 				</button>
 				<button
 					type="button"

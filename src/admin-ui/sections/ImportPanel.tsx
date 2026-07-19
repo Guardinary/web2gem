@@ -14,7 +14,7 @@ export function ImportPanel(): JSX.Element {
 	return (
 		<section
 			id="import-panel"
-			class={`panel disclosure ${importExpanded.value ? "open" : ""}`}
+			class="panel disclosure"
 			hidden={!importExpanded.value}
 		>
 			<div class="panel-head">

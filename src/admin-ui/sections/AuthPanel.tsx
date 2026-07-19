@@ -15,7 +15,7 @@ export function AuthPanel(): JSX.Element {
 	const connected = connectionVerified.value;
 	return (
 		<section
-			class={`panel auth-panel ${connected ? "compact" : "hero-panel"}${authExpanded.value ? " expanded" : ""}`}
+			class={`panel auth-panel${connected ? " compact" : ""}${authExpanded.value ? " expanded" : ""}`}
 		>
 			<div class="auth-copy">
 				<span class="eyebrow">

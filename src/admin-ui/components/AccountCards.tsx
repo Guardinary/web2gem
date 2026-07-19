@@ -30,7 +30,11 @@ const AccountCard = memo(function AccountCardView({
 							)
 						}
 					/>
-					<span class="sr-only">Select {accountDisplayName(account)}</span>
+					<span class="sr-only">
+						{tr("Select account", {
+							label: accountDisplayName(account),
+						})}
+					</span>
 				</label>
 				{accountIdentity(account)}
 			</div>

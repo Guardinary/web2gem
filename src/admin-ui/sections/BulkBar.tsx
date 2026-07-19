@@ -18,12 +18,12 @@ export function BulkBar({
 }: BulkBarProps): JSX.Element {
 	return (
 		<div
-			class={`bulkbar ${selected.value.size ? "active" : "empty"}`}
+			class={selected.value.size ? "bulkbar active" : "bulkbar"}
 			role="toolbar"
 			aria-label={tr("Selected")}
 		>
 			<div>
-				<strong>{selected.value.size}</strong> {tr("Selected")}
+				<strong>{tr("Selected count", { count: selected.value.size })}</strong>
 				{!selected.value.size ? (
 					<span class="bulk-hint">
 						{tr("Select accounts to unlock bulk actions.")}

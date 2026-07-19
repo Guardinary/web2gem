@@ -8,10 +8,10 @@ import {
 	batchBusy,
 	confirmationDraft,
 	connectionVerified,
+	createProtectedAdminState,
 	cursorStack,
 	editBusy,
 	editDraft,
-	emptyModelRoutingDrafts,
 	importBusy,
 	KEY_STORAGE,
 	KEY_STORAGE_MODE,
@@ -88,24 +88,25 @@ export function invalidateAdminSession(): void {
 	adminSessionAbortController = new AbortController();
 	confirmationResolver?.(false);
 	confirmationResolver = null;
-	connectionVerified.value = false;
-	accounts.value = [];
-	accountStats.value = null;
-	modelRouting.value = null;
-	modelRoutingDrafts.value = emptyModelRoutingDrafts();
-	selected.value = new Set();
-	cursorStack.value = [""];
-	pageIndex.value = 0;
-	nextCursor.value = null;
-	editDraft.value = null;
-	confirmationDraft.value = null;
-	loading.value = false;
-	modelRoutingLoading.value = false;
-	importBusy.value = false;
-	editBusy.value = false;
-	batchBusy.value = "";
-	rowBusy.value = {};
-	authExpanded.value = true;
+	const reset = createProtectedAdminState();
+	connectionVerified.value = reset.connectionVerified;
+	accounts.value = reset.accounts;
+	accountStats.value = reset.accountStats;
+	modelRouting.value = reset.modelRouting;
+	modelRoutingDrafts.value = reset.modelRoutingDrafts;
+	selected.value = reset.selected;
+	cursorStack.value = reset.cursorStack;
+	pageIndex.value = reset.pageIndex;
+	nextCursor.value = reset.nextCursor;
+	editDraft.value = reset.editDraft;
+	confirmationDraft.value = reset.confirmationDraft;
+	loading.value = reset.loading;
+	modelRoutingLoading.value = reset.modelRoutingLoading;
+	importBusy.value = reset.importBusy;
+	editBusy.value = reset.editBusy;
+	batchBusy.value = reset.batchBusy;
+	rowBusy.value = reset.rowBusy;
+	authExpanded.value = reset.authExpanded;
 }
 
 export async function runAdminSessionOperation<T>(

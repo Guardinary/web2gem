@@ -83,7 +83,9 @@ function ModelRoutingCard({
 									class="secondary icon-button"
 									type="button"
 									disabled={draft.busy || index === 0}
-									aria-label={`${tr("Move up")} ${route.providerModelId}`}
+									aria-label={tr("Move route up", {
+										model: route.providerModelId,
+									})}
 									onClick={() => moveModelRoute(family.family, index, -1)}
 								>
 									↑
@@ -92,7 +94,9 @@ function ModelRoutingCard({
 									class="secondary icon-button"
 									type="button"
 									disabled={draft.busy || index === draft.routes.length - 1}
-									aria-label={`${tr("Move down")} ${route.providerModelId}`}
+									aria-label={tr("Move route down", {
+										model: route.providerModelId,
+									})}
 									onClick={() => moveModelRoute(family.family, index, 1)}
 								>
 									↓

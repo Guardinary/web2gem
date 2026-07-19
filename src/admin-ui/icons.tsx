@@ -4,7 +4,6 @@ export type IconName =
 	| "alert"
 	| "check"
 	| "chevron"
-	| "download"
 	| "edit"
 	| "globe"
 	| "key"
@@ -25,13 +24,6 @@ const paths: Record<IconName, JSX.Element> = {
 	),
 	check: <path d="m5 12 4 4L19 6" />,
 	chevron: <path d="m8 10 4 4 4-4" />,
-	download: (
-		<>
-			<path d="M12 3v12" />
-			<path d="m7 10 5 5 5-5" />
-			<path d="M5 21h14" />
-		</>
-	),
 	edit: (
 		<>
 			<path d="M12 20h9" />

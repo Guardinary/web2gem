@@ -2,13 +2,10 @@ import {
 	createAccount,
 	createAccountsWithLimitFallback,
 	getAccountOverview,
-	getModelRoutingOverview,
-	replaceModelRoutePriority,
-	resetModelRoutePriority,
 	runAccountAction,
 	updateAccount,
 } from "./api";
-import { language, tr } from "./i18n";
+import { localActionLabel, tr } from "./i18n";
 import {
 	identifier,
 	identifierKey,
@@ -32,9 +29,6 @@ import {
 	importPsid,
 	importPsidts,
 	loading,
-	modelRouting,
-	modelRoutingDrafts,
-	modelRoutingLoading,
 	nextCursor,
 	pageIndex,
 	query,
@@ -42,9 +36,8 @@ import {
 	selected,
 	stateFilter,
 } from "./state";
-import { emptyModelRoutingDrafts } from "./state";
+import { loadModelRoutingForSession } from "./model-routing-actions";
 import {
-	type AdminSession,
 	beginAccountLoad,
 	confirmDeletion,
 	currentAdminSession,
@@ -55,13 +48,13 @@ import {
 	runAdminSessionOperation,
 	showToast,
 } from "./session";
-import type {
-	AccountAction,
-	AccountIdentifier,
-	GeminiAccount,
-	ModelFamily,
-	ModelRoutingOverview,
-} from "./types";
+import type { AccountAction, AccountIdentifier, GeminiAccount } from "./types";
+
+export {
+	moveModelRoute,
+	resetModelRoutePriorityAction,
+	saveModelRoutePriority,
+} from "./model-routing-actions";
 
 export function selectedIdentifiers(): AccountIdentifier[] {
 	const current = selected.value;
@@ -111,11 +104,7 @@ export async function loadAccounts(
 			await loadModelRoutingForSession(session);
 		}
 		if (!isCurrentAccountLoad(session, generation)) return;
-		showToast(
-			language.value === "zh-CN"
-				? `已加载 ${overview.items.length} 个账号`
-				: `Loaded ${overview.items.length} accounts`,
-		);
+		showToast(tr("Loaded account count", { count: overview.items.length }));
 	} finally {
 		if (isCurrentAccountLoad(session, generation)) loading.value = false;
 	}
@@ -171,164 +160,6 @@ function requestedAccountPage(
 	};
 }
 
-export function loadModelRouting(): Promise<void> {
-	const session = currentVerifiedAdminSession();
-	return session ? loadModelRoutingForSession(session) : Promise.resolve();
-}
-
-async function loadModelRoutingForSession(
-	session: AdminSession,
-): Promise<void> {
-	if (
-		!session.adminKey ||
-		!connectionVerified.value ||
-		!isCurrentAdminSession(session)
-	)
-		return;
-	modelRoutingLoading.value = true;
-	try {
-		const result = await runAdminSessionOperation(
-			session,
-			() => getModelRoutingOverview(session),
-			{ fallbackMessage: tr("Failed to load model routing") },
-		);
-		if (result.ok) applyModelRoutingOverview(result.value);
-	} finally {
-		if (isCurrentAdminSession(session)) modelRoutingLoading.value = false;
-	}
-}
-
-export function moveModelRoute(
-	family: ModelFamily,
-	index: number,
-	direction: -1 | 1,
-): void {
-	const draft = modelRoutingDrafts.value[family];
-	const target = index + direction;
-	if (draft.busy || target < 0 || target >= draft.routes.length) return;
-	const routes = [...draft.routes];
-	const current = routes[index];
-	const adjacent = routes[target];
-	if (!current || !adjacent) return;
-	routes[index] = adjacent;
-	routes[target] = current;
-	modelRoutingDrafts.value = {
-		...modelRoutingDrafts.value,
-		[family]: { ...draft, routes, dirty: true, error: null },
-	};
-}
-
-export async function saveModelRoutePriority(
-	family: ModelFamily,
-): Promise<void> {
-	const session = currentVerifiedAdminSession();
-	if (!session) return;
-	const draft = modelRoutingDrafts.value[family];
-	setModelRoutingDraft(family, { busy: true, error: null });
-	const routes = draft.routes.map(
-		({ providerModelId, capacity, capacityField, modelNumber }) => ({
-			providerModelId,
-			capacity,
-			capacityField,
-			modelNumber,
-		}),
-	);
-	const result = await runAdminSessionOperation(
-		session,
-		() => replaceModelRoutePriority(session, family, routes),
-		{
-			fallbackMessage: tr("Failed to save model routing"),
-			onError: (message) =>
-				setModelRoutingDraft(family, { busy: false, error: message }),
-		},
-	);
-	if (!result.ok) return;
-	applyModelRoutingOverview(result.value, family);
-	showToast(tr("Model routing saved"));
-}
-
-export async function resetModelRoutePriorityAction(
-	family: ModelFamily,
-): Promise<void> {
-	const session = currentVerifiedAdminSession();
-	if (!session) return;
-	setModelRoutingDraft(family, { busy: true, error: null });
-	const result = await runAdminSessionOperation(
-		session,
-		() => resetModelRoutePriority(session, family),
-		{
-			fallbackMessage: tr("Failed to reset model routing"),
-			onError: (message) =>
-				setModelRoutingDraft(family, { busy: false, error: message }),
-		},
-	);
-	if (!result.ok) return;
-	applyModelRoutingOverview(result.value, family);
-	showToast(tr("Model routing reset"));
-}
-
-function applyModelRoutingOverview(
-	overview: ModelRoutingOverview,
-	changedFamily?: ModelFamily,
-): void {
-	const acceptedOverview = newerModelRoutingOverview(
-		modelRouting.value,
-		overview,
-	);
-	modelRouting.value = acceptedOverview;
-	const current = modelRoutingDrafts.value;
-	const next = emptyModelRoutingDrafts();
-	for (const family of acceptedOverview.families) {
-		const existing = current[family.family];
-		if (family.family !== changedFamily && (existing.dirty || existing.busy)) {
-			next[family.family] = existing;
-			continue;
-		}
-		next[family.family] = {
-			routes: family.routes,
-			busy: false,
-			error: null,
-			dirty: false,
-		};
-	}
-	modelRoutingDrafts.value = next;
-}
-
-function newerModelRoutingOverview(
-	current: ModelRoutingOverview | null,
-	incoming: ModelRoutingOverview,
-): ModelRoutingOverview {
-	if (!current) return incoming;
-	return compareDecimalVersions(incoming.version, current.version) < 0
-		? current
-		: incoming;
-}
-
-function compareDecimalVersions(left: string, right: string): number {
-	const normalizedLeft = normalizeDecimalVersion(left);
-	const normalizedRight = normalizeDecimalVersion(right);
-	if (normalizedLeft.length !== normalizedRight.length)
-		return normalizedLeft.length - normalizedRight.length;
-	if (normalizedLeft === normalizedRight) return 0;
-	return normalizedLeft < normalizedRight ? -1 : 1;
-}
-
-function normalizeDecimalVersion(value: string): string {
-	return value.replace(/^0+(?=\d)/, "");
-}
-
-function setModelRoutingDraft(
-	family: ModelFamily,
-	update: Partial<
-		Pick<(typeof modelRoutingDrafts.value)[ModelFamily], "busy" | "error">
-	>,
-): void {
-	modelRoutingDrafts.value = {
-		...modelRoutingDrafts.value,
-		[family]: { ...modelRoutingDrafts.value[family], ...update },
-	};
-}
-
 export async function submitImport(event: Event): Promise<void> {
 	event.preventDefault();
 	const session = currentVerifiedAdminSession();
@@ -376,7 +207,7 @@ export async function runAction(
 		showToast(tr("Select at least one account"), "error");
 		return;
 	}
-	const targetLabel = options.targetLabel || "selected account(s)";
+	const targetLabel = options.targetLabel || tr("selected account(s)");
 	if (action === "delete") {
 		const confirmed = await confirmDeletion(identifiers.length, targetLabel);
 		if (!confirmed) return;
@@ -392,7 +223,11 @@ export async function runAction(
 		const operation = await runAdminSessionOperation(
 			session,
 			() => runAccountAction(session, action, identifiers),
-			{ fallbackMessage: `${action} failed` },
+			{
+				fallbackMessage: tr("Action failure", {
+					action: localActionLabel(action, true),
+				}),
+			},
 		);
 		if (!operation.ok) return;
 		const result = operation.value;

@@ -26,37 +26,6 @@ export type ConfirmationDraft = {
 };
 export type EditDraft = { key: string; label: string };
 
-export const adminKey = signal("");
-export const connectionVerified = signal(false);
-export const accounts = signal<GeminiAccount[]>([]);
-export const selected = signal<Set<string>>(new Set());
-export const loading = signal(false);
-export const query = signal("");
-export const stateFilter = signal<GeminiAccountState | "">("");
-export const cursorStack = signal<string[]>([""]);
-export const pageIndex = signal(0);
-export const nextCursor = signal<string | null>(null);
-export const toastItems = signal<ToastItem[]>([]);
-export const editDraft = signal<EditDraft | null>(null);
-export const importLabel = signal("");
-export const importPsid = signal("");
-export const importPsidts = signal("");
-export const importBatch = signal("");
-export const keyStorageMode = signal<"session" | "local">("session");
-export const accountStats = signal<AccountStats | null>(null);
-export const importBusy = signal(false);
-export const editBusy = signal(false);
-export const batchBusy = signal("");
-export const rowBusy = signal<Record<string, string>>({});
-export const confirmationDraft = signal<ConfirmationDraft | null>(null);
-export const importExpanded = signal(false);
-export const authExpanded = signal(false);
-export const modelRouting = signal<ModelRoutingOverview | null>(null);
-export const modelRoutingLoading = signal(false);
-export const modelRoutingDrafts = signal<
-	Record<ModelFamily, ModelRoutingDraft>
->(emptyModelRoutingDrafts());
-
 export function emptyModelRoutingDrafts(): Record<
 	ModelFamily,
 	ModelRoutingDraft
@@ -67,3 +36,86 @@ export function emptyModelRoutingDrafts(): Record<
 		flash_lite: { routes: [], busy: false, error: null, dirty: false },
 	};
 }
+
+export type ProtectedAdminState = {
+	connectionVerified: boolean;
+	accounts: GeminiAccount[];
+	selected: Set<string>;
+	cursorStack: string[];
+	pageIndex: number;
+	nextCursor: string | null;
+	accountStats: AccountStats | null;
+	loading: boolean;
+	editDraft: EditDraft | null;
+	importBusy: boolean;
+	editBusy: boolean;
+	batchBusy: string;
+	rowBusy: Record<string, string>;
+	confirmationDraft: ConfirmationDraft | null;
+	authExpanded: boolean;
+	modelRouting: ModelRoutingOverview | null;
+	modelRoutingLoading: boolean;
+	modelRoutingDrafts: Record<ModelFamily, ModelRoutingDraft>;
+};
+
+export function createProtectedAdminState(): ProtectedAdminState {
+	return {
+		connectionVerified: false,
+		accounts: [],
+		selected: new Set(),
+		cursorStack: [""],
+		pageIndex: 0,
+		nextCursor: null,
+		accountStats: null,
+		loading: false,
+		editDraft: null,
+		importBusy: false,
+		editBusy: false,
+		batchBusy: "",
+		rowBusy: {},
+		confirmationDraft: null,
+		authExpanded: true,
+		modelRouting: null,
+		modelRoutingLoading: false,
+		modelRoutingDrafts: emptyModelRoutingDrafts(),
+	};
+}
+
+const initialProtectedState = createProtectedAdminState();
+
+export const adminKey = signal("");
+export const connectionVerified = signal(
+	initialProtectedState.connectionVerified,
+);
+export const accounts = signal(initialProtectedState.accounts);
+export const selected = signal(initialProtectedState.selected);
+export const loading = signal(initialProtectedState.loading);
+export const query = signal("");
+export const stateFilter = signal<GeminiAccountState | "">("");
+export const cursorStack = signal(initialProtectedState.cursorStack);
+export const pageIndex = signal(initialProtectedState.pageIndex);
+export const nextCursor = signal(initialProtectedState.nextCursor);
+export const toastItems = signal<ToastItem[]>([]);
+export const editDraft = signal(initialProtectedState.editDraft);
+export const importLabel = signal("");
+export const importPsid = signal("");
+export const importPsidts = signal("");
+export const importBatch = signal("");
+export const keyStorageMode = signal<"session" | "local">("session");
+export const accountStats = signal(initialProtectedState.accountStats);
+export const importBusy = signal(initialProtectedState.importBusy);
+export const editBusy = signal(initialProtectedState.editBusy);
+export const batchBusy = signal(initialProtectedState.batchBusy);
+export const rowBusy = signal(initialProtectedState.rowBusy);
+export const confirmationDraft = signal(
+	initialProtectedState.confirmationDraft,
+);
+export const importExpanded = signal(false);
+export const authExpanded = signal(initialProtectedState.authExpanded);
+export const modelRouting = signal(initialProtectedState.modelRouting);
+export const modelRoutingLoading = signal(
+	initialProtectedState.modelRoutingLoading,
+);
+export const modelRoutingDrafts = signal(
+	initialProtectedState.modelRoutingDrafts,
+);

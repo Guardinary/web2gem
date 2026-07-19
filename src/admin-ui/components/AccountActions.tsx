@@ -23,7 +23,7 @@ export function AccountActions({
 	const run = (action: AccountAction): void => {
 		void runAction(action, [identifier(account)], {
 			scope: "row",
-			targetLabel: `account “${label}”`,
+			targetLabel: tr("Account target", { label }),
 		});
 	};
 	return (
@@ -31,14 +31,16 @@ export function AccountActions({
 			<button
 				type="button"
 				disabled={!!busy}
-				aria-label={`${tr("Refresh")} ${label}`}
+				aria-label={tr("Refresh account", { label })}
 				onClick={() => run("refresh")}
 			>
 				<Icon name="refresh" />
 				{busy === "refresh" ? `${tr("Refreshing")}…` : tr("Refresh")}
 			</button>
 			<details class="action-menu">
-				<summary aria-label={`${tr("More")} ${label}`}>{tr("More")}</summary>
+				<summary aria-label={tr("More account actions", { label })}>
+					{tr("More")}
+				</summary>
 				<div class="action-menu-items">
 					<button
 						type="button"

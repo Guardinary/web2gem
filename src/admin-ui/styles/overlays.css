@@ -96,11 +96,6 @@
 .dialog-actions {
 	justify-content: flex-end;
 }
-.field-row {
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: var(--space-2);
-}
 .grid {
 	display: grid;
 	gap: var(--space-3);

@@ -1,4 +1,15 @@
-import type { AccountIdentifier, GeminiAccount, MutationResult } from "./types";
+import {
+	deletionTargetLabel,
+	localActionLabel,
+	relativeUnit,
+	tr,
+} from "./i18n";
+import type {
+	AccountIdentifier,
+	GeminiAccount,
+	ModelRoutingOverview,
+	MutationResult,
+} from "./types";
 
 export type BatchImportItem = { label?: string; psid: string; psidts: string };
 
@@ -20,19 +31,28 @@ export function accountDisplayName(account: GeminiAccount): string {
 
 export function accountBusyLabel(action: string): string {
 	if (!action) return "";
-	return `${action.slice(0, 1).toUpperCase()}${action.slice(1)} in progress`;
+	const localized = localActionLabel(action);
+	const label =
+		localized === action
+			? `${action.slice(0, 1).toUpperCase()}${action.slice(1)}`
+			: localized;
+	return tr("Busy action", { action: label });
 }
 
 export function destructiveConfirmationText(
 	count: number,
 	targetLabel: string,
 ): { title: string; description: string; confirmLabel: string } {
-	const rawScope = targetLabel.trim() || "selected account(s)";
-	const scope = rawScope.replace("(s)", count === 1 ? "" : "s");
+	const target = deletionTargetLabel(targetLabel, count);
 	return {
-		title: count === 1 ? "Delete account?" : `Delete ${count} accounts?`,
-		description: `This permanently deletes ${count} ${scope}. This action cannot be undone.`,
-		confirmLabel: count === 1 ? "Delete account" : `Delete ${count} accounts`,
+		title: tr(count === 1 ? "Delete account title" : "Delete accounts title", {
+			count,
+		}),
+		description: tr("Delete confirmation description", { count, target }),
+		confirmLabel: tr(
+			count === 1 ? "Delete account action" : "Delete accounts action",
+			{ count },
+		),
 	};
 }
 
@@ -68,7 +88,7 @@ export function relativeTime(
 	if (!Number.isFinite(n) || n <= 0) return "-";
 	const diff = n - nowMs;
 	const abs = Math.abs(diff);
-	let unit = "m";
+	let unit: "m" | "h" | "d" = "m";
 	let amount = Math.round(abs / 60000);
 	if (abs >= 86400000) {
 		unit = "d";
@@ -78,7 +98,10 @@ export function relativeTime(
 		amount = Math.round(abs / 3600000);
 	}
 	if (amount < 1) amount = 1;
-	return diff >= 0 ? `in ${amount}${unit}` : `${amount}${unit} ago`;
+	const params = { amount, unit: relativeUnit(unit) };
+	return diff >= 0
+		? tr("Relative future", params)
+		: tr("Relative past", params);
 }
 
 export function isCooling(account: GeminiAccount): boolean {
@@ -86,9 +109,40 @@ export function isCooling(account: GeminiAccount): boolean {
 }
 
 export function resultSummary(action: string, result: MutationResult): string {
-	const summary = `processed ${result.processed}, changed ${result.changed}, unchanged ${result.unchanged}, failed ${result.failed}`;
+	const params = {
+		action: localActionLabel(action, true),
+		processed: result.processed,
+		changed: result.changed,
+		unchanged: result.unchanged,
+		failed: result.failed,
+	};
 	const firstError = result.errors?.[0]?.message || "";
-	return `${action} completed: ${summary}${firstError ? ` - ${firstError}` : ""}`;
+	return firstError
+		? tr("Mutation summary with error", { ...params, error: firstError })
+		: tr("Mutation summary", params);
+}
+
+export function normalizeDecimalVersion(value: string): string {
+	return value.replace(/^0+(?=\d)/, "");
+}
+
+export function compareDecimalVersions(left: string, right: string): number {
+	const normalizedLeft = normalizeDecimalVersion(left);
+	const normalizedRight = normalizeDecimalVersion(right);
+	if (normalizedLeft.length !== normalizedRight.length)
+		return normalizedLeft.length - normalizedRight.length;
+	if (normalizedLeft === normalizedRight) return 0;
+	return normalizedLeft < normalizedRight ? -1 : 1;
+}
+
+export function newerModelRoutingOverview(
+	current: ModelRoutingOverview | null,
+	incoming: ModelRoutingOverview,
+): ModelRoutingOverview {
+	if (!current) return incoming;
+	return compareDecimalVersions(incoming.version, current.version) < 0
+		? current
+		: incoming;
 }
 
 export function validateCookieValue(value: string, name: string): string {

@@ -1,7 +1,7 @@
 import type { JSX } from "preact";
 import { loadAccounts, runAction } from "../actions";
 import { AccountCards, AccountRows } from "../components";
-import { language, tr } from "../i18n";
+import { tr } from "../i18n";
 import { Icon } from "../icons";
 import { identifier, identifierKey } from "../logic";
 import { hasFilters } from "../selectors";
@@ -25,7 +25,7 @@ export function Workspace(): JSX.Element {
 	const deleteVisible = (): void => {
 		void runAction("delete", rows.map(identifier), {
 			scope: "batch",
-			targetLabel: "loaded account(s)",
+			targetLabel: tr("loaded account(s)"),
 		});
 	};
 	const clearFilters = (): void => {
@@ -93,9 +93,10 @@ export function Workspace(): JSX.Element {
 					{tr("Previous")}
 				</button>
 				<span>
-					{language.value === "zh-CN"
-						? `第 ${pageIndex.value + 1} 页 · 已加载 ${accounts.value.length} 个${nextCursor.value ? "" : " · 已到底"}`
-						: `Page ${pageIndex.value + 1} · ${accounts.value.length} loaded${nextCursor.value ? "" : " · end"}`}
+					{tr(nextCursor.value ? "Pager summary" : "Pager summary at end", {
+						page: pageIndex.value + 1,
+						count: accounts.value.length,
+					})}
 				</span>
 				<button
 					type="button"

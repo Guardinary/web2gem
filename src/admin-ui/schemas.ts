@@ -1,10 +1,4 @@
 import * as v from "valibot";
-import type {
-	AccountOverview,
-	GeminiAccount,
-	ModelRoutingOverview,
-	MutationResult,
-} from "./types";
 
 const issueSchema = v.union([
 	v.literal("auth"),
@@ -85,29 +79,40 @@ const modelRouteSchema = v.strictObject({
 	configured: v.boolean(),
 	accountCount: v.number(),
 });
+const modelRoutingFamilySchema = v.strictObject({
+	family: modelFamilySchema,
+	publicNames: v.tuple([v.string(), v.string()]),
+	configured: v.boolean(),
+	routes: v.array(modelRouteSchema),
+});
 const modelRoutingSchema = v.strictObject({
 	version: v.pipe(v.string(), v.regex(/^\d+$/)),
-	families: v.array(
-		v.strictObject({
-			family: modelFamilySchema,
-			publicNames: v.tuple([v.string(), v.string()]),
-			configured: v.boolean(),
-			routes: v.array(modelRouteSchema),
-		}),
-	),
+	families: v.array(modelRoutingFamilySchema),
 });
+
+export type GeminiAccountIssue = v.InferOutput<typeof issueSchema>;
+export type GeminiAccountState = v.InferOutput<typeof stateSchema>;
+export type GeminiAccount = v.InferOutput<typeof accountSchema>;
+export type AccountStats = v.InferOutput<typeof statsSchema>;
+export type MutationError = v.InferOutput<typeof mutationErrorSchema>;
+export type MutationResult = v.InferOutput<typeof mutationSchema>;
+export type AccountOverview = v.InferOutput<typeof overviewSchema>;
+export type ModelFamily = v.InferOutput<typeof modelFamilySchema>;
+export type ModelRoutingRoute = v.InferOutput<typeof modelRouteSchema>;
+export type ModelRoutingFamily = v.InferOutput<typeof modelRoutingFamilySchema>;
+export type ModelRoutingOverview = v.InferOutput<typeof modelRoutingSchema>;
 
 export function parseMutation(value: unknown): MutationResult {
 	const parsed = v.safeParse(mutationSchema, value);
 	if (!parsed.success) throw new Error("admin mutation response is invalid");
-	return parsed.output as MutationResult;
+	return parsed.output;
 }
 
 export function parseOverview(value: unknown): AccountOverview {
 	const parsed = v.safeParse(overviewSchema, value);
 	if (!parsed.success)
 		throw new Error("admin account overview response is invalid");
-	return parsed.output as AccountOverview;
+	return parsed.output;
 }
 
 export function isAccount(value: unknown): value is GeminiAccount {
@@ -120,5 +125,5 @@ export function parseModelRoutingOverview(
 	const parsed = v.safeParse(modelRoutingSchema, value);
 	if (!parsed.success)
 		throw new Error("admin model routing response is invalid");
-	return parsed.output as ModelRoutingOverview;
+	return parsed.output;
 }

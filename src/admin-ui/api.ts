@@ -196,32 +196,12 @@ export async function createAccountsWithLimitFallback(
 	session: AdminApiSession,
 	input: CreateBatchInput,
 ): Promise<MutationResult> {
-	try {
-		return await createAccounts(session, input);
-	} catch (error) {
-		if (
-			!(error instanceof AdminApiError) ||
-			error.status !== 413 ||
-			error.code !== WORKER_ACCOUNT_IMPORT_LIMIT_CODE ||
-			input.accounts.length <= WORKER_ACCOUNT_IMPORT_BATCH_SIZE
-		)
-			throw error;
-	}
-	const results: MutationResult[] = [];
-	for (
-		let offset = 0;
-		offset < input.accounts.length;
-		offset += WORKER_ACCOUNT_IMPORT_BATCH_SIZE
-	)
-		results.push(
-			await createAccounts(session, {
-				accounts: input.accounts.slice(
-					offset,
-					offset + WORKER_ACCOUNT_IMPORT_BATCH_SIZE,
-				),
-			}),
-		);
-	return mergeMutationResults(results);
+	return requestWithLimitFallback(
+		input.accounts,
+		WORKER_ACCOUNT_IMPORT_BATCH_SIZE,
+		WORKER_ACCOUNT_IMPORT_LIMIT_CODE,
+		(accounts) => createAccounts(session, { accounts: [...accounts] }),
+	);
 }
 
 export async function updateAccount(
@@ -243,30 +223,35 @@ export async function runAccountAction(
 ): Promise<MutationResult> {
 	if (!identifiers.length)
 		return { processed: 0, changed: 0, unchanged: 0, failed: 0 };
+	return requestWithLimitFallback(
+		identifiers,
+		BULK_ACTION_BATCH_SIZE,
+		BULK_ACTION_LIMIT_CODE,
+		(batch) => requestBulkAccountAction(session, action, [...batch]),
+	);
+}
+
+async function requestWithLimitFallback<Item>(
+	items: readonly Item[],
+	chunkSize: number,
+	limitCode: string,
+	send: (items: readonly Item[]) => Promise<MutationResult>,
+): Promise<MutationResult> {
 	try {
-		return await requestBulkAccountAction(session, action, identifiers);
+		return await send(items);
 	} catch (error) {
 		if (
 			!(error instanceof AdminApiError) ||
 			error.status !== 413 ||
-			error.code !== BULK_ACTION_LIMIT_CODE ||
-			identifiers.length <= BULK_ACTION_BATCH_SIZE
+			error.code !== limitCode ||
+			items.length <= chunkSize
 		)
 			throw error;
 	}
 	const results: MutationResult[] = [];
-	for (
-		let offset = 0;
-		offset < identifiers.length;
-		offset += BULK_ACTION_BATCH_SIZE
-	)
-		results.push(
-			await requestBulkAccountAction(
-				session,
-				action,
-				identifiers.slice(offset, offset + BULK_ACTION_BATCH_SIZE),
-			),
-		);
+	for (let offset = 0; offset < items.length; offset += chunkSize) {
+		results.push(await send(items.slice(offset, offset + chunkSize)));
+	}
 	return mergeMutationResults(results);
 }
 

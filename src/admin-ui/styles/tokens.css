@@ -34,10 +34,6 @@
 	--accent-hover: #4f5abf;
 	--accent-muted: #edeefb;
 	--accent-contrast: #ffffff;
-	/* Back-compat aliases */
-	--primary: var(--accent);
-	--primary-hover: var(--accent-hover);
-	--primary-soft: var(--accent-muted);
 	--focus: var(--accent);
 
 	/* Semantic status (AA on light surfaces) */

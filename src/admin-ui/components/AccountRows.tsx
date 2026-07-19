@@ -38,7 +38,9 @@ const AccountRow = memo(function AccountRowView({
 			<td>
 				<input
 					type="checkbox"
-					aria-label={`Select ${accountDisplayName(account)}`}
+					aria-label={tr("Select account", {
+						label: accountDisplayName(account),
+					})}
 					checked={isSelected.value}
 					onChange={(event) =>
 						toggleSelected(
