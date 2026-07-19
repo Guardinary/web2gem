@@ -1,5 +1,5 @@
 import { isRecord } from "../shared/types";
-import { uploadFilenameFromObject } from "./input";
+import { uploadFilenameFromObject } from "./metadata";
 import type { AttachmentFileRef } from "./types";
 
 type ExistingRefState = {

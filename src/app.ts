@@ -107,10 +107,15 @@ function route<P>(definition: AppRoute<P>): AppRoute<unknown> {
 
 const matchExact = (target: string) => (path: string) =>
 	path === target ? {} : null;
-const matchIdSuffix = (prefix: string) => (path: string) =>
-	path.startsWith(prefix)
-		? { id: decodeURIComponent(path.slice(prefix.length)) }
-		: null;
+const matchIdSuffix = (prefix: string) => (path: string) => {
+	if (!path.startsWith(prefix)) return null;
+	try {
+		const id = decodeURIComponent(path.slice(prefix.length));
+		return id ? { id } : null;
+	} catch {
+		return null;
+	}
+};
 const matchPredicate =
 	(predicate: (path: string) => boolean) => (path: string) =>
 		predicate(path) ? {} : null;

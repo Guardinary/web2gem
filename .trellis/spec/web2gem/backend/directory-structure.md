@@ -28,6 +28,19 @@
 - `src/promptcompat/token-accounting.ts` owns prompt/completion token estimates, counters, and prepared-text accounting. `src/shared/text-metrics.ts` owns only provider-neutral UTF-8 byte, code-point, and continuation-overlap primitives.
 - `src/shared/` must stay leaf-level and provider-neutral. Production code imports concrete owners such as `encoding.ts`, `logging.ts`, `abort.ts`, `errors.ts`, `crypto.ts`, `strings.ts`, `text-metrics.ts`, and `json-schema.ts`; broad `runtime.ts` / `tokens.ts` compatibility barrels do not exist. Generic string selection and JSON-Schema subset validation belong here, while completion-specific structured-output parsing belongs in `src/completion/structured-output.ts`. Gemini SAPISID hashing belongs to `src/gemini/auth.ts`.
 - Media and attachment helpers live under `src/attachments/**`; do not add compatibility shims under `src/shared/`.
+
+### Attachment owner dependency direction
+
+`src/attachments/refs.ts` owns the recognized existing-file-reference vocabulary
+(`file_id`, `fileId`, `file_ref`, `fileRef`, `ref`, and context-sensitive `id`).
+Upload normalization may consume that owner, but `refs.ts` must not import the
+upload-input owner. Shared filename metadata extraction belongs in a leaf helper
+such as `src/attachments/metadata.ts` so reference collection and upload
+normalization do not form a cycle.
+
+Model-detail route matchers must catch `decodeURIComponent` failures and return a
+non-match; malformed encoded IDs must reach the existing not-found response,
+not the generic application 500 handler.
 - `src/admin-ui/html.ts` is the authored compile-time HTML injection boundary; `build-admin-ui.mjs` returns HTML in memory and no generated source directory is tracked. `admin-ui/session.ts` owns browser session cancellation, stale-result guards, feedback, and confirmation lifecycle; `actions.ts` owns account/model/import/edit use cases.
 - `server/docker-server.mjs` adapts Node HTTP requests to the Worker `fetch` entrypoint. It owns Node header/body/response-stream translation and propagates client disconnects into the Web `Request.signal`; `server/d1-http-binding.mjs` and `server/io.mjs` are its production runtime siblings. Development commands remain under `scripts/`.
 

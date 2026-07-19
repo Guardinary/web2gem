@@ -150,7 +150,7 @@ describe.sequential("application request error contract", () => {
 		assert.equal(response.status, 404);
 		assert.deepEqual(await response.json(), { error: "not found" });
 	});
-	test("sanitizes unexpected route errors while preserving CORS and completion logs", async () => {
+	test("returns not found for malformed model detail paths", async () => {
 		const logs = [];
 		const response = await withConsoleLog(
 			(line) => logs.push(String(line)),
@@ -163,22 +163,16 @@ describe.sequential("application request error contract", () => {
 					{},
 				),
 		);
-		assert.equal(response.status, 500);
+		assert.equal(response.status, 404);
 		assert.equal(
 			response.headers.get("Access-Control-Allow-Origin"),
 			"https://app.example",
 		);
-		const body = await response.json();
-		assert.deepEqual(body.error, {
-			message: "internal server error",
-			code: "internal_server_error",
-		});
-		assert.equal(logs.length, 2);
-		assert.match(logs[0], /^\[web2gem\] error: type=URIError$/);
-		assert.doesNotMatch(logs[0], /URI malformed|at /);
+		assert.deepEqual(await response.json(), { error: "not found" });
+		assert.equal(logs.length, 1);
 		assert.match(
-			logs[1],
-			/^\[web2gem\] stage=request_complete requestId=.+ method=GET path=\/v1\/models\/%E0%A4%A status=500 ms=/,
+			logs[0],
+			/^\[web2gem\] stage=request_complete requestId=.+ method=GET path=\/v1\/models\/%E0%A4%A status=404 ms=/,
 		);
 	});
 	test("rejects empty chat prompts before context-file handling", async () => {

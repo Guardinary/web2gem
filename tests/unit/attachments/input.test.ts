@@ -97,8 +97,24 @@ describe("attachment input", () => {
 			}),
 			null,
 		);
+		for (const key of [
+			"file_id",
+			"fileId",
+			"file_ref",
+			"fileRef",
+			"ref",
+			"id",
+		]) {
+			assert.equal(
+				normalizeUploadFileInput({ type: "input_file", [key]: "file-1" }),
+				null,
+			);
+		}
 		assert.equal(
-			normalizeUploadFileInput({ type: "input_file", file_id: "file-1" }),
+			normalizeUploadFileInput({
+				type: "input_file",
+				file: { fileRef: "file-1" },
+			}),
 			null,
 		);
 		assert.equal(normalizeUploadFileInput(42), null);
