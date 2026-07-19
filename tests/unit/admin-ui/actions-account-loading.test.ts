@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { afterEach, describe, test } from "vitest";
 import { loadAccounts } from "../../../src/admin-ui/actions";
+import { language } from "../../../src/admin-ui/i18n";
 import { updateAdminKey } from "../../../src/admin-ui/session";
 import {
 	accountStats,
@@ -34,6 +35,7 @@ import {
 
 describe("admin UI account loading actions", () => {
 	afterEach(() => {
+		language.value = "en";
 		resetAccountViewState();
 		resetModelRoutingState();
 		resetAdminSessionState();
@@ -151,6 +153,7 @@ describe("admin UI account loading actions", () => {
 				return Response.json({ items: [], nextCursor: null, limit: 200 });
 			},
 			async () => {
+				language.value = "zh-CN";
 				updateAdminKey("admin-secret");
 				connectionVerified.value = true;
 				modelRouting.value = uiModelRouting();
@@ -163,6 +166,25 @@ describe("admin UI account loading actions", () => {
 		assert.equal(connectionVerified.value, false);
 		assert.equal(authExpanded.value, true);
 		assert.equal(modelRouting.value, null);
+		assert.equal(toastItems.value[0]?.message, "账号加载失败");
+	});
+
+	test("uses the localized account fallback for fetch failures", async () => {
+		await withAdminEnvironment(
+			async () => {
+				throw new TypeError("browser transport detail");
+			},
+			async () => {
+				language.value = "zh-CN";
+				updateAdminKey("admin-secret");
+				connectionVerified.value = true;
+
+				await loadAccounts();
+			},
+		);
+
+		assert.equal(connectionVerified.value, true);
+		assert.equal(toastItems.value[0]?.message, "账号加载失败");
 	});
 
 	test("requires an admin key before issuing a verification request", async () => {

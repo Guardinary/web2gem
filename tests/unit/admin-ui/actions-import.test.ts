@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { afterEach, describe, test } from "vitest";
 import { resetImport, submitImport } from "../../../src/admin-ui/actions";
+import { language } from "../../../src/admin-ui/i18n";
 import { updateAdminKey } from "../../../src/admin-ui/session";
 import {
 	connectionVerified,
@@ -9,6 +10,7 @@ import {
 	importLabel,
 	importPsid,
 	importPsidts,
+	toastItems,
 } from "../../../src/admin-ui/state";
 import { assert } from "../assertions.js";
 import { deferred } from "../_support/deferred.js";
@@ -22,6 +24,7 @@ import { resetAdminSessionState, resetImportState } from "./_support/state.js";
 
 describe("admin UI import actions", () => {
 	afterEach(() => {
+		language.value = "en";
 		resetImportState();
 		resetAdminSessionState();
 	});
@@ -90,6 +93,58 @@ describe("admin UI import actions", () => {
 			"__Secure-1PSID": "psid-value",
 			"__Secure-1PSIDTS": "psidts-value",
 		});
+	});
+
+	test("localizes malformed batch rows without issuing a request or clearing the draft", async () => {
+		let requests = 0;
+		await withAdminEnvironment(
+			async () => {
+				requests++;
+				return Response.json(uiMutation());
+			},
+			async () => {
+				language.value = "zh-CN";
+				updateAdminKey("admin-secret");
+				connectionVerified.value = true;
+				importBatch.value = "psid-only";
+
+				await submitImport({ preventDefault() {} });
+
+				assert.equal(importBusy.value, false);
+				assert.equal(importBatch.value, "psid-only");
+			},
+		);
+
+		assert.equal(requests, 0);
+		assert.equal(toastItems.value[0]?.message, "每行必须包含 PSID 和 PSIDTS");
+	});
+
+	test("localizes missing single-account credentials without issuing a request or clearing the draft", async () => {
+		let requests = 0;
+		await withAdminEnvironment(
+			async () => {
+				requests++;
+				return Response.json(uiMutation());
+			},
+			async () => {
+				language.value = "zh-CN";
+				updateAdminKey("admin-secret");
+				connectionVerified.value = true;
+				importLabel.value = "Primary";
+				importPsidts.value = "psidts-value";
+
+				await submitImport({ preventDefault() {} });
+
+				assert.equal(importBusy.value, false);
+				assert.deepEqual(
+					[importLabel.value, importPsid.value, importPsidts.value],
+					["Primary", "", "psidts-value"],
+				);
+			},
+		);
+
+		assert.equal(requests, 0);
+		assert.equal(toastItems.value[0]?.message, "需要填写 __Secure-1PSID");
 	});
 
 	test("resets single and batch import drafts together", () => {
