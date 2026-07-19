@@ -29,7 +29,7 @@ export default defineConfig({
 		},
 		environment: "node",
 		fileParallelism: true,
-		include: ["tests/unit/**/*.test.mjs"],
+		include: ["tests/unit/**/*.test.{ts,tsx}"],
 		pool: "threads",
 		testTimeout: 30000,
 	},

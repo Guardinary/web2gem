@@ -81,6 +81,10 @@ jobs:
         if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm typecheck
 
+      - name: Required - Test TypeScript
+        if: ${{ needs.classify.outputs.runtime == 'true' }}
+        run: pnpm typecheck:tests
+
       - name: Required - Architecture
         if: ${{ needs.classify.outputs.runtime == 'true' }}
         run: pnpm check:arch

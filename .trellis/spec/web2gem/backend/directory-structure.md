@@ -383,7 +383,7 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
   through `scripts/check-bundle-size.mjs`; the default gzip ceiling is 3 MiB and
   `BUNDLE_GZIP_SIZE_LIMIT_BYTES` may override it.
 - `wrangler.jsonc` deploys `dist/worker.js`.
-- `tests/unit/**/*.test.mjs` are recursively Vitest-discovered files that import authored `src/**` modules directly (owner modules, bypassing compatibility barrels) plus narrow support modules owned under `tests/unit/_support/` or the relevant domain's `_support/` directory.
+- `tests/unit/**/*.test.ts` are recursively Vitest-discovered files that import authored `src/**` modules directly (owner modules, bypassing compatibility barrels) plus narrow support modules owned under `tests/unit/_support/` or the relevant domain's `_support/` directory.
 - `tests/unit/assertions.js` provides Vitest-backed assertion helpers.
 
 ### 3. Contracts
@@ -435,7 +435,7 @@ export * from "./harness-exports";
 #### Correct
 
 ```javascript
-// tests/unit/gemini/client/protocol.test.mjs
+// tests/unit/gemini/client/protocol.test.ts
 import { buildPayload } from "../../../../src/gemini/client/protocol";
 ```
 
@@ -449,8 +449,8 @@ timers, or concurrency coordination into reusable test support.
 
 ### 2. Signatures
 
-- `tests/unit/<owner>/**/*.test.mjs` contains focused owner behavior.
-- `tests/unit/<owner>/**/*.contract.test.mjs` contains an intentional stable
+- `tests/unit/<owner>/**/*.test.ts` contains focused owner behavior.
+- `tests/unit/<owner>/**/*.contract.test.ts` contains an intentional stable
   boundary spanning immediate collaborators.
 - `tests/unit/_support/` contains only proven owner-neutral mechanisms such as
   deferred gates, scoped global patches, stream iterables, and base runtime
@@ -463,13 +463,13 @@ timers, or concurrency coordination into reusable test support.
   `withConsoleLog(fn, run)` await `run` and restore the original property
   descriptor in `finally`.
 - Domain support stays with its owner, for example:
-  - `tests/unit/attachments/_support/result.js`
-  - `tests/unit/gemini/_support/cache.js`
-  - `tests/unit/gemini/transport/_support/socket.js`
-  - `tests/unit/http/_support/provider.js`
-  - `tests/unit/http/_support/sse.js`
-- `vitest.config.mjs` discovers only `tests/unit/**/*.test.mjs`; support files
-  do not use the `.test.mjs` suffix.
+  - `tests/unit/attachments/_support/result.ts`
+  - `tests/unit/gemini/_support/cache.ts`
+  - `tests/unit/gemini/transport/_support/socket.ts`
+  - `tests/unit/http/_support/provider.ts`
+  - `tests/unit/http/_support/sse.ts`
+- `vitest.config.mjs` discovers only `tests/unit/**/*.test.ts`; support files
+  do not use the `.test.ts` suffix.
 - Vitest uses the `threads` pool with file isolation and file parallelism left
   enabled. Owner-granular suites must not pay one child-process module-graph
   startup cost per file, and tests must still restore every mutable global or
@@ -500,7 +500,7 @@ timers, or concurrency coordination into reusable test support.
 
 ### 4. Validation & Error Matrix
 
-- Disk `tests/unit/**/*.test.mjs` differs from `vitest list --filesOnly` -> fail
+- Disk `tests/unit/**/*.test.ts` differs from `vitest list --filesOnly` -> fail
   the migration; nested tests are missing or unrelated files are discovered.
 - Duplicate `file + describe path + test name` -> fail the manifest check.
 - Default parallel execution fails while serial execution passes -> treat as a
@@ -517,15 +517,15 @@ timers, or concurrency coordination into reusable test support.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `http/openai/responses-stream.contract.test.mjs` owns Responses SSE
+- Good: `http/openai/responses-stream.contract.test.ts` owns Responses SSE
   failure envelopes and uses a strict HTTP provider double.
 - Good: a shared deferred gate is promoted only after independent domains need
   the same start/release mechanism.
 - Base: a pure owner test imports one concrete `src/**` module and the assertion
   adapter, with no global reset.
 - Bad: keep HTTP streaming, completion context files, and tool prompt assembly
-  in a historical `toolcall.test.mjs` bucket.
-- Bad: add a universal `helpers.js` whose import transitively loads Gemini
+  in a historical `toolcall.test.ts` bucket.
+- Bad: add a universal `helpers.ts` whose import transitively loads Gemini
   cookie, upload, cache, and socket test seams.
 - Bad: split a coherent scripts/runtime invariant suite only because it crossed
   a line-count threshold.
@@ -570,6 +570,68 @@ const provider = {
     yield "done";
   },
 };
+```
+
+## Scenario: TypeScript Unit Test Graph
+
+### 1. Scope / Trigger
+
+Use this contract when adding or moving unit tests, changing Vitest discovery,
+or changing the test TypeScript project and its CI/release gates.
+
+### 2. Signatures
+
+- Discovery: `tests/unit/**/*.test.{ts,tsx}`.
+- Test type check: `pnpm typecheck:tests` -> `tsc --noEmit -p tsconfig.tests.json`.
+- Production type check remains `pnpm typecheck`; neither command emits files.
+
+### 3. Contracts
+
+- `tsconfig.tests.json` extends the production strict baseline and adds Node plus
+  test sources without weakening `tsconfig.json`.
+- Unit support modules use `.ts`; JSX tests use `.tsx` only when JSX syntax is
+  present. Relative `.js` specifiers may target authored `.ts` support under
+  bundler resolution, but no JavaScript support file remains on disk.
+- CI and release checks run both production and test type checks.
+- Mechanical extension migrations preserve file count, full test IDs, coverage,
+  and direct imports from authored `src/**` owners.
+
+### 4. Validation & Error Matrix
+
+- Disk `.test.ts` count differs from `vitest list --filesOnly` -> discovery is
+  incomplete; fix the glob before proceeding.
+- Duplicate full test IDs -> stop and reconcile renamed paths or suite names.
+- `typecheck:tests` fails only in a support helper -> type the shared helper
+  before adding leaf-local casts.
+- Unit or coverage behavior changes after an extension-only migration -> treat
+  it as a regression and compare against the pre-migration manifest.
+
+### 5. Good/Base/Bad Cases
+
+- Good: rename an owner batch, keep its direct imports, and run its focused suite.
+- Base: `pnpm unit` discovers all TypeScript suites without a build step.
+- Bad: keep mixed `.mjs`/`.ts` discovery indefinitely or add a generated test bundle.
+
+### 6. Tests Required
+
+- Run `pnpm typecheck`, `pnpm typecheck:tests`, and `pnpm check:static`.
+- Reconcile disk paths with `pnpm exec vitest list --filesOnly` and full IDs with
+  `pnpm exec vitest list --json`.
+- Run full, serial, fixed-seed shuffled, coverage, smoke, and bundle-size gates
+  after a repository-wide migration.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+test: { include: ["tests/unit/**/*.test.mjs"] }
+```
+
+#### Correct
+
+```javascript
+test: { include: ["tests/unit/**/*.test.{ts,tsx}"] }
 ```
 
 ## Scenario: Coverage Reports

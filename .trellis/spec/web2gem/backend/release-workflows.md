@@ -442,7 +442,7 @@ release workflows.
 
 ### 2. Signatures
 
-- `vitest.config.mjs` owns `test.include = ["tests/unit/**/*.test.mjs"]`.
+- `vitest.config.mjs` owns `test.include = ["tests/unit/**/*.test.ts"]`.
 - `pnpm unit` and `pnpm unit:quick` run `vitest run` directly against authored
   source imports.
 - `pnpm coverage` runs Vitest V8 coverage through `scripts/coverage.mjs`;
@@ -452,7 +452,7 @@ release workflows.
 
 ### 3. Contracts
 
-- Vitest recursively discovers `*.test.mjs` files at every depth under
+- Vitest recursively discovers `*.test.ts` files at every depth under
   `tests/unit/`; support modules must not use that suffix.
 - Unit tests import their authored `src/**` owners directly. Unit and coverage
   commands require no Worker build, generated test bundle, `TEST_BUNDLE`,
@@ -467,7 +467,7 @@ release workflows.
 
 ### 4. Validation & Error Matrix
 
-- A disk `*.test.mjs` path is absent from `vitest list --filesOnly` -> discovery
+- A disk `*.test.ts` path is absent from `vitest list --filesOnly` -> discovery
   is incomplete; fix the include pattern before moving more suites.
 - A mechanical move changes or duplicates full test IDs -> stop and reconcile
   the manifest before accepting semantic cleanup.
@@ -480,11 +480,11 @@ release workflows.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: add `tests/unit/gemini/client/retry.test.mjs`; recursive discovery lists
+- Good: add `tests/unit/gemini/client/retry.test.ts`; recursive discovery lists
   it and the suite imports `src/gemini/client/**` directly.
 - Base: a clean checkout after dependency installation can run discovery,
   unit, and coverage without a production or harness build.
-- Bad: keep the flat `tests/unit/*.test.mjs` glob, create a generated Worker
+- Bad: keep the flat `tests/unit/*.test.ts` glob, create a generated Worker
   test bundle, or use `BENCH_HARNESS_BUNDLE` as a Vitest loader.
 
 ### 6. Tests Required
@@ -503,7 +503,7 @@ release workflows.
 
 ```javascript
 export default defineConfig({
-  test: { include: ["tests/unit/*.test.mjs"] },
+  test: { include: ["tests/unit/*.test.ts"] },
 });
 await build({ outfile: "dist-coverage/worker.test.js" });
 ```
@@ -512,7 +512,7 @@ await build({ outfile: "dist-coverage/worker.test.js" });
 
 ```javascript
 export default defineConfig({
-  test: { include: ["tests/unit/**/*.test.mjs"] },
+  test: { include: ["tests/unit/**/*.test.ts"] },
 });
 await runPnpm(["exec", "vitest", "run", "--coverage"]);
 ```

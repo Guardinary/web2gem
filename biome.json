@@ -12,6 +12,8 @@
 			"scripts/**/*.mjs",
 			"tests/**/*.js",
 			"tests/**/*.mjs",
+			"tests/**/*.ts",
+			"tests/**/*.tsx",
 			"src/**/*.css",
 			"*.json",
 			"*.jsonc",
@@ -26,6 +28,17 @@
 		"lineEnding": "lf"
 	},
 	"overrides": [
+		{
+			"includes": ["tests/**/*.ts", "tests/**/*.tsx"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noEvolvingTypes": "off",
+						"noImplicitAnyLet": "off"
+					}
+				}
+			}
+		},
 		{
 			"includes": ["src/generated/**"],
 			"formatter": {

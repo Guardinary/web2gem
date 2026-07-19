@@ -4,6 +4,7 @@ export const RELEASE_CHECKS = [
 	"check:static",
 	"check:worker-types",
 	"typecheck",
+	"typecheck:tests",
 	"check:arch",
 	"coverage:ci",
 	"smoke",

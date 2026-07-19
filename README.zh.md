@@ -494,7 +494,7 @@ pnpm smoke
 | `pnpm check:size`   | 构建生产 Worker，并检查 gzip bundle 体积预算。                                             |
 | `pnpm docker:smoke` | 构建 Docker 镜像，运行临时容器，并通过 Node adapter 验证健康检查、认证和 OpenAI 路由行为。 |
 
-Vitest 会递归发现 `tests/unit/**/*.test.mjs`，它们直接 import `src/**` 模块，因此 watch 模式与 coverage 都无需构建。coverage 使用 Vitest 的 V8 provider 直接作用于源码（lcov 与 JSON summary 报告）。`pnpm coverage` 和 `pnpm coverage:ci` 使用 Node runner，因此环境变量在 Windows 和 Unix shell 下处理一致。`pnpm coverage:ci` 还会通过 `scripts/check-coverage.mjs` 读取 `coverage/coverage-summary.json`，以捕获关键源码目录和选定高风险分支路径中的回归。
+Vitest 会递归发现 `tests/unit/**/*.test.ts`，它们直接 import `src/**` 模块，因此 watch 模式与 coverage 都无需构建。`pnpm typecheck:tests` 会在严格 TypeScript 基线下检查测试图。coverage 使用 Vitest 的 V8 provider 直接作用于源码（lcov 与 JSON summary 报告）。`pnpm coverage` 和 `pnpm coverage:ci` 使用 Node runner，因此环境变量在 Windows 和 Unix shell 下处理一致。`pnpm coverage:ci` 还会通过 `scripts/check-coverage.mjs` 读取 `coverage/coverage-summary.json`，以捕获关键源码目录和选定高风险分支路径中的回归。
 
 推荐 pre-commit gate：
 
