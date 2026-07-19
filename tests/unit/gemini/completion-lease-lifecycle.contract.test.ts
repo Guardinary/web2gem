@@ -212,7 +212,12 @@ describe("Gemini account lease lifecycle", () => {
 		});
 		assert.deepEqual(
 			events.map((event) => event[0]),
-			["markSuccess", "release", "flushObservedCookies"],
+			[
+				"markSuccess",
+				"release",
+				"flushObservedCookies",
+				"maintainSessionIfStale",
+			],
 		);
 	});
 
@@ -270,7 +275,12 @@ describe("Gemini account lease lifecycle", () => {
 		assert.deepEqual(await iterator.next(), { value: undefined, done: true });
 		assert.deepEqual(
 			events.map((event) => event[0]),
-			["markSuccess", "release", "flushObservedCookies"],
+			[
+				"markSuccess",
+				"release",
+				"flushObservedCookies",
+				"maintainSessionIfStale",
+			],
 		);
 	});
 
@@ -342,7 +352,12 @@ describe("Gemini account lease lifecycle", () => {
 		);
 		assert.deepEqual(
 			events.map((event) => event[0]),
-			["markSuccess", "release", "flushObservedCookies"],
+			[
+				"markSuccess",
+				"release",
+				"flushObservedCookies",
+				"maintainSessionIfStale",
+			],
 		);
 		assert.match(
 			logs.join("\n"),
@@ -385,7 +400,12 @@ describe("Gemini account lease lifecycle", () => {
 		);
 		assert.deepEqual(
 			events.map((event) => event[0]),
-			["markSuccess", "release", "flushObservedCookies"],
+			[
+				"markSuccess",
+				"release",
+				"flushObservedCookies",
+				"maintainSessionIfStale",
+			],
 		);
 		assert.match(
 			logs.join("\n"),
