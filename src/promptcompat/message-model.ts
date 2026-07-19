@@ -392,15 +392,14 @@ export function parseMessagePart(
 		.trim()
 		.toLowerCase();
 	if (mode === "content") {
-		if (type === "image_url" || type === "image" || type === "input_image")
-			return imagePart(raw, contentImagePayload(raw));
-		if (type === "input_file" || type === "file") return filePart(raw);
-		const text = flattenText(raw);
-		return {
-			kind: "text",
-			text: text || stringifyContent(raw),
-			inputText: true,
-		};
+		if (!isRecognizedMessagePartType(type)) {
+			const text = flattenText(raw);
+			return {
+				kind: "text",
+				text: text || stringifyContent(raw),
+				inputText: true,
+			};
+		}
 	}
 	if (
 		type === "text" ||
@@ -418,6 +417,11 @@ export function parseMessagePart(
 			kind: "reasoning",
 			text: flattenText(raw.summary ?? raw.text ?? raw.content),
 		};
+	}
+	if (mode === "content") {
+		if (type === "image_url" || type === "image" || type === "input_image")
+			return imagePart(raw, contentImagePayload(raw));
+		if (type === "input_file" || type === "file") return filePart(raw);
 	}
 	if (type === "image_url" || raw.image_url) {
 		const urlValue = raw.image_url != null ? raw.image_url : raw.url;
@@ -443,6 +447,22 @@ export function parseMessagePart(
 			inputText: false,
 		};
 	return null;
+}
+
+function isRecognizedMessagePartType(type: string): boolean {
+	return (
+		type === "text" ||
+		type === "input_text" ||
+		type === "output_text" ||
+		type === "summary_text" ||
+		type === "reasoning" ||
+		type === "thinking" ||
+		type === "image_url" ||
+		type === "image" ||
+		type === "input_image" ||
+		type === "input_file" ||
+		type === "file"
+	);
 }
 
 function stringifyContent(content: unknown): string {

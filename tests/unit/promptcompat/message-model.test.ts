@@ -3,12 +3,35 @@ import { describe, test } from "vitest";
 import {
 	flattenText,
 	historyContentText,
+	parseMessageContent,
 	parseOpenAIMessages,
 	rawRecordReasoningText,
 } from "../../../src/promptcompat/message-model";
 import { assert } from "../assertions.js";
 
 describe("prompt compatibility", () => {
+	test("keeps recognized singleton content parts equivalent to arrays", () => {
+		for (const part of [
+			{ type: "input_text", text: "input" },
+			{ type: "output_text", text: "output" },
+			{ type: "summary_text", text: "summary" },
+			{ type: "reasoning", text: "thought" },
+			{ type: "input_image", image_url: "data:image/png;base64,QUJD" },
+			{ type: "input_file", file_id: "file-1" },
+		]) {
+			assert.deepEqual(parseMessageContent(part), parseMessageContent([part]));
+		}
+	});
+
+	test("retains explicit legacy fallback for unknown singleton content", () => {
+		assert.deepEqual(parseMessageContent({ type: "custom", text: "legacy" }), [
+			{ kind: "text", text: "legacy", inputText: true },
+		]);
+		assert.deepEqual(
+			parseMessageContent([{ type: "custom", text: "ignored" }]),
+			[{ kind: "text", text: "ignored", inputText: false }],
+		);
+	});
 	test("renders history and flattened content fallbacks", async () => {
 		const cyclic = {};
 		cyclic.self = cyclic;

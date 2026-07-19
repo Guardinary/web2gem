@@ -939,6 +939,7 @@ Use this contract when changing `src/promptcompat/responses-input.ts` or any Ope
 - `parseResponsesInput(req, mode)` returns `InternalMessage[]` or a parse error, where mode is `completion | image-generation`.
 - `normalizeResponsesInputAsMessages(req)` remains a harness/test compatibility projection; production routes do not consume its chat-style wire records.
 - `parseToolCallArguments(value)` preserves object arguments and parses string arguments once into the internal object shape.
+- `generateOpenAICompletionTail(args)` owns the shared Chat/Responses non-stream `generateTextLogged -> finalizeOpenAICompletionResult -> protocol error` sequence; endpoint adapters still own IDs, payloads, usage, and timestamps.
 
 ### 3. Contracts
 
@@ -949,6 +950,9 @@ Use this contract when changing `src/promptcompat/responses-input.ts` or any Ope
 - Completion mode rejects top-level `input_image` with `unsupported_responses_input`; image-generation mode retains it as a typed user image part.
 - Reasoning/call/result order, pending reasoning, call-name lookup, generated IDs, instruction prepend, role normalization, and adjacent call merging are part of the parser contract.
 - Tool argument objects do not cross an internal stringify/parse boundary.
+- Production and compatibility Responses paths reuse the pure recognizers in `responses-semantics.ts` for item types, function-call inputs, reasoning text, call-name lookup, and pending-reasoning joins. Compatibility stringifies arguments only when projecting its final wire record.
+- Recognized message content parts (`text`, input/output/summary text, reasoning/thinking, image, and file) have the same typed result whether supplied as one object or a one-element array.
+- Generic message content retains the legacy unknown-singleton fallback for compatibility. This does not weaken the Responses top-level rule: unknown Responses items remain ignored.
 
 ### 4. Validation & Error Matrix
 
@@ -968,6 +972,7 @@ Use this contract when changing `src/promptcompat/responses-input.ts` or any Ope
 ### 6. Tests Required
 
 - Unit test `parseResponsesInput` for known text, direct object/string tool arguments, unknown omission, and both image modes.
+- Unit test singleton versus one-element-array equivalence for every recognized message part type, plus the explicit unknown-singleton compatibility fallback.
 - Keep the compatibility normalizer covered as a harness contract.
 - Unit or route-level test that `handleResponses` prompt text includes known text and excludes unknown object `text`, nested `content`, and serialized metadata.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke`.
