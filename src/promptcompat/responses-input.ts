@@ -5,7 +5,6 @@ import {
 	type InternalMessage,
 	type InternalToolCall,
 	isTextPartType,
-	normalizeMessageRole,
 	parseAssistantContent,
 	parseMessageContent,
 	parseOpenAIMessages,
@@ -14,12 +13,15 @@ import {
 	rawRecordReasoningText,
 } from "./message-model";
 import {
-	appendResponsesReasoning,
 	isResponsesFileInputType,
+	reduceResponsesSequence,
 	rememberResponsesCallName,
 	responsesCallName,
 	responsesInputItemType,
+	responsesItemKind,
+	responsesItemRole,
 	responsesReasoningText,
+	type ResponsesSequenceEvent,
 	responsesToolCallInput,
 	responsesToolResultCallID,
 } from "./responses-semantics";
@@ -98,39 +100,14 @@ function parseResponsesInputArrayDirect(
 	items: readonly unknown[],
 	mode: ResponsesInputMode,
 ): ResponsesInputParseResult {
-	const messages: InternalMessage[] = [];
 	const callNameByID: Record<string, string> = {};
-	const fallbackParts: string[] = [];
-	let pendingReasoning = "";
-
-	const flushReasoning = () => {
-		if (!pendingReasoning) return;
-		messages.push(
-			createInternalMessage("assistant", [], {
-				reasoningText: pendingReasoning,
-			}),
-		);
-		pendingReasoning = "";
-	};
-	const flushFallback = () => {
-		if (!fallbackParts.length) return;
-		flushReasoning();
-		messages.push(
-			createInternalMessage(
-				"user",
-				parseMessageContent(fallbackParts.join("\n")),
-			),
-		);
-		fallbackParts.length = 0;
-	};
-
+	const events: ResponsesSequenceEvent<InternalMessage>[] = [];
 	for (let index = 0; index < items.length; index++) {
 		const raw = items[index];
 		if (typeof raw === "string") {
 			if (!raw.trim())
 				return { error: `Responses input item ${index} is empty` };
-			flushReasoning();
-			fallbackParts.push(raw);
+			events.push({ kind: "fallback", text: raw });
 			continue;
 		}
 		if (!isRecord(raw)) {
@@ -144,35 +121,30 @@ function parseResponsesInputArrayDirect(
 			return { error: `Responses input item ${index} ${item.error}` };
 		if (item.kind === "unknown") continue;
 		if (item.kind === "reasoning") {
-			pendingReasoning = appendResponsesReasoning(pendingReasoning, item.text);
+			events.push({ kind: "reasoning", text: item.text });
 			continue;
 		}
-
-		const message = item.message;
-		if (isInternalAssistantToolCallMessage(message) && pendingReasoning) {
-			if (!projectMessageText(message, "reasoning"))
-				message.reasoningText = pendingReasoning;
-			pendingReasoning = "";
-		} else {
-			flushReasoning();
-		}
-		flushFallback();
-		const previous = messages[messages.length - 1];
-		if (
-			previous &&
-			isInternalAssistantToolCallMessage(previous) &&
-			isInternalAssistantToolCallMessage(message)
-		) {
-			previous.toolCalls.push(...message.toolCalls);
-			if (!projectMessageText(previous, "reasoning"))
-				previous.reasoningText = projectMessageText(message, "reasoning");
-			continue;
-		}
-		messages.push(message);
+		events.push({ kind: "message", value: item.message });
 	}
-	flushReasoning();
-	flushFallback();
-	return { messages };
+	return {
+		messages: reduceResponsesSequence(events, {
+			createReasoning: (text) =>
+				createInternalMessage("assistant", [], { reasoningText: text }),
+			createFallback: (text) =>
+				createInternalMessage("user", parseMessageContent(text)),
+			isToolCall: isInternalAssistantToolCallMessage,
+			reasoningText: (message) => projectMessageText(message, "reasoning"),
+			attachReasoning: (message, text) => {
+				message.reasoningText = text;
+			},
+			mergeToolCalls: (previous, next) => {
+				previous.toolCalls.push(...next.toolCalls);
+				if (!projectMessageText(previous, "reasoning"))
+					previous.reasoningText = projectMessageText(next, "reasoning");
+				return true;
+			},
+		}),
+	};
 }
 
 function parseResponsesInputItemDirect(
@@ -181,13 +153,13 @@ function parseResponsesInputItemDirect(
 	mode: ResponsesInputMode,
 ): DirectItemResult {
 	const type = responsesInputItemType(item);
+	const kind = responsesItemKind(item);
 	if (type === "input_image" && mode === "completion")
 		return directError("has unsupported type: input_image");
-	if (item.role != null) return parseResponsesRoleMessage(item, type);
-	if (type === "message" || type === "input_message")
-		return parseResponsesRoleMessage(item, type, "user");
+	if (kind === "role-message") return parseResponsesRoleMessage(item, type);
+	if (kind === "message") return parseResponsesRoleMessage(item, type, "user");
 
-	if (type === "function_call_output" || type === "tool_result") {
+	if (kind === "tool-result") {
 		if (item.output == null && item.content == null)
 			return directError("tool result requires output");
 		const callID = responsesToolResultCallID(item);
@@ -207,7 +179,7 @@ function parseResponsesInputItemDirect(
 		);
 	}
 
-	if (type === "function_call" || type === "tool_call") {
+	if (kind === "tool-call") {
 		const call = responsesToolCall(item);
 		if (!call) return directError("function call requires name");
 		rememberResponsesCallName(callNameByID, call);
@@ -216,24 +188,24 @@ function parseResponsesInputItemDirect(
 		);
 	}
 
-	if (type === "reasoning" || type === "thinking") {
+	if (kind === "reasoning") {
 		const text = responsesReasoningText(item);
 		return text
 			? { kind: "reasoning", text }
 			: directError("reasoning item requires text");
 	}
 
-	if (type === "input_image") {
+	if (kind === "input-image") {
 		return directMessage(
 			createInternalMessage("user", parseMessageContent([item])),
 		);
 	}
-	if (isResponsesFileInputType(type)) {
+	if (kind === "file") {
 		return directMessage(
 			createInternalMessage("user", parseMessageContent([item])),
 		);
 	}
-	if (isTextPartType(type)) {
+	if (kind === "text") {
 		if (typeof item.text !== "string" || !item.text.trim())
 			return directError("text item requires text");
 		return directMessage(
@@ -248,7 +220,7 @@ function parseResponsesRoleMessage(
 	itemType: string,
 	defaultRole?: string,
 ): DirectItemResult {
-	const role = normalizeMessageRole(item.role ?? defaultRole ?? "user");
+	const role = responsesItemRole(item, defaultRole ?? "user");
 	if (role === "assistant") return parseResponsesAssistantDirect(item);
 	let content = item.content ?? (role === "tool" ? item.output : null);
 	if (
@@ -413,35 +385,16 @@ function normalizeResponsesInputArray(
 	items: readonly unknown[],
 	preservePartTypes = false,
 ): UnknownRecord[] | null {
-	const out: UnknownRecord[] = [];
 	const callNameByID: Record<string, string> = {};
-	const fallbackParts: string[] = [];
-	let pendingAssistantReasoning = "";
-
-	const flushPendingReasoning = () => {
-		if (!pendingAssistantReasoning) return;
-		out.push({
-			role: "assistant",
-			reasoning_content: pendingAssistantReasoning,
-		});
-		pendingAssistantReasoning = "";
-	};
-	const flushFallback = () => {
-		if (!fallbackParts.length) return;
-		flushPendingReasoning();
-		out.push({ role: "user", content: fallbackParts.join("\n") });
-		fallbackParts.length = 0;
-	};
-
+	const events: ResponsesSequenceEvent<UnknownRecord>[] = [];
 	for (const item of items || []) {
 		if (typeof item === "string") {
-			flushPendingReasoning();
-			fallbackParts.push(item);
+			events.push({ kind: "fallback", text: item });
 			continue;
 		}
 		if (!isRecord(item)) {
 			const s = String(item == null ? "" : item).trim();
-			if (s) fallbackParts.push(s);
+			if (s) events.push({ kind: "fallback", text: s });
 			continue;
 		}
 
@@ -452,36 +405,27 @@ function normalizeResponsesInputArray(
 		);
 		if (msg) {
 			const reasoning = assistantReasoningOnlyContent(msg);
-			if (reasoning) {
-				pendingAssistantReasoning = appendResponsesReasoning(
-					pendingAssistantReasoning,
-					reasoning,
-				);
-				continue;
-			}
-			if (isAssistantToolCallMessage(msg) && pendingAssistantReasoning) {
-				if (!rawRecordReasoningText(msg))
-					msg.reasoning_content = pendingAssistantReasoning;
-				pendingAssistantReasoning = "";
-			} else {
-				flushPendingReasoning();
-			}
-			flushFallback();
-			if (
-				isAssistantToolCallMessage(msg) &&
-				out.length &&
-				mergeResponsesAssistantToolCalls(out[out.length - 1], msg)
-			)
-				continue;
-			out.push(msg);
+			if (reasoning) events.push({ kind: "reasoning", text: reasoning });
+			else events.push({ kind: "message", value: msg });
 			continue;
 		}
 
 		const fallback = normalizeResponsesFallbackPart(item);
-		if (fallback) fallbackParts.push(fallback);
+		if (fallback) events.push({ kind: "fallback", text: fallback });
 	}
-	flushPendingReasoning();
-	flushFallback();
+	const out = reduceResponsesSequence(events, {
+		createReasoning: (text) => ({
+			role: "assistant",
+			reasoning_content: text,
+		}),
+		createFallback: (text) => ({ role: "user", content: text }),
+		isToolCall: isAssistantToolCallMessage,
+		reasoningText: rawRecordReasoningText,
+		attachReasoning: (message, text) => {
+			message.reasoning_content = text;
+		},
+		mergeToolCalls: mergeResponsesAssistantToolCalls,
+	});
 	return out.length ? out : null;
 }
 
@@ -514,8 +458,9 @@ function parseResponsesInputItem(
 	if (!isRecord(item))
 		return invalidItem("must be a supported object or string");
 	const itemType = responsesInputItemType(item);
-	const role = normalizeMessageRole(item.role);
-	if (item.role != null && role) {
+	const kind = responsesItemKind(item);
+	const role = responsesItemRole(item);
+	if (kind === "role-message" && role) {
 		if (role === "assistant") {
 			const message = normalizeResponsesAssistantMessage(item);
 			return message
@@ -550,8 +495,8 @@ function parseResponsesInputItem(
 	}
 
 	const type = itemType;
-	if (type === "message" || type === "input_message") {
-		const msgRole = normalizeMessageRole(item.role || "user");
+	if (kind === "message") {
+		const msgRole = responsesItemRole(item, "user");
 		if (msgRole === "assistant") {
 			const message = normalizeResponsesAssistantMessage(item);
 			return message
@@ -570,7 +515,7 @@ function parseResponsesInputItem(
 		return parsedItem({ role: msgRole || "user", content });
 	}
 
-	if (type === "function_call_output" || type === "tool_result") {
+	if (kind === "tool-result") {
 		const callID = responsesToolResultCallID(item);
 		const out = {
 			role: "tool",
@@ -587,7 +532,7 @@ function parseResponsesInputItem(
 			: invalidItem("tool result requires output");
 	}
 
-	if (type === "function_call" || type === "tool_call") {
+	if (kind === "tool-call") {
 		const call = responsesToolCallInput(item);
 		if (!call) return invalidItem("function call requires name");
 		rememberResponsesCallName(callNameByID, call);
@@ -607,22 +552,18 @@ function parseResponsesInputItem(
 		});
 	}
 
-	if (type === "reasoning" || type === "thinking") {
+	if (kind === "reasoning") {
 		const text = responsesReasoningText(item);
 		return text
 			? parsedItem({ role: "assistant", content: "", reasoning_content: text })
 			: invalidItem("reasoning item requires text");
 	}
 
-	if (isResponsesFileInputType(type)) {
+	if (kind === "file") {
 		return parsedItem({ role: "user", content: [item] });
 	}
 
-	if (
-		isTextPartType(type) &&
-		typeof item.text === "string" &&
-		item.text.trim()
-	) {
+	if (kind === "text" && typeof item.text === "string" && item.text.trim()) {
 		return parsedItem({
 			role: "user",
 			content: preservePartTypes ? [item] : item.text,
@@ -666,7 +607,7 @@ function assistantReasoningOnlyContent(msg: unknown): string {
 }
 
 function isAssistantMessage(msg: unknown): msg is UnknownRecord {
-	return isRecord(msg) && normalizeMessageRole(msg.role) === "assistant";
+	return isRecord(msg) && responsesItemRole(msg) === "assistant";
 }
 
 function isAssistantToolCallMessage(
