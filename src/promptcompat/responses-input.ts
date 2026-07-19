@@ -394,7 +394,7 @@ function normalizeResponsesInputArray(
 		}
 		if (!isRecord(item)) {
 			const s = String(item == null ? "" : item).trim();
-			if (s) events.push({ kind: "fallback", text: s });
+			if (s) events.push({ kind: "fallback-deferred", text: s });
 			continue;
 		}
 
@@ -411,7 +411,7 @@ function normalizeResponsesInputArray(
 		}
 
 		const fallback = normalizeResponsesFallbackPart(item);
-		if (fallback) events.push({ kind: "fallback", text: fallback });
+		if (fallback) events.push({ kind: "fallback-deferred", text: fallback });
 	}
 	const out = reduceResponsesSequence(events, {
 		createReasoning: (text) => ({

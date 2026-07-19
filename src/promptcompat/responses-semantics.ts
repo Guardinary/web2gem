@@ -26,7 +26,8 @@ export type ResponsesItemKind =
 export type ResponsesSequenceEvent<T> =
 	| { kind: "reasoning"; text: string }
 	| { kind: "message"; value: T }
-	| { kind: "fallback"; text: string };
+	| { kind: "fallback"; text: string }
+	| { kind: "fallback-deferred"; text: string };
 
 export function responsesInputItemType(item: UnknownRecord): string {
 	return String(item.type || "")
@@ -135,8 +136,8 @@ export function reduceResponsesSequence<T>(
 			pendingReasoning = appendResponsesReasoning(pendingReasoning, event.text);
 			continue;
 		}
-		if (event.kind === "fallback") {
-			flushReasoning();
+		if (event.kind === "fallback" || event.kind === "fallback-deferred") {
+			if (event.kind === "fallback") flushReasoning();
 			fallbackParts.push(event.text);
 			continue;
 		}
