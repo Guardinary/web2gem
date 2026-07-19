@@ -237,7 +237,7 @@ function boundedInt(value: unknown): number | undefined {
 		: undefined;
 }
 
-async function readBoundedResponseText(
+export async function readBoundedResponseText(
 	response: {
 		body?: ReadableStream<Uint8Array> | null;
 		text(): Promise<string>;
@@ -253,6 +253,7 @@ async function readBoundedResponseText(
 	const reader = response.body.getReader();
 	const decoder = new TextDecoder();
 	let text = "";
+	let completedNormally = false;
 	try {
 		for (;;) {
 			const { done, value } = await reader.read();
@@ -264,8 +265,14 @@ async function readBoundedResponseText(
 		text += decoder.decode();
 		if (text.length > maxChars)
 			throw new Error("Gemini account probe too large");
+		completedNormally = true;
 		return text;
 	} finally {
+		if (!completedNormally) {
+			try {
+				await reader.cancel();
+			} catch (_) {}
+		}
 		try {
 			reader.releaseLock();
 		} catch (_) {}

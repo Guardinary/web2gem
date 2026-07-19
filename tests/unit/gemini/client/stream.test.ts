@@ -11,6 +11,15 @@ function wrbLine(texts) {
 	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
 }
 
+function fatalWrbLine(code) {
+	const inner = [null, null, null, null, []];
+	inner[5] = [];
+	inner[5][2] = [];
+	inner[5][2][0] = [];
+	inner[5][2][0][1] = [code];
+	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
+}
+
 describe("Gemini client streaming", () => {
 	beforeEach(resetGeminiBuildLabelCacheForTest);
 	afterEach(resetGeminiBuildLabelCacheForTest);
@@ -111,6 +120,103 @@ describe("Gemini client streaming", () => {
 				assert.deepEqual(chunks, ["stream fallback"]);
 			},
 		);
+	});
+	test("cancels the response body when the consumer closes early", async () => {
+		const cfg = baseGeminiClientConfig();
+		let canceled = false;
+		await withFetch(
+			async (url) => {
+				assert.match(String(url), /StreamGenerate/);
+				return new Response(
+					new ReadableStream({
+						start(controller) {
+							controller.enqueue(
+								new TextEncoder().encode(`${wrbLine(["first"])}\n`),
+							);
+						},
+						cancel() {
+							canceled = true;
+						},
+					}),
+					{ status: 200 },
+				);
+			},
+			async () => {
+				for await (const _delta of generateStream(
+					cfg,
+					"prompt",
+					1,
+					false,
+					null,
+				))
+					break;
+			},
+		);
+		assert.equal(canceled, true);
+	});
+	test("leaves a normally completed response body reusable", async () => {
+		const cfg = baseGeminiClientConfig();
+		let canceled = false;
+		await withFetch(
+			async () =>
+				new Response(
+					new ReadableStream({
+						start(controller) {
+							controller.enqueue(
+								new TextEncoder().encode(`${wrbLine(["complete"])}\n`),
+							);
+							controller.close();
+						},
+						cancel() {
+							canceled = true;
+						},
+					}),
+					{ status: 200 },
+				),
+			async () => {
+				const chunks = [];
+				for await (const delta of generateStream(cfg, "prompt", 1, false, null))
+					chunks.push(delta);
+				assert.deepEqual(chunks, ["complete"]);
+			},
+		);
+		assert.equal(canceled, false);
+	});
+	test("cancels the response body when a fatal WRB line aborts parsing", async () => {
+		const cfg = baseGeminiClientConfig();
+		let canceled = false;
+		await withFetch(
+			async () =>
+				new Response(
+					new ReadableStream({
+						start(controller) {
+							controller.enqueue(
+								new TextEncoder().encode(`${fatalWrbLine(1052)}\n`),
+							);
+						},
+						cancel() {
+							canceled = true;
+						},
+					}),
+					{ status: 200 },
+				),
+			async () => {
+				await assert.rejects(
+					(async () => {
+						for await (const _delta of generateStream(
+							cfg,
+							"prompt",
+							1,
+							false,
+							null,
+						)) {
+						}
+					})(),
+					/gemini/i,
+				);
+			},
+		);
+		assert.equal(canceled, true);
 	});
 	test("streams fallback text from response-like objects with no body", async () => {
 		const cfg = baseGeminiClientConfig();

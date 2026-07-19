@@ -29,6 +29,11 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 - Chunked response parsing must accept valid chunk extensions such as `5;foo=bar`, reject invalid hex, reject unsafe integer sizes, and tolerate split chunk-size lines across socket reads.
 - `ByteQueue.readHttpChunkSizeLineIfAvailable()` must parse chunk-size digits incrementally while scanning for CRLF. Do not rescan and reparse the complete line after the terminator is found; long extensions may arrive one byte per socket read.
 - Keep-alive sockets are pooled per origin, capped by `SOCKET_KEEP_ALIVE_MAX_IDLE_PER_ORIGIN`, and expire after `SOCKET_KEEP_ALIVE_IDLE_MS`.
+- Every response-body reader owner must release its reader lock. Owners that
+  terminate before normal EOF (parse failure, size limit, abort, or downstream
+  iterator close) must attempt `reader.cancel()` before releasing the lock.
+  Cleanup errors must not replace the primary return or exception. A normal EOF
+  must release without canceling so a keep-alive response remains reusable.
 
 ### 4. Validation & Error Matrix
 
@@ -57,6 +62,9 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 - Unit test unsupported decompression behavior by patching `DecompressionStream` away and by using a constructor that rejects gzip.
 - Unit test unsolicited gzip with `acceptCompressed=false` and assert raw bytes plus both compression headers remain intact.
 - Unit test keep-alive reuse and expiry/cap behavior after changing socket pooling.
+- Unit test reader lifecycle for normal EOF, read/parse failure, size limits,
+  and early async-iterator close; assert both cancellation policy and unlocked
+  bodies.
 - Unit test a long chunk extension split across one-byte queue pushes and assert the parsed size plus remaining body bytes.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke` after changing transport fallback or socket response parsing.
 

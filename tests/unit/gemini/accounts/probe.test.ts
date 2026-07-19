@@ -1,6 +1,9 @@
 // @ts-nocheck
 import { describe, test } from "vitest";
-import { decodeGeminiAccountProbe } from "../../../../src/gemini/accounts/probe";
+import {
+	decodeGeminiAccountProbe,
+	readBoundedResponseText,
+} from "../../../../src/gemini/accounts/probe";
 import { assert } from "../../assertions.js";
 
 function accountProbeWrb(
@@ -18,6 +21,57 @@ function accountProbeWrb(
 }
 
 describe("Gemini account probe decoding", () => {
+	test("releases bounded probe readers without canceling normal EOF", async () => {
+		let canceled = false;
+		const body = new ReadableStream({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode("probe"));
+				controller.close();
+			},
+			cancel() {
+				canceled = true;
+			},
+		});
+		assert.equal(
+			await readBoundedResponseText({ body, text: async () => "" }, 100),
+			"probe",
+		);
+		assert.equal(body.locked, false);
+		assert.equal(canceled, false);
+	});
+
+	test("cancels and releases bounded probe readers on size errors", async () => {
+		let canceled = false;
+		const body = new ReadableStream({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode("too-large"));
+			},
+			cancel() {
+				canceled = true;
+			},
+		});
+		await assert.rejects(
+			readBoundedResponseText({ body, text: async () => "" }, 3),
+			/Gemini account probe too large/,
+		);
+		assert.equal(body.locked, false);
+		assert.equal(canceled, true);
+	});
+
+	test("preserves probe read errors while releasing the reader", async () => {
+		const readError = new Error("probe read failed");
+		const body = new ReadableStream({
+			pull(controller) {
+				controller.error(readError);
+			},
+		});
+		await assert.rejects(
+			readBoundedResponseText({ body, text: async () => "" }, 100),
+			/probe read failed/,
+		);
+		assert.equal(body.locked, false);
+	});
+
 	test("decodes a selectable account and bounded model metadata", () => {
 		assert.deepEqual(
 			decodeGeminiAccountProbe(

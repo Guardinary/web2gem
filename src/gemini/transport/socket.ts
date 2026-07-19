@@ -247,15 +247,21 @@ export async function socketHttp(
 			const r = responseBody.getReader();
 			const decoder = new TextDecoder();
 			const chunks: string[] = [];
-			for (;;) {
-				const { done, value } = await r.read();
-				if (done) break;
-				if (!value?.length) continue;
-				chunks.push(decoder.decode(value, { stream: true }));
+			try {
+				for (;;) {
+					const { done, value } = await r.read();
+					if (done) break;
+					if (!value?.length) continue;
+					chunks.push(decoder.decode(value, { stream: true }));
+				}
+				const tail = decoder.decode();
+				if (tail) chunks.push(tail);
+				return chunks.join("");
+			} finally {
+				try {
+					r.releaseLock();
+				} catch (_) {}
 			}
-			const tail = decoder.decode();
-			if (tail) chunks.push(tail);
-			return chunks.join("");
 		},
 	};
 }

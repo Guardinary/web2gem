@@ -20,6 +20,7 @@ export async function* consumeGeminiWrbStream(
 	let lineLength = 0;
 	let rawSnippet = "";
 	let rawLength = 0;
+	let completedNormally = false;
 
 	const takeLine = (piece: string): string => {
 		if (!lineChunks.length) return piece;
@@ -85,8 +86,14 @@ export async function* consumeGeminiWrbStream(
 			yield* consumeDecoded(tail);
 		}
 		if (lineLength > 0) yield* consumeLine(takeLine(""));
+		completedNormally = true;
 		yield { type: "summary", rawSnippet, rawLength };
 	} finally {
+		if (!completedNormally) {
+			try {
+				await reader.cancel();
+			} catch (_) {}
+		}
 		try {
 			reader.releaseLock();
 		} catch (_) {}

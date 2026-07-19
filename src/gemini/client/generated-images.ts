@@ -180,26 +180,34 @@ async function responseBytes(
 	const reader = resp.body.getReader();
 	const chunks: Uint8Array[] = [];
 	let total = 0;
-	while (true) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		if (!value) continue;
-		if (total + value.byteLength > maxBytes) {
-			await reader.cancel().catch(() => undefined);
-			throw new GeneratedImageLimitError(
-				`generated image exceeds ${maxBytes} byte limit`,
-			);
+	let completedNormally = false;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+			if (total + value.byteLength > maxBytes) {
+				throw new GeneratedImageLimitError(
+					`generated image exceeds ${maxBytes} byte limit`,
+				);
+			}
+			chunks.push(value);
+			total += value.byteLength;
 		}
-		chunks.push(value);
-		total += value.byteLength;
+		const out = new Uint8Array(total);
+		let offset = 0;
+		for (const chunk of chunks) {
+			out.set(chunk, offset);
+			offset += chunk.byteLength;
+		}
+		completedNormally = true;
+		return out;
+	} finally {
+		if (!completedNormally) await reader.cancel().catch(() => undefined);
+		try {
+			reader.releaseLock();
+		} catch (_) {}
 	}
-	const out = new Uint8Array(total);
-	let offset = 0;
-	for (const chunk of chunks) {
-		out.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return out;
 }
 
 function outputFormatFromMime(mime: string): GeminiImageOutputFormat | "" {
