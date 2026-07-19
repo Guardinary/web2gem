@@ -74,10 +74,8 @@ export function googleGenerateContentResponse(params: {
 	responseParts: GoogleResponsePart[];
 	promptTokens: number;
 	candidateTokens: number;
-	upstreamEmpty: boolean;
-	warning?: unknown;
 }) {
-	const responseObj: Record<string, unknown> = {
+	return {
 		candidates: [
 			{
 				content: { parts: params.responseParts, role: "model" },
@@ -92,12 +90,6 @@ export function googleGenerateContentResponse(params: {
 		},
 		modelVersion: params.model,
 	};
-	if (params.upstreamEmpty)
-		responseObj.promptFeedback = {
-			blockReason: "OTHER",
-			warning: params.warning,
-		};
-	return responseObj;
 }
 
 export function googleStreamDonePayload(

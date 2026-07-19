@@ -13,10 +13,8 @@ describe("Google response format", () => {
 			responseParts: [{ text: "done" }],
 			promptTokens: 2,
 			candidateTokens: 1,
-			upstreamEmpty: true,
-			warning: { code: "upstream_empty" },
 		});
-		assert.equal(response.promptFeedback.warning.code, "upstream_empty");
+		assert.equal(response.promptFeedback, undefined);
 		assert.equal(
 			googleStreamDonePayload("gemini-3.5-flash", 2, 1).usageMetadata
 				.totalTokenCount,

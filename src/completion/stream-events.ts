@@ -43,11 +43,9 @@ export type CompletionStreamEvent =
 	| { type: "tool_policy_violation"; violation: ToolPolicyViolation }
 	| { type: "warning"; error: unknown; message: string }
 	| { type: "stream_error"; error: unknown; message: string }
-	| { type: "empty" }
 	| {
 			type: "done";
 			emittedText: boolean;
-			completionTokens: number;
 			completionCounts: TokenCharCounts & { hasText: boolean };
 	  };
 
@@ -72,7 +70,6 @@ export type CompletionStreamOutcome =
 
 export type CompletionStreamLifecycle = {
 	emittedText: boolean;
-	empty: boolean;
 	issue: Extract<
 		CompletionStreamEvent,
 		{ type: "warning" } | { type: "stream_error" }
@@ -85,7 +82,6 @@ export type CompletionStreamLifecycle = {
 export function createCompletionStreamLifecycle(): CompletionStreamLifecycle {
 	return {
 		emittedText: false,
-		empty: false,
 		issue: null,
 		toolCalls: null,
 		violation: null,
@@ -127,9 +123,6 @@ export function recordCompletionStreamEvent(
 		case "tool_policy_violation":
 			lifecycle.violation = event.violation;
 			break;
-		case "empty":
-			lifecycle.empty = true;
-			break;
 		case "done":
 			lifecycle.emittedText ||= event.emittedText;
 			lifecycle.completionCounts = event.completionCounts;
@@ -161,13 +154,10 @@ export async function* streamPlainCompletionEvents(
 
 	if (streamErr) {
 		yield streamErrorEvent(streamErr, emittedText);
-	} else if (!emittedText) {
-		yield { type: "empty" };
 	}
 	yield {
 		type: "done",
 		emittedText,
-		completionTokens: completionTokenCounter.tokens(),
 		completionCounts: completionTokenCounter.counts(),
 	};
 }
@@ -247,12 +237,9 @@ export async function* streamToolSieveCompletionEvents(
 		);
 	if (violation) yield { type: "tool_policy_violation", violation };
 	if (toolCalls?.length) yield { type: "tool_calls", toolCalls };
-	if (!ctx.streamErr && !ctx.emittedText && !toolCalls?.length)
-		yield { type: "empty" };
 	yield {
 		type: "done",
 		emittedText: ctx.emittedText,
-		completionTokens: ctx.counter.tokens(),
 		completionCounts: ctx.counter.counts(),
 	};
 }

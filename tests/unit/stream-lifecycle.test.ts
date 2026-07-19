@@ -8,6 +8,7 @@ import {
 	streamSievedTextDeltas,
 	streamToolSieveCompletionEvents,
 } from "../../src/completion/stream-events";
+import { tokenCountFromCounts } from "../../src/promptcompat/token-accounting";
 import { toolSieveBufferedText } from "../../src/toolcall/sieve";
 import { assert } from "./assertions.js";
 import { chunks } from "./_support/async-stream.js";
@@ -41,7 +42,8 @@ async function consumeCompletionEvents(events, onText) {
 	for await (const event of events) {
 		recordCompletionStreamEvent(lifecycle, event);
 		if (event.type === "text_delta") onText(event.text);
-		if (event.type === "done") completionTokens = event.completionTokens;
+		if (event.type === "done")
+			completionTokens = tokenCountFromCounts(event.completionCounts);
 	}
 	return {
 		emittedText: lifecycle.emittedText,
@@ -113,13 +115,11 @@ describe("completion stream lifecycle", () => {
 			{
 				type: "done",
 				emittedText: true,
-				completionTokens: 2,
 				completionCounts: { ascii: 7, nonAscii: 0, hasText: true },
 			},
 		])
 			recordCompletionStreamEvent(lifecycle, event);
 		assert.equal(lifecycle.emittedText, true);
-		assert.equal(lifecycle.empty, false);
 		assert.equal(lifecycle.issue.error, failure);
 		assert.deepEqual(lifecycle.toolCalls, toolCalls);
 		assert.deepEqual(lifecycle.completionCounts, {
@@ -127,11 +127,6 @@ describe("completion stream lifecycle", () => {
 			nonAscii: 0,
 			hasText: true,
 		});
-
-		const emptyLifecycle = createCompletionStreamLifecycle();
-		recordCompletionStreamEvent(emptyLifecycle, { type: "empty" });
-		assert.equal(emptyLifecycle.empty, true);
-		assert.equal(emptyLifecycle.emittedText, false);
 	});
 	test("emits plain text deltas and token counts", async () => {
 		const emitted = [];

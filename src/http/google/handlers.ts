@@ -173,7 +173,6 @@ async function runGoogleGeneration(
 		responseParts: finalized.responseParts,
 		promptTokens,
 		candidateTokens,
-		upstreamEmpty: false,
 	});
 
 	return jsonResponse(responseObj);

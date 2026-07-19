@@ -80,10 +80,6 @@ export async function streamGooglePlain(
 		await writeGoogleStreamError(write, rm.name, error);
 		return;
 	}
-	if (outcome.type === "policy_violation") {
-		await writeGoogleStreamError(write, rm.name, outcome.violation);
-		return;
-	}
 	if (outcome.type === "empty") {
 		log(cfg, `google stream produced no content model=${rm.name}`);
 		await writeGoogleStreamError(write, rm.name, {

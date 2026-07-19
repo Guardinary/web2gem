@@ -40,17 +40,6 @@ export type OpenAICompletionTurn =
 			toolCalls?: undefined;
 	  };
 
-export function upstreamEmptyWarning(
-	cfg: { gemini_bl?: unknown } | null | undefined,
-) {
-	return {
-		code: "upstream_empty",
-		message: EMPTY_UPSTREAM_MSG,
-		hint: "Current GEMINI_BL is included for diagnostics; empty responses are not always caused by an outdated build label.",
-		gemini_bl: cfg?.gemini_bl,
-	};
-}
-
 export function finalizeOpenAICompletionResult(
 	text: unknown,
 	options: OpenAICompletionTurnOptions,
