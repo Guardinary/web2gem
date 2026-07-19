@@ -16,6 +16,12 @@ Use this contract when changing account import, D1 account schema, Cookie refres
   `12|13`, model number `1..64`, discovery order `0..127`, and `checked_at_ms`.
 - `gemini_model_route_priority` stores one ordered exact tuple per known family
   and mutation batches bump `gemini_pool_meta.pool_version`.
+- `GeminiAccountSecretRow` is exactly `id`, `cookie_header`, `cookie_hash`,
+  `identity_hash`, and `last_refresh_success_at_ms`; `getAccountForRefresh`
+  selects only those columns.
+- Bulk import entries carry the authoritative identity at
+  `entry.input.identityHash`. The compact result is
+  `{ createdAccountIds, changedCredentialCount }`.
 
 ### 3. Contracts
 
@@ -23,6 +29,8 @@ Use this contract when changing account import, D1 account schema, Cookie refres
 - Re-importing the same PSID with a changed PSIDTS updates the canonical
   account's credential version without replacing its ID.
 - Concurrent same-identity imports converge through the unique identity constraint and canonical re-read/upsert behavior.
+- Bulk import re-reads only `identity_hash,id` to recover canonical IDs. Do not
+  build Admin summaries or cookie-hash maps when no caller consumes them.
 - Raw Cookies, identity hashes, Cookie hashes, RPC arrays, localized model descriptions, and raw status payloads never enter admin DTOs or logs.
 - Replace capability rows only after a complete successful probe. Failed/empty/unknown probes preserve the previous snapshot as stale.
 
@@ -45,6 +53,8 @@ Use this contract when changing account import, D1 account schema, Cookie refres
 - Fresh-schema initialization and required unique identity.
 - Same-identity re-import and concurrent uniqueness convergence.
 - Cookie-version change without account-ID change.
+- Exact refresh-secret SQL projection and bulk created/changed/unchanged parity
+  for D1 and one-by-one fallback stores.
 - Atomic bounded capability replacement, failed-probe preservation, exact route
   priority replacement/reset, Worker/Docker query parity, and bind redaction.
 - Run account, Docker, static, type, architecture, Worker-type, and full unit gates.
@@ -76,6 +86,9 @@ Use this contract when changing account lease selection, model-header resolution
 - `GEMINI_ACCOUNT_CAPABILITY_TTL_SEC`: `60..604800`, default `3600`.
 - `GEMINI_ACCOUNT_MAX_ATTEMPTS`: any positive safe integer, default `10`.
 - `GEMINI_ACCOUNT_REFRESH_INTERVAL_SEC`: `0` or `60..604800`, default `600`.
+- `capabilityFreshAfterMs(ttlSeconds, nowMs)` is the sole freshness cutoff
+  calculation. Callers pass the current/injected clock explicitly; the helper
+  preserves default `3600` seconds and minimum `60` seconds.
 - Lease route requirements carry ordered exact
   `(providerModelId, capacity, capacityField, modelNumber)` candidates plus an
   optional known-family Basic fallback. Acquisition separately carries the
@@ -103,6 +116,9 @@ Use this contract when changing account lease selection, model-header resolution
 - A capability snapshot is fresh when at least one valid capability row for the
   account meets the freshness cutoff. Do not use the account status timestamp
   as a substitute for capability-snapshot freshness.
+- Application catalog, completion acquisition/model resolution, and Admin
+  routing use the same explicit-time cutoff helper; do not recreate config-only
+  wrappers in those modules.
 - `strict`: return no account unless a fresh known-capable account exists.
   `off`: preserve ordinary pool selection, then bind the first fresh candidate
   actually supported by that selected account or the known-family Basic
@@ -321,6 +337,8 @@ resolution, model-routing Admin API/WebUI, or route-priority persistence.
 - Admin endpoints are `GET /admin/model-routing`, `PUT
   /admin/model-routing/{family}`, and `DELETE /admin/model-routing/{family}`.
 - PUT body is `{ routes: GeminiRouteTuple[] }`, maximum 128 unique tuples.
+- `validateGeminiModelRoutePolicy(family, routes)` is the pure owner of family,
+  exact four-field tuple shape/ranges, the 128-entry limit, and duplicates.
 - `parseGoogleGenerationPath(path)` removes the final
   `:generateContent|:streamGenerateContent` action before decoding and returns
   `{ modelName, stream }`; completion preparation accepts that normalized model
@@ -345,6 +363,10 @@ resolution, model-routing Admin API/WebUI, or route-priority persistence.
   degrades to the anonymous Flash pair.
 - Basic/Plus/Advanced labels and exact tuples are ADMIN_KEY-only internal data.
   Custom model configuration is unsupported.
+- Model-routing handlers authenticate first, then validate query, method, path,
+  family, and body. They construct the D1-backed service only for a recognized,
+  valid operation. Store methods reuse the pure policy validator as
+  defense-in-depth without producing HTTP errors.
 - Admin overview retains saved missing routes, appends new discovery routes, and
   exposes only bounded tuple facts, known label, availability, configured flag,
   and account count.
@@ -364,7 +386,8 @@ resolution, model-routing Admin API/WebUI, or route-priority persistence.
   real Pro-family route is also discovered, the public entry belongs to that
   known route and resolves through Pro capability selection.
 - Invalid family, extra body key, malformed/duplicate/oversized tuple array ->
-  sanitized 4xx; policy and `pool_version` unchanged.
+  sanitized 4xx; account service/D1 is not constructed, and policy plus
+  `pool_version` remain unchanged.
 - Submitted tuple absent from persisted discovery and saved policy ->
   `unknown_model_route`; policy unchanged.
 - Missing/invalid ADMIN_KEY -> 401 before routing-policy D1 access.
@@ -400,6 +423,8 @@ resolution, model-routing Admin API/WebUI, or route-priority persistence.
 - Assert three-family independence, capacity-3/field-13 round trip, missing/new
   reconciliation, invalid mutation atomicity, save/reset cache invalidation, and
   strict browser DTO validation.
+- Assert invalid/unknown model-routing requests do not read the D1 binding after
+  successful Admin authentication.
 - Run static, type, architecture, account/runtime, HTTP, Admin UI, Docker, smoke,
   Worker-type, benchmark, size, full unit, and coverage gates.
 
@@ -416,7 +441,7 @@ await store.replaceModelRoutePriority(family, unvalidatedRoutes, nowMs);
 
 ```typescript
 const catalog = await runtime.modelCatalog(freshAfterMs);
-const routes = normalizeModelRoutePriority(body);
+const routes = normalizeModelRoutePriority(body, family);
 await service.replaceModelRoutePriority(family, routes);
 ```
 
