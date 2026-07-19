@@ -59,14 +59,14 @@ export type GeminiAccountCreateInput = {
 
 export type GeminiAccountBulkCreateEntry = {
 	cookieHash: string;
-	identityHash: string;
-	input: GeminiAccountCreateInput;
+	input: GeminiAccountCreateInput & {
+		identityHash: string;
+	};
 };
 
 export type GeminiAccountBulkCreateResult = {
-	itemsByCookieHash: ReadonlyMap<string, GeminiAccountSummary>;
 	createdAccountIds: ReadonlySet<string>;
-	changedCredentialCookieHashes: ReadonlySet<string>;
+	changedCredentialCount: number;
 };
 
 export type GeminiAccountIdentityImportResult = {

@@ -52,6 +52,7 @@ import { elapsedMs, log, logStage, nowMs } from "./shared/logging";
 import { errorLogSummary } from "./shared/errors";
 import { uuid } from "./shared/crypto";
 import { buildGeminiModelCatalog, type GeminiModelCatalog } from "./models";
+import { capabilityFreshAfterMs } from "./gemini/accounts/freshness";
 import type { RuntimeConfig, WorkerEnv } from "./config";
 import type { GeminiAccountRuntime } from "./gemini/accounts/runtime";
 import type { RouteJsonPostResult } from "./http/route-body";
@@ -429,18 +430,16 @@ async function applicationModelCatalog(
 	const runtime = getGeminiAccountRuntimeFromEnv(context.env);
 	if (!runtime) return fallback;
 	try {
-		return await runtime.modelCatalog(capabilityFreshAfterMs(context.cfg));
+		return await runtime.modelCatalog(
+			capabilityFreshAfterMs(
+				context.cfg.gemini_account_capability_ttl_sec,
+				Date.now(),
+			),
+		);
 	} catch (error) {
 		log(context.cfg, `model catalog load failed: ${errorLogSummary(error)}`);
 		return fallback;
 	}
-}
-
-function capabilityFreshAfterMs(cfg: RuntimeConfig): number {
-	return (
-		Date.now() -
-		Math.max(Number(cfg.gemini_account_capability_ttl_sec) || 3600, 60) * 1000
-	);
 }
 
 function createProvider(

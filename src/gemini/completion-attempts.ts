@@ -10,9 +10,10 @@ import {
 import { log } from "../shared/logging";
 import type { ErrorWithMetadata } from "../shared/types";
 import { classifyGeminiAccountOutcome } from "./accounts/classify";
+import { capabilityFreshAfterMs } from "./accounts/freshness";
+import type { GeminiAccountLease } from "./accounts/lease-types";
 import { basicRouteForFamily } from "./accounts/routes";
 import type { GeminiAccountRuntime } from "./accounts/runtime";
-import type { GeminiAccountLease } from "./accounts/lease-types";
 import type { GeminiAccountRouteRequirement } from "./accounts/runtime-types";
 import type { UploadReplayState } from "./upload-replay";
 
@@ -75,7 +76,10 @@ export class GeminiAccountAttemptOrchestrator {
 						? { routeRequirement: this.activeRouteRequirement }
 						: {}),
 					capabilityMode: this.cfg.gemini_account_capability_mode || "prefer",
-					capabilityFreshAfterMs: capabilityFreshAfterMs(this.cfg),
+					capabilityFreshAfterMs: capabilityFreshAfterMs(
+						this.cfg.gemini_account_capability_ttl_sec,
+						Date.now(),
+					),
 				})
 				.then((acquiredLease) => {
 					if (!acquiredLease) throw noAvailableAccountError();
@@ -358,7 +362,10 @@ export class GeminiAccountAttemptOrchestrator {
 			return;
 		const candidates = await accountRuntime.routeCandidatesForModel(
 			model,
-			capabilityFreshAfterMs(this.cfg),
+			capabilityFreshAfterMs(
+				this.cfg.gemini_account_capability_ttl_sec,
+				Date.now(),
+			),
 		);
 		this.activeRouteRequirement = {
 			candidates,
@@ -416,13 +423,6 @@ export function noAvailableAccountError(): ErrorWithMetadata {
 	error.code = "no_available_gemini_account";
 	error.status = 503;
 	return error;
-}
-
-export function capabilityFreshAfterMs(cfg: RuntimeConfig): number {
-	return (
-		Date.now() -
-		Math.max(Number(cfg.gemini_account_capability_ttl_sec) || 3600, 60) * 1000
-	);
 }
 
 function accountAttemptLimit(cfg: RuntimeConfig): number {

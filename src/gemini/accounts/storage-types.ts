@@ -48,4 +48,11 @@ export type GeminiAccountRow = {
 	updated_at_ms: number;
 };
 
-export type GeminiAccountSecretRow = GeminiAccountRow;
+export type GeminiAccountSecretRow = Pick<
+	GeminiAccountRow,
+	| "id"
+	| "cookie_header"
+	| "cookie_hash"
+	| "identity_hash"
+	| "last_refresh_success_at_ms"
+>;

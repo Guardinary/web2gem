@@ -16,21 +16,19 @@ import { isAbortError } from "../shared/abort";
 import { uuid } from "../shared/crypto";
 import type { GeminiAuthenticatedSessionReason } from "../shared/errors";
 import { promptByteLengthGreaterThan } from "../shared/text-metrics";
+import { capabilityFreshAfterMs } from "./accounts/freshness";
 import type { GeminiAccountRuntime } from "./accounts/runtime";
-import { buildGeminiModelHeaders } from "./client/model-headers";
 import {
 	generate,
 	generateRich as generateGeminiRich,
 	generateStream,
 } from "./client";
 import { upstreamEmptyResponseError } from "./client/errors";
-import {
-	capabilityFreshAfterMs,
-	GeminiAccountAttemptOrchestrator,
-} from "./completion-attempts";
+import { buildGeminiModelHeaders } from "./client/model-headers";
+import { GeminiAccountAttemptOrchestrator } from "./completion-attempts";
 import { logGeminiRoute, routeForModelAndLease } from "./completion-routing";
-import { resolveAttachments, uploadTextFile } from "./uploads";
 import { type GeminiUploadDelegates, UploadReplayState } from "./upload-replay";
+import { resolveAttachments, uploadTextFile } from "./uploads";
 
 type ResolvedModelOK = Extract<ResolvedModel, { name: string }>;
 type GeminiClientDelegates = {
@@ -103,7 +101,10 @@ export function createGeminiCompletionProvider(
 					: await runtime.resolveModel(
 							name,
 							defaultName,
-							capabilityFreshAfterMs(cfg),
+							capabilityFreshAfterMs(
+								cfg.gemini_account_capability_ttl_sec,
+								Date.now(),
+							),
 						);
 			if (resolved.name !== undefined) attempts.setResolvedModel(resolved);
 			return resolved;

@@ -218,6 +218,7 @@ const ACCOUNT_STORE_METHODS = [
 	"findAccountByCookieHash",
 	"findAccountByIdentityHash",
 	"createAccount",
+	"importAccountByIdentity",
 	"createAccountsBulk",
 	"updateAccount",
 	"deleteAccount",

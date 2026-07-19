@@ -23,10 +23,10 @@ import type {
 	GeminiAccountBulkCreateResult,
 	GeminiAccountMutationError,
 	GeminiAccountMutationResult,
-	GeminiAccountSummary,
 	GeminiModelRoutingOverview,
 } from "./admin-types";
 import { rotateGeminiAccountCookie } from "./cookie-rotator";
+import { capabilityFreshAfterMs } from "./freshness";
 import type {
 	GeminiAccountCookieRotator,
 	GeminiAccountRefreshReason,
@@ -122,7 +122,7 @@ export class GeminiAccountAdminService {
 		family: GeminiPublicFamily,
 		body: UnknownRecord,
 	): Promise<GeminiModelRoutingOverview> {
-		const routes = normalizeModelRoutePriority(body);
+		const routes = normalizeModelRoutePriority(body, family);
 		await this.assertKnownModelRoutes(family, routes);
 		if (!this.runtimeStore.replaceModelRoutePriority)
 			throw new GeminiAccountAdminError(
@@ -163,8 +163,10 @@ export class GeminiAccountAdminService {
 				normalizeGeminiCookieHeader(input.cookieHeader),
 			);
 			const identityHash = await identityHashFromCookie(input.cookieHeader);
-			input.identityHash = identityHash;
-			uniqueEntries.set(identityHash, { cookieHash, identityHash, input });
+			uniqueEntries.set(identityHash, {
+				cookieHash,
+				input: { ...input, identityHash },
+			});
 		}
 
 		const entries = Array.from(uniqueEntries.values());
@@ -172,7 +174,7 @@ export class GeminiAccountAdminService {
 			? await this.adminStore.createAccountsBulk(entries)
 			: await createAccountsOneByOne(this.adminStore, entries);
 		const changed =
-			stored.createdAccountIds.size + stored.changedCredentialCookieHashes.size;
+			stored.createdAccountIds.size + stored.changedCredentialCount;
 		const result = mutationResult(accounts.length, changed, [], 0);
 		await this.scheduleImportedAccountProbes([...stored.createdAccountIds]);
 		return result;
@@ -262,10 +264,9 @@ export class GeminiAccountAdminService {
 	}
 
 	private capabilityFreshAfterMs(): number {
-		return (
-			this.nowMs() -
-			Math.max(Number(this.cfg.gemini_account_capability_ttl_sec) || 3600, 60) *
-				1000
+		return capabilityFreshAfterMs(
+			this.cfg.gemini_account_capability_ttl_sec,
+			this.nowMs(),
 		);
 	}
 
@@ -335,24 +336,21 @@ async function createAccountsOneByOne(
 		throw new Error(
 			"Gemini account import store requires identity import support",
 		);
-	const itemsByCookieHash = new Map<string, GeminiAccountSummary>();
 	const createdAccountIds = new Set<string>();
-	const changedCredentialCookieHashes = new Set<string>();
+	let changedCredentialCount = 0;
 	for (const entry of entries) {
 		const imported = await store.importAccountByIdentity(entry);
-		itemsByCookieHash.set(entry.cookieHash, imported.item);
 		if (imported.outcome === "created") createdAccountIds.add(imported.item.id);
 		else if (imported.outcome === "credentials_changed")
-			changedCredentialCookieHashes.add(entry.cookieHash);
+			changedCredentialCount += 1;
 		else if (imported.outcome !== "unchanged")
 			throw new Error(
 				"Gemini account import store returned an invalid outcome",
 			);
 	}
 	return {
-		itemsByCookieHash,
 		createdAccountIds,
-		changedCredentialCookieHashes,
+		changedCredentialCount,
 	};
 }
 

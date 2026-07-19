@@ -12,6 +12,34 @@ import {
 } from "./_support/store-fixtures.js";
 
 describe("D1 Gemini account runtime store", () => {
+	test("reads refresh credentials through the exact secret projection", async () => {
+		const db = new RecordingD1([
+			{
+				sql: "SELECT id, cookie_header, cookie_hash, identity_hash, last_refresh_success_at_ms FROM gemini_accounts WHERE id = ? LIMIT 1",
+				binds: ["first"],
+				operation: "first",
+				result: {
+					id: "first",
+					cookie_header: "cookie",
+					cookie_hash: "cookie-hash",
+					identity_hash: "identity-hash",
+					last_refresh_success_at_ms: 1234,
+				},
+			},
+		]);
+		assert.deepEqual(
+			await new D1GeminiAccountStore(db).getAccountForRefresh("first"),
+			{
+				id: "first",
+				cookie_header: "cookie",
+				cookie_hash: "cookie-hash",
+				identity_hash: "identity-hash",
+				last_refresh_success_at_ms: 1234,
+			},
+		);
+		db.assertDrained();
+	});
+
 	test("clamps selectable-account limits and maps snapshot rows", async () => {
 		const snapshot = {
 			id: "account-a",

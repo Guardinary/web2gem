@@ -96,7 +96,6 @@ describe("D1 Gemini account store codec", () => {
 				const identityHash = await identityHashFromCookie(cookieHeader);
 				return {
 					cookieHash,
-					identityHash,
 					input: { id, cookieHeader, identityHash, nowMs: 6000 },
 				};
 			}),
@@ -109,7 +108,7 @@ describe("D1 Gemini account store codec", () => {
 				1,
 				entry.input.cookieHeader,
 				entry.cookieHash,
-				entry.identityHash,
+				entry.input.identityHash,
 				null,
 				null,
 				null,
@@ -126,32 +125,33 @@ describe("D1 Gemini account store codec", () => {
 			result: mutationResult(),
 		}));
 		const resultRows = inputs.map((entry) => ({
-			identity_hash: entry.identityHash,
+			identity_hash: entry.input.identityHash,
 			...adminSqlRow(entry.input.id),
 		}));
 		const db = new RecordingD1([
 			importVersionExpectation(
 				6000,
-				inputs.map((entry) => [entry.identityHash, entry.cookieHash]),
+				inputs.map((entry) => [entry.input.identityHash, entry.cookieHash]),
 			),
 			...insertExpectations,
 			{
-				sql: /SELECT identity_hash, id, label, enabled, issue, .* FROM gemini_accounts WHERE identity_hash IN \(\?, \?\)/,
-				binds: inputs.map((entry) => entry.identityHash),
+				sql: /SELECT identity_hash, id FROM gemini_accounts WHERE identity_hash IN \(\?, \?\)/,
+				binds: inputs.map((entry) => entry.input.identityHash),
 				operation: "all",
-				result: { results: resultRows },
+				result: {
+					results: resultRows.map((row) => ({
+						identity_hash: row.identity_hash,
+						id: row.id,
+					})),
+				},
 			},
 		]);
 
 		const result = await new D1GeminiAccountStore(db).createAccountsBulk(
 			inputs,
 		);
-		assert.deepEqual(
-			[...result.itemsByCookieHash.values()].map((item) => item.id),
-			["second", "third"],
-		);
 		assert.deepEqual([...result.createdAccountIds], ["second", "third"]);
-		assert.deepEqual([...result.changedCredentialCookieHashes], []);
+		assert.equal(result.changedCredentialCount, 0);
 		db.assertBatches([[0, 1, 2]]);
 		db.assertDrained();
 	});

@@ -1,3 +1,4 @@
+import { isRecord } from "../../shared/types";
 import type {
 	GeminiAccountAdminFilter,
 	GeminiAccountAdminOverview,
@@ -16,9 +17,8 @@ import {
 	boundedGeminiAccountPageLimit,
 	GEMINI_DURABLE_ACCOUNT_ISSUES,
 } from "./domain";
-import type { GeminiAccountRuntimeStore } from "./runtime-types";
-import { isRecord } from "../../shared/types";
 import { changedRows } from "./normalize";
+import type { GeminiAccountRuntimeStore } from "./runtime-types";
 import type {
 	D1DatabaseLike,
 	D1PreparedStatementLike,
@@ -320,9 +320,8 @@ export class D1GeminiAccountStore
 	): Promise<GeminiAccountBulkCreateResult> {
 		if (!entries.length)
 			return {
-				itemsByCookieHash: new Map(),
 				createdAccountIds: new Set(),
-				changedCredentialCookieHashes: new Set(),
+				changedCredentialCount: 0,
 			};
 		const rows = await Promise.all(
 			entries.map((entry) =>
@@ -330,33 +329,28 @@ export class D1GeminiAccountStore
 			),
 		);
 		const facts = await this.writeAccountImports(rows);
-		const nowMs = entries[0]?.input.nowMs ?? Date.now();
-		const canonicalByIdentity = await this.findAccountsByIdentityHashes(
+		const canonicalIdByIdentity = await this.findAccountIdsByIdentityHashes(
 			rows.map((row) => row.identity_hash),
-			nowMs,
 		);
-		const itemsByCookieHash = new Map<string, GeminiAccountSummary>();
 		const createdAccountIds = new Set<string>();
-		const changedCredentialCookieHashes = new Set<string>();
+		let changedCredentialCount = 0;
 		for (const row of rows) {
-			const canonical = canonicalByIdentity.get(row.identity_hash);
-			if (!canonical)
+			const canonicalId = canonicalIdByIdentity.get(row.identity_hash);
+			if (!canonicalId)
 				throw new Error(
 					"D1 account import did not return a canonical identity",
 				);
-			itemsByCookieHash.set(row.cookie_hash, canonical);
 			if (!facts.mutatedCookieHashes.has(row.cookie_hash)) continue;
-			const created = importWasCreated(facts, row, canonical.id);
+			const created = importWasCreated(facts, row, canonicalId);
 			if (created) {
-				createdAccountIds.add(canonical.id);
+				createdAccountIds.add(canonicalId);
 			} else {
-				changedCredentialCookieHashes.add(row.cookie_hash);
+				changedCredentialCount += 1;
 			}
 		}
 		return {
-			itemsByCookieHash,
 			createdAccountIds,
-			changedCredentialCookieHashes,
+			changedCredentialCount,
 		};
 	}
 
@@ -529,6 +523,33 @@ export class D1GeminiAccountStore
 				items.set(row.identity_hash, summaryFromSql(row, nowMs));
 		}
 		return items;
+	}
+
+	private async findAccountIdsByIdentityHashes(
+		identityHashes: readonly string[],
+	): Promise<Map<string, string>> {
+		const unique = [...new Set(identityHashes)];
+		const ids = new Map<string, string>();
+		for (
+			let offset = 0;
+			offset < unique.length;
+			offset += MAX_D1_BOUND_PARAMETERS
+		) {
+			const chunk = unique.slice(offset, offset + MAX_D1_BOUND_PARAMETERS);
+			if (!chunk.length) continue;
+			const placeholders = chunk.map(() => "?").join(", ");
+			const result = await this.db
+				.prepare(`
+						SELECT identity_hash, id
+						FROM gemini_accounts
+						WHERE identity_hash IN (${placeholders})
+					`)
+				.bind(...chunk)
+				.all<{ identity_hash: string; id: string }>();
+			for (const row of result.results || [])
+				ids.set(row.identity_hash, row.id);
+		}
+		return ids;
 	}
 }
 

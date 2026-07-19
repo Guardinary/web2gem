@@ -4,9 +4,9 @@ import {
 	identityHashFromCookie,
 	sha256Hex,
 } from "../../../../src/gemini/accounts/normalize";
-import { assert } from "../../assertions.js";
 import { deferred } from "../../_support/deferred.js";
 import { baseConfig } from "../../_support/runtime-config.js";
+import { assert } from "../../assertions.js";
 import {
 	createService,
 	mutationCounts,
@@ -18,6 +18,41 @@ import {
 } from "./_support/store-fixtures.js";
 
 describe("Gemini account admin service imports", () => {
+	test("preserves created, changed, and unchanged facts in fallback stores", async () => {
+		const store = createAccountStoreDouble({
+			importAccountByIdentity: [
+				{ result: { item: accountSummary("created"), outcome: "created" } },
+				{
+					result: {
+						item: accountSummary("changed"),
+						outcome: "credentials_changed",
+					},
+				},
+				{ result: { item: accountSummary("unchanged"), outcome: "unchanged" } },
+			],
+			getAccountForRefresh: {
+				args: ["created"],
+				result: null,
+			},
+		});
+		delete store.createAccountsBulk;
+		const result = await createService(store).create({
+			provider: "gemini",
+			accounts: [
+				{ "__Secure-1PSID": "new", "__Secure-1PSIDTS": "t" },
+				{ "__Secure-1PSID": "changed", "__Secure-1PSIDTS": "t" },
+				{ "__Secure-1PSID": "same", "__Secure-1PSIDTS": "t" },
+			],
+		});
+		assert.deepEqual(mutationCounts(result), {
+			processed: 3,
+			changed: 2,
+			unchanged: 1,
+			failed: 0,
+		});
+		store.assertDrained();
+	});
+
 	test("returns compact import counts and forwards canonical bulk entries", async () => {
 		const cookieHeader = "__Secure-1PSID=p; __Secure-1PSIDTS=t";
 		const cookieHash = await sha256Hex(cookieHeader);
@@ -27,16 +62,13 @@ describe("Gemini account admin service imports", () => {
 				check([entries]) {
 					assert.equal(entries.length, 1);
 					assert.equal(entries[0].cookieHash, cookieHash);
-					assert.equal(entries[0].identityHash, identityHash);
+					assert.equal(entries[0].input.identityHash, identityHash);
 					assert.equal(entries[0].input.label, "Alpha");
 					assert.equal(entries[0].input.nowMs, 1000);
 				},
 				result: {
-					itemsByCookieHash: new Map([
-						[cookieHash, accountSummary("account-a")],
-					]),
 					createdAccountIds: new Set(["account-a"]),
-					changedCredentialCookieHashes: new Set(),
+					changedCredentialCount: 0,
 				},
 			},
 			getAccountForRefresh: {
@@ -83,20 +115,14 @@ describe("Gemini account admin service imports", () => {
 			createAccountsBulk: [
 				{
 					result: {
-						itemsByCookieHash: new Map([
-							[cookieHash, accountSummary("worker-account")],
-						]),
 						createdAccountIds: new Set(["worker-account"]),
-						changedCredentialCookieHashes: new Set(),
+						changedCredentialCount: 0,
 					},
 				},
 				{
 					result: {
-						itemsByCookieHash: new Map([
-							[cookieHash, accountSummary("worker-account")],
-						]),
 						createdAccountIds: new Set(),
-						changedCredentialCookieHashes: new Set(),
+						changedCredentialCount: 0,
 					},
 				},
 			],
@@ -181,16 +207,10 @@ describe("Gemini account admin service imports", () => {
 			createAccountsBulk: {
 				run([entries]) {
 					return {
-						itemsByCookieHash: new Map(
-							entries.map((entry, index) => [
-								entry.cookieHash,
-								accountSummary(`docker-${index}`),
-							]),
-						),
 						createdAccountIds: new Set(
 							entries.map((_entry, index) => `docker-${index}`),
 						),
-						changedCredentialCookieHashes: new Set(),
+						changedCredentialCount: 0,
 					};
 				},
 			},

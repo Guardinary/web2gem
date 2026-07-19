@@ -6,6 +6,7 @@ import {
 import {
 	assertNoAdminQueryParams,
 	modelFamilyFromPathSegment,
+	normalizeModelRoutePriority,
 } from "../../gemini/accounts/admin-input";
 import { errorLogSummary } from "../../shared/errors";
 import { log } from "../../shared/logging";
@@ -40,20 +41,23 @@ export async function handleGeminiModelRoutingAdminRequest(
 	try {
 		assertNoAdminQueryParams(url.searchParams);
 		const method = request.method.toUpperCase();
-		const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
-		if (method === "GET" && url.pathname === MODEL_ROUTING_PREFIX)
+		if (method === "GET" && url.pathname === MODEL_ROUTING_PREFIX) {
+			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
 			return jsonResponse(await service.modelRoutingOverview());
+		}
 
 		const family = modelRoutingFamilyFromPath(url.pathname);
-		if (family && method === "PUT")
+		if (family && method === "PUT") {
+			const body = await readAdminJson(request);
+			normalizeModelRoutePriority(body, family);
+			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
 			return jsonResponse(
-				await service.replaceModelRoutePriority(
-					family,
-					await readAdminJson(request),
-				),
+				await service.replaceModelRoutePriority(family, body),
 			);
+		}
 		if (family && method === "DELETE") {
 			assertAdminBodyAbsent(request);
+			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
 			return jsonResponse(await service.clearModelRoutePriority(family));
 		}
 		return adminErrorResponse(

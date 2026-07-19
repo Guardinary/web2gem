@@ -1,8 +1,8 @@
 // @ts-nocheck
 import { afterEach, describe, test, vi } from "vitest";
 import { handleGeminiModelRoutingAdminRequest } from "../../../../src/http/admin/gemini-model-routing";
-import { assert } from "../../assertions.js";
 import { baseConfig } from "../../_support/runtime-config.js";
+import { assert } from "../../assertions.js";
 import { RecordingD1 } from "../../gemini/accounts/_support/store-fixtures.js";
 
 const nowMs = 10_000;
@@ -194,15 +194,33 @@ function proFamily(body) {
 
 async function expectRejectedBeforeD1({ path, body, status, code, message }) {
 	const db = new RecordingD1();
-	const response = await request(db, path, {
-		method: "PUT",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify(body),
+	let accessed = false;
+	const env = {};
+	Object.defineProperty(env, "GEMINI_DB", {
+		get() {
+			accessed = true;
+			return db;
+		},
 	});
+	const url = new URL(`https://worker.example${path}`);
+	const response = await handleGeminiModelRoutingAdminRequest(
+		new Request(url, {
+			method: "PUT",
+			headers: {
+				Authorization: "Bearer admin-secret",
+				"content-type": "application/json",
+			},
+			body: JSON.stringify(body),
+		}),
+		env,
+		cfg,
+		url,
+	);
 	assert.equal(response.status, status);
 	assert.deepEqual(await response.json(), {
 		error: { code, message },
 	});
+	assert.equal(accessed, false);
 	assert.equal(db.records.length, 0);
 	db.assertBatches([]);
 	db.assertDrained();
@@ -222,6 +240,39 @@ describe("Gemini model-routing admin HTTP contract", () => {
 		assert.equal((await response.json()).error.code, "invalid_admin_key");
 		db.assertBatches([]);
 		db.assertDrained();
+	});
+
+	test("does not read the D1 binding for an authenticated unknown route", async () => {
+		let accessed = false;
+		const env = {};
+		Object.defineProperty(env, "GEMINI_DB", {
+			get() {
+				accessed = true;
+				throw new Error("D1 must not be accessed");
+			},
+		});
+		const url = new URL("https://worker.example/admin/model-routing/pro/extra");
+		const response = await handleGeminiModelRoutingAdminRequest(
+			new Request(url, {
+				method: "PUT",
+				headers: {
+					Authorization: "Bearer admin-secret",
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ routes: [] }),
+			}),
+			env,
+			cfg,
+			url,
+		);
+		assert.equal(response.status, 404);
+		assert.deepEqual(await response.json(), {
+			error: {
+				code: "admin_route_not_found",
+				message: "admin route not found",
+			},
+		});
+		assert.equal(accessed, false);
 	});
 
 	test("rejects invalid families and route payloads before D1 preparation", async () => {

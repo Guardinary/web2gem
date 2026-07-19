@@ -1,10 +1,10 @@
 import type { RuntimeConfig } from "../../config";
 import { extractCookieValue } from "../cookies";
-import { normalizeGeminiCookieHeader } from "./normalize";
 import type {
 	GeminiAccountLease,
 	GeminiAccountRefreshResult,
 } from "./lease-types";
+import { normalizeGeminiCookieHeader } from "./normalize";
 import type {
 	GeminiAccountModelCapability,
 	GeminiRouteTuple,
@@ -42,7 +42,10 @@ export class PoolLease implements GeminiAccountLease {
 	constructor(
 		private readonly pool: PoolLeaseHost,
 		baseConfig: RuntimeConfig,
-		row: GeminiAccountSnapshotRow,
+		row: Pick<
+			GeminiAccountSnapshotRow,
+			"id" | "cookie_header" | "cookie_hash" | "last_refresh_success_at_ms"
+		>,
 		modelCapability: GeminiAccountModelCapability | null = null,
 		selectedRoute: GeminiRouteTuple | null = null,
 	) {

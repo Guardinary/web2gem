@@ -13,7 +13,11 @@ import {
 } from "./domain";
 import { cleanAccountString } from "./normalize";
 import type { GeminiRouteTuple } from "./route-types";
-import { geminiRouteKey, isGeminiRouteTuple } from "./routes";
+import {
+	isGeminiPublicFamily,
+	MAX_GEMINI_MODEL_ROUTES,
+	validateGeminiModelRoutePolicy,
+} from "./routes";
 
 const SAFE_CREATE_KEYS = new Set([
 	"provider",
@@ -31,12 +35,6 @@ const UNSAFE_CREATE_KEYS = new Set([
 const COOKIE_NAME_RE = /(?:^|[;\s])__Secure-1PSID(?:TS)?\s*=/i;
 const SAFE_UPDATE_KEYS = new Set(["label", "enabled"]);
 const LIST_QUERY_KEYS = new Set(["limit", "cursor", "q", "state"]);
-const MODEL_ROUTE_KEYS = new Set([
-	"providerModelId",
-	"capacity",
-	"capacityField",
-	"modelNumber",
-]);
 
 export class GeminiAccountAdminError extends Error {
 	constructor(
@@ -79,13 +77,13 @@ export function modelFamilyFromPathSegment(
 	} catch {
 		throw invalidModelFamilyError();
 	}
-	if (family !== "pro" && family !== "flash" && family !== "flash_lite")
-		throw invalidModelFamilyError();
+	if (!isGeminiPublicFamily(family)) throw invalidModelFamilyError();
 	return family;
 }
 
 export function normalizeModelRoutePriority(
 	body: UnknownRecord,
+	family: GeminiPublicFamily,
 ): GeminiRouteTuple[] {
 	for (const key of Object.keys(body)) {
 		if (key !== "routes")
@@ -101,36 +99,21 @@ export function normalizeModelRoutePriority(
 			"invalid_model_routes",
 			"routes must be an array",
 		);
-	if (body.routes.length > 128)
+	const policy = validateGeminiModelRoutePolicy(family, body.routes);
+	if (policy.error === "route_limit_exceeded")
 		throw new GeminiAccountAdminError(
 			413,
 			"model_route_limit_exceeded",
-			"model routing policy exceeds the limit of 128 routes",
+			`model routing policy exceeds the limit of ${MAX_GEMINI_MODEL_ROUTES} routes`,
 		);
-	const seen = new Set<string>();
-	return body.routes.map((value) => {
-		if (
-			!isRecord(value) ||
-			Object.keys(value).some((field) => !MODEL_ROUTE_KEYS.has(field))
-		)
-			throw invalidModelRouteError();
-		const route = {
-			providerModelId: value.providerModelId,
-			capacity: value.capacity,
-			capacityField: value.capacityField,
-			modelNumber: value.modelNumber,
-		};
-		if (!isGeminiRouteTuple(route)) throw invalidModelRouteError();
-		const key = geminiRouteKey(route);
-		if (seen.has(key))
-			throw new GeminiAccountAdminError(
-				400,
-				"duplicate_model_route",
-				"model routing policy contains duplicate routes",
-			);
-		seen.add(key);
-		return route;
-	});
+	if (policy.error === "duplicate_route")
+		throw new GeminiAccountAdminError(
+			400,
+			"duplicate_model_route",
+			"model routing policy contains duplicate routes",
+		);
+	if (policy.error) throw invalidModelRouteError();
+	return policy.routes;
 }
 
 export type GeminiAccountAdminFilterInput = {

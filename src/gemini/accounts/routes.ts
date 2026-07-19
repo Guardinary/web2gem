@@ -9,6 +9,29 @@ import type {
 } from "./route-types";
 
 const MAX_GEMINI_MODEL_NUMBER = 64;
+export const MAX_GEMINI_MODEL_ROUTES = 128;
+const GEMINI_ROUTE_TUPLE_KEYS = new Set([
+	"providerModelId",
+	"capacity",
+	"capacityField",
+	"modelNumber",
+]);
+
+export type GeminiModelRoutePolicyError =
+	| "invalid_family"
+	| "route_limit_exceeded"
+	| "invalid_route"
+	| "duplicate_route";
+
+export type GeminiModelRoutePolicyResult =
+	| { routes: GeminiRouteTuple[]; error?: undefined }
+	| { routes?: undefined; error: GeminiModelRoutePolicyError };
+
+export function isGeminiPublicFamily(
+	value: unknown,
+): value is GeminiPublicFamily {
+	return value === "pro" || value === "flash" || value === "flash_lite";
+}
 
 const KNOWN_PROVIDER_MODELS = {
 	"9d8ca3786ebdfbea": { family: "pro", modelNumber: 3, tier: "Basic" },
@@ -120,21 +143,28 @@ export function geminiRouteKey(route: GeminiRouteTuple): string {
 	]);
 }
 
-export function parseGeminiRouteKey(value: unknown): GeminiRouteTuple | null {
-	if (typeof value !== "string" || !value) return null;
-	try {
-		const parsed: unknown = JSON.parse(value);
-		if (!Array.isArray(parsed) || parsed.length !== 4) return null;
-		const route = {
-			providerModelId: parsed[0],
-			capacity: parsed[1],
-			capacityField: parsed[2],
-			modelNumber: parsed[3],
-		};
-		return isGeminiRouteTuple(route) ? route : null;
-	} catch (_) {
-		return null;
+export function validateGeminiModelRoutePolicy(
+	family: unknown,
+	routes: readonly unknown[],
+): GeminiModelRoutePolicyResult {
+	if (!isGeminiPublicFamily(family)) return { error: "invalid_family" };
+	if (routes.length > MAX_GEMINI_MODEL_ROUTES)
+		return { error: "route_limit_exceeded" };
+	const normalized: GeminiRouteTuple[] = [];
+	const seen = new Set<string>();
+	for (const value of routes) {
+		if (
+			!isGeminiRouteTuple(value) ||
+			Object.keys(value).length !== GEMINI_ROUTE_TUPLE_KEYS.size ||
+			Object.keys(value).some((field) => !GEMINI_ROUTE_TUPLE_KEYS.has(field))
+		)
+			return { error: "invalid_route" };
+		const key = geminiRouteKey(value);
+		if (seen.has(key)) return { error: "duplicate_route" };
+		seen.add(key);
+		normalized.push(value);
 	}
+	return { routes: normalized };
 }
 
 export function capabilityFromRow(

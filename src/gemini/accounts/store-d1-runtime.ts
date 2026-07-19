@@ -10,7 +10,7 @@ import type {
 	GeminiModelRoutePriorityRow,
 	GeminiRouteTuple,
 } from "./route-types";
-import { geminiRouteKey, isGeminiRouteTuple } from "./routes";
+import { validateGeminiModelRoutePolicy } from "./routes";
 import type {
 	GeminiAccountOutcome,
 	GeminiAccountSnapshotRow,
@@ -32,6 +32,8 @@ const ACCOUNT_CAPABILITY_SELECT = `
   account_id, model_id, display_name, description, available,
   capacity, capacity_field, model_number, discovery_order, checked_at_ms
 `;
+const ACCOUNT_SECRET_SELECT =
+	"id, cookie_header, cookie_hash, identity_hash, last_refresh_success_at_ms";
 
 export abstract class D1GeminiAccountRuntimeStore {
 	constructor(protected readonly db: D1DatabaseLike) {}
@@ -69,7 +71,12 @@ export abstract class D1GeminiAccountRuntimeStore {
 	async getAccountForRefresh(
 		accountId: string,
 	): Promise<GeminiAccountSecretRow | null> {
-		return this.getAccountRow(accountId);
+		return this.db
+			.prepare(
+				`SELECT ${ACCOUNT_SECRET_SELECT} FROM gemini_accounts WHERE id = ? LIMIT 1`,
+			)
+			.bind(accountId)
+			.first<GeminiAccountSecretRow>();
 	}
 
 	async tryAcquireRefreshLock(
@@ -312,7 +319,6 @@ export abstract class D1GeminiAccountRuntimeStore {
 		family: GeminiPublicFamily,
 		nowMs: number,
 	): Promise<void> {
-		assertGeminiPublicFamily(family);
 		await this.replaceModelRoutePriority(family, [], nowMs);
 	}
 
@@ -475,25 +481,17 @@ export abstract class D1GeminiAccountRuntimeStore {
 	}
 }
 
-function assertGeminiPublicFamily(
-	family: unknown,
-): asserts family is GeminiPublicFamily {
-	if (family !== "pro" && family !== "flash" && family !== "flash_lite")
-		throw new Error("invalid Gemini model family");
-}
-
 function assertModelRoutePriority(
 	family: unknown,
 	routes: readonly GeminiRouteTuple[],
 ): void {
-	assertGeminiPublicFamily(family);
-	if (routes.length > 128) throw new Error("too many Gemini model routes");
-	const seen = new Set<string>();
-	for (const route of routes) {
-		if (!isGeminiRouteTuple(route))
-			throw new Error("invalid Gemini route tuple");
-		const key = geminiRouteKey(route);
-		if (seen.has(key)) throw new Error("duplicate Gemini route tuple");
-		seen.add(key);
-	}
+	const policy = validateGeminiModelRoutePolicy(family, routes);
+	if (!policy.error) return;
+	if (policy.error === "invalid_family")
+		throw new Error("invalid Gemini model family");
+	if (policy.error === "route_limit_exceeded")
+		throw new Error("too many Gemini model routes");
+	if (policy.error === "duplicate_route")
+		throw new Error("duplicate Gemini route tuple");
+	throw new Error("invalid Gemini route tuple");
 }
