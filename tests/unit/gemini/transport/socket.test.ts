@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { socketHttp } from "../../../../src/gemini/transport/socket";
 import { assert } from "../../assertions.js";
@@ -6,7 +5,7 @@ import { fakeSocketConnect, joinedWriteText } from "./_support/socket.js";
 
 describe.sequential("socketHttp", () => {
 	test("sends socket HTTP requests with content length", async () => {
-		const state = {};
+		const state: { closed?: boolean } = {};
 		const resp = await socketHttp(
 			fakeSocketConnect(
 				["HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"],
@@ -203,7 +202,7 @@ describe.sequential("socketHttp", () => {
 		);
 		assert.equal(await trailer.text(), "hello");
 
-		const state = {};
+		const state: { closed?: boolean } = {};
 		const identity = await socketHttp(
 			fakeSocketConnect(["HTTP/1.1 200 OK\r\n\r\nhello"], state),
 			"https://example.test/cancel-body",

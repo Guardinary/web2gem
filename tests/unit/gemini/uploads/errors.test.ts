@@ -1,17 +1,29 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	contentPushUploadError,
+	type ContentPushUploadError,
 	validateContentPushFileRef,
 } from "../../../../src/gemini/uploads/errors";
 import { contentPushUploadTokens } from "../../../../src/gemini/uploads/tokens";
 import { assert } from "../../assertions.js";
 
-function captureError(run) {
+function isContentPushUploadError(
+	error: unknown,
+): error is ContentPushUploadError {
+	if (!(error instanceof Error) || !("code" in error)) return false;
+	return (
+		error.code === "content_push_http_status" ||
+		error.code === "content_push_invalid_ref" ||
+		error.code === "content_push_missing_page_token"
+	);
+}
+
+function captureError(run: () => unknown): ContentPushUploadError {
 	try {
 		run();
 	} catch (error) {
-		return error;
+		if (isContentPushUploadError(error)) return error;
+		throw error;
 	}
 	throw new Error("expected operation to fail");
 }

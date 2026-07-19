@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	extractTextsFromLine,
@@ -7,7 +6,7 @@ import {
 } from "../../../../src/gemini/client/parse-envelope";
 import { assert } from "../../assertions.js";
 
-function wrbLine(texts) {
+function wrbLine(texts: readonly string[]): string {
 	const inner = [null, null, null, null, [[null, texts]], "x".repeat(160)];
 	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
 }

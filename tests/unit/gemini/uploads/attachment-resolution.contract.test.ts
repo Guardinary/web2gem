@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, beforeEach, describe, test } from "vitest";
 import { createAttachmentPlan } from "../../../../src/attachments/plan";
 import { resolveAttachments } from "../../../../src/gemini/uploads/execute";
@@ -10,6 +9,7 @@ import {
 	baseUploadConfig,
 	multipartRequestText,
 	resetUploadState,
+	type UploadRequestInit,
 } from "./_support/upload-fixtures.js";
 
 describe("AttachmentPlan to Gemini resolution", () => {
@@ -18,7 +18,7 @@ describe("AttachmentPlan to Gemini resolution", () => {
 
 	test("resolves empty and pre-dropped plans without network access", async () => {
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				throw new Error(`unexpected fetch ${url}`);
 			},
 			async () => {
@@ -88,7 +88,7 @@ describe("AttachmentPlan to Gemini resolution", () => {
 		});
 
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				throw new Error(`unexpected fetch ${url}`);
 			},
 			async () => {
@@ -143,7 +143,10 @@ describe("AttachmentPlan to Gemini resolution", () => {
 		});
 
 		await withFetch(
-			async (url, init = {}) => {
+			async (
+				url: RequestInfo | URL,
+				init: UploadRequestInit = { headers: {} },
+			) => {
 				const href = String(url);
 				if (href === "https://gemini.example/app") {
 					return new Response('{"qKIAYe":"push-mixed"}', { status: 200 });
@@ -215,7 +218,10 @@ describe("AttachmentPlan to Gemini resolution", () => {
 			crypto.subtle,
 			"digest",
 		);
-		const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
+		const originalDigest: (
+			algorithm: AlgorithmIdentifier,
+			data: BufferSource,
+		) => Promise<ArrayBuffer> = crypto.subtle.digest.bind(crypto.subtle);
 		const allowDuplicateDigest = deferred();
 		const duplicateContinued = deferred();
 		const firstUploadStarted = deferred();
@@ -225,9 +231,9 @@ describe("AttachmentPlan to Gemini resolution", () => {
 		Object.defineProperty(crypto.subtle, "digest", {
 			configurable: true,
 			writable: true,
-			value(...args) {
+			value(algorithm: AlgorithmIdentifier, data: BufferSource) {
 				digestCalls += 1;
-				const digest = Promise.resolve(originalDigest(...args));
+				const digest = Promise.resolve(originalDigest(algorithm, data));
 				if (digestCalls !== 2) return digest;
 				const controlled = Promise.all([
 					digest,
@@ -248,7 +254,10 @@ describe("AttachmentPlan to Gemini resolution", () => {
 
 		try {
 			await withFetch(
-				async (url, init = {}) => {
+				async (
+					url: RequestInfo | URL,
+					init: UploadRequestInit = { headers: {} },
+				) => {
 					const href = String(url);
 					if (href === "https://gemini.example/app") {
 						return new Response('{"qKIAYe":"push-dedupe"}', { status: 200 });
@@ -293,7 +302,7 @@ describe("AttachmentPlan to Gemini resolution", () => {
 					originalDigestDescriptor,
 				);
 			} else {
-				delete crypto.subtle.digest;
+				Reflect.deleteProperty(crypto.subtle, "digest");
 			}
 		}
 		assert.equal(uploadCalls, 1);
@@ -310,7 +319,10 @@ describe("AttachmentPlan to Gemini resolution", () => {
 		});
 
 		await withFetch(
-			async (url, init = {}) => {
+			async (
+				url: RequestInfo | URL,
+				init: UploadRequestInit = { headers: {} },
+			) => {
 				const href = String(url);
 				if (href === "https://gemini.example/app") {
 					return new Response('{"qKIAYe":"push-identity"}', { status: 200 });
@@ -360,7 +372,7 @@ describe("AttachmentPlan to Gemini resolution", () => {
 		});
 
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				throw new Error(`unexpected fetch ${url}`);
 			},
 			async () => {
@@ -379,12 +391,15 @@ describe("AttachmentPlan to Gemini resolution", () => {
 	});
 
 	test("degrades invalid multipart refs without auth fallback", async () => {
-		const requests = [];
+		const requests: string[] = [];
 		const plan = createAttachmentPlan({
 			files: [{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" }],
 		});
 		await withFetch(
-			async (url, init = {}) => {
+			async (
+				url: RequestInfo | URL,
+				init: UploadRequestInit = { headers: {} },
+			) => {
 				const href = String(url);
 				requests.push(href);
 				if (href === "https://gemini.example/app") {
@@ -420,7 +435,7 @@ describe("AttachmentPlan to Gemini resolution", () => {
 	});
 
 	test("logs aggregate usage without attachment payloads or credentials", async () => {
-		const logs = [];
+		const logs: string[] = [];
 		const plan = createAttachmentPlan({
 			files: [
 				{ b64: "aGVsbG8=", mime: "text/plain", filename: "secret-name.txt" },
@@ -428,10 +443,10 @@ describe("AttachmentPlan to Gemini resolution", () => {
 			],
 		});
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				withFetch(
-					async (url) => {
+					async (url: RequestInfo | URL) => {
 						const href = String(url);
 						if (href === "https://gemini.example/app") {
 							return new Response('{"qKIAYe":"push-log"}', { status: 200 });
@@ -468,17 +483,20 @@ describe("AttachmentPlan to Gemini resolution", () => {
 	});
 
 	test("records multipart rejection as a dropped request-local attachment", async () => {
-		const logs = [];
+		const logs: string[] = [];
 		const plan = createAttachmentPlan({
 			files: [
 				{ b64: "aGVsbG8=", mime: "text/plain", filename: "fallback.txt" },
 			],
 		});
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				withFetch(
-					async (url, init = {}) => {
+					async (
+						url: RequestInfo | URL,
+						init: UploadRequestInit = { headers: {} },
+					) => {
 						const href = String(url);
 						if (href === "https://gemini.example/app") {
 							return new Response('{"qKIAYe":"push-log-failure"}', {

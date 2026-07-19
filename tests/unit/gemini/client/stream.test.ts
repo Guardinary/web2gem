@@ -1,23 +1,28 @@
-// @ts-nocheck
 import { afterEach, beforeEach, describe, test } from "vitest";
 import { generateStream } from "../../../../src/gemini/client";
 import { resetGeminiBuildLabelCacheForTest } from "../../../../src/gemini/client/retry";
+import type { ErrorWithMetadata } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { withFetch } from "../../_support/globals.js";
 import { baseGeminiClientConfig } from "../_support/client-fixtures.js";
 
-function wrbLine(texts) {
+function wrbLine(texts: readonly string[]) {
 	const inner = [null, null, null, null, [[null, texts]], "x".repeat(160)];
 	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
 }
 
-function fatalWrbLine(code) {
-	const inner = [null, null, null, null, []];
-	inner[5] = [];
-	inner[5][2] = [];
-	inner[5][2][0] = [];
-	inner[5][2][0][1] = [code];
+function fatalWrbLine(code: number) {
+	const inner: unknown[] = [null, null, null, null, []];
+	const codeEntry: unknown[] = [];
+	codeEntry[1] = [code];
+	const fatalParts: unknown[] = [];
+	fatalParts[2] = [codeEntry];
+	inner[5] = fatalParts;
 	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
+}
+
+function isErrorWithMetadata(error: unknown): error is ErrorWithMetadata {
+	return error instanceof Error;
 }
 
 describe("Gemini client streaming", () => {
@@ -45,6 +50,7 @@ describe("Gemini client streaming", () => {
 					}
 					throw new Error("expected abort");
 				} catch (err) {
+					if (!isErrorWithMetadata(err)) throw err;
 					assert.equal(err.name, "AbortError");
 					assert.equal(err.code, "request_aborted");
 					assert.match(err.message, /stop now/);
@@ -54,9 +60,9 @@ describe("Gemini client streaming", () => {
 	});
 	test("throws for stream responses with no body and no parseable fallback text", async () => {
 		const cfg = baseGeminiClientConfig();
-		const calls = [];
+		const calls: string[] = [];
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				calls.push(href);
 				if (href === "https://gemini.example/app")
@@ -79,6 +85,7 @@ describe("Gemini client streaming", () => {
 					}
 					throw new Error("expected empty stream error");
 				} catch (err) {
+					if (!isErrorWithMetadata(err)) throw err;
 					assert.equal(err.code, "upstream_empty_response");
 					assert.equal(err.status, 502);
 					assert.equal(err.upstreamStatus, 502);
@@ -87,13 +94,13 @@ describe("Gemini client streaming", () => {
 			},
 		);
 		assert.equal(calls.length, 2);
-		assert.match(calls[0], /StreamGenerate/);
+		assert.match(calls[0] ?? "", /StreamGenerate/);
 		assert.equal(calls[1], "https://gemini.example/app");
 	});
 	test("streams a final unterminated WRB line from the response body", async () => {
 		const cfg = baseGeminiClientConfig();
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				assert.match(String(url), /StreamGenerate/);
 				return new Response(
 					JSON.stringify([
@@ -114,7 +121,7 @@ describe("Gemini client streaming", () => {
 				);
 			},
 			async () => {
-				const chunks = [];
+				const chunks: string[] = [];
 				for await (const delta of generateStream(cfg, "prompt", 1, false, null))
 					chunks.push(delta);
 				assert.deepEqual(chunks, ["stream fallback"]);
@@ -125,7 +132,7 @@ describe("Gemini client streaming", () => {
 		const cfg = baseGeminiClientConfig();
 		let canceled = false;
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				assert.match(String(url), /StreamGenerate/);
 				return new Response(
 					new ReadableStream({
@@ -174,7 +181,7 @@ describe("Gemini client streaming", () => {
 					{ status: 200 },
 				),
 			async () => {
-				const chunks = [];
+				const chunks: string[] = [];
 				for await (const delta of generateStream(cfg, "prompt", 1, false, null))
 					chunks.push(delta);
 				assert.deepEqual(chunks, ["complete"]);
@@ -221,7 +228,7 @@ describe("Gemini client streaming", () => {
 	test("streams fallback text from response-like objects with no body", async () => {
 		const cfg = baseGeminiClientConfig();
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				assert.match(String(url), /StreamGenerate/);
 				return {
 					ok: true,
@@ -242,9 +249,9 @@ describe("Gemini client streaming", () => {
 	});
 	test("throws when streamed Gemini body has no parseable text", async () => {
 		const cfg = baseGeminiClientConfig();
-		const calls = [];
+		const calls: string[] = [];
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				calls.push(href);
 				if (href === "https://gemini.example/app")
@@ -267,6 +274,7 @@ describe("Gemini client streaming", () => {
 					}
 					throw new Error("expected parse failure");
 				} catch (err) {
+					if (!isErrorWithMetadata(err)) throw err;
 					assert.equal(err.code, "upstream_empty_response");
 					assert.equal(err.status, 502);
 					assert.equal(err.upstreamStatus, 502);
@@ -275,14 +283,14 @@ describe("Gemini client streaming", () => {
 			},
 		);
 		assert.equal(calls.length, 2);
-		assert.match(calls[0], /StreamGenerate/);
+		assert.match(calls[0] ?? "", /StreamGenerate/);
 		assert.equal(calls[1], "https://gemini.example/app");
 	});
 	test("throws explicit stream upstream empty error for HTTP 200 responses", async () => {
 		const cfg = baseGeminiClientConfig({ gemini_bl: "stale-stream-bl" });
-		const calls = [];
+		const calls: string[] = [];
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				calls.push(href);
 				if (href === "https://gemini.example/app")
@@ -307,6 +315,7 @@ describe("Gemini client streaming", () => {
 					}
 					throw new Error("expected upstream empty stream response");
 				} catch (err) {
+					if (!isErrorWithMetadata(err)) throw err;
 					assert.equal(err.code, "upstream_empty_response");
 					assert.equal(err.status, 502);
 					assert.equal(err.upstreamStatus, 200);
@@ -318,7 +327,7 @@ describe("Gemini client streaming", () => {
 			},
 		);
 		assert.equal(calls.length, 2);
-		assert.match(calls[0], /StreamGenerate/);
+		assert.match(calls[0] ?? "", /StreamGenerate/);
 		assert.equal(calls[1], "https://gemini.example/app");
 	});
 	test("refreshes Gemini build label and retries empty stream bodies", async () => {
@@ -326,9 +335,9 @@ describe("Gemini client streaming", () => {
 			gemini_bl: "old-stream-bl",
 			retry_attempts: 2,
 		});
-		const streamUrls = [];
+		const streamUrls: string[] = [];
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				if (href === "https://gemini.example/app")
 					return new Response('<html>{"cfb2h":"fresh-stream-bl"}</html>', {
@@ -343,13 +352,13 @@ describe("Gemini client streaming", () => {
 				});
 			},
 			async () => {
-				const chunks = [];
+				const chunks: string[] = [];
 				for await (const delta of generateStream(cfg, "prompt", 1, false, null))
 					chunks.push(delta);
 				assert.deepEqual(chunks, ["after stream refresh"]);
 			},
 		);
-		assert.match(streamUrls[0], /bl=old-stream-bl/);
-		assert.match(streamUrls[1], /bl=fresh-stream-bl/);
+		assert.match(streamUrls[0] ?? "", /bl=old-stream-bl/);
+		assert.match(streamUrls[1] ?? "", /bl=fresh-stream-bl/);
 	});
 });

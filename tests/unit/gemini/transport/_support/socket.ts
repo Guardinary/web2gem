@@ -1,9 +1,23 @@
-// @ts-nocheck
 import { _joinByteChunks } from "../../../../../src/gemini/transport/byte-queue";
+import type {
+	ByteChunk,
+	SocketConnect,
+} from "../../../../../src/gemini/transport/socket-types";
 
-export function fakeSocketConnect(responseChunks, state = {}) {
+export type SocketTestState = {
+	writes?: ByteChunk[];
+	closed?: boolean | number;
+	connects?: number;
+};
+
+type SocketResponseChunk = string | ByteChunk;
+
+export function fakeSocketConnect(
+	responseChunks: readonly SocketResponseChunk[],
+	state: SocketTestState = {},
+): SocketConnect {
 	const encoder = new TextEncoder();
-	const writes = [];
+	const writes: ByteChunk[] = [];
 	let connected = false;
 	state.writes = writes;
 	state.closed = false;
@@ -11,7 +25,7 @@ export function fakeSocketConnect(responseChunks, state = {}) {
 	return function connect() {
 		if (connected) throw new Error("unexpected additional socket connection");
 		connected = true;
-		state.connects += 1;
+		state.connects = (state.connects ?? 0) + 1;
 		return {
 			readable: new ReadableStream({
 				start(controller) {
@@ -36,19 +50,19 @@ export function fakeSocketConnect(responseChunks, state = {}) {
 }
 
 export function fakePersistentSocketConnect(
-	responseChunksByRequest,
-	state = {},
-) {
+	responseChunksByRequest: readonly (readonly SocketResponseChunk[])[],
+	state: SocketTestState = {},
+): SocketConnect {
 	const encoder = new TextEncoder();
 	const decoder = new TextDecoder();
-	const writes = [];
+	const writes: ByteChunk[] = [];
 	state.writes = writes;
 	state.connects = 0;
 	state.closed = 0;
 	let responseIndex = 0;
 	return function connect() {
-		state.connects += 1;
-		let controller;
+		state.connects = (state.connects ?? 0) + 1;
+		let controller: ReadableStreamDefaultController<ByteChunk> | undefined;
 		let requestText = "";
 		return {
 			readable: new ReadableStream({
@@ -65,25 +79,29 @@ export function fakePersistentSocketConnect(
 						throw new Error("unexpected additional socket request");
 					}
 					const responseChunks = responseChunksByRequest[responseIndex++];
+					if (!responseChunks) {
+						throw new Error("missing socket response chunks");
+					}
 					requestText = "";
 					for (const part of responseChunks) {
-						controller.enqueue(
+						controller?.enqueue(
 							typeof part === "string" ? encoder.encode(part) : part,
 						);
 					}
 				},
 			}),
 			close() {
-				state.closed += 1;
+				state.closed = Number(state.closed ?? 0) + 1;
 				try {
-					controller.close();
+					controller?.close();
 				} catch (_) {}
 			},
 		};
 	};
 }
 
-export function joinedWriteText(state) {
-	const total = state.writes.reduce((sum, chunk) => sum + chunk.length, 0);
-	return new TextDecoder().decode(_joinByteChunks(state.writes, total));
+export function joinedWriteText(state: SocketTestState): string {
+	const writes = state.writes ?? [];
+	const total = writes.reduce((sum, chunk) => sum + chunk.length, 0);
+	return new TextDecoder().decode(_joinByteChunks(writes, total));
 }

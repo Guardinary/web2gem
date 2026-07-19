@@ -1,9 +1,8 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { createStreamTextExtractor } from "../../../../src/gemini/client/parse-stream";
 import { assert } from "../../assertions.js";
 
-function wrbLine(texts) {
+function wrbLine(texts: readonly string[]): string {
 	const inner = [null, null, null, null, [[null, texts]], "x".repeat(160)];
 	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
 }

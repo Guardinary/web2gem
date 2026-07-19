@@ -1,19 +1,34 @@
-// @ts-nocheck
 import { afterEach, beforeEach, describe, test } from "vitest";
 import { uploadTextFile } from "../../../../src/gemini/uploads/execute";
+import type { ContentPushUploadError } from "../../../../src/gemini/uploads/errors";
 import { assert } from "../../assertions.js";
 import { withFetch } from "../../_support/globals.js";
 import {
 	assertMultipartRequest,
 	baseUploadConfig,
 	resetUploadState,
+	type UploadRequestInit,
 } from "./_support/upload-fixtures.js";
 
-async function captureError(run) {
+function isContentPushUploadError(
+	error: unknown,
+): error is ContentPushUploadError {
+	if (!(error instanceof Error) || !("code" in error)) return false;
+	return (
+		error.code === "content_push_http_status" ||
+		error.code === "content_push_invalid_ref" ||
+		error.code === "content_push_missing_page_token"
+	);
+}
+
+async function captureError(
+	run: () => unknown | PromiseLike<unknown>,
+): Promise<ContentPushUploadError> {
 	try {
 		await run();
 	} catch (error) {
-		return error;
+		if (isContentPushUploadError(error)) return error;
+		throw error;
 	}
 	throw new Error("expected operation to fail");
 }
@@ -23,9 +38,12 @@ describe("required Gemini uploads", () => {
 	afterEach(resetUploadState);
 
 	test("uploads required text through unauthenticated multipart transport", async () => {
-		const requests = [];
+		const requests: string[] = [];
 		await withFetch(
-			async (url, init = {}) => {
+			async (
+				url: RequestInfo | URL,
+				init: UploadRequestInit = { headers: {} },
+			) => {
 				const href = String(url);
 				requests.push(href);
 				if (href === "https://gemini.example/app") {
@@ -63,9 +81,12 @@ describe("required Gemini uploads", () => {
 	});
 
 	test("keeps protocol rejection as a hard failure without auth fallback", async () => {
-		const requests = [];
+		const requests: string[] = [];
 		await withFetch(
-			async (url, init = {}) => {
+			async (
+				url: RequestInfo | URL,
+				init: UploadRequestInit = { headers: {} },
+			) => {
 				const href = String(url);
 				requests.push(href);
 				if (href === "https://gemini.example/app") {
@@ -102,9 +123,9 @@ describe("required Gemini uploads", () => {
 	});
 
 	test("keeps invalid file refs as a hard failure", async () => {
-		const requests = [];
+		const requests: string[] = [];
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				requests.push(href);
 				if (href === "https://gemini.example/app") {
@@ -134,9 +155,12 @@ describe("required Gemini uploads", () => {
 	});
 
 	test("propagates network failures without attempting auth transport", async () => {
-		const requests = [];
+		const requests: string[] = [];
 		await withFetch(
-			async (url, init = {}) => {
+			async (
+				url: RequestInfo | URL,
+				init: UploadRequestInit = { headers: {} },
+			) => {
 				const href = String(url);
 				requests.push(href);
 				if (href === "https://gemini.example/app") {

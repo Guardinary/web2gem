@@ -1,10 +1,27 @@
-// @ts-nocheck
 import { resetActiveGeminiCookieForTest } from "../../../../../src/gemini/cookies";
 import { resetGeminiUploadCachesForTest } from "../../../../../src/gemini/uploads/tokens";
+import {
+	createRuntimeConfig,
+	getConfig,
+	type RuntimeConfig,
+} from "../../../../../src/config";
 import { assert } from "../../../assertions.js";
 
-export function baseUploadConfig(overrides = {}) {
+export type UploadRequestInit = RequestInit & {
+	headers: Record<string, string>;
+};
+type ExpectedMultipartRequest = {
+	pushId?: string;
+	filename: string;
+	mime: string;
+	bodyText?: string;
+};
+
+export function baseUploadConfig(
+	overrides: Partial<RuntimeConfig> = {},
+): RuntimeConfig {
 	return {
+		...createRuntimeConfig(getConfig()),
 		gemini_origin: "https://gemini.example",
 		cookie: "",
 		sapisid: "",
@@ -16,12 +33,14 @@ export function baseUploadConfig(overrides = {}) {
 	};
 }
 
-export function accountUploadConfig(accountId, cookieHash) {
+export function accountUploadConfig(
+	accountId: string,
+	cookieHash: string,
+): RuntimeConfig {
 	return baseUploadConfig({
 		cookie: `__Secure-1PSID=psid-${accountId}; __Secure-1PSIDTS=ts-${accountId}`,
 		gemini_account: {
 			accountId,
-			rowId: `row-${accountId}`,
 			cookieHash,
 		},
 	});
@@ -32,7 +51,10 @@ export function resetUploadState() {
 	resetGeminiUploadCachesForTest();
 }
 
-export async function assertMultipartRequest(init, expected) {
+export async function assertMultipartRequest(
+	init: UploadRequestInit,
+	expected: ExpectedMultipartRequest,
+): Promise<string> {
 	const text = await multipartRequestText(init);
 	if (expected.pushId !== undefined) {
 		assert.equal(init.headers["Push-ID"], expected.pushId);
@@ -51,7 +73,9 @@ export async function assertMultipartRequest(init, expected) {
 	return text;
 }
 
-export async function multipartRequestText(init) {
+export async function multipartRequestText(
+	init: UploadRequestInit,
+): Promise<string> {
 	assert.equal(init.method, "POST");
 	assert.equal(init.headers["X-Tenant-Id"], "bard-storage");
 	assert.equal(init.headers.Cookie, undefined);
@@ -64,7 +88,9 @@ export async function multipartRequestText(init) {
 	return text;
 }
 
-export async function bodyBytes(body) {
+export async function bodyBytes(
+	body: BodyInit | null | undefined,
+): Promise<Uint8Array> {
 	if (body instanceof Uint8Array) return body;
 	if (body instanceof ArrayBuffer) return new Uint8Array(body);
 	if (ArrayBuffer.isView(body)) {
@@ -73,6 +99,6 @@ export async function bodyBytes(body) {
 	return new Response(body).bytes();
 }
 
-function escapeRegExp(value) {
+function escapeRegExp(value: unknown): string {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

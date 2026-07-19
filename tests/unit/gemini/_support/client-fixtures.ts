@@ -1,6 +1,14 @@
-// @ts-nocheck
-export function baseGeminiClientConfig(overrides = {}) {
+import {
+	createRuntimeConfig,
+	getConfig,
+	type RuntimeConfig,
+} from "../../../../src/config";
+
+export function baseGeminiClientConfig(
+	overrides: Partial<RuntimeConfig> = {},
+): RuntimeConfig {
 	return {
+		...createRuntimeConfig(getConfig()),
 		gemini_origin: "https://gemini.example",
 		gemini_bl: "boq_test",
 		cookie: "",

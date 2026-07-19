@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test, vi } from "vitest";
 import {
 	closeSocketQuietly,

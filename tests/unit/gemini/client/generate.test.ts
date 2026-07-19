@@ -1,16 +1,31 @@
-// @ts-nocheck
 import { afterEach, beforeEach, describe, test } from "vitest";
 import { generate } from "../../../../src/gemini/client";
 import { resetGeminiBuildLabelCacheForTest } from "../../../../src/gemini/client/retry";
 import { resetActiveGeminiCookieForTest } from "../../../../src/gemini/cookies";
 import { resetGeminiUploadCachesForTest } from "../../../../src/gemini/uploads/tokens";
+import type { ErrorWithMetadata } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { withFetch } from "../../_support/globals.js";
 import { baseGeminiClientConfig } from "../_support/client-fixtures.js";
 
-function wrbLine(texts) {
+type TestRequestInit = Omit<RequestInit, "headers"> & {
+	headers?: Record<string, string>;
+};
+
+type FetchCall = { url: string; init: TestRequestInit };
+type RotationCall = {
+	href: string;
+	cookie: string | undefined;
+	body: string;
+};
+
+function wrbLine(texts: readonly string[]) {
 	const inner = [null, null, null, null, [[null, texts]], "x".repeat(160)];
 	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
+}
+
+function isErrorWithMetadata(error: unknown): error is ErrorWithMetadata {
+	return error instanceof Error;
 }
 
 function resetGenerateClientState() {
@@ -23,7 +38,7 @@ describe("Gemini client generation", () => {
 	beforeEach(resetGenerateClientState);
 	afterEach(resetGenerateClientState);
 	test("observes managed account cookies from generation responses", async () => {
-		const observed = [];
+		const observed: string[][] = [];
 		const cfg = baseGeminiClientConfig({
 			gemini_account: {
 				accountId: "managed",
@@ -34,7 +49,7 @@ describe("Gemini client generation", () => {
 			},
 		});
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				assert.match(href, /StreamGenerate/);
 				return new Response(wrbLine(["observed"]), {
@@ -49,16 +64,16 @@ describe("Gemini client generation", () => {
 			},
 		);
 		assert.equal(observed.length, 1);
-		assert.match(observed[0][0], /from-generation/);
+		assert.match(observed[0]?.[0], /from-generation/);
 	});
 	test("generates text with page auth token appended for cookie requests", async () => {
-		const calls = [];
+		const calls: FetchCall[] = [];
 		const cfg = baseGeminiClientConfig({
 			cookie: "__Secure-1PSID=psid; SAPISID=sapi",
 			sapisid: "sapi",
 		});
 		await withFetch(
-			async (url, init = {}) => {
+			async (url: RequestInfo | URL, init: TestRequestInit = {}) => {
 				calls.push({ url: String(url), init });
 				if (String(url) === "https://gemini.example/app") {
 					return new Response('{"SNlM0e":"at-test"}', { status: 200 });
@@ -91,13 +106,13 @@ describe("Gemini client generation", () => {
 			},
 		);
 		assert.equal(calls.length, 2);
-		assert.equal(calls[0].init.headers.Cookie, cfg.cookie);
+		assert.equal(calls[0]?.init.headers?.Cookie, cfg.cookie);
 	});
 	test("rejects cookie requests when Gemini page auth token is missing", async () => {
-		const calls = [];
+		const calls: string[] = [];
 		const cfg = baseGeminiClientConfig({ cookie: "SID=ok" });
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				calls.push(String(url));
 				if (String(url) === "https://gemini.example/app")
 					return new Response("<html>no at token</html>", { status: 200 });
@@ -108,6 +123,7 @@ describe("Gemini client generation", () => {
 					await generate(cfg, "prompt", 1, false, null);
 					throw new Error("expected missing page token failure");
 				} catch (err) {
+					if (!isErrorWithMetadata(err)) throw err;
 					assert.equal(err.code, "invalid_gemini_cookie");
 					assert.match(err.message, /Gemini account pool/);
 				}
@@ -116,13 +132,13 @@ describe("Gemini client generation", () => {
 		assert.deepEqual(calls, ["https://gemini.example/app"]);
 	});
 	test("reports cookie rotation failure when StreamGenerate rejects the cookie", async () => {
-		const calls = [];
+		const calls: string[] = [];
 		const cfg = baseGeminiClientConfig({
 			cookie: "__Secure-1PSID=psid; SAPISID=sapi",
 			sapisid: "sapi",
 		});
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				calls.push(href);
 				if (href === "https://gemini.example/app")
@@ -137,6 +153,7 @@ describe("Gemini client generation", () => {
 					await generate(cfg, "prompt", 1, false, null);
 					throw new Error("expected invalid cookie failure");
 				} catch (err) {
+					if (!isErrorWithMetadata(err)) throw err;
 					assert.equal(err.code, "invalid_gemini_cookie");
 					assert.equal(
 						err.reason,
@@ -154,7 +171,7 @@ describe("Gemini client generation", () => {
 		);
 	});
 	test("retries generate after successful cookie rotation", async () => {
-		const calls = [];
+		const calls: RotationCall[] = [];
 		let appCalls = 0;
 		let streamCalls = 0;
 		const cfg = baseGeminiClientConfig({
@@ -162,7 +179,7 @@ describe("Gemini client generation", () => {
 			retry_attempts: 2,
 		});
 		await withFetch(
-			async (url, init = {}) => {
+			async (url: RequestInfo | URL, init: TestRequestInit = {}) => {
 				const href = String(url);
 				calls.push({
 					href,
@@ -174,7 +191,7 @@ describe("Gemini client generation", () => {
 					return new Response(`{"SNlM0e":"at-${appCalls}"}`, { status: 200 });
 				}
 				if (href === "https://accounts.google.com/RotateCookies") {
-					assert.match(init.headers.Cookie, /__Secure-1PSIDTS=old/);
+					assert.match(init.headers?.Cookie ?? "", /__Secure-1PSIDTS=old/);
 					return new Response("", {
 						status: 200,
 						headers: { "set-cookie": "__Secure-1PSIDTS=new; Path=/; Secure" },
@@ -184,7 +201,7 @@ describe("Gemini client generation", () => {
 				streamCalls += 1;
 				if (streamCalls === 1)
 					return new Response("cookie rejected", { status: 401 });
-				assert.match(init.headers.Cookie, /__Secure-1PSIDTS=new/);
+				assert.match(init.headers?.Cookie ?? "", /__Secure-1PSIDTS=new/);
 				assert.match(String(init.body), /&at=at-2/);
 				return new Response(wrbLine(["after cookie rotation"]), {
 					status: 200,
@@ -208,9 +225,9 @@ describe("Gemini client generation", () => {
 			gemini_bl: "old-bl",
 			retry_attempts: 2,
 		});
-		const streamUrls = [];
+		const streamUrls: string[] = [];
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				if (href === "https://gemini.example/app") {
 					return new Response('<html>{"cfb2h":"fresh-bl"}</html>', {
@@ -228,14 +245,14 @@ describe("Gemini client generation", () => {
 				assert.equal(text, "after refresh");
 			},
 		);
-		assert.match(streamUrls[0], /bl=old-bl/);
-		assert.match(streamUrls[1], /bl=fresh-bl/);
+		assert.match(streamUrls[0] ?? "", /bl=old-bl/);
+		assert.match(streamUrls[1] ?? "", /bl=fresh-bl/);
 	});
 	test("throws explicit non-stream upstream error when refresh cannot recover", async () => {
 		const cfg = baseGeminiClientConfig({ gemini_bl: "stale-bl" });
-		const calls = [];
+		const calls: string[] = [];
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				calls.push(href);
 				if (href === "https://gemini.example/app")
@@ -252,6 +269,7 @@ describe("Gemini client generation", () => {
 					await generate(cfg, "prompt", 1, false, null);
 					throw new Error("expected non-stream upstream failure");
 				} catch (err) {
+					if (!isErrorWithMetadata(err)) throw err;
 					assert.match(err.message, /HTTP 502 returned no parseable text/);
 				}
 			},
@@ -262,9 +280,9 @@ describe("Gemini client generation", () => {
 	});
 	test("throws explicit non-stream upstream empty error for HTTP 200 responses", async () => {
 		const cfg = baseGeminiClientConfig({ gemini_bl: "stale-bl" });
-		const calls = [];
+		const calls: string[] = [];
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				calls.push(href);
 				if (href === "https://gemini.example/app")
@@ -281,6 +299,7 @@ describe("Gemini client generation", () => {
 					await generate(cfg, "prompt", 1, false, null);
 					throw new Error("expected upstream empty response");
 				} catch (err) {
+					if (!isErrorWithMetadata(err)) throw err;
 					assert.equal(err.code, "upstream_empty_response");
 					assert.equal(err.status, 502);
 					assert.equal(err.upstreamStatus, 200);
@@ -299,7 +318,7 @@ describe("Gemini client generation", () => {
 		const cfg = baseGeminiClientConfig();
 		let calls = 0;
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				calls += 1;
 				assert.match(String(url), /StreamGenerate/);
 				return new Response("data_analysis_tool returned no final text", {
@@ -313,6 +332,7 @@ describe("Gemini client generation", () => {
 					]);
 					throw new Error("expected data-analysis empty response");
 				} catch (err) {
+					if (!isErrorWithMetadata(err)) throw err;
 					assert.equal(err.code, "data_analysis_empty_response");
 					assert.match(err.message, /data_analysis_tool/);
 				}
@@ -326,7 +346,7 @@ describe("Gemini client generation", () => {
 		});
 		let calls = 0;
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				calls += 1;
 				assert.match(String(url), /StreamGenerate/);
 				return new Response("no parseable text", { status: 200 });
@@ -336,8 +356,14 @@ describe("Gemini client generation", () => {
 					await generate(cfg, "x".repeat(20), 1, false, null);
 					throw new Error("expected large prompt empty response");
 				} catch (err) {
+					if (!isErrorWithMetadata(err)) throw err;
 					assert.equal(err.code, "large_prompt_empty_response");
 					assert.equal(err.thresholdBytes, 10);
+					if (
+						typeof err.promptBytes !== "number" ||
+						typeof err.thresholdBytes !== "number"
+					)
+						throw err;
 					assert.equal(err.promptBytes > err.thresholdBytes, true);
 				}
 			},

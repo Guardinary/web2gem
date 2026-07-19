@@ -1,10 +1,9 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { socketHttp } from "../../../../src/gemini/transport/socket";
 import { assert } from "../../assertions.js";
 import { fakeSocketConnect, joinedWriteText } from "./_support/socket.js";
 
-async function gzipText(text) {
+async function gzipText(text: string): Promise<Uint8Array> {
 	const stream = new Blob([text])
 		.stream()
 		.pipeThrough(new CompressionStream("gzip"));
@@ -14,7 +13,7 @@ async function gzipText(text) {
 describe.sequential("socket response decompression", () => {
 	test("decodes compressed socket HTTP responses when explicitly enabled", async () => {
 		const body = await gzipText("hello");
-		const state = {};
+		const state: { closed?: boolean } = {};
 		const resp = await socketHttp(
 			fakeSocketConnect(
 				[

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { invalidGeminiCookieError } from "../../../../src/gemini/client/errors";
 import { assert } from "../../assertions.js";
@@ -11,6 +10,7 @@ describe("Gemini client errors", () => {
 			null,
 			"rotation_no_update",
 		);
+		if (!err) throw new Error("expected an invalid cookie error");
 		assert.equal(err.code, "invalid_gemini_cookie");
 		assert.equal(
 			err.reason,

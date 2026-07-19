@@ -65,6 +65,25 @@ Do not use `declare module "*.mjs"`, an explicit `any`, or a double cast merely
 to silence the import. Run the focused suite, `pnpm typecheck:tests`, and
 `pnpm check:static` after introducing this boundary.
 
+### Strict test doubles at platform boundaries
+
+Gemini client, transport, and upload tests must keep platform doubles aligned
+with the owner contract while remaining local to the suite:
+
+- Model decoded WRB fixtures as `unknown[]` and build sparse nested paths with
+  typed local arrays; do not assert provider payloads as a broad record.
+- Type fetch callbacks with `RequestInfo | URL` and a narrow `RequestInit`
+  extension when tests inspect header keys; use `new Headers(...)` when the
+  callback receives the standard `RequestInit` shape.
+- Type `ReadableStream`/`WritableStream` doubles with their byte chunk type and
+  guard indexed values before using them under `noUncheckedIndexedAccess`.
+- Capture thrown values as `unknown` and narrow them with an owner-local
+  predicate before reading metadata such as `code`, `status`, or `reason`.
+
+This keeps test behavior coupled to the same request, byte, and error contracts
+as production code without weakening `tsconfig.tests.json` or introducing
+test-wide ambient declarations.
+
 ## Change Size
 
 When tightening external payload types, prefer small, behavior-preserving

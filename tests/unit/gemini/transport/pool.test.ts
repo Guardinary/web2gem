@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test, vi } from "vitest";
 import {
 	closeIdleSocketPool,
@@ -10,10 +9,12 @@ import {
 	takeIdleSocket,
 } from "../../../../src/gemini/transport/pool";
 import { socketHttp } from "../../../../src/gemini/transport/socket";
+import type { SocketLike } from "../../../../src/gemini/transport/socket-types";
 import { assert } from "../../assertions.js";
 import {
 	fakePersistentSocketConnect,
 	joinedWriteText,
+	type SocketTestState,
 } from "./_support/socket.js";
 
 describe.sequential("socket pools", () => {
@@ -22,7 +23,7 @@ describe.sequential("socket pools", () => {
 		vi.restoreAllMocks();
 	});
 	test("reuses socket HTTP keep-alive connections after complete bounded responses", async () => {
-		const state = {};
+		const state: SocketTestState = {};
 		const connect = fakePersistentSocketConnect(
 			[
 				["HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\none"],
@@ -57,7 +58,7 @@ describe.sequential("socket pools", () => {
 		}
 	});
 	test("does not reuse socket HTTP connections when upstream asks to close", async () => {
-		const state = {};
+		const state: SocketTestState = {};
 		const connect = fakePersistentSocketConnect(
 			[
 				[
@@ -91,11 +92,14 @@ describe.sequential("socket pools", () => {
 	});
 	test("manages socket idle pool expiry cap and explicit close", async () => {
 		let now = 1000;
-		const sockets = [];
-		const makeSocket = (name) => {
+		type TestSocket = SocketLike & { name: string; closed: number };
+		const sockets: TestSocket[] = [];
+		const makeSocket = (name: string): TestSocket => {
 			const socket = {
 				name,
 				closed: 0,
+				readable: new ReadableStream<Uint8Array>(),
+				writable: new WritableStream<Uint8Array>(),
 				close() {
 					this.closed += 1;
 				},
@@ -121,7 +125,7 @@ describe.sequential("socket pools", () => {
 			putIdleSocket(pool, key, third);
 			assert.equal(first.closed, 1);
 			assert.equal(
-				pool.idle.get(key).length,
+				pool.idle.get(key)?.length,
 				SOCKET_KEEP_ALIVE_MAX_IDLE_PER_ORIGIN,
 			);
 

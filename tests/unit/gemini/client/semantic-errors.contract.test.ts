@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, beforeEach, describe, test } from "vitest";
 import {
 	generate,
@@ -6,28 +5,40 @@ import {
 	generateStream,
 } from "../../../../src/gemini/client";
 import { resetGeminiBuildLabelCacheForTest } from "../../../../src/gemini/client/retry";
+import type { ErrorWithMetadata } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { withFetch } from "../../_support/globals.js";
 import { baseGeminiClientConfig } from "../_support/client-fixtures.js";
 
-function fatalWrbLine(code, location = "inner") {
-	const inner = [null, null, null, null, []];
-	const envelope = ["wrb.fr", null, JSON.stringify(inner)];
+type SemanticError = ErrorWithMetadata & {
+	geminiSource?: string;
+	geminiCode?: string;
+};
+
+function fatalWrbLine(code: number, location = "inner") {
+	const inner: unknown[] = [null, null, null, null, []];
+	const envelope: unknown[] = ["wrb.fr", null, JSON.stringify(inner)];
 	const target = location === "envelope" ? envelope : inner;
-	target[5] = [];
-	target[5][2] = [];
-	target[5][2][0] = [];
-	target[5][2][0][1] = [code];
+	const codeEntry: unknown[] = [];
+	codeEntry[1] = [code];
+	const fatalParts: unknown[] = [];
+	fatalParts[2] = [codeEntry];
+	target[5] = fatalParts;
 	if (location !== "envelope") envelope[2] = JSON.stringify(inner);
 	return JSON.stringify([envelope]);
 }
 
-async function assertRejectsWithCode(run, code) {
+async function assertRejectsWithCode(
+	run: () => unknown | PromiseLike<unknown>,
+	code: string,
+): Promise<SemanticError> {
 	try {
 		await run();
 	} catch (err) {
-		assert.equal(err.code, code);
-		return err;
+		if (!(err instanceof Error)) throw err;
+		const semanticError: SemanticError = err;
+		assert.equal(semanticError.code, code);
+		return semanticError;
 	}
 	throw new Error(`expected rejection with code ${code}`);
 }
@@ -40,7 +51,7 @@ describe("Gemini semantic error precedence", () => {
 		const cfg = baseGeminiClientConfig();
 		let calls = 0;
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				calls += 1;
 				assert.match(String(url), /StreamGenerate/);
 				return new Response(fatalWrbLine(1037), { status: 200 });
@@ -62,7 +73,7 @@ describe("Gemini semantic error precedence", () => {
 		const cfg = baseGeminiClientConfig();
 		let calls = 0;
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				calls += 1;
 				assert.match(String(url), /StreamGenerate/);
 				return new Response(`${fatalWrbLine(1052)}\n`, { status: 200 });
@@ -92,7 +103,7 @@ describe("Gemini semantic error precedence", () => {
 		const cfg = baseGeminiClientConfig();
 		let calls = 0;
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				calls += 1;
 				assert.match(String(url), /StreamGenerate/);
 				return new Response(fatalWrbLine(1013), { status: 200 });
@@ -112,9 +123,9 @@ describe("Gemini semantic error precedence", () => {
 
 	test("maps rich empty responses to an image generation error", async () => {
 		const cfg = baseGeminiClientConfig();
-		const calls = [];
+		const calls: string[] = [];
 		await withFetch(
-			async (url) => {
+			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				calls.push(href);
 				if (href.includes("StreamGenerate"))
@@ -140,7 +151,7 @@ describe("Gemini semantic error precedence", () => {
 			},
 		);
 		assert.equal(calls.length, 2);
-		assert.match(calls[0], /StreamGenerate/);
+		assert.match(calls[0] ?? "", /StreamGenerate/);
 		assert.equal(calls[1], "https://gemini.example/app");
 	});
 });

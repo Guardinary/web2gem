@@ -1,8 +1,13 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { mapWithConcurrencyAndWeight } from "../../../../src/gemini/concurrency";
 import { assert } from "../../assertions.js";
-import { deferred } from "../../_support/deferred.js";
+import { deferred, type Deferred } from "../../_support/deferred.js";
+
+function requiredDeferred<T>(items: readonly Deferred<T>[], index: number) {
+	const item = items[index];
+	if (!item) throw new Error(`missing deferred ${index}`);
+	return item;
+}
 
 describe("weighted upload concurrency", () => {
 	test("limits active mapper count independently of weight", async () => {
@@ -21,22 +26,25 @@ describe("weighted upload concurrency", () => {
 				startedFlags[index] = true;
 				activeCount += 1;
 				maxActiveCount = Math.max(maxActiveCount, activeCount);
-				started[index].resolve();
-				await release[index].promise;
+				requiredDeferred(started, index).resolve();
+				await requiredDeferred(release, index).promise;
 				activeCount -= 1;
 				return value;
 			},
 		);
 
-		await Promise.all([started[0].promise, started[1].promise]);
+		await Promise.all([
+			requiredDeferred(started, 0).promise,
+			requiredDeferred(started, 1).promise,
+		]);
 		assert.deepEqual(startedFlags, [true, true, false, false]);
-		release[0].resolve();
-		await started[2].promise;
+		requiredDeferred(release, 0).resolve();
+		await requiredDeferred(started, 2).promise;
 		assert.deepEqual(startedFlags, [true, true, true, false]);
-		release[1].resolve();
-		await started[3].promise;
-		release[2].resolve();
-		release[3].resolve();
+		requiredDeferred(release, 1).resolve();
+		await requiredDeferred(started, 3).promise;
+		requiredDeferred(release, 2).resolve();
+		requiredDeferred(release, 3).resolve();
 
 		assert.deepEqual(await operation, [0, 1, 2, 3]);
 		assert.equal(maxActiveCount, 2);
@@ -58,20 +66,23 @@ describe("weighted upload concurrency", () => {
 				startedFlags[index] = true;
 				activeWeight += value;
 				maxActiveWeight = Math.max(maxActiveWeight, activeWeight);
-				started[index].resolve();
-				await release[index].promise;
+				requiredDeferred(started, index).resolve();
+				await requiredDeferred(release, index).promise;
 				activeWeight -= value;
 				return `result-${index}`;
 			},
 		);
 
-		await Promise.all([started[0].promise, started[1].promise]);
+		await Promise.all([
+			requiredDeferred(started, 0).promise,
+			requiredDeferred(started, 1).promise,
+		]);
 		assert.deepEqual(startedFlags, [true, true, false]);
-		release[0].resolve();
-		await started[2].promise;
+		requiredDeferred(release, 0).resolve();
+		await requiredDeferred(started, 2).promise;
 		assert.deepEqual(startedFlags, [true, true, true]);
-		release[1].resolve();
-		release[2].resolve();
+		requiredDeferred(release, 1).resolve();
+		requiredDeferred(release, 2).resolve();
 
 		assert.deepEqual(await operation, ["result-0", "result-1", "result-2"]);
 		assert.equal(maxActiveWeight, 10);
@@ -94,25 +105,25 @@ describe("weighted upload concurrency", () => {
 				startedFlags[index] = true;
 				activeWeight += value;
 				maxActiveWeight = Math.max(maxActiveWeight, activeWeight);
-				started[index].resolve();
-				await release[index].promise;
+				requiredDeferred(started, index).resolve();
+				await requiredDeferred(release, index).promise;
 				activeWeight -= value;
 				return index;
 			},
 		);
 
-		await started[0].promise;
+		await requiredDeferred(started, 0).promise;
 		assert.deepEqual(startedFlags, [true, false, false, false]);
-		release[0].resolve();
-		await started[1].promise;
+		requiredDeferred(release, 0).resolve();
+		await requiredDeferred(started, 1).promise;
 		assert.deepEqual(startedFlags, [true, true, false, false]);
-		release[1].resolve();
-		await started[2].promise;
+		requiredDeferred(release, 1).resolve();
+		await requiredDeferred(started, 2).promise;
 		assert.deepEqual(startedFlags, [true, true, true, false]);
 		assert.equal(activeWeight, 12);
-		release[2].resolve();
-		await started[3].promise;
-		release[3].resolve();
+		requiredDeferred(release, 2).resolve();
+		await requiredDeferred(started, 3).promise;
+		requiredDeferred(release, 3).resolve();
 
 		assert.deepEqual(await operation, [0, 1, 2, 3]);
 		assert.equal(maxActiveWeight, 12);
@@ -123,7 +134,7 @@ describe("weighted upload concurrency", () => {
 		const secondStarted = deferred();
 		const releaseSecond = deferred();
 		const secondCompleted = deferred();
-		const starts = [];
+		const starts: number[] = [];
 
 		const operation = mapWithConcurrencyAndWeight(
 			[12, 4],

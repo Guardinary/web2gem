@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	cleanText,
@@ -10,7 +9,7 @@ import {
 } from "../../../../src/gemini/client/parse-parts";
 import { assert } from "../../assertions.js";
 
-function framedWrbRaw(candidate) {
+function framedWrbRaw(candidate: unknown[]) {
 	const inner = [
 		null,
 		["cid_1", "rid_1", "rcid_meta"],
@@ -30,19 +29,21 @@ function framedWrbRaw(candidate) {
 	return `)]}'\n\n${payload.length}\n${payload}${emptyPayload.length}\n${emptyPayload}`;
 }
 
-function wrbLine(candidate) {
+function wrbLine(candidate: unknown[]) {
 	const inner = [null, null, null, null, [candidate], "x".repeat(160)];
 	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
 }
 
-function fatalWrbLine(code, location = "inner") {
-	const inner = [null, null, null, null, []];
-	const envelope = ["wrb.fr", null, JSON.stringify(inner)];
+function fatalWrbLine(code: number, location = "inner") {
+	const inner: unknown[] = [null, null, null, null, []];
+	const envelope: unknown[] = ["wrb.fr", null, JSON.stringify(inner)];
 	const target = location === "envelope" ? envelope : inner;
-	target[5] = [];
-	target[5][2] = [];
-	target[5][2][0] = [];
-	target[5][2][0][1] = [code];
+	const codeEntry: unknown[] = [];
+	codeEntry[1] = [code];
+	const codeGroup: unknown[] = [codeEntry];
+	const fatalParts: unknown[] = [];
+	fatalParts[2] = codeGroup;
+	target[5] = fatalParts;
 	if (location !== "envelope") envelope[2] = JSON.stringify(inner);
 	return JSON.stringify([envelope]);
 }
@@ -51,10 +52,11 @@ function generatedImageEntry(
 	url = "https://lh3.googleusercontent.com/generated=s1024-rj",
 	id = "img_1",
 ) {
-	const meta = [];
-	meta[3] = [];
-	meta[3][2] = "generated alt";
-	meta[3][3] = url;
+	const detail: unknown[] = [];
+	detail[2] = "generated alt";
+	detail[3] = url;
+	const meta: unknown[] = [];
+	meta[3] = detail;
 	return [meta, [id]];
 }
 
@@ -62,11 +64,12 @@ function generatedImageCandidate(
 	text = "final text",
 	url = "https://lh3.googleusercontent.com/generated=s1024-rj",
 ) {
-	const candidate = [];
+	const candidate: unknown[] = [];
 	candidate[1] = [text];
 	candidate[8] = [2];
-	candidate[12] = [];
-	candidate[12][7] = [[generatedImageEntry(url)]];
+	const rich: unknown[] = [];
+	rich[7] = [[generatedImageEntry(url)]];
+	candidate[12] = rich;
 	return candidate;
 }
 
@@ -135,12 +138,12 @@ describe("Gemini response parts", () => {
 		assert.equal(parts.text, "image 🟦 ready");
 		assert.equal(parts.generatedImageCount, 1);
 		assert.equal(
-			parts.images[0].url,
+			parts.images[0]?.url,
 			"https://lh3.googleusercontent.com/generated=s1024-rj",
 		);
-		assert.equal(parts.images[0].cid, "cid_1");
-		assert.equal(parts.images[0].rid, "rid_1");
-		assert.equal(parts.images[0].rcid, "rcid_1");
+		assert.equal(parts.images[0]?.cid, "cid_1");
+		assert.equal(parts.images[0]?.rid, "rid_1");
+		assert.equal(parts.images[0]?.rcid, "rcid_1");
 	});
 	test("maps numeric Gemini fatal part codes from inner payloads and envelopes", () => {
 		for (const code of [1013, 1037, 1050, 1052, 1060]) {

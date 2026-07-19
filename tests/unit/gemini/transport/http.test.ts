@@ -1,13 +1,14 @@
-// @ts-nocheck
 import { afterEach, beforeEach, describe, test } from "vitest";
 import { httpFetch } from "../../../../src/gemini/transport/http";
 import { closeIdleSocketPool } from "../../../../src/gemini/transport/pool";
 import { _setConnectForTest } from "../../../../src/gemini/transport/socket";
+import type { ErrorWithMetadata } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { withConsoleLog, withFetch } from "../../_support/globals.js";
 import {
 	fakePersistentSocketConnect,
 	joinedWriteText,
+	type SocketTestState,
 } from "./_support/socket.js";
 
 function resetHttpTransportOwner() {
@@ -25,21 +26,23 @@ describe.sequential("httpFetch transport selection", () => {
 			"any",
 		);
 		const originalAny = originalDescriptor?.value;
-		assert.equal(typeof originalAny, "function");
+		if (typeof originalAny !== "function") {
+			throw new Error("expected AbortSignal.any");
+		}
 		let calls = 0;
-		let seenSignals = null;
+		const capturedSignals: AbortSignal[][] = [];
 		Object.defineProperty(AbortSignal, "any", {
 			...originalDescriptor,
-			value(signals) {
+			value(signals: AbortSignal[]) {
 				calls += 1;
-				seenSignals = Array.from(signals);
+				capturedSignals.push(Array.from(signals));
 				return originalAny.call(AbortSignal, signals);
 			},
 		});
 		try {
 			const ac = new AbortController();
 			await withFetch(
-				async (_url, init = {}) => {
+				async (_url: RequestInfo | URL, init: RequestInit = {}) => {
 					assert.equal(init.signal instanceof AbortSignal, true);
 					return new Response("ok");
 				},
@@ -53,6 +56,8 @@ describe.sequential("httpFetch transport selection", () => {
 				},
 			);
 			assert.equal(calls, 1);
+			const seenSignals = capturedSignals[0];
+			if (!seenSignals) throw new Error("expected linked signals");
 			assert.equal(seenSignals[0], ac.signal);
 			assert.equal(seenSignals.length, 2);
 			assert.equal(seenSignals[1] instanceof AbortSignal, true);
@@ -60,13 +65,13 @@ describe.sequential("httpFetch transport selection", () => {
 			if (originalDescriptor) {
 				Object.defineProperty(AbortSignal, "any", originalDescriptor);
 			} else {
-				delete AbortSignal.any;
+				Reflect.deleteProperty(AbortSignal, "any");
 			}
 		}
 	});
 
 	test("enables socket keep-alive on the httpFetch upstream path", async () => {
-		const state = {};
+		const state: SocketTestState = {};
 		const connect = fakePersistentSocketConnect(
 			[
 				["HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\none"],
@@ -96,9 +101,9 @@ describe.sequential("httpFetch transport selection", () => {
 
 	test("falls back to fetch after a pre-response socket failure", async () => {
 		let fetched = false;
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				withFetch(
 					async () => {
@@ -107,7 +112,7 @@ describe.sequential("httpFetch transport selection", () => {
 					},
 					async () => {
 						_setConnectForTest(() => {
-							const err = new Error("socket boom secret");
+							const err: ErrorWithMetadata = new Error("socket boom secret");
 							err.code = "socket_boom";
 							throw err;
 						});
@@ -131,9 +136,9 @@ describe.sequential("httpFetch transport selection", () => {
 
 	test("honors disabled socket fallback policy", async () => {
 		let fetched = false;
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				withFetch(
 					async () => {
@@ -142,7 +147,9 @@ describe.sequential("httpFetch transport selection", () => {
 					},
 					async () => {
 						_setConnectForTest(() => {
-							const err = new Error("socket disabled secret");
+							const err: ErrorWithMetadata = new Error(
+								"socket disabled secret",
+							);
 							err.code = "socket_disabled";
 							throw err;
 						});
@@ -173,19 +180,21 @@ describe.sequential("httpFetch transport selection", () => {
 	test("replays untouched streaming request bodies through fetch fallback", async () => {
 		let fetched = false;
 		let fetchBody = "";
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				withFetch(
-					async (_url, init = {}) => {
+					async (_url: RequestInfo | URL, init: RequestInit = {}) => {
 						fetched = true;
 						fetchBody = init.body ? await new Response(init.body).text() : "";
 						return new Response("fallback", { status: 202 });
 					},
 					async () => {
 						_setConnectForTest(() => {
-							const err = new Error("stream body socket secret");
+							const err: ErrorWithMetadata = new Error(
+								"stream body socket secret",
+							);
 							err.code = "socket_stream_body";
 							throw err;
 						});
@@ -222,9 +231,9 @@ describe.sequential("httpFetch transport selection", () => {
 	test("does not replay streaming bodies after socket consumption starts", async () => {
 		let fetched = false;
 		let writes = 0;
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				withFetch(
 					async () => {
@@ -278,9 +287,9 @@ describe.sequential("httpFetch transport selection", () => {
 
 	test("does not fall back after upstream response status is exposed", async () => {
 		let fetched = false;
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				withFetch(
 					async () => {
@@ -289,7 +298,9 @@ describe.sequential("httpFetch transport selection", () => {
 					},
 					async () => {
 						_setConnectForTest(() => {
-							const err = new Error("upstream response started secret");
+							const err: ErrorWithMetadata = new Error(
+								"upstream response started secret",
+							);
 							err.code = "socket_response_started";
 							err.upstreamStatus = 502;
 							throw err;

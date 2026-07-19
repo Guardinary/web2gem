@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { createByteQueue } from "../../../../src/gemini/transport/byte-queue";
 import { parseHttpChunkSizeLine } from "../../../../src/gemini/transport/http-parse";

@@ -1,15 +1,18 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { buildMultipartFileBody } from "../../../../src/gemini/uploads/multipart";
 import { assert } from "../../assertions.js";
 import { withPatchedGlobal } from "../../_support/globals.js";
 import { bodyBytes } from "./_support/upload-fixtures.js";
 
-function escapeRegExp(value) {
+function escapeRegExp(value: unknown) {
 	return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function assertMultipartText(multipart, bytes, expectedText) {
+function assertMultipartText(
+	multipart: ReturnType<typeof buildMultipartFileBody>,
+	bytes: Uint8Array,
+	expectedText: string,
+) {
 	const text = new TextDecoder().decode(bytes);
 	assert.equal(bytes.byteLength, multipart.contentLength);
 	assert.equal(
@@ -28,11 +31,14 @@ function assertMultipartText(multipart, bytes, expectedText) {
 
 describe("multipart upload bodies", () => {
 	test("writes exact bytes through FixedLengthStream", async () => {
-		const lengths = [];
+		const lengths: number[] = [];
 		class FakeFixedLengthStream {
-			constructor(length) {
+			readonly readable: ReadableStream<Uint8Array>;
+			readonly writable: WritableStream<Uint8Array>;
+
+			constructor(length: number) {
 				lengths.push(length);
-				const stream = new TransformStream();
+				const stream = new TransformStream<Uint8Array, Uint8Array>();
 				this.readable = stream.readable;
 				this.writable = stream.writable;
 			}

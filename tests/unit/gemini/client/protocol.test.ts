@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	buildHeaders,
@@ -6,6 +5,7 @@ import {
 	getUrl,
 } from "../../../../src/gemini/client/protocol";
 import { assert } from "../../assertions.js";
+import { baseGeminiClientConfig } from "../_support/client-fixtures.js";
 
 describe("Gemini client protocol", () => {
 	test("builds Gemini payload with model number and extended thinking", () => {
@@ -16,7 +16,9 @@ describe("Gemini client protocol", () => {
 			[{ ref: "file-ref", name: "doc.txt" }],
 			"req-test",
 		);
-		const outer = JSON.parse(new URLSearchParams(payload).get("f.req"));
+		const encodedRequest = new URLSearchParams(payload).get("f.req");
+		if (encodedRequest === null) throw new Error("missing f.req payload");
+		const outer = JSON.parse(encodedRequest);
 		const inner = JSON.parse(outer[1]);
 		assert.equal(inner.length, 102);
 		assert.equal(inner[0][0], "prompt");
@@ -33,16 +35,16 @@ describe("Gemini client protocol", () => {
 			/invalid Gemini model number/,
 		);
 		assert.throws(
-			() => buildPayload("prompt", 1, 2, null),
+			() => Reflect.apply(buildPayload, undefined, ["prompt", 1, 2, null]),
 			/invalid Gemini extended-thinking flag/,
 		);
 	});
 	test("builds Gemini request URL and browser headers", async () => {
-		const cfg = {
+		const cfg = baseGeminiClientConfig({
 			gemini_origin: "https://gemini.example/",
 			gemini_bl: "boq test",
 			cookie: "SID=ok",
-		};
+		});
 		const url = getUrl(cfg);
 		assert.match(
 			url,
