@@ -3,7 +3,6 @@ import {
 	OPENAI_COMPLETION_DIALECT,
 	prepareCompletion,
 } from "../../completion/prepare";
-import { finalizeOpenAICompletionResult } from "../../completion/turn";
 import type { RuntimeConfig } from "../../config";
 import type { InternalMessage } from "../../promptcompat/message-model";
 import { parseResponsesInput } from "../../promptcompat/responses-input";
@@ -13,12 +12,11 @@ import {
 	upstreamErrorMessage,
 	upstreamErrorReason,
 } from "../../shared/errors";
-import { log, nowSec } from "../../shared/logging";
+import { nowSec } from "../../shared/logging";
 import type { ToolBundle } from "../../toolcall/tool-bundle";
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
 import {
-	generateTextLogged,
 	type PreparedOk,
 	runPreparedCompletion,
 	type StageLog,
@@ -37,6 +35,7 @@ import {
 	streamResponsesWithToolSieve,
 	writeResponsesEvent,
 } from "./responses-stream";
+import { generateOpenAICompletionTail } from "./completion-tail";
 
 // POST /v1/responses(Codex CLI 用)
 export async function handleResponses(
@@ -176,14 +175,20 @@ async function runResponsesGeneration(
 		);
 	}
 
-	const generated = await generateTextLogged({
+	const generated = await generateOpenAICompletionTail({
 		cfg,
 		provider,
 		stage: "openai_responses",
 		logLabel: "openai responses",
-		protocol: OPENAI_GENERATION_PROTOCOL,
 		stageLog,
 		input: { prompt, rm, fileRefs },
+		options: {
+			tools,
+			noneModeTools: bundle,
+			promptToolChoice,
+			structured,
+			toolPolicy,
+		},
 		okLogFields: (out) => ({
 			completionChars: out.length,
 			promptTokens,
@@ -191,29 +196,7 @@ async function runResponsesGeneration(
 		}),
 	});
 	if (generated.response) return generated.response;
-	let text = generated.text;
-
-	const finalized = finalizeOpenAICompletionResult(text, {
-		tools,
-		noneModeTools: bundle,
-		promptToolChoice,
-		structured,
-		toolPolicy,
-	});
-	if (finalized.error) {
-		if (finalized.error.code === "upstream_empty")
-			log(
-				cfg,
-				`openai responses generate produced no content model=${rm.name}`,
-			);
-		return openAIErrorResponse(
-			finalized.error.message,
-			finalized.error.status,
-			finalized.error.code,
-		);
-	}
-	const { toolCalls } = finalized;
-	text = finalized.text;
+	const { text, toolCalls } = generated.turn;
 
 	const rid = `resp_${randHex(16)}`;
 	const mid = `msg_${randHex(12)}`;

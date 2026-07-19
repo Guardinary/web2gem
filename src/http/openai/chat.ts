@@ -3,17 +3,15 @@ import {
 	OPENAI_COMPLETION_DIALECT,
 	prepareCompletion,
 } from "../../completion/prepare";
-import { finalizeOpenAICompletionResult } from "../../completion/turn";
 import type { RuntimeConfig } from "../../config";
 import { parseOpenAIMessages } from "../../promptcompat/message-model";
 import { randHex } from "../../shared/crypto";
-import { log, nowSec } from "../../shared/logging";
+import { nowSec } from "../../shared/logging";
 import { tokenEst } from "../../promptcompat/token-accounting";
 import { isRecord, type UnknownRecord } from "../../shared/types";
 import { jsonResponse } from "../core/json";
 import { sseResponse } from "../core/sse";
 import {
-	generateTextLogged,
 	type PreparedOk,
 	runPreparedCompletion,
 	type StageLog,
@@ -32,6 +30,7 @@ import {
 	imageGenerationMode,
 	runImageGenerationCompletion,
 } from "./image-generation";
+import { generateOpenAICompletionTail } from "./completion-tail";
 
 // POST /v1/chat/completions
 export async function handleChat(
@@ -172,14 +171,20 @@ async function runChatGeneration(
 		);
 	}
 
-	const generated = await generateTextLogged({
+	const generated = await generateOpenAICompletionTail({
 		cfg,
 		provider,
 		stage: "openai_chat",
 		logLabel: "openai chat",
-		protocol: OPENAI_GENERATION_PROTOCOL,
 		stageLog,
 		input: { prompt, rm, fileRefs },
+		options: {
+			tools,
+			noneModeTools: bundle,
+			promptToolChoice,
+			structured,
+			toolPolicy,
+		},
 		okLogFields: (out) => ({
 			completionChars: out.length,
 			promptTokens,
@@ -187,26 +192,7 @@ async function runChatGeneration(
 		}),
 	});
 	if (generated.response) return generated.response;
-	let text = generated.text;
-
-	const finalized = finalizeOpenAICompletionResult(text, {
-		tools,
-		noneModeTools: bundle,
-		promptToolChoice,
-		structured,
-		toolPolicy,
-	});
-	if (finalized.error) {
-		if (finalized.error.code === "upstream_empty")
-			log(cfg, `openai chat generate produced no content model=${rm.name}`);
-		return openAIErrorResponse(
-			finalized.error.message,
-			finalized.error.status,
-			finalized.error.code,
-		);
-	}
-	const { toolCalls } = finalized;
-	text = finalized.text;
+	const { text, toolCalls } = generated.turn;
 	const msg: Record<string, unknown> = {
 		role: "assistant",
 		content: text || null,
