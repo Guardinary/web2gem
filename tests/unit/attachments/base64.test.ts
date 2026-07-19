@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	base64DecodedByteLength,
@@ -8,7 +7,9 @@ import {
 } from "../../../src/attachments/base64";
 import { assert } from "../assertions.js";
 
-async function withoutTypedArrayEncodingMethods(run) {
+async function withoutTypedArrayEncodingMethods<T>(
+	run: () => T | PromiseLike<T>,
+): Promise<T> {
 	const fromBase64Descriptor = Object.getOwnPropertyDescriptor(
 		Uint8Array,
 		"fromBase64",
@@ -33,7 +34,7 @@ async function withoutTypedArrayEncodingMethods(run) {
 		if (fromBase64Descriptor) {
 			Object.defineProperty(Uint8Array, "fromBase64", fromBase64Descriptor);
 		} else {
-			delete Uint8Array.fromBase64;
+			Reflect.deleteProperty(Uint8Array, "fromBase64");
 		}
 		if (toBase64Descriptor) {
 			Object.defineProperty(
@@ -42,7 +43,7 @@ async function withoutTypedArrayEncodingMethods(run) {
 				toBase64Descriptor,
 			);
 		} else {
-			delete Uint8Array.prototype.toBase64;
+			Reflect.deleteProperty(Uint8Array.prototype, "toBase64");
 		}
 	}
 }

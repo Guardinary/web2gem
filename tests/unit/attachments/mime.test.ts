@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	chooseUploadMime,
@@ -63,7 +62,7 @@ describe("attachment MIME and filenames", () => {
 	});
 
 	test("detects supported media signatures and conservative text fallbacks", () => {
-		const cases = [
+		const cases: ReadonlyArray<readonly [Uint8Array, string]> = [
 			[
 				new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
 				"image/png",

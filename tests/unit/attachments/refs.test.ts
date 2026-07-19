@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	appendExistingFileRefs,
@@ -6,6 +5,7 @@ import {
 	recognizedFileRefID,
 	recognizedFileRefKey,
 } from "../../../src/attachments/refs";
+import type { AttachmentFileRef } from "../../../src/attachments/types";
 import { assert } from "../assertions.js";
 
 describe("attachment references", () => {
@@ -28,7 +28,7 @@ describe("attachment references", () => {
 	});
 
 	test("ignores empty and unsupported reference values", () => {
-		const out = [];
+		const out: AttachmentFileRef[] = [];
 		appendExistingFileRefs(out, [null, 1, {}, { id: "  " }, [undefined]]);
 		assert.deepEqual(out, []);
 	});

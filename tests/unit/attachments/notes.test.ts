@@ -1,14 +1,19 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	attachmentDrop,
 	droppedAttachmentNote,
 } from "../../../src/attachments/notes";
+import type {
+	AttachmentDropReason,
+	AttachmentKind,
+} from "../../../src/attachments/types";
 import { assert } from "../assertions.js";
 
 describe("attachment drop notes", () => {
 	test("uses deterministic default messages for every drop reason", () => {
-		const reasons = [
+		const reasons: ReadonlyArray<
+			readonly [AttachmentKind, AttachmentDropReason, string]
+		> = [
 			["image", "invalid_image_input", "invalid image input"],
 			["file", "invalid_file_input", "invalid file input"],
 			["file", "invalid_base64", "invalid base64 payload"],
@@ -37,7 +42,7 @@ describe("attachment drop notes", () => {
 			attachmentDrop("image", "too_many_files", "custom limit"),
 		];
 
-		assert.equal(drops[0].filename, "bad  name.txt");
+		assert.equal(drops[0]?.filename, "bad  name.txt");
 		assert.equal(
 			droppedAttachmentNote(drops),
 			"\n\n[Note: 2 file(s) were provided but ignored - invalid base64 payload.]" +

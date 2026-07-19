@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	createAttachmentPlan,
@@ -89,7 +88,7 @@ describe("attachment plans", () => {
 		});
 		assert.equal(defaults.candidates.length, MAX_ATTACHMENTS_PER_REQUEST);
 		assert.equal(defaults.dropped.length, 1);
-		assert.match(defaults.dropped[0].message, /maximum of 50 attachments/);
+		assert.match(defaults.dropped[0]?.message, /maximum of 50 attachments/);
 	});
 
 	test("merges plans with minimum capacity and fresh candidate IDs", () => {

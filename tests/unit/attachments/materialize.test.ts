@@ -1,11 +1,20 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { materializeAttachment } from "../../../src/attachments/materialize";
+import type {
+	AttachmentCandidate,
+	AttachmentKind,
+	AttachmentSource,
+} from "../../../src/attachments/types";
+import type { ErrorWithMetadata } from "../../../src/shared/types";
 import { assert } from "../assertions.js";
 
 const generousLimits = { maxFileBytes: 1024, maxImageBytes: 1024 };
 
-function attachmentCandidate(kind, source, overrides = {}) {
+function attachmentCandidate(
+	kind: AttachmentKind,
+	source: AttachmentSource,
+	overrides: Partial<AttachmentCandidate> = {},
+): AttachmentCandidate {
 	return {
 		id: "att_1",
 		kind,
@@ -15,11 +24,18 @@ function attachmentCandidate(kind, source, overrides = {}) {
 	};
 }
 
-async function captureError(run) {
+type AttachmentMaterializeError = ErrorWithMetadata & {
+	attachmentKind?: AttachmentKind;
+};
+
+async function captureError(
+	run: () => unknown | PromiseLike<unknown>,
+): Promise<AttachmentMaterializeError> {
 	try {
 		await run();
 	} catch (error) {
-		return error;
+		if (error instanceof Error) return error;
+		throw new TypeError("expected an Error", { cause: error });
 	}
 	throw new Error("expected operation to fail");
 }
@@ -113,7 +129,7 @@ describe("attachment materialization", () => {
 			assert.equal(imageError.attachmentKind, "image");
 		} finally {
 			if (original) Object.defineProperty(Uint8Array, "fromBase64", original);
-			else delete Uint8Array.fromBase64;
+			else Reflect.deleteProperty(Uint8Array, "fromBase64");
 		}
 	});
 });
