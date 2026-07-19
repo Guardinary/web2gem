@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	assertRuntimeConfig,
@@ -105,11 +104,13 @@ describe("runtime configuration", () => {
 		assert.equal(getConfig({ ADMIN_KEY: "" }).admin_key, "");
 	});
 	test("keeps cached static config separate from request and account context", () => {
-		const staticConfig = getConfig({
+		const legacyEnv = {
+			LOG_REQUESTS: "false",
 			GEMINI_COOKIE:
 				"__Secure-1PSID=psid; SAPISID=sapi-from-cookie; __Secure-1PSIDTS=ts",
 			SAPISID: "",
-		});
+		};
+		const staticConfig = getConfig(legacyEnv);
 		assert.equal(Object.hasOwn(staticConfig, "cookie"), false);
 		assert.equal(Object.hasOwn(staticConfig, "execution_ctx"), false);
 		const executionContext = { waitUntil() {} };

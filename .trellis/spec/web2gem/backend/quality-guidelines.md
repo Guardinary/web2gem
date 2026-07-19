@@ -33,6 +33,38 @@ Good existing helpers:
 - `src/shared/types.ts` exposes `UnknownRecord` and `isRecord`.
 - `src/shared/json.ts` exposes `tryParseJson`, `parseJson`, and `parseJsonObject`.
 
+### Test imports from untyped JavaScript modules
+
+When a TypeScript test exercises an authored `.mjs` module that has no declaration
+file, keep the module boundary honest instead of adding a broad ambient declaration
+or suppressing `TS7016`:
+
+- dynamically import through a non-literal specifier into `unknown`;
+- validate that the module is a record and each required export is callable;
+- assign each validated export a narrow test-local contract containing only the
+  arguments and results exercised by that suite;
+- keep decoded JSON and platform doubles narrow at their own read sites.
+
+```typescript
+async function importUnknown(specifier: string): Promise<unknown> {
+	return import(specifier);
+}
+
+function moduleFunction<T extends (...args: never[]) => unknown>(
+	moduleValue: unknown,
+	name: string,
+): T {
+	if (!isRecord(moduleValue) || typeof moduleValue[name] !== "function") {
+		throw new TypeError(`module export ${name} must be a function`);
+	}
+	return moduleValue[name] as T;
+}
+```
+
+Do not use `declare module "*.mjs"`, an explicit `any`, or a double cast merely
+to silence the import. Run the focused suite, `pnpm typecheck:tests`, and
+`pnpm check:static` after introducing this boundary.
+
 ## Change Size
 
 When tightening external payload types, prefer small, behavior-preserving

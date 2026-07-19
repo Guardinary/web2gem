@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test, vi } from "vitest";
 import {
 	abortError,
@@ -35,6 +34,7 @@ describe.sequential("shared abort primitives", () => {
 			throwIfAborted(already.signal);
 			throw new Error("expected throwIfAborted to throw");
 		} catch (err) {
+			if (!(err instanceof Error) || !("code" in err)) throw err;
 			assert.equal(err.name, "AbortError");
 			assert.equal(err.code, "request_aborted");
 			assert.match(err.message, /already done/);

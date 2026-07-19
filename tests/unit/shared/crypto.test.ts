@@ -1,10 +1,11 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { randHex, randomBytes, uuid } from "../../../src/shared/crypto";
 import { assert } from "../assertions.js";
 import { withPatchedGlobal } from "../_support/globals.js";
 
-async function withoutTypedArrayHexMethod(run) {
+async function withoutTypedArrayHexMethod<T>(
+	run: () => T | PromiseLike<T>,
+): Promise<T> {
 	const toHexDescriptor = Object.getOwnPropertyDescriptor(
 		Uint8Array.prototype,
 		"toHex",
@@ -19,7 +20,7 @@ async function withoutTypedArrayHexMethod(run) {
 	} finally {
 		if (toHexDescriptor)
 			Object.defineProperty(Uint8Array.prototype, "toHex", toHexDescriptor);
-		else delete Uint8Array.prototype.toHex;
+		else Reflect.deleteProperty(Uint8Array.prototype, "toHex");
 	}
 }
 
@@ -28,7 +29,7 @@ describe("shared crypto primitives", () => {
 		await withPatchedGlobal(
 			"crypto",
 			{
-				getRandomValues(arr) {
+				getRandomValues(arr: Uint8Array): Uint8Array {
 					for (let i = 0; i < arr.length; i++) arr[i] = 0xab + i;
 					return arr;
 				},

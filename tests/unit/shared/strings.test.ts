@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { firstNonEmptyString } from "../../../src/shared/strings";
 import { assert } from "../assertions.js";

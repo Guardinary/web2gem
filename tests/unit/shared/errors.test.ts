@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	canFallbackAfterSocketError,
@@ -7,11 +6,12 @@ import {
 	upstreamErrorMessage,
 	upstreamErrorStatus,
 } from "../../../src/shared/errors";
+import type { ErrorWithMetadata } from "../../../src/shared/types";
 import { assert } from "../assertions.js";
 
 describe("shared upstream errors", () => {
 	test("summarizes upstream errors and fallback eligibility", () => {
-		const err = new Error("bad gateway");
+		const err: ErrorWithMetadata = new Error("bad gateway");
 		err.code = "upstream_bad_gateway";
 		err.status = 502;
 		err.upstreamStatus = 503;

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	jsonValuesEqual,
@@ -35,7 +34,8 @@ describe("JSON Schema subset", () => {
 				},
 			},
 		};
-		const validate = (value) => validateJsonSchemaSubset(value, schema, "$");
+		const validate = (value: unknown) =>
+			validateJsonSchemaSubset(value, schema, "$");
 
 		assert.equal(
 			validate({ kind: "alpha", tag: "ok-ready", items: [1, 2], score: 1.5 }),

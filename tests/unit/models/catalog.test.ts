@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { MODELS, resolveModel } from "../../../src/models";
 import { assert } from "../assertions.js";

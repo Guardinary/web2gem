@@ -1,23 +1,118 @@
-// @ts-nocheck
+import type { Server } from "node:http";
 import { describe, test } from "vitest";
-import {
-	createD1HttpBinding,
-	resolveD1HttpConfig,
-} from "../../server/d1-http-binding.mjs";
-import {
-	createDockerServer,
-	executionContext,
-	requestHeaders,
-	requestUrl,
-	resolveDockerEnv,
-	startDockerServer,
-} from "../../server/docker-server.mjs";
 import { assertRuntimeConfig } from "../../src/config";
 import worker from "../../src/index";
+import { isRecord, type UnknownRecord } from "../../src/shared/types";
 import { assert } from "./assertions.js";
 
-function listen(server) {
-	return new Promise((resolve, reject) => {
+type FetchInput = Parameters<typeof fetch>[0];
+type FetchInit = Parameters<typeof fetch>[1];
+type DockerExecutionContext = {
+	runtimeProfile: "docker";
+	waitUntil(promise: Promise<unknown>): void;
+	passThroughOnException(): void;
+};
+type DockerRequest = {
+	headers: Record<string, string | readonly string[] | undefined>;
+	url?: string | null;
+};
+type DockerServerOptions = {
+	host?: string;
+	port?: number;
+	env?: Record<string, unknown>;
+	processEnv?: NodeJS.ProcessEnv;
+	fetch?: typeof fetch;
+	worker?: DockerWorker;
+};
+type DockerWorker = {
+	fetch(
+		request: Request,
+		env: Record<string, unknown>,
+		context: DockerExecutionContext,
+	): Response | Promise<Response>;
+	assertRuntimeConfig?: (env: Record<string, unknown>) => void;
+};
+type D1HttpResult = {
+	results: UnknownRecord[];
+	success: boolean;
+	meta: UnknownRecord;
+};
+type D1HttpStatement = {
+	bind(...values: unknown[]): D1HttpStatement;
+	first(columnName?: string): Promise<unknown>;
+	all(): Promise<D1HttpResult>;
+	run(): Promise<Omit<D1HttpResult, "results">>;
+};
+type D1HttpBinding = {
+	prepare(sql: string): D1HttpStatement;
+	batch(statements: D1HttpStatement[]): Promise<D1HttpResult[]>;
+};
+type D1HttpConfig = {
+	accountId: string;
+	databaseId: string;
+	apiToken: string;
+};
+type RecordedRequest = {
+	url: string;
+	init: {
+		headers: Record<string, string>;
+		body: string;
+	};
+};
+type Callable = (...args: never[]) => unknown;
+
+async function importUnknown(specifier: string): Promise<unknown> {
+	return import(specifier);
+}
+
+function moduleFunction<T extends Callable>(
+	moduleValue: unknown,
+	name: string,
+): T {
+	if (!isRecord(moduleValue) || typeof moduleValue[name] !== "function") {
+		throw new TypeError(`module export ${name} must be a function`);
+	}
+	return moduleValue[name] as T;
+}
+
+const d1HttpModule = await importUnknown(
+	new URL("../../server/d1-http-binding.mjs", import.meta.url).href,
+);
+const createD1HttpBinding = moduleFunction<
+	(config: D1HttpConfig, options?: { fetch?: typeof fetch }) => D1HttpBinding
+>(d1HttpModule, "createD1HttpBinding");
+const resolveD1HttpConfig = moduleFunction<
+	(env?: Record<string, unknown>) => D1HttpConfig | null
+>(d1HttpModule, "resolveD1HttpConfig");
+
+const dockerServerModule = await importUnknown(
+	new URL("../../server/docker-server.mjs", import.meta.url).href,
+);
+const createDockerServer = moduleFunction<
+	(options?: DockerServerOptions) => Server
+>(dockerServerModule, "createDockerServer");
+const executionContext = moduleFunction<() => DockerExecutionContext>(
+	dockerServerModule,
+	"executionContext",
+);
+const requestHeaders = moduleFunction<
+	(rawHeaders: readonly string[]) => Headers
+>(dockerServerModule, "requestHeaders");
+const requestUrl = moduleFunction<
+	(request: DockerRequest, fallbackPort?: number) => string
+>(dockerServerModule, "requestUrl");
+const resolveDockerEnv = moduleFunction<
+	(
+		sourceEnv?: Record<string, unknown>,
+		options?: { fetch?: typeof fetch },
+	) => Record<string, unknown> & { GEMINI_DB?: D1HttpBinding }
+>(dockerServerModule, "resolveDockerEnv");
+const startDockerServer = moduleFunction<
+	(options?: DockerServerOptions) => Promise<Server>
+>(dockerServerModule, "startDockerServer");
+
+function listen(server: Server): Promise<void> {
+	return new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
 		server.listen(0, "127.0.0.1", () => {
 			server.off("error", reject);
@@ -26,7 +121,10 @@ function listen(server) {
 	});
 }
 
-async function withStderrWrite(write, run) {
+async function withStderrWrite<T>(
+	write: typeof process.stderr.write,
+	run: () => T | PromiseLike<T>,
+): Promise<T> {
 	const original = process.stderr.write;
 	process.stderr.write = write;
 	try {
@@ -35,10 +133,42 @@ async function withStderrWrite(write, run) {
 		process.stderr.write = original;
 	}
 }
-function close(server) {
-	return new Promise((resolve, reject) => {
+function close(server: Server): Promise<void> {
+	return new Promise<void>((resolve, reject) => {
 		server.close((err) => (err ? reject(err) : resolve()));
 	});
+}
+
+function serverPort(server: Server): number {
+	const address = server.address();
+	if (!address || typeof address === "string") {
+		throw new Error("expected an IP server address");
+	}
+	return address.port;
+}
+
+async function responseJsonRecord(response: Response): Promise<UnknownRecord> {
+	const value: unknown = await response.json();
+	if (!isRecord(value)) throw new TypeError("expected a JSON object response");
+	return value;
+}
+
+function recordedRequest(input: FetchInput, init?: FetchInit): RecordedRequest {
+	if (!init || typeof init.body !== "string" || !isRecord(init.headers)) {
+		throw new TypeError("expected D1 request headers and body");
+	}
+	const headers: Record<string, string> = {};
+	for (const [name, value] of Object.entries(init.headers)) {
+		if (typeof value !== "string") {
+			throw new TypeError(`expected string header ${name}`);
+		}
+		headers[name] = value;
+	}
+	return { url: String(input), init: { headers, body: init.body } };
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 describe("docker server", () => {
@@ -83,7 +213,12 @@ describe("docker server", () => {
 		assert.equal(fallbackUrl, "https://internal.example/v1/models");
 	});
 	test("adapts Node HTTP requests to Worker fetch with streamed bodies", async () => {
-		const seen = {};
+		const seen: {
+			url?: string;
+			method?: string;
+			env?: Record<string, unknown>;
+			body?: string;
+		} = {};
 		const server = createDockerServer({
 			port: 0,
 			env: { API_KEYS: "", CUSTOM_ENV: "ok" },
@@ -114,7 +249,7 @@ describe("docker server", () => {
 		});
 		await listen(server);
 		try {
-			const port = server.address().port;
+			const port = serverPort(server);
 			const resp = await fetch(`http://127.0.0.1:${port}/v1/test`, {
 				method: "POST",
 				headers: {
@@ -126,7 +261,7 @@ describe("docker server", () => {
 			});
 			assert.equal(resp.status, 201);
 			assert.equal(resp.headers.get("x-adapter"), "docker");
-			const body = await resp.json();
+			const body = await responseJsonRecord(resp);
 			assert.match(body.url, /^https:\/\/127\.0\.0\.1:\d+\/v1\/test$/);
 			assert.equal(body.method, "POST");
 			assert.equal(body.body, "hello");
@@ -137,7 +272,7 @@ describe("docker server", () => {
 		}
 	});
 	test("does not stream response bodies for HEAD requests", async () => {
-		const seen = {};
+		const seen: { method?: string } = {};
 		const server = createDockerServer({
 			worker: {
 				async fetch(request) {
@@ -153,7 +288,7 @@ describe("docker server", () => {
 		});
 		await listen(server);
 		try {
-			const port = server.address().port;
+			const port = serverPort(server);
 			const resp = await fetch(`http://127.0.0.1:${port}/`, {
 				method: "HEAD",
 			});
@@ -170,7 +305,7 @@ describe("docker server", () => {
 		const server = createDockerServer({ env, worker: worker });
 		await listen(server);
 		try {
-			const port = server.address().port;
+			const port = serverPort(server);
 			for (const path of ["/", "/v1/models", "/missing"]) {
 				const direct = await worker.fetch(
 					new Request(`http://127.0.0.1:${port}${path}`),
@@ -196,12 +331,12 @@ describe("docker server", () => {
 		}
 	});
 	test("propagates Docker client disconnects to the Worker request signal", async () => {
-		let markStarted;
-		const started = new Promise((resolve) => {
+		let markStarted: () => void = () => {};
+		const started = new Promise<void>((resolve) => {
 			markStarted = resolve;
 		});
-		let markAborted;
-		const aborted = new Promise((resolve) => {
+		let markAborted: (reason: unknown) => void = () => {};
+		const aborted = new Promise<unknown>((resolve) => {
 			markAborted = resolve;
 		});
 		const server = createDockerServer({
@@ -220,7 +355,7 @@ describe("docker server", () => {
 		});
 		await listen(server);
 		try {
-			const port = server.address().port;
+			const port = serverPort(server);
 			const controller = new AbortController();
 			const response = fetch(`http://127.0.0.1:${port}/slow`, {
 				signal: controller.signal,
@@ -243,15 +378,15 @@ describe("docker server", () => {
 			},
 		});
 		await listen(server);
-		const loggedErrors = [];
+		const loggedErrors: string[] = [];
 		await withStderrWrite(
-			(chunk) => {
+			(chunk: string | Uint8Array) => {
 				loggedErrors.push(String(chunk));
 				return true;
 			},
 			async () => {
 				try {
-					const port = server.address().port;
+					const port = serverPort(server);
 					const resp = await fetch(`http://127.0.0.1:${port}/`);
 					assert.equal(resp.status, 500);
 					assert.match(
@@ -278,8 +413,9 @@ describe("docker server", () => {
 			});
 			throw new Error("expected partial D1 config to throw");
 		} catch (err) {
-			assert.match(err.message, /partial D1 HTTP configuration/);
-			assert.doesNotMatch(err.message, /token-secret-fragment/);
+			const message = errorMessage(err);
+			assert.match(message, /partial D1 HTTP configuration/);
+			assert.doesNotMatch(message, /token-secret-fragment/);
 		}
 
 		const env = resolveDockerEnv(
@@ -299,7 +435,7 @@ describe("docker server", () => {
 				},
 			},
 		);
-		assert.equal(typeof env.GEMINI_DB.prepare, "function");
+		assert.equal(typeof env.GEMINI_DB?.prepare, "function");
 	});
 	test("rejects invalid runtime config before the Docker server listens", async () => {
 		await assert.rejects(
@@ -322,7 +458,7 @@ describe("docker server", () => {
 			},
 		});
 		try {
-			await new Promise((resolve) => {
+			await new Promise<void>((resolve) => {
 				if (server.listening) resolve();
 				else server.once("listening", resolve);
 			});
@@ -332,7 +468,7 @@ describe("docker server", () => {
 		}
 	});
 	test("maps D1 HTTP first all and run without leaking params or tokens in errors", async () => {
-		const requests = [];
+		const requests: RecordedRequest[] = [];
 		const responses = [
 			{
 				success: true,
@@ -351,8 +487,8 @@ describe("docker server", () => {
 				apiToken: "d1-token-secret",
 			},
 			{
-				async fetch(url, init) {
-					requests.push({ url: String(url), init });
+				async fetch(url: FetchInput, init?: FetchInit) {
+					requests.push(recordedRequest(url, init));
 					return new Response(JSON.stringify(responses.shift()), {
 						status: 200,
 						headers: { "content-type": "application/json" },
@@ -382,15 +518,17 @@ describe("docker server", () => {
 				meta: { changes: 3 },
 			},
 		);
+		const firstRequest = requests[0];
+		if (!firstRequest) throw new Error("expected a D1 HTTP request");
 		assert.match(
-			requests[0].url,
+			firstRequest.url,
 			/\/accounts\/account\/d1\/database\/database\/query$/,
 		);
 		assert.equal(
-			requests[0].init.headers.authorization,
+			firstRequest.init.headers.authorization,
 			"Bearer d1-token-secret",
 		);
-		assert.match(requests[0].init.body, /secret-cookie/);
+		assert.match(firstRequest.init.body, /secret-cookie/);
 
 		const failing = createD1HttpBinding(
 			{
@@ -430,7 +568,7 @@ describe("docker server", () => {
 				.bind("__Secure-1PSID=secret-cookie", "session-token-secret")
 				.all();
 		} catch (err) {
-			const message = String(err.message || err);
+			const message = errorMessage(err);
 			assert.doesNotMatch(
 				message,
 				/secret-cookie|session-token-secret|d1-token-secret/,
@@ -458,15 +596,16 @@ describe("docker server", () => {
 				.all();
 			throw new Error("expected D1 fetch failure to throw");
 		} catch (err) {
-			assert.match(err.message, /D1 HTTP query failed before response/);
+			const message = errorMessage(err);
+			assert.match(message, /D1 HTTP query failed before response/);
 			assert.doesNotMatch(
-				err.message,
+				message,
 				/secret-cookie|session-token-secret|d1-token-secret/,
 			);
 		}
 	});
 	test("maps ordered D1 HTTP batches and rejects unsafe or malformed batches", async () => {
-		const requests = [];
+		const requests: RecordedRequest[] = [];
 		const responses = [
 			{
 				success: true,
@@ -484,8 +623,8 @@ describe("docker server", () => {
 				],
 			},
 		];
-		const fetchImpl = async (url, init) => {
-			requests.push({ url: String(url), init });
+		const fetchImpl = async (url: FetchInput, init?: FetchInit) => {
+			requests.push(recordedRequest(url, init));
 			return new Response(JSON.stringify(responses.shift()), {
 				status: 200,
 				headers: { "content-type": "application/json" },
@@ -507,7 +646,9 @@ describe("docker server", () => {
 			{ success: true, results: [{ id: 1 }], meta: { changes: 0 } },
 			{ success: true, results: [], meta: { changes: 2 } },
 		]);
-		assert.deepEqual(JSON.parse(requests[0].init.body), {
+		const firstRequest = requests[0];
+		if (!firstRequest) throw new Error("expected a D1 batch request");
+		assert.deepEqual(JSON.parse(firstRequest.init.body), {
 			batch: [
 				{ sql: "SELECT ? AS id", params: [1] },
 				{
@@ -533,17 +674,19 @@ describe("docker server", () => {
 		);
 		assert.equal(requests.length, 1);
 
-		for (const [message, pattern] of [
+		const failureCases: ReadonlyArray<readonly [string, RegExp]> = [
 			["unexpected result count", /unexpected result count/],
 			["failed member", /D1 HTTP batch query failed index=1/],
-		]) {
+		];
+		for (const [message, pattern] of failureCases) {
 			try {
 				await binding.batch(statements);
 				throw new Error(`expected ${message} failure`);
 			} catch (error) {
-				assert.match(error.message, pattern);
+				const messageText = errorMessage(error);
+				assert.match(messageText, pattern);
 				assert.doesNotMatch(
-					error.message,
+					messageText,
 					/secret-cookie|session-token-secret|d1-token-secret/,
 				);
 			}

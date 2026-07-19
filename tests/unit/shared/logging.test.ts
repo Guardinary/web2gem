@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { log, logStage } from "../../../src/shared/logging";
 import { assert } from "../assertions.js";
@@ -6,14 +5,14 @@ import { withConsoleLog } from "../_support/globals.js";
 
 describe("shared logging", () => {
 	test.sequential("logs runtime messages and stage metadata behind config flag", async () => {
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			async () => {
 				log(null, "hidden");
 				log({ log_requests: false }, "hidden");
 				log({ log_requests: true }, { ok: true });
-				const cyclic = {};
+				const cyclic: { self?: unknown } = {};
 				cyclic.self = cyclic;
 				log({ log_requests: true }, cyclic);
 				logStage({ log_requests: true }, "upload", {
