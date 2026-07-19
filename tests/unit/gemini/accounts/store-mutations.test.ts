@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { D1GeminiAccountStore } from "../../../../src/gemini/accounts/store-d1";
 import { assert } from "../../assertions.js";
@@ -26,6 +25,7 @@ describe("D1 Gemini account store mutations", () => {
 			nowMs: 1100,
 		});
 		assert.equal(result.changed, false);
+		if (!result.item) throw new Error("unchanged account was not returned");
 		assert.equal(result.item.label, "First");
 		db.assertDrained();
 	});
@@ -53,6 +53,7 @@ describe("D1 Gemini account store mutations", () => {
 			nowMs: 1200,
 		});
 		assert.equal(result.changed, true);
+		if (!result.item) throw new Error("updated account was not returned");
 		assert.equal(result.item.enabled, false);
 		db.assertBatches([[1, 2]]);
 		db.assertDrained();

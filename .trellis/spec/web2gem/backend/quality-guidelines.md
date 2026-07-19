@@ -84,6 +84,26 @@ This keeps test behavior coupled to the same request, byte, and error contracts
 as production code without weakening `tsconfig.tests.json` or introducing
 test-wide ambient declarations.
 
+### Account runtime test fixtures
+
+Gemini account tests must keep their D1/runtime doubles aligned with the
+production owner contracts:
+
+- Account-row helpers return a complete `GeminiAccountRow`, including identity,
+  status, refresh-attempt, and timestamp fields; optional test overrides use
+  `Partial<GeminiAccountRow>`.
+- Ordered runtime scripts are a discriminated `RuntimeCall` union derived from
+  `GeminiAccountRuntimeStore`; each method keeps its production argument tuple
+  and awaited result type.
+- Account-pool tests pass a complete `RuntimeConfig` fixture. The neutral
+  `TestRuntimeConfig` helper is intentionally partial and must not be widened
+  or passed to production account services.
+- Optional lease callbacks and nullable lease acquisitions are narrowed with a
+  guard before use; do not restore hidden null assumptions with assertions.
+
+This preserves SQL/runtime call order and makes fixture changes fail at the
+same owner boundary as production contract changes.
+
 ## Change Size
 
 When tightening external payload types, prefer small, behavior-preserving

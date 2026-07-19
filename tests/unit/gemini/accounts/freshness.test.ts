@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { capabilityFreshAfterMs } from "../../../../src/gemini/accounts/freshness";
 import { assert } from "../../assertions.js";

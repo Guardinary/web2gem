@@ -1,6 +1,11 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
+import type { RuntimeConfig } from "../../../../src/config/types";
+import type { GeminiModelRoutingOverview } from "../../../../src/gemini/accounts/admin-types";
+import type { GeminiAccountLease } from "../../../../src/gemini/accounts/lease-types";
+import type { GeminiAccountAcquireOptions } from "../../../../src/gemini/accounts/runtime-types";
+import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
+import type { ResolvedModelOk } from "../../../../src/models";
 import {
 	d1BindingFromEnv,
 	GeminiAccountRuntime,
@@ -12,9 +17,9 @@ import {
 	capabilityRow,
 	createRuntimeStore,
 	rejectUnexpectedCookieRotation,
+	runtimeConfig,
 	runtimeCall,
 } from "./_support/runtime-fixtures.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 
 describe("gemini account public runtime facade", () => {
 	test("exposes an ordered catalog and dynamic resolution through the runtime facade", async () => {
@@ -79,39 +84,63 @@ describe("gemini account public runtime facade", () => {
 	});
 
 	test("delegates lease and routing operations through the public runtime facade", async () => {
-		const cfg = baseConfig();
-		const options = {
+		const cfg = runtimeConfig();
+		const options: GeminiAccountAcquireOptions = {
 			excludeAccountIds: new Set(["attempted"]),
 			capabilityMode: "strict",
 		};
-		const model = {
+		const model: ResolvedModelOk = {
 			name: "gemini-3.1-pro",
 			family: "pro",
 			extended: false,
+			dynamicProviderId: null,
 		};
-		const route = {
+		const route: GeminiRouteTuple = {
 			providerModelId: "9d8ca3786ebdfbea",
 			capacity: 1,
 			capacityField: 12,
 			modelNumber: 3,
 		};
-		const lease = { accountId: "selected" };
-		const overview = { version: "7", families: [] };
-		const calls = [];
-		const runtime = new GeminiAccountRuntime({
-			async acquireLease(...args) {
-				calls.push(["acquireLease", ...args]);
-				return lease;
-			},
-			async modelRoutingOverview(...args) {
-				calls.push(["modelRoutingOverview", ...args]);
-				return overview;
-			},
-			async routeCandidatesForModel(...args) {
-				calls.push(["routeCandidatesForModel", ...args]);
-				return [route];
-			},
+		const lease: GeminiAccountLease = {
+			accountId: "selected",
+			selectedRoute: null,
+			modelCapability: null,
+			config: cfg,
+			refreshForRetry: async () => ({
+				changed: false,
+				reason: "recent_rotation",
+			}),
+			markSuccess: async () => undefined,
+			markFailure: async () => undefined,
+			flushObservedCookies: async () => undefined,
+			maintainSessionIfStale: async () => undefined,
+			release: () => undefined,
+		};
+		const overview: GeminiModelRoutingOverview = { version: "7", families: [] };
+		const calls: unknown[][] = [];
+		const pool = new AccountPoolService(createRuntimeStore([]), {
+			nowMs: () => 100000,
+			rotateCookie: rejectUnexpectedCookieRotation,
 		});
+		pool.acquireLease = async (
+			baseConfig: RuntimeConfig,
+			acquireOptions: GeminiAccountAcquireOptions = {},
+		) => {
+			calls.push(["acquireLease", baseConfig, acquireOptions]);
+			return lease;
+		};
+		pool.modelRoutingOverview = async (freshAfterMs: number) => {
+			calls.push(["modelRoutingOverview", freshAfterMs]);
+			return overview;
+		};
+		pool.routeCandidatesForModel = async (
+			resolved: ResolvedModelOk,
+			freshAfterMs: number,
+		) => {
+			calls.push(["routeCandidatesForModel", resolved, freshAfterMs]);
+			return [route];
+		};
+		const runtime = new GeminiAccountRuntime(pool);
 
 		assert.equal(await runtime.acquireLease(cfg, options), lease);
 		assert.equal(await runtime.modelRoutingOverview(99000), overview);

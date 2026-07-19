@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { sha256Hex } from "../../../../src/gemini/accounts/normalize";
 import { D1GeminiAccountStore } from "../../../../src/gemini/accounts/store-d1";
@@ -234,7 +233,9 @@ describe("D1 Gemini account runtime store", () => {
 			nowMs: 5000,
 		});
 		db.assertBatches([[0, 2, 1]]);
-		assert.match(db.batches[0][1].sql, /WHERE changes\(\) > 0/);
+		const versionRecord = db.batches[0]?.[1];
+		if (!versionRecord) throw new Error("pool-version batch was not recorded");
+		assert.match(versionRecord.sql, /WHERE changes\(\) > 0/);
 		db.assertDrained();
 	});
 });

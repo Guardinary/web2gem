@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	geminiAccountState,
@@ -8,18 +7,32 @@ import { assert } from "../../assertions.js";
 
 describe("Gemini account domain", () => {
 	test("derives disabled, cooling, attention, and available states", () => {
-		for (const [account, expected] of [
-			[{ enabled: false, issue: "auth", cooldown_until_ms: 9000 }, "disabled"],
-			[
-				{ enabled: true, issue: "rate_limit", cooldown_until_ms: 9000 },
-				"cooling",
-			],
-			[{ enabled: true, issue: "auth", cooldown_until_ms: null }, "attention"],
-			[
-				{ enabled: true, issue: "transient", cooldown_until_ms: 900 },
-				"available",
-			],
-		]) {
+		const cases: readonly {
+			account: Parameters<typeof geminiAccountState>[0];
+			expected: ReturnType<typeof geminiAccountState>;
+		}[] = [
+			{
+				account: { enabled: false, issue: "auth", cooldown_until_ms: 9000 },
+				expected: "disabled",
+			},
+			{
+				account: {
+					enabled: true,
+					issue: "rate_limit",
+					cooldown_until_ms: 9000,
+				},
+				expected: "cooling",
+			},
+			{
+				account: { enabled: true, issue: "auth", cooldown_until_ms: null },
+				expected: "attention",
+			},
+			{
+				account: { enabled: true, issue: "transient", cooldown_until_ms: 900 },
+				expected: "available",
+			},
+		];
+		for (const { account, expected } of cases) {
 			assert.equal(geminiAccountState(account, 1000), expected);
 		}
 	});

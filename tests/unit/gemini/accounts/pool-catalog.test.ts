@@ -1,18 +1,20 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
 import { basicRouteForFamily } from "../../../../src/gemini/accounts/routes";
+import type { GeminiModelRoutePriorityRow } from "../../../../src/gemini/accounts/route-types";
 import { assert } from "../../assertions.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 import {
 	account,
 	capabilityRow,
 	createRuntimeStore,
+	resolvedModel,
 	rejectUnexpectedCookieRotation,
+	required,
+	runtimeConfig,
 	runtimeCall,
 } from "./_support/runtime-fixtures.js";
 
-function savedProPriorities(nowMs) {
+function savedProPriorities(nowMs: number): GeminiModelRoutePriorityRow[] {
 	return [
 		{
 			family: "pro",
@@ -69,10 +71,12 @@ describe("gemini account runtime", () => {
 			nowMs: () => nowMs,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const resolved = await pool.resolveModel(
-			"gemini-3.1-pro",
-			"gemini-3.5-flash",
-			nowMs - 1000,
+		const resolved = resolvedModel(
+			await pool.resolveModel(
+				"gemini-3.1-pro",
+				"gemini-3.5-flash",
+				nowMs - 1000,
+			),
 		);
 		const candidates = await pool.routeCandidatesForModel(
 			resolved,
@@ -83,16 +87,22 @@ describe("gemini account runtime", () => {
 			["9d8ca3786ebdfbea", "e6fa609c3fa255c0"],
 		);
 
-		const lease = await pool.acquireLease(baseConfig(), {
-			routeRequirement: {
-				candidates,
-				fallbackRoute: basicRouteForFamily("pro"),
-			},
-			capabilityMode: "prefer",
-			capabilityFreshAfterMs: nowMs - 1000,
-		});
+		const lease = required(
+			await pool.acquireLease(runtimeConfig(), {
+				routeRequirement: {
+					candidates,
+					fallbackRoute: basicRouteForFamily("pro"),
+				},
+				capabilityMode: "prefer",
+				capabilityFreshAfterMs: nowMs - 1000,
+			}),
+			"lease",
+		);
 		assert.equal(lease.accountId, "second");
-		assert.equal(lease.selectedRoute.providerModelId, "9d8ca3786ebdfbea");
+		assert.equal(
+			required(lease.selectedRoute, "selected route").providerModelId,
+			"9d8ca3786ebdfbea",
+		);
 		lease.release();
 		store.assertExhausted();
 	});
@@ -128,7 +138,7 @@ describe("gemini account runtime", () => {
 			overview.families.map((family) => family.family),
 			["pro", "flash", "flash_lite"],
 		);
-		const proOverview = overview.families[0];
+		const proOverview = required(overview.families[0], "pro overview");
 		assert.deepEqual(proOverview.publicNames, [
 			"gemini-3.1-pro",
 			"gemini-3.1-pro-extended",
@@ -195,10 +205,12 @@ describe("gemini account runtime", () => {
 			nowMs: () => nowMs,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const resolved = await pool.resolveModel(
-			"gemini-3.1-pro",
-			"gemini-3.5-flash",
-			nowMs - 1000,
+		const resolved = resolvedModel(
+			await pool.resolveModel(
+				"gemini-3.1-pro",
+				"gemini-3.5-flash",
+				nowMs - 1000,
+			),
 		);
 		assert.deepEqual(
 			(await pool.routeCandidatesForModel(resolved, nowMs - 1000)).map(
@@ -331,10 +343,12 @@ describe("gemini account runtime", () => {
 			extended: false,
 		});
 
-		const resolved = await pool.resolveModel(
-			"gemini-3.1-pro",
-			"gemini-3.5-flash",
-			nowMs - 1000,
+		const resolved = resolvedModel(
+			await pool.resolveModel(
+				"gemini-3.1-pro",
+				"gemini-3.5-flash",
+				nowMs - 1000,
+			),
 		);
 		const candidates = await pool.routeCandidatesForModel(
 			resolved,
@@ -344,14 +358,17 @@ describe("gemini account runtime", () => {
 			candidates.map((route) => route.providerModelId),
 			["9d8ca3786ebdfbea"],
 		);
-		const lease = await pool.acquireLease(baseConfig(), {
-			routeRequirement: {
-				candidates,
-				fallbackRoute: basicRouteForFamily("pro"),
-			},
-			capabilityMode: "prefer",
-			capabilityFreshAfterMs: nowMs - 1000,
-		});
+		const lease = required(
+			await pool.acquireLease(runtimeConfig(), {
+				routeRequirement: {
+					candidates,
+					fallbackRoute: basicRouteForFamily("pro"),
+				},
+				capabilityMode: "prefer",
+				capabilityFreshAfterMs: nowMs - 1000,
+			}),
+			"lease",
+		);
 		assert.equal(lease.accountId, "known-pro");
 		lease.release();
 		store.assertExhausted();

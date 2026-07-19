@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	identityHashFromCookie,
@@ -6,26 +5,57 @@ import {
 	sha256Hex,
 } from "../../../../src/gemini/accounts/normalize";
 import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
+import type { GeminiAccountOutcome } from "../../../../src/gemini/accounts/runtime-types";
+import type { GeminiAccountProbe } from "../../../../src/gemini/accounts/probe-types";
+import type { GeminiAccountLease } from "../../../../src/gemini/accounts/lease-types";
+import { isRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { deferred } from "../../_support/deferred.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 import {
 	account,
+	accountContext,
 	createRuntimeStore,
 	rejectUnexpectedCookieRotation,
+	required,
 	runtimeCall,
+	runtimeConfig,
+	type RuntimeCall,
 } from "./_support/runtime-fixtures.js";
 
 const REFRESH_LOCK_TTL_MS = 2 * 60 * 1000;
 const UUID_PATTERN =
 	"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 
-function lockedRuntimeCalls(accountId, nowMs, ownerPrefix, middle) {
+function observeSetCookie(
+	lease: GeminiAccountLease,
+	values: readonly string[],
+): void {
+	const observer = accountContext(lease.config).observeSetCookie;
+	if (!observer) throw new Error("account cookie observer is required");
+	observer(values);
+}
+
+function isCookieWrite(
+	value: unknown,
+): value is { cookieHeader: string; refreshedAtMs: number } {
+	return (
+		isRecord(value) &&
+		typeof value.cookieHeader === "string" &&
+		typeof value.refreshedAtMs === "number"
+	);
+}
+
+function lockedRuntimeCalls(
+	accountId: string,
+	nowMs: number,
+	ownerPrefix: string,
+	middle: readonly RuntimeCall[],
+): RuntimeCall[] {
 	let owner = "";
 	return [
 		runtimeCall(
 			"tryAcquireRefreshLock",
-			(args) => {
+			(args: [string, string, number, number]) => {
 				assert.equal(args.length, 4);
 				assert.equal(args[0], accountId);
 				assert.match(
@@ -40,16 +70,20 @@ function lockedRuntimeCalls(accountId, nowMs, ownerPrefix, middle) {
 		...middle,
 		runtimeCall(
 			"releaseRefreshLock",
-			(args) => assert.deepEqual(args, [accountId, owner]),
+			(args: [string, string]) => assert.deepEqual(args, [accountId, owner]),
 			undefined,
 		),
 	];
 }
 
-function rejectedRuntimeLockCall(accountId, nowMs, ownerPrefix) {
+function rejectedRuntimeLockCall(
+	accountId: string,
+	nowMs: number,
+	ownerPrefix: string,
+): RuntimeCall {
 	return runtimeCall(
 		"tryAcquireRefreshLock",
-		(args) => {
+		(args: [string, string, number, number]) => {
 			assert.equal(args.length, 4);
 			assert.equal(args[0], accountId);
 			assert.match(
@@ -62,11 +96,14 @@ function rejectedRuntimeLockCall(accountId, nowMs, ownerPrefix) {
 	);
 }
 
-function refreshedCookieWrite(cookieHeader, nowMs = 120000) {
+function refreshedCookieWrite(cookieHeader: string, nowMs = 120000) {
 	return { cookieHeader, refreshedAtMs: nowMs, nowMs };
 }
 
-async function withFixedNow(nowMs, run) {
+async function withFixedNow<T>(
+	nowMs: number,
+	run: () => T | PromiseLike<T>,
+): Promise<T> {
 	const original = Date.now;
 	Date.now = () => nowMs;
 	try {
@@ -108,7 +145,10 @@ describe("gemini account runtime", () => {
 			},
 			verifyAccount: async () => ({ ok: true, at: "fresh-at" }),
 		});
-		const lease = await pool.acquireLease(baseConfig());
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"refresh lease",
+		);
 		const firstRefresh = lease.refreshForRetry("auth");
 		await rotationStarted.promise;
 		const secondRefresh = lease.refreshForRetry("auth");
@@ -120,18 +160,21 @@ describe("gemini account runtime", () => {
 		assert.equal(store.callsFor("writeRefreshedCookie").length, 1);
 		assert.match(lease.config.cookie, /__Secure-1PSIDTS=rotated/);
 		assert.doesNotMatch(lease.config.cookie, /__Secure-1PSIDTS=t(?:;|$)/);
-		assert.equal(lease.config.gemini_account.cookieHash, lease.cookieHash);
+		const rotatedHash = await sha256Hex(
+			normalizeGeminiCookieHeader(rotatedCookie),
+		);
+		assert.equal(accountContext(lease.config).cookieHash, rotatedHash);
 		assert.equal(
-			typeof lease.config.gemini_account.observeSetCookie,
+			typeof accountContext(lease.config).observeSetCookie,
 			"function",
 		);
 		lease.release();
-		const cachedLease = await pool.acquireLease(baseConfig());
-		assert.match(cachedLease.config.cookie, /__Secure-1PSIDTS=rotated/);
-		assert.equal(
-			cachedLease.config.gemini_account.cookieHash,
-			lease.cookieHash,
+		const cachedLease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"cached refresh lease",
 		);
+		assert.match(cachedLease.config.cookie, /__Secure-1PSIDTS=rotated/);
+		assert.equal(accountContext(cachedLease.config).cookieHash, rotatedHash);
 		cachedLease.release();
 		store.assertExhausted();
 	});
@@ -160,22 +203,25 @@ describe("gemini account runtime", () => {
 				}),
 			verifyAccount: async () => ({ ok: true, at: "fresh-at" }),
 		});
-		const lease = await pool.acquireLease(baseConfig());
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"duplicate refresh lease",
+		);
 		const originalCookie = lease.config.cookie;
-		const originalHash = lease.cookieHash;
+		const originalHash = accountContext(lease.config).cookieHash;
 		assert.deepEqual(await lease.refreshForRetry("auth"), {
 			changed: false,
 			reason: "rotation_duplicate",
 		});
 		assert.equal(lease.config.cookie, originalCookie);
-		assert.equal(lease.cookieHash, originalHash);
+		assert.equal(accountContext(lease.config).cookieHash, originalHash);
 		lease.release();
 		store.assertExhausted();
 	});
 
 	test("records rejected refreshes through the shared classifier", async () => {
 		const row = account("a");
-		const outcome = {
+		const outcome: GeminiAccountOutcome = {
 			kind: "failure",
 			issue: "auth",
 			recoveryScope: "try_next_account",
@@ -191,7 +237,7 @@ describe("gemini account runtime", () => {
 			nowMs: () => 120000,
 			rotateCookie: async () => new Response(null, { status: 401 }),
 		});
-		assert.deepEqual(await pool.refreshAccountForAdmin(baseConfig(), row), {
+		assert.deepEqual(await pool.refreshAccountForAdmin(runtimeConfig(), row), {
 			changed: false,
 			reason: "rotation_rejected",
 		});
@@ -220,7 +266,10 @@ describe("gemini account runtime", () => {
 				reason: "missing_page_at_token",
 			}),
 		});
-		const lease = await pool.acquireLease(baseConfig());
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"missing-at refresh lease",
+		);
 		const originalCookie = lease.config.cookie;
 		assert.deepEqual(await lease.refreshForRetry("auth"), {
 			changed: false,
@@ -236,12 +285,12 @@ describe("gemini account runtime", () => {
 		const row = account("restricted");
 		const rotatedCookie =
 			"__Secure-1PSID=p-restricted; __Secure-1PSIDTS=rotated";
-		const probe = {
+		const probe: GeminiAccountProbe = {
 			statusCode: 1060,
 			issue: "location",
 			models: [],
 		};
-		const outcome = {
+		const outcome: GeminiAccountOutcome = {
 			kind: "failure",
 			issue: "location",
 			recoveryScope: "none",
@@ -279,7 +328,7 @@ describe("gemini account runtime", () => {
 				};
 			},
 		});
-		assert.deepEqual(await pool.refreshAccountForAdmin(baseConfig(), row), {
+		assert.deepEqual(await pool.refreshAccountForAdmin(runtimeConfig(), row), {
 			changed: true,
 			reason: "status_restricted",
 		});
@@ -306,7 +355,10 @@ describe("gemini account runtime", () => {
 			nowMs: () => nowMs,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const lease = await pool.acquireLease(baseConfig());
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"session lease",
+		);
 
 		await withFixedNow(nowMs, async () => {
 			await lease.maintainSessionIfStale(0);
@@ -347,7 +399,10 @@ describe("gemini account runtime", () => {
 				return { ok: true, at: "fresh-at" };
 			},
 		});
-		const lease = await pool.acquireLease(baseConfig());
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"passive lease",
+		);
 
 		await withFixedNow(nowMs, async () => {
 			await lease.maintainSessionIfStale(1000);
@@ -384,21 +439,31 @@ describe("gemini account runtime", () => {
 			nowMs: () => 120000,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const lease = await pool.acquireLease(baseConfig());
-		lease.config.gemini_account.observeSetCookie([
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"passive lease",
+		);
+		observeSetCookie(lease, [
 			"__Secure-1PSIDTS=passive-update; Path=/; Secure",
 			"SNlM0e=temporary; Path=/",
 			"at=temporary; Path=/",
 			"session_token=temporary; Path=/",
 		]);
 		await lease.flushObservedCookies();
-		const [[accountId, update]] = store.callsFor("writeRefreshedCookie");
+		const write = store.callsFor("writeRefreshedCookie")[0];
+		if (!write || typeof write[0] !== "string" || !isCookieWrite(write[1]))
+			throw new Error("expected refreshed cookie write");
+		const accountId = write[0];
+		const update = write[1];
 		assert.equal(accountId, "passive");
 		assert.match(update.cookieHeader, /PSIDTS=passive-update/);
 		assert.doesNotMatch(update.cookieHeader, /SNlM0e=|\bat=|session_token=/);
 		assert.equal(update.refreshedAtMs, 120000);
 		assert.match(lease.config.cookie, /PSIDTS=passive-update/);
-		assert.equal(lease.config.gemini_account.cookieHash, lease.cookieHash);
+		assert.equal(
+			accountContext(lease.config).cookieHash,
+			await sha256Hex(normalizeGeminiCookieHeader(updatedCookie)),
+		);
 		lease.release();
 		store.assertExhausted();
 	});
@@ -423,10 +488,13 @@ describe("gemini account runtime", () => {
 			nowMs: () => 120000,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const lease = await pool.acquireLease(baseConfig());
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"unchanged passive lease",
+		);
 		const originalCookie = lease.config.cookie;
-		const originalHash = lease.cookieHash;
-		lease.config.gemini_account.observeSetCookie([
+		const originalHash = accountContext(lease.config).cookieHash;
+		observeSetCookie(lease, [
 			"__Secure-1PSIDTS=t-passive-unchanged; Path=/; Secure",
 		]);
 
@@ -434,7 +502,7 @@ describe("gemini account runtime", () => {
 
 		assert.deepEqual(store.callsFor("writeRefreshedCookie"), []);
 		assert.equal(lease.config.cookie, originalCookie);
-		assert.equal(lease.cookieHash, originalHash);
+		assert.equal(accountContext(lease.config).cookieHash, originalHash);
 		lease.release();
 		store.assertExhausted();
 	});
@@ -468,21 +536,25 @@ describe("gemini account runtime", () => {
 			nowMs: () => 120000,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const lease = await pool.acquireLease(baseConfig());
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"duplicate passive lease",
+		);
 		const originalCookie = lease.config.cookie;
-		const originalHash = lease.cookieHash;
-		lease.config.gemini_account.observeSetCookie([
-			"__Secure-1PSIDTS=duplicate; Path=/; Secure",
-		]);
+		const originalHash = accountContext(lease.config).cookieHash;
+		observeSetCookie(lease, ["__Secure-1PSIDTS=duplicate; Path=/; Secure"]);
 
 		await lease.flushObservedCookies();
 
 		assert.equal(lease.config.cookie, originalCookie);
-		assert.equal(lease.cookieHash, originalHash);
+		assert.equal(accountContext(lease.config).cookieHash, originalHash);
 		lease.release();
-		const cachedLease = await pool.acquireLease(baseConfig());
+		const cachedLease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"cached passive lease",
+		);
 		assert.equal(cachedLease.config.cookie, originalCookie);
-		assert.equal(cachedLease.cookieHash, originalHash);
+		assert.equal(accountContext(cachedLease.config).cookieHash, originalHash);
 		cachedLease.release();
 		store.assertExhausted();
 	});
@@ -507,10 +579,11 @@ describe("gemini account runtime", () => {
 			nowMs: () => 120000,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const lease = await pool.acquireLease(baseConfig());
-		lease.config.gemini_account.observeSetCookie([
-			"__Secure-1PSID=other-identity; Path=/; Secure",
-		]);
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"identity passive lease",
+		);
+		observeSetCookie(lease, ["__Secure-1PSID=other-identity; Path=/; Secure"]);
 		await lease.flushObservedCookies();
 		assert.deepEqual(store.callsFor("writeRefreshedCookie"), []);
 		lease.release();
@@ -536,10 +609,11 @@ describe("gemini account runtime", () => {
 			nowMs: () => 120000,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const lease = await pool.acquireLease(baseConfig());
-		lease.config.gemini_account.observeSetCookie([
-			"__Secure-1PSIDTS=locked-update; Path=/; Secure",
-		]);
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"locked passive lease",
+		);
+		observeSetCookie(lease, ["__Secure-1PSIDTS=locked-update; Path=/; Secure"]);
 		await lease.flushObservedCookies();
 		assert.deepEqual(store.callsFor("getAccountForRefresh"), []);
 		assert.deepEqual(store.callsFor("writeRefreshedCookie"), []);

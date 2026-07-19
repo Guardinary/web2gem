@@ -1,14 +1,16 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
 import { basicRouteForFamily } from "../../../../src/gemini/accounts/routes";
+import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
+import type { GeminiAccountAcquireOptions } from "../../../../src/gemini/accounts/runtime-types";
 import { assert } from "../../assertions.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 import {
 	account,
 	capabilityRow,
 	createRuntimeStore,
 	rejectUnexpectedCookieRotation,
+	required,
+	runtimeConfig,
 	runtimeCall,
 } from "./_support/runtime-fixtures.js";
 
@@ -20,7 +22,7 @@ describe("gemini account runtime", () => {
 			capacity: 4,
 			capacityField: 12,
 			modelNumber: 1,
-		};
+		} satisfies GeminiRouteTuple;
 		const rows = [
 			account("incapable", { status_checked_at_ms: nowMs }),
 			account("unknown", { status_checked_at_ms: null }),
@@ -46,14 +48,17 @@ describe("gemini account runtime", () => {
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
 
-		const lease = await pool.acquireLease(baseConfig(), {
-			routeRequirement: {
-				candidates: [route],
-				fallbackRoute: basicRouteForFamily("pro"),
-			},
-			capabilityMode: "prefer",
-			capabilityFreshAfterMs: nowMs - 1000,
-		});
+		const lease = required(
+			await pool.acquireLease(runtimeConfig(), {
+				routeRequirement: {
+					candidates: [route],
+					fallbackRoute: basicRouteForFamily("pro"),
+				},
+				capabilityMode: "prefer",
+				capabilityFreshAfterMs: nowMs - 1000,
+			}),
+			"capable lease",
+		);
 		assert.equal(lease.accountId, "capable");
 		assert.deepEqual(lease.modelCapability, {
 			modelId: "model-pro",
@@ -78,7 +83,7 @@ describe("gemini account runtime", () => {
 			capacity: 4,
 			capacityField: 12,
 			modelNumber: 1,
-		};
+		} satisfies GeminiRouteTuple;
 		const rows = [
 			account("known-no", { status_checked_at_ms: nowMs }),
 			account("unknown-only", { status_checked_at_ms: null }),
@@ -107,16 +112,19 @@ describe("gemini account runtime", () => {
 			capabilityFreshAfterMs: nowMs - 1000,
 		};
 
-		const preferred = await pool.acquireLease(baseConfig(), {
-			...options,
-			capabilityMode: "prefer",
-		});
+		const preferred = required(
+			await pool.acquireLease(runtimeConfig(), {
+				...options,
+				capabilityMode: "prefer",
+			}),
+			"preferred lease",
+		);
 		assert.equal(preferred.accountId, "unknown-only");
 		assert.equal(preferred.modelCapability, null);
 		assert.deepEqual(preferred.selectedRoute, basicRouteForFamily("pro"));
 		preferred.release();
 		assert.equal(
-			await pool.acquireLease(baseConfig(), {
+			await pool.acquireLease(runtimeConfig(), {
 				...options,
 				capabilityMode: "strict",
 			}),
@@ -132,7 +140,7 @@ describe("gemini account runtime", () => {
 			capacity: 4,
 			capacityField: 12,
 			modelNumber: 3,
-		};
+		} satisfies GeminiRouteTuple;
 		const rows = [account("stale", { status_checked_at_ms: nowMs })];
 		const capabilities = [
 			capabilityRow(
@@ -155,14 +163,17 @@ describe("gemini account runtime", () => {
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
 
-		const lease = await pool.acquireLease(baseConfig(), {
-			routeRequirement: {
-				candidates: [staleRoute],
-				fallbackRoute: basicRouteForFamily("pro"),
-			},
-			capabilityMode: "prefer",
-			capabilityFreshAfterMs: nowMs - 1000,
-		});
+		const lease = required(
+			await pool.acquireLease(runtimeConfig(), {
+				routeRequirement: {
+					candidates: [staleRoute],
+					fallbackRoute: basicRouteForFamily("pro"),
+				},
+				capabilityMode: "prefer",
+				capabilityFreshAfterMs: nowMs - 1000,
+			}),
+			"stale fallback lease",
+		);
 		assert.equal(lease.accountId, "stale");
 		assert.equal(lease.modelCapability, null);
 		assert.deepEqual(lease.selectedRoute, basicRouteForFamily("pro"));
@@ -177,7 +188,7 @@ describe("gemini account runtime", () => {
 			capacity: 3,
 			capacityField: 13,
 			modelNumber: 7,
-		};
+		} satisfies GeminiRouteTuple;
 		const rows = [account("stale")];
 		const capabilities = [
 			capabilityRow(
@@ -200,9 +211,12 @@ describe("gemini account runtime", () => {
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
 
-		for (const capabilityMode of ["off", "prefer", "strict"]) {
+		const capabilityModes: readonly NonNullable<
+			GeminiAccountAcquireOptions["capabilityMode"]
+		>[] = ["off", "prefer", "strict"];
+		for (const capabilityMode of capabilityModes) {
 			assert.equal(
-				await pool.acquireLease(baseConfig(), {
+				await pool.acquireLease(runtimeConfig(), {
 					routeRequirement: {
 						candidates: [staleRoute],
 						fallbackRoute: null,
@@ -223,7 +237,7 @@ describe("gemini account runtime", () => {
 			capacity: 3,
 			capacityField: 13,
 			modelNumber: 7,
-		};
+		} satisfies GeminiRouteTuple;
 		const rows = [account("dynamic")];
 		const capabilities = [
 			capabilityRow(
@@ -246,15 +260,24 @@ describe("gemini account runtime", () => {
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
 
-		for (const capabilityMode of ["off", "prefer", "strict"]) {
-			const lease = await pool.acquireLease(baseConfig(), {
-				routeRequirement: { candidates: [route], fallbackRoute: null },
-				capabilityMode,
-				capabilityFreshAfterMs: nowMs - 1000,
-			});
+		const capabilityModes: readonly NonNullable<
+			GeminiAccountAcquireOptions["capabilityMode"]
+		>[] = ["off", "prefer", "strict"];
+		for (const capabilityMode of capabilityModes) {
+			const lease = required(
+				await pool.acquireLease(runtimeConfig(), {
+					routeRequirement: { candidates: [route], fallbackRoute: null },
+					capabilityMode,
+					capabilityFreshAfterMs: nowMs - 1000,
+				}),
+				"dynamic lease",
+			);
 			assert.equal(lease.accountId, "dynamic");
 			assert.deepEqual(lease.selectedRoute, route);
-			assert.equal(lease.modelCapability.modelId, "future-model");
+			assert.equal(
+				required(lease.modelCapability, "dynamic model capability").modelId,
+				"future-model",
+			);
 			lease.release();
 		}
 		store.assertExhausted();
@@ -267,7 +290,7 @@ describe("gemini account runtime", () => {
 			capacity: 4,
 			capacityField: 12,
 			modelNumber: 3,
-		};
+		} satisfies GeminiRouteTuple;
 		const basicRoute = basicRouteForFamily("pro");
 		const rows = [account("b-basic"), account("a-plus")];
 		const capabilities = [
@@ -302,20 +325,29 @@ describe("gemini account runtime", () => {
 			},
 			capabilityMode: "off",
 			capabilityFreshAfterMs: nowMs - 1000,
-		};
+		} satisfies GeminiAccountAcquireOptions;
 
-		const first = await pool.acquireLease(baseConfig(), options);
+		const first = required(
+			await pool.acquireLease(runtimeConfig(), options),
+			"first off-mode lease",
+		);
 		assert.equal(first.accountId, "b-basic");
 		assert.deepEqual(first.selectedRoute, basicRoute);
 		first.release();
 
-		const second = await pool.acquireLease(baseConfig(), {
-			...options,
-			excludeAccountIds: new Set(["b-basic"]),
-		});
+		const second = required(
+			await pool.acquireLease(runtimeConfig(), {
+				...options,
+				excludeAccountIds: new Set(["b-basic"]),
+			}),
+			"second off-mode lease",
+		);
 		assert.equal(second.accountId, "a-plus");
 		assert.deepEqual(second.selectedRoute, plusRoute);
-		assert.equal(second.modelCapability.modelId, plusRoute.providerModelId);
+		assert.equal(
+			required(second.modelCapability, "second model capability").modelId,
+			plusRoute.providerModelId,
+		);
 		second.release();
 		store.assertExhausted();
 	});
@@ -353,11 +385,14 @@ describe("gemini account runtime", () => {
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
 
-		const lease = await pool.acquireLease(baseConfig(), {
-			routeRequirement: { candidates: [route], fallbackRoute: route },
-			capabilityMode: "strict",
-			capabilityFreshAfterMs: nowMs - 1000,
-		});
+		const lease = required(
+			await pool.acquireLease(runtimeConfig(), {
+				routeRequirement: { candidates: [route], fallbackRoute: route },
+				capabilityMode: "strict",
+				capabilityFreshAfterMs: nowMs - 1000,
+			}),
+			"selected capability lease",
+		);
 		assert.deepEqual(store.callsFor("listAccountCapabilities"), [
 			[["selected"]],
 		]);

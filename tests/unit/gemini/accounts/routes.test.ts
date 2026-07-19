@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	geminiRouteKey,
@@ -6,9 +5,10 @@ import {
 	MAX_GEMINI_MODEL_ROUTES,
 	validateGeminiModelRoutePolicy,
 } from "../../../../src/gemini/accounts/routes";
+import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
 import { assert } from "../../assertions.js";
 
-const BOUNDARY_ROUTES = [
+const BOUNDARY_ROUTES: GeminiRouteTuple[] = [
 	{
 		providerModelId: "boundary-capacity-1",
 		capacity: 1,
@@ -37,7 +37,7 @@ const BOUNDARY_ROUTES = [
 
 describe("Gemini account routes", () => {
 	test("round-trips exact route keys and labels known tiers", () => {
-		const route = {
+		const route: GeminiRouteTuple = {
 			providerModelId: "future-model-extended",
 			capacity: 3,
 			capacityField: 13,
@@ -71,6 +71,7 @@ describe("Gemini account routes", () => {
 
 	test("rejects duplicate routes", () => {
 		const route = BOUNDARY_ROUTES[0];
+		if (!route) throw new Error("missing boundary route fixture");
 		assert.deepEqual(validateGeminiModelRoutePolicy("pro", [route, route]), {
 			error: "duplicate_route",
 		});

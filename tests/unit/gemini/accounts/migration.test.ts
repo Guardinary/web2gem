@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { readFileSync } from "node:fs";
 import { describe, test } from "vitest";
 import { assert } from "../../assertions.js";
@@ -8,7 +7,7 @@ const migrationSql = readFileSync(
 	"utf8",
 );
 
-function tableDefinition(name) {
+function tableDefinition(name: string): string {
 	const match = new RegExp(
 		`CREATE TABLE IF NOT EXISTS ${name} \\([\\s\\S]*?\\n\\);`,
 	).exec(migrationSql);

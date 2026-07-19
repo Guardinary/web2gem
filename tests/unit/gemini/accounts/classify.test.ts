@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { classifyGeminiAccountOutcome } from "../../../../src/gemini/accounts/classify";
 import { assert } from "../../assertions.js";

@@ -1,10 +1,10 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import { isRecord } from "../../../../src/shared/types";
 import {
 	identityHashFromCookie,
 	sha256Hex,
 } from "../../../../src/gemini/accounts/normalize";
-import { deferred } from "../../_support/deferred.js";
+import { deferred, type Deferred } from "../../_support/deferred.js";
 import { baseConfig } from "../../_support/runtime-config.js";
 import { assert } from "../../assertions.js";
 import {
@@ -16,6 +16,18 @@ import {
 	accountSummary,
 	createAccountStoreDouble,
 } from "./_support/store-fixtures.js";
+
+function argumentAt(args: readonly unknown[], index: number): unknown {
+	const value = args[index];
+	if (value === undefined)
+		throw new Error(`missing callback argument ${index}`);
+	return value;
+}
+
+function unknownArray(value: unknown, name: string): readonly unknown[] {
+	if (!Array.isArray(value)) throw new Error(`${name} must be an array`);
+	return value;
+}
 
 describe("Gemini account admin service imports", () => {
 	test("preserves created, changed, and unchanged facts in fallback stores", async () => {
@@ -59,12 +71,16 @@ describe("Gemini account admin service imports", () => {
 		const identityHash = await identityHashFromCookie(cookieHeader);
 		const store = createAccountStoreDouble({
 			createAccountsBulk: {
-				check([entries]) {
+				check(args: readonly unknown[]) {
+					const entries = unknownArray(argumentAt(args, 0), "entries");
 					assert.equal(entries.length, 1);
-					assert.equal(entries[0].cookieHash, cookieHash);
-					assert.equal(entries[0].input.identityHash, identityHash);
-					assert.equal(entries[0].input.label, "Alpha");
-					assert.equal(entries[0].input.nowMs, 1000);
+					const entry = entries[0];
+					if (!isRecord(entry) || !isRecord(entry.input))
+						throw new Error("invalid bulk entry fixture");
+					assert.equal(entry.cookieHash, cookieHash);
+					assert.equal(entry.input.identityHash, identityHash);
+					assert.equal(entry.input.label, "Alpha");
+					assert.equal(entry.input.nowMs, 1000);
 				},
 				result: {
 					createdAccountIds: new Set(["account-a"]),
@@ -109,7 +125,7 @@ describe("Gemini account admin service imports", () => {
 			cookie_header: cookieHeader,
 			cookie_hash: cookieHash,
 		});
-		const pending = [];
+		const pending: Promise<unknown>[] = [];
 		let verifyCalls = 0;
 		const store = createAccountStoreDouble({
 			createAccountsBulk: [
@@ -133,8 +149,12 @@ describe("Gemini account admin service imports", () => {
 			tryAcquireRefreshLock: { result: true },
 			writeRefreshedCookie: { result: { changed: true } },
 			writeAccountProbe: {
-				check([id, probe, checkedAtMs]) {
+				check(args: readonly unknown[]) {
+					const id = argumentAt(args, 0);
+					const probe = argumentAt(args, 1);
+					const checkedAtMs = argumentAt(args, 2);
 					assert.equal(id, "worker-account");
+					if (!isRecord(probe)) throw new Error("invalid probe fixture");
 					assert.equal(probe.statusCode, 1000);
 					assert.equal(checkedAtMs, 1000);
 				},
@@ -148,7 +168,7 @@ describe("Gemini account admin service imports", () => {
 			cfg: baseConfig({
 				runtime_profile: "worker",
 				execution_ctx: {
-					waitUntil(promise) {
+					waitUntil(promise: Promise<unknown>) {
 						pending.push(promise);
 					},
 				},
@@ -178,7 +198,9 @@ describe("Gemini account admin service imports", () => {
 
 		await service.create(body);
 		assert.equal(pending.length, 1);
-		await pending[0];
+		const firstProbe = pending[0];
+		if (!firstProbe) throw new Error("missing scheduled import probe");
+		await firstProbe;
 		assert.equal(verifyCalls, 1);
 		await service.create(body);
 		assert.equal(pending.length, 1);
@@ -190,14 +212,19 @@ describe("Gemini account admin service imports", () => {
 		const firstFourStarted = deferred();
 		const allStarted = deferred();
 		const releases = new Map(
-			Array.from({ length: 6 }, (_, index) => [`docker-${index}`, deferred()]),
+			Array.from({ length: 6 }, (_, index): [string, Deferred<unknown>] => [
+				`docker-${index}`,
+				deferred<unknown>(),
+			]),
 		);
 		let active = 0;
 		let maxActive = 0;
 		let started = 0;
 		let verifyCalls = 0;
 		const refreshRows = Array.from({ length: 12 }, () => ({
-			run([id]) {
+			run(args: readonly unknown[]) {
+				const id = argumentAt(args, 0);
+				if (typeof id !== "string") throw new Error("invalid refresh id");
 				return accountSqlRow(id, {
 					cookie_header: `__Secure-1PSID=${id}; __Secure-1PSIDTS=t-${id}`,
 				});
@@ -205,7 +232,8 @@ describe("Gemini account admin service imports", () => {
 		}));
 		const store = createAccountStoreDouble({
 			createAccountsBulk: {
-				run([entries]) {
+				run(args: readonly unknown[]) {
+					const entries = unknownArray(argumentAt(args, 0), "entries");
 					return {
 						createdAccountIds: new Set(
 							entries.map((_entry, index) => `docker-${index}`),
@@ -231,7 +259,9 @@ describe("Gemini account admin service imports", () => {
 				started += 1;
 				if (started === 4) firstFourStarted.resolve();
 				if (started === 6) allStarted.resolve();
-				await releases.get(account.id).promise;
+				const release = releases.get(account.id);
+				if (!release) throw new Error(`missing release ${account.id}`);
+				await release.promise;
 				active -= 1;
 				return new Response(null, { status: 200 });
 			},
@@ -250,12 +280,18 @@ describe("Gemini account admin service imports", () => {
 
 		await firstFourStarted.promise;
 		assert.equal(active, 4);
-		for (let index = 0; index < 4; index++)
-			releases.get(`docker-${index}`).resolve();
+		for (let index = 0; index < 4; index++) {
+			const release = releases.get(`docker-${index}`);
+			if (!release) throw new Error(`missing release docker-${index}`);
+			release.resolve();
+		}
 		await allStarted.promise;
 		assert.equal(active, 2);
-		for (let index = 4; index < 6; index++)
-			releases.get(`docker-${index}`).resolve();
+		for (let index = 4; index < 6; index++) {
+			const release = releases.get(`docker-${index}`);
+			if (!release) throw new Error(`missing release docker-${index}`);
+			release.resolve();
+		}
 		await createPromise;
 
 		assert.equal(maxActive, 4);

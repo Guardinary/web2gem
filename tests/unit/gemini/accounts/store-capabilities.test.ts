@@ -1,11 +1,12 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
 import { D1GeminiAccountStore } from "../../../../src/gemini/accounts/store-d1";
 import { assert } from "../../assertions.js";
 import {
 	mutationResult,
 	poolVersionExpectation,
 	RecordingD1,
+	type D1Expectation,
 } from "./_support/store-fixtures.js";
 
 describe("D1 Gemini account capability store", () => {
@@ -47,7 +48,6 @@ describe("D1 Gemini account capability store", () => {
 			{
 				statusCode: 1000,
 				issue: null,
-				selectable: true,
 				models: [
 					{
 						modelId: "model-pro",
@@ -78,10 +78,12 @@ describe("D1 Gemini account capability store", () => {
 		]);
 		await new D1GeminiAccountStore(db).writeAccountProbe(
 			"first",
-			{ statusCode: 1016, issue: "auth", selectable: false, models: [] },
+			{ statusCode: 1016, issue: "auth", models: [] },
 			5650,
 		);
-		assert.doesNotMatch(db.records[0].sql, /gemini_account_models/);
+		const statusRecord = db.records[0];
+		if (!statusRecord) throw new Error("status statement was not recorded");
+		assert.doesNotMatch(statusRecord.sql, /gemini_account_models/);
 		db.assertDrained();
 	});
 
@@ -137,7 +139,7 @@ describe("D1 Gemini account capability store", () => {
 				capacityField: 12,
 				modelNumber: 3,
 			},
-		];
+		] satisfies readonly GeminiRouteTuple[];
 		const rows = routes.map((route, priority) => ({
 			family: "pro",
 			provider_model_id: route.providerModelId,
@@ -147,27 +149,29 @@ describe("D1 Gemini account capability store", () => {
 			priority,
 			updated_at_ms: 5700,
 		}));
-		const expectations = [
+		const expectations: D1Expectation[] = [
 			{
 				sql: "DELETE FROM gemini_model_route_priority WHERE family = ?",
 				binds: ["pro"],
 				operation: "batch",
 				result: mutationResult(),
 			},
-			...routes.map((route, priority) => ({
-				sql: /INSERT INTO gemini_model_route_priority \( family, provider_model_id, capacity, capacity_field, model_number, priority, updated_at_ms \) VALUES \(\?, \?, \?, \?, \?, \?, \?\)/,
-				binds: [
-					"pro",
-					route.providerModelId,
-					route.capacity,
-					route.capacityField,
-					route.modelNumber,
-					priority,
-					5700,
-				],
-				operation: "batch",
-				result: mutationResult(),
-			})),
+			...routes.map(
+				(route, priority): D1Expectation => ({
+					sql: /INSERT INTO gemini_model_route_priority \( family, provider_model_id, capacity, capacity_field, model_number, priority, updated_at_ms \) VALUES \(\?, \?, \?, \?, \?, \?, \?\)/,
+					binds: [
+						"pro",
+						route.providerModelId,
+						route.capacity,
+						route.capacityField,
+						route.modelNumber,
+						priority,
+						5700,
+					],
+					operation: "batch",
+					result: mutationResult(),
+				}),
+			),
 			poolVersionExpectation(5700, "unconditional"),
 			{
 				sql: /SELECT family, provider_model_id, capacity, capacity_field, model_number, priority, updated_at_ms FROM gemini_model_route_priority ORDER BY family ASC, priority ASC/,
@@ -191,7 +195,7 @@ describe("D1 Gemini account capability store", () => {
 			capacity: 4,
 			capacityField: 12,
 			modelNumber: 3,
-		};
+		} satisfies GeminiRouteTuple;
 		const invalidDb = new RecordingD1();
 		await assert.rejects(
 			() =>

@@ -1,7 +1,40 @@
-// @ts-nocheck
 import { isDeepStrictEqual } from "node:util";
+import type {
+	GeminiAccountAdminStore,
+	GeminiAccountSummary,
+} from "../../../../../src/gemini/accounts/admin-types";
+import type { GeminiAccountIssue } from "../../../../../src/gemini/accounts/domain";
+import type { GeminiAccountRuntimeStore } from "../../../../../src/gemini/accounts/runtime-types";
+import type {
+	D1DatabaseLike,
+	D1PreparedStatementLike,
+	D1Result,
+	GeminiAccountRow,
+} from "../../../../../src/gemini/accounts/storage-types";
+import type { GeminiAccountSummarySqlRow } from "../../../../../src/gemini/accounts/store-d1-admin";
 
-export function accountSqlRow(id, overrides = {}) {
+type SqlExpectation = string | RegExp;
+type D1Operation = "first" | "all" | "run" | "batch";
+
+export type D1Expectation = {
+	sql: SqlExpectation;
+	binds: readonly unknown[];
+	operation: D1Operation;
+	result?: unknown;
+	error?: unknown;
+	columnName?: string;
+};
+
+export type RecordingD1Record = {
+	sql: string;
+	binds: unknown[] | null;
+	operation: D1Operation | null;
+};
+
+export function accountSqlRow(
+	id: string,
+	overrides: Partial<GeminiAccountRow> = {},
+): GeminiAccountRow {
 	return {
 		id,
 		label: null,
@@ -24,7 +57,10 @@ export function accountSqlRow(id, overrides = {}) {
 	};
 }
 
-export function accountSummary(id, overrides = {}) {
+export function accountSummary(
+	id: string,
+	overrides: Partial<GeminiAccountSummary> = {},
+): GeminiAccountSummary {
 	return {
 		id,
 		label: null,
@@ -43,7 +79,10 @@ export function accountSummary(id, overrides = {}) {
 	};
 }
 
-export function adminSqlRow(id, overrides = {}) {
+export function adminSqlRow(
+	id: string,
+	overrides: Partial<GeminiAccountSummarySqlRow> = {},
+): GeminiAccountSummarySqlRow {
 	const row = accountSqlRow(id, overrides);
 	return {
 		id: row.id,
@@ -61,7 +100,11 @@ export function adminSqlRow(id, overrides = {}) {
 	};
 }
 
-export const durableIssues = ["auth", "user_action", "location"];
+export const durableIssues = [
+	"auth",
+	"user_action",
+	"location",
+] as const satisfies readonly GeminiAccountIssue[];
 
 const poolVersionSql = {
 	changes:
@@ -73,10 +116,10 @@ const poolVersionSql = {
 };
 
 export function poolVersionExpectation(
-	nowMs,
-	mode = "changes",
-	extraBinds = [],
-) {
+	nowMs: number,
+	mode: keyof typeof poolVersionSql = "changes",
+	extraBinds: readonly unknown[] = [],
+): D1Expectation {
 	return {
 		sql: poolVersionSql[mode],
 		binds: ["pool_version", nowMs, ...extraBinds],
@@ -85,18 +128,20 @@ export function poolVersionExpectation(
 	};
 }
 
-export function mutationResult(changes = 1) {
+export function mutationResult(changes = 1): D1Result {
 	return { meta: { changes } };
 }
 
-export class RecordingD1 {
-	constructor(expectations = []) {
+export class RecordingD1 implements D1DatabaseLike {
+	readonly pending: D1Expectation[];
+	readonly records: RecordingD1Record[] = [];
+	readonly batches: RecordingD1Record[][] = [];
+
+	constructor(expectations: readonly D1Expectation[] = []) {
 		this.pending = [...expectations];
-		this.records = [];
-		this.batches = [];
 	}
 
-	prepare(sql) {
+	prepare(sql: string): D1PreparedStatementLike {
 		const expectation = this.pending.shift();
 		if (!expectation)
 			throw new Error(`unexpected D1 prepare: ${normalizeSql(sql)}`);
@@ -107,7 +152,9 @@ export class RecordingD1 {
 		return new RecordingStatement(this, expectation, record);
 	}
 
-	async batch(statements) {
+	async batch<T = unknown>(
+		statements: D1PreparedStatementLike[],
+	): Promise<D1Result<T>[]> {
 		if (!Array.isArray(statements))
 			throw new Error("D1 batch must be an array");
 		this.batches.push(
@@ -118,18 +165,20 @@ export class RecordingD1 {
 			}),
 		);
 		return statements.map((statement) => {
-			return statement.execute("batch");
+			if (!(statement instanceof RecordingStatement) || statement.db !== this)
+				throw new Error("D1 batch received an unrecorded statement");
+			return statement.execute<D1Result<T>>("batch");
 		});
 	}
 
-	assertBatches(expectedRecordIndexes) {
+	assertBatches(expectedRecordIndexes: readonly (readonly number[])[]): void {
 		const actualRecordIndexes = this.batches.map((batch) =>
 			batch.map((record) => this.records.indexOf(record)),
 		);
 		assertValues(expectedRecordIndexes, actualRecordIndexes, "D1 batch groups");
 	}
 
-	assertDrained() {
+	assertDrained(): void {
 		if (this.pending.length) {
 			throw new Error(
 				`unconsumed D1 expectations: ${this.pending
@@ -144,19 +193,19 @@ export class RecordingD1 {
 			);
 	}
 
-	get lastStatement() {
+	get lastStatement(): RecordingD1Record | undefined {
 		return this.records.at(-1);
 	}
 }
 
-class RecordingStatement {
-	constructor(db, expectation, record) {
-		this.db = db;
-		this.expectation = expectation;
-		this.record = record;
-	}
+class RecordingStatement implements D1PreparedStatementLike {
+	constructor(
+		readonly db: RecordingD1,
+		private readonly expectation: D1Expectation,
+		readonly record: RecordingD1Record,
+	) {}
 
-	bind(...values) {
+	bind(...values: unknown[]): D1PreparedStatementLike {
 		if (this.record.binds !== null)
 			throw new Error(`D1 statement was bound twice: ${this.record.sql}`);
 		assertValues(this.expectation.binds, values, this.record.sql);
@@ -164,25 +213,25 @@ class RecordingStatement {
 		return this;
 	}
 
-	async first(columnName) {
+	async first<T = unknown>(columnName?: string): Promise<T | null> {
 		if (this.expectation.columnName !== undefined)
 			assertValues(
 				[this.expectation.columnName],
 				[columnName],
 				`${this.record.sql} column`,
 			);
-		return this.execute("first");
+		return this.execute<T | null>("first");
 	}
 
-	async all() {
-		return this.execute("all");
+	async all<T = unknown>(): Promise<D1Result<T>> {
+		return this.execute<D1Result<T>>("all");
 	}
 
-	async run() {
-		return this.execute("run");
+	async run<T = unknown>(): Promise<D1Result<T>> {
+		return this.execute<D1Result<T>>("run");
 	}
 
-	execute(operation) {
+	execute<T>(operation: D1Operation): T {
 		if (this.record.operation !== null)
 			throw new Error(`D1 statement executed twice: ${this.record.sql}`);
 		if (this.record.binds === null) {
@@ -196,7 +245,7 @@ class RecordingStatement {
 		}
 		this.record.operation = operation;
 		if (Object.hasOwn(this.expectation, "error")) throw this.expectation.error;
-		return this.expectation.result;
+		return this.expectation.result as T;
 	}
 }
 
@@ -224,51 +273,145 @@ const ACCOUNT_STORE_METHODS = [
 	"deleteAccount",
 	"setAccountsEnabledBulk",
 	"deleteAccountsBulk",
-];
+] as const;
 
-export function createAccountStoreDouble(expectations = {}) {
-	const pending = new Map(
-		Object.entries(expectations).map(([method, entries]) => [
-			method,
-			Array.isArray(entries) ? [...entries] : [entries],
-		]),
-	);
-	const calls = [];
-	const store = { calls };
+type CompleteAccountStore = Required<
+	GeminiAccountAdminStore & GeminiAccountRuntimeStore
+>;
+type StoreMethod = {
+	[K in keyof CompleteAccountStore]: CompleteAccountStore[K] extends (
+		...args: infer _Args
+	) => unknown
+		? K
+		: never;
+}[keyof CompleteAccountStore];
+type StoreMethodArgs<K extends StoreMethod> = CompleteAccountStore[K] extends (
+	...args: infer Args
+) => unknown
+	? Args
+	: never;
+type StoreMethodResult<K extends StoreMethod> =
+	CompleteAccountStore[K] extends (...args: never[]) => Promise<infer Result>
+		? Result
+		: never;
+type StoreMethodExpectation<K extends StoreMethod> = {
+	args?: StoreMethodArgs<K>;
+	check?: (args: StoreMethodArgs<K>) => void;
+	run?: (
+		args: StoreMethodArgs<K>,
+	) => StoreMethodResult<K> | Promise<StoreMethodResult<K>>;
+	result?: StoreMethodResult<K>;
+	error?: unknown;
+};
+type AccountStoreExpectations = {
+	[K in StoreMethod]?: StoreMethodExpectation<K> | StoreMethodExpectation<K>[];
+};
+type AccountStoreCall = {
+	method: StoreMethod;
+	args: readonly unknown[];
+};
+type AccountStoreDouble = GeminiAccountAdminStore &
+	GeminiAccountRuntimeStore & {
+		calls: AccountStoreCall[];
+		assertDrained(): void;
+	};
 
-	for (const method of ACCOUNT_STORE_METHODS) {
-		store[method] = async (...args) => {
-			const queue = pending.get(method);
-			const expectation = queue?.shift();
-			if (!expectation)
-				throw new Error(`unexpected account store call: ${method}`);
-			calls.push({ method, args });
-			if (Object.hasOwn(expectation, "args"))
-				assertValues(expectation.args, args, `account store ${method}`);
-			if (expectation.check) expectation.check(args);
-			if (Object.hasOwn(expectation, "error")) throw expectation.error;
-			if (expectation.run) return expectation.run(args);
-			return expectation.result;
-		};
+export function createAccountStoreDouble(
+	expectations: AccountStoreExpectations = {},
+): AccountStoreDouble {
+	const offsets = new Map<StoreMethod, number>();
+	const calls: AccountStoreCall[] = [];
+
+	async function invoke<K extends StoreMethod>(
+		method: K,
+		args: StoreMethodArgs<K>,
+	): Promise<StoreMethodResult<K>> {
+		const entries = expectationEntries(expectations[method]);
+		const offset = offsets.get(method) ?? 0;
+		const expectation = entries[offset];
+		if (!expectation)
+			throw new Error(`unexpected account store call: ${method}`);
+		offsets.set(method, offset + 1);
+		calls.push({ method, args });
+		if (Object.hasOwn(expectation, "args"))
+			assertValues(expectation.args, args, `account store ${method}`);
+		if (expectation.check) expectation.check(args);
+		if (Object.hasOwn(expectation, "error")) throw expectation.error;
+		if (expectation.run) return expectation.run(args);
+		return expectation.result as StoreMethodResult<K>;
 	}
 
-	store.assertDrained = () => {
-		const remaining = [...pending.entries()].flatMap(([method, entries]) =>
-			entries.length ? [`${method}(${entries.length})`] : [],
-		);
-		if (remaining.length)
-			throw new Error(
-				`unconsumed account store calls: ${remaining.join(", ")}`,
-			);
+	const store: AccountStoreDouble = {
+		calls,
+		getPoolVersion: () => invoke("getPoolVersion", []),
+		listSelectableAccounts: (nowMs, limit) =>
+			invoke("listSelectableAccounts", [nowMs, limit]),
+		getAccountForRefresh: (accountId) =>
+			invoke("getAccountForRefresh", [accountId]),
+		tryAcquireRefreshLock: (accountId, owner, expiresAtMs, nowMs) =>
+			invoke("tryAcquireRefreshLock", [accountId, owner, expiresAtMs, nowMs]),
+		releaseRefreshLock: (accountId, owner) =>
+			invoke("releaseRefreshLock", [accountId, owner]),
+		writeRefreshedCookie: (accountId, update) =>
+			invoke("writeRefreshedCookie", [accountId, update]),
+		writeAccountOutcome: (accountId, outcome) =>
+			invoke("writeAccountOutcome", [accountId, outcome]),
+		writeAccountProbe: (accountId, probe, checkedAtMs) =>
+			invoke("writeAccountProbe", [accountId, probe, checkedAtMs]),
+		listAccountCapabilities: (accountIds) =>
+			invoke("listAccountCapabilities", [accountIds]),
+		listAllAccountCapabilities: (limit) =>
+			invoke("listAllAccountCapabilities", [limit]),
+		listModelRoutePriorities: () => invoke("listModelRoutePriorities", []),
+		replaceModelRoutePriority: (family, routes, nowMs) =>
+			invoke("replaceModelRoutePriority", [family, routes, nowMs]),
+		clearModelRoutePriority: (family, nowMs) =>
+			invoke("clearModelRoutePriority", [family, nowMs]),
+		getAdminOverview: (filter, nowMs) =>
+			invoke("getAdminOverview", [filter, nowMs]),
+		findAccountByCookieHash: (cookieHash, nowMs) =>
+			invoke("findAccountByCookieHash", [cookieHash, nowMs]),
+		findAccountByIdentityHash: (identityHash, nowMs) =>
+			invoke("findAccountByIdentityHash", [identityHash, nowMs]),
+		createAccount: (input) => invoke("createAccount", [input]),
+		importAccountByIdentity: (entry) =>
+			invoke("importAccountByIdentity", [entry]),
+		createAccountsBulk: (entries) => invoke("createAccountsBulk", [entries]),
+		updateAccount: (accountId, update) =>
+			invoke("updateAccount", [accountId, update]),
+		deleteAccount: (accountId, nowMs) =>
+			invoke("deleteAccount", [accountId, nowMs]),
+		setAccountsEnabledBulk: (accountIds, enabled, nowMs) =>
+			invoke("setAccountsEnabledBulk", [accountIds, enabled, nowMs]),
+		deleteAccountsBulk: (accountIds, nowMs) =>
+			invoke("deleteAccountsBulk", [accountIds, nowMs]),
+		assertDrained: () => {
+			const remaining = ACCOUNT_STORE_METHODS.flatMap((method) => {
+				const entries = expectationEntries(expectations[method]);
+				const count = entries.length - (offsets.get(method) ?? 0);
+				return count > 0 ? [`${method}(${count})`] : [];
+			});
+			if (remaining.length)
+				throw new Error(
+					`unconsumed account store calls: ${remaining.join(", ")}`,
+				);
+		},
 	};
 	return store;
 }
 
-export function normalizeSql(sql) {
+function expectationEntries<K extends StoreMethod>(
+	value: StoreMethodExpectation<K> | StoreMethodExpectation<K>[] | undefined,
+): StoreMethodExpectation<K>[] {
+	if (value === undefined) return [];
+	return Array.isArray(value) ? value : [value];
+}
+
+export function normalizeSql(sql: string): string {
 	return String(sql).replace(/\s+/g, " ").trim();
 }
 
-function assertSql(expected, actual) {
+function assertSql(expected: SqlExpectation, actual: string): void {
 	if (expected instanceof RegExp) {
 		expected.lastIndex = 0;
 		if (expected.test(actual)) return;
@@ -278,7 +421,11 @@ function assertSql(expected, actual) {
 	);
 }
 
-function assertValues(expected, actual, context) {
+function assertValues(
+	expected: unknown,
+	actual: unknown,
+	context: string,
+): void {
 	if (isDeepStrictEqual(expected, actual)) return;
 	throw new Error(
 		`unexpected values for ${context}: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`,

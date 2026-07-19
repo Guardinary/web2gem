@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	identityHashFromCookie,
@@ -10,9 +9,13 @@ import {
 	adminSqlRow,
 	mutationResult,
 	RecordingD1,
+	type D1Expectation,
 } from "./_support/store-fixtures.js";
 
-function importVersionExpectation(nowMs, pairs) {
+function importVersionExpectation(
+	nowMs: number,
+	pairs: readonly (readonly [string, string])[],
+): D1Expectation {
 	return {
 		sql: /WITH requested\(identity_hash, cookie_hash\) AS \( SELECT json_extract\(value, '\$\[0\]'\), json_extract\(value, '\$\[1\]'\) FROM json_each\(\?\) \) INSERT INTO gemini_pool_meta .* WHERE EXISTS .* RETURNING .* AS preexisting_ids/,
 		binds: [JSON.stringify(pairs), "pool_version", nowMs],
@@ -86,11 +89,12 @@ describe("D1 Gemini account store codec", () => {
 	});
 
 	test("maps bulk create rows from separately supplied preflight and reread results", async () => {
+		const inputPairs = [
+			["second", "p2"],
+			["third", "p3"],
+		] as const;
 		const inputs = await Promise.all(
-			[
-				["second", "p2"],
-				["third", "p3"],
-			].map(async ([id, cookie]) => {
+			inputPairs.map(async ([id, cookie]) => {
 				const cookieHeader = `__Secure-1PSID=${cookie}; __Secure-1PSIDTS=t`;
 				const cookieHash = await sha256Hex(cookieHeader);
 				const identityHash = await identityHashFromCookie(cookieHeader);
@@ -100,7 +104,7 @@ describe("D1 Gemini account store codec", () => {
 				};
 			}),
 		);
-		const insertExpectations = inputs.map((entry) => ({
+		const insertExpectations: D1Expectation[] = inputs.map((entry) => ({
 			sql: /INSERT INTO gemini_accounts .*ON CONFLICT\(identity_hash\) DO UPDATE SET/,
 			binds: [
 				entry.input.id,

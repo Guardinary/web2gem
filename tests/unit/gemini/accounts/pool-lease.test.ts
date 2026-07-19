@@ -1,12 +1,14 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
+import type { GeminiAccountOutcome } from "../../../../src/gemini/accounts/runtime-types";
 import { assert } from "../../assertions.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 import {
 	account,
+	accountContext,
 	createRuntimeStore,
 	rejectUnexpectedCookieRotation,
+	required,
+	runtimeConfig,
 	runtimeCall,
 } from "./_support/runtime-fixtures.js";
 
@@ -27,16 +29,17 @@ describe("gemini account runtime", () => {
 			nowMs: () => 3000,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const lease = await pool.acquireLease(baseConfig());
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"first account lease",
+		);
+		const context = accountContext(lease.config);
 		assert.equal(lease.accountId, "first");
 		assert.equal(lease.config.sapisid, "sapisid-value");
 		assert.match(lease.config.cookie, /__Secure-1PSID=p/);
-		assert.equal(lease.config.gemini_account.accountId, "first");
-		assert.equal(lease.config.gemini_account.cookieHash, "hash-first");
-		assert.equal(
-			typeof lease.config.gemini_account.observeSetCookie,
-			"function",
-		);
+		assert.equal(context.accountId, "first");
+		assert.equal(context.cookieHash, "hash-first");
+		assert.equal(typeof context.observeSetCookie, "function");
 		lease.release();
 		store.assertExhausted();
 	});
@@ -51,13 +54,22 @@ describe("gemini account runtime", () => {
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
 
-		const first = await pool.acquireLease(baseConfig());
-		const second = await pool.acquireLease(baseConfig());
+		const first = required(
+			await pool.acquireLease(runtimeConfig()),
+			"first lease",
+		);
+		const second = required(
+			await pool.acquireLease(runtimeConfig()),
+			"second lease",
+		);
 		assert.equal(first.accountId, "a");
 		assert.equal(second.accountId, "b");
 
 		second.release();
-		const afterRelease = await pool.acquireLease(baseConfig());
+		const afterRelease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"lease after release",
+		);
 		assert.equal(afterRelease.accountId, "b");
 		first.release();
 		afterRelease.release();
@@ -104,7 +116,10 @@ describe("gemini account runtime", () => {
 			nowMs: () => 1000,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const lease = await pool.acquireLease(baseConfig());
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"health update lease",
+		);
 		await lease.markFailure({ status: 429 }, 1000);
 		await lease.markFailure(new Error("invalid model"), 2000);
 		await lease.markSuccess(3000);
@@ -134,7 +149,7 @@ describe("gemini account runtime", () => {
 	});
 	test("applies account outcomes to the cached facade snapshot", async () => {
 		const row = account("cooling");
-		const outcome = {
+		const outcome: GeminiAccountOutcome = {
 			kind: "failure",
 			issue: "rate_limit",
 			cooldownUntilMs: 301000,
@@ -150,11 +165,14 @@ describe("gemini account runtime", () => {
 			nowMs: () => 1000,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const lease = await pool.acquireLease(baseConfig());
+		const lease = required(
+			await pool.acquireLease(runtimeConfig()),
+			"cached snapshot lease",
+		);
 		await lease.markFailure({ status: 429 }, 1000);
 		lease.release();
 
-		assert.equal(await pool.acquireLease(baseConfig()), null);
+		assert.equal(await pool.acquireLease(runtimeConfig()), null);
 		store.assertExhausted();
 	});
 	test("excludes request-attempted accounts before load balancing", async () => {
@@ -167,9 +185,12 @@ describe("gemini account runtime", () => {
 			nowMs: () => 1000,
 			rotateCookie: rejectUnexpectedCookieRotation,
 		});
-		const lease = await pool.acquireLease(baseConfig(), {
-			excludeAccountIds: new Set(["a"]),
-		});
+		const lease = required(
+			await pool.acquireLease(runtimeConfig(), {
+				excludeAccountIds: new Set(["a"]),
+			}),
+			"non-excluded lease",
+		);
 		assert.equal(lease.accountId, "b");
 		lease.release();
 		store.assertExhausted();

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { D1GeminiAccountStore } from "../../../../src/gemini/accounts/store-d1";
 import { assert } from "../../assertions.js";
@@ -42,11 +41,15 @@ describe("D1 Gemini account store admin projections", () => {
 			1000,
 		);
 		assert.deepEqual(overview.stats, stats);
-		assert.equal(overview.items[0].state, "cooling");
-		assert.equal(overview.items[0].issue, "rate_limit");
-		assert.equal(Object.keys(overview.items[0]).length, 13);
+		const item = overview.items[0];
+		if (!item) throw new Error("admin overview did not return an item");
+		assert.equal(item.state, "cooling");
+		assert.equal(item.issue, "rate_limit");
+		assert.equal(Object.keys(item).length, 13);
+		const pageRecord = db.records[0];
+		if (!pageRecord) throw new Error("admin page statement was not recorded");
 		assert.doesNotMatch(
-			db.records[0].sql,
+			pageRecord.sql,
 			/cookie_header|cookie_hash|identity_hash/,
 		);
 		assert.doesNotMatch(JSON.stringify(overview), /secret|cookie_hash/);

@@ -1,7 +1,9 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { assert } from "../../assertions.js";
-import { createService } from "./_support/admin-service-fixtures.js";
+import {
+	createService,
+	mutationError,
+} from "./_support/admin-service-fixtures.js";
 import {
 	accountSqlRow,
 	accountSummary,
@@ -67,8 +69,8 @@ describe("Gemini account admin service bulk and overview", () => {
 		}).runBulkAction({ action: "refresh", ids: ["a", "b"] });
 
 		assert.equal(result.failed, 2);
-		assert.equal(result.errors[0].code, "rotation_rejected");
-		assert.equal(result.errors[1].code, "rotation_rejected");
+		assert.equal(mutationError(result, 0).code, "rotation_rejected");
+		assert.equal(mutationError(result, 1).code, "rotation_rejected");
 		store.assertDrained();
 	});
 
@@ -93,7 +95,7 @@ describe("Gemini account admin service bulk and overview", () => {
 			},
 			{ processed: 3, changed: 2, failed: 1 },
 		);
-		assert.equal(result.errors[0].code, "account_not_found");
+		assert.equal(mutationError(result).code, "account_not_found");
 		store.assertDrained();
 	});
 

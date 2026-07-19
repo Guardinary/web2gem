@@ -1,8 +1,8 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { assert } from "../../assertions.js";
 import {
 	createService,
+	mutationError,
 	mutationCounts,
 } from "./_support/admin-service-fixtures.js";
 import {
@@ -52,8 +52,8 @@ describe("Gemini account admin service mutations", () => {
 		);
 		const missing = await service.delete("missing");
 		assert.equal(missing.failed, 1);
-		assert.equal(missing.errors[0].code, "account_not_found");
-		assert.equal(typeof service.check, "undefined");
+		assert.equal(mutationError(missing).code, "account_not_found");
+		assert.equal(Reflect.get(service, "check"), undefined);
 		store.assertDrained();
 	});
 

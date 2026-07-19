@@ -1,23 +1,32 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	decodeGeminiAccountProbe,
 	readBoundedResponseText,
 } from "../../../../src/gemini/accounts/probe";
+import type { GeminiAccountProbe } from "../../../../src/gemini/accounts/probe-types";
 import { assert } from "../../assertions.js";
 
 function accountProbeWrb(
-	statusCode,
-	models = [],
-	tierFlags = [],
-	capabilityFlags = [],
+	statusCode: number,
+	models: readonly unknown[] = [],
+	tierFlags: readonly unknown[] = [],
+	capabilityFlags: readonly unknown[] = [],
 ) {
-	const payload = [];
+	const payload: unknown[] = [];
 	payload[14] = statusCode;
 	payload[15] = models;
 	payload[16] = tierFlags;
 	payload[17] = capabilityFlags;
 	return JSON.stringify([["wrb.fr", "otAQ7b", JSON.stringify(payload)]]);
+}
+
+function probeModel(
+	probe: GeminiAccountProbe,
+	index: number,
+): GeminiAccountProbe["models"][number] {
+	const model = probe.models[index];
+	if (!model) throw new Error(`missing probe model at index ${index}`);
+	return model;
 }
 
 describe("Gemini account probe decoding", () => {
@@ -126,10 +135,8 @@ describe("Gemini account probe decoding", () => {
 					capabilityFlags,
 				),
 			);
-			assert.deepEqual(
-				[decoded.models[0].capacity, decoded.models[0].capacityField],
-				expected,
-			);
+			const model = probeModel(decoded, 0);
+			assert.deepEqual([model.capacity, model.capacityField], expected);
 		}
 	});
 
@@ -140,10 +147,12 @@ describe("Gemini account probe decoding", () => {
 				["9d8ca3786ebdfbea", "Pro", "Authenticated Pro"],
 			]),
 		);
-		assert.equal(decoded.models[0].available, true);
-		assert.equal(decoded.models[0].modelNumber, 1);
-		assert.equal(decoded.models[1].available, false);
-		assert.equal(decoded.models[1].modelNumber, 3);
+		const flash = probeModel(decoded, 0);
+		const pro = probeModel(decoded, 1);
+		assert.equal(flash.available, true);
+		assert.equal(flash.modelNumber, 1);
+		assert.equal(pro.available, false);
+		assert.equal(pro.modelNumber, 3);
 	});
 
 	test("drops model records with oversized or missing display metadata", () => {
