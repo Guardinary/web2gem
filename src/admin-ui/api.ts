@@ -1,4 +1,3 @@
-import { accountResourcePath, mergeMutationResults } from "./logic";
 import {
 	parseModelRoutingOverview,
 	parseMutation,
@@ -47,6 +46,30 @@ export type ListOptions = {
 export type CreateInput = { label?: string; psid: string; psidts: string };
 export type CreateBatchInput = { accounts: CreateInput[] };
 export type UpdateInput = { id: string; label: string | null };
+
+function accountResourcePath(id: string): string {
+	return `${API_PATH}/${encodeURIComponent(id)}`;
+}
+
+function mergeMutationResults(
+	results: readonly MutationResult[],
+): MutationResult {
+	const merged: MutationResult = {
+		processed: 0,
+		changed: 0,
+		unchanged: 0,
+		failed: 0,
+	};
+	for (const result of results) {
+		merged.processed += result.processed;
+		merged.changed += result.changed;
+		merged.unchanged += result.unchanged;
+		merged.failed += result.failed;
+	}
+	const errors = results.flatMap((result) => result.errors || []);
+	if (errors.length) merged.errors = errors;
+	return merged;
+}
 
 function headers(adminKey: string, json: boolean): HeadersInit {
 	const normalized = adminKey.trim();

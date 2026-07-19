@@ -1,5 +1,5 @@
 import { computed } from "@preact/signals";
-import { accountStats, accounts, query, selected, stateFilter } from "./state";
+import { accountStats, accounts, query, stateFilter } from "./state";
 
 export const metricSummary = computed(() => {
 	const stats = accountStats.value;
@@ -20,7 +20,6 @@ export const metricSummary = computed(() => {
 	};
 });
 
-export const selectedCount = computed(() => selected.value.size);
 export const hasFilters = computed(() =>
 	Boolean(query.value.trim() || stateFilter.value),
 );

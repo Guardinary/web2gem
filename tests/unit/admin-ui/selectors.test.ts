@@ -1,15 +1,10 @@
 // @ts-nocheck
 import { afterEach, describe, test } from "vitest";
-import {
-	hasFilters,
-	metricSummary,
-	selectedCount,
-} from "../../../src/admin-ui/selectors";
+import { hasFilters, metricSummary } from "../../../src/admin-ui/selectors";
 import {
 	accountStats,
 	accounts,
 	query,
-	selected,
 	stateFilter,
 } from "../../../src/admin-ui/state";
 import { assert } from "../assertions.js";
@@ -49,10 +44,8 @@ describe("admin UI selectors", () => {
 		assert.deepEqual(metricSummary.value, accountStats.value);
 	});
 
-	test("projects selection count and normalized filter presence", () => {
-		selected.value = new Set(["a", "b"]);
+	test("normalizes filter presence", () => {
 		query.value = "   ";
-		assert.equal(selectedCount.value, 2);
 		assert.equal(hasFilters.value, false);
 
 		query.value = " account ";

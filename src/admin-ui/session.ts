@@ -1,5 +1,6 @@
 import { AdminApiError, type AdminApiSession } from "./api";
 import { tr } from "./i18n";
+import { AdminLocalError, adminLocalErrorMessage } from "./local-errors";
 import {
 	accountStats,
 	accounts,
@@ -121,7 +122,11 @@ export async function runAdminSessionOperation<T>(
 	} catch (error) {
 		if (!isCurrent()) return { ok: false };
 		const message =
-			error instanceof Error ? error.message : options.fallbackMessage;
+			error instanceof AdminApiError
+				? error.message
+				: error instanceof AdminLocalError
+					? adminLocalErrorMessage(error)
+					: options.fallbackMessage;
 		const authenticationFailed =
 			error instanceof AdminApiError && error.status === 401;
 		if (authenticationFailed || options.invalidateOnError)

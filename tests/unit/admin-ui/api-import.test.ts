@@ -93,6 +93,17 @@ describe("admin UI import API", () => {
 						},
 						{ status: 413 },
 					);
+				if (requestSizes.length === 2)
+					return Response.json(
+						uiMutation({
+							processed: payload.accounts.length,
+							changed: payload.accounts.length - 1,
+							failed: 1,
+							errors: [
+								{ id: "account-40", code: "safe", message: "safe failure" },
+							],
+						}),
+					);
 				return Response.json(
 					uiMutation({
 						processed: payload.accounts.length,
@@ -107,9 +118,10 @@ describe("admin UI import API", () => {
 				);
 				assert.deepEqual(result, {
 					processed: 81,
-					changed: 81,
+					changed: 80,
 					unchanged: 0,
-					failed: 0,
+					failed: 1,
+					errors: [{ id: "account-40", code: "safe", message: "safe failure" }],
 				});
 			},
 		);

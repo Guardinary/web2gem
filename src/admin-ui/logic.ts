@@ -4,6 +4,7 @@ import {
 	relativeUnit,
 	tr,
 } from "./i18n";
+import { AdminLocalError } from "./local-errors";
 import type {
 	AccountIdentifier,
 	GeminiAccount,
@@ -54,30 +55,6 @@ export function destructiveConfirmationText(
 			{ count },
 		),
 	};
-}
-
-export function accountResourcePath(id: string): string {
-	return `/admin/accounts/${encodeURIComponent(id)}`;
-}
-
-export function mergeMutationResults(
-	results: readonly MutationResult[],
-): MutationResult {
-	const merged: MutationResult = {
-		processed: 0,
-		changed: 0,
-		unchanged: 0,
-		failed: 0,
-	};
-	for (const result of results) {
-		merged.processed += result.processed;
-		merged.changed += result.changed;
-		merged.unchanged += result.unchanged;
-		merged.failed += result.failed;
-	}
-	const errors = results.flatMap((result) => result.errors || []);
-	if (errors.length) merged.errors = errors;
-	return merged;
 }
 
 export function relativeTime(
@@ -147,7 +124,11 @@ export function newerModelRoutingOverview(
 
 export function validateCookieValue(value: string, name: string): string {
 	const normalized = value.trim();
-	if (!normalized) throw new Error(`${name} is required`);
+	if (!normalized)
+		throw new AdminLocalError({
+			key: "Cookie value required",
+			params: { name },
+		});
 	if (
 		normalized.includes("=") ||
 		normalized.includes(";") ||
@@ -155,7 +136,10 @@ export function validateCookieValue(value: string, name: string): string {
 		normalized.startsWith("[") ||
 		/__Secure-1PSID/i.test(normalized)
 	)
-		throw new Error(`${name} must be a value only`);
+		throw new AdminLocalError({
+			key: "Cookie value only",
+			params: { name },
+		});
 	return normalized;
 }
 
@@ -170,7 +154,8 @@ export function parseBatchImport(rawValue: string): BatchImportItem[] {
 			.split(/[,\t ]+/)
 			.map((part) => part.trim())
 			.filter(Boolean);
-		if (parts.length < 2) throw new Error("Batch rows require PSID and PSIDTS");
+		if (parts.length < 2)
+			throw new AdminLocalError({ key: "Batch row credentials required" });
 		const item = {
 			psid: validateCookieValue(parts[0] || "", "__Secure-1PSID"),
 			psidts: validateCookieValue(parts[1] || "", "__Secure-1PSIDTS"),
@@ -178,6 +163,5 @@ export function parseBatchImport(rawValue: string): BatchImportItem[] {
 		const label = parts.slice(2).join(" ").trim();
 		out.push(label ? { ...item, label } : item);
 	}
-	if (!out.length) throw new Error("Batch import is empty");
 	return out;
 }

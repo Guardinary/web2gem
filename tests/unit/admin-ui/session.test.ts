@@ -1,5 +1,8 @@
 // @ts-nocheck
 import { afterEach, describe, test, vi } from "vitest";
+import { AdminApiError } from "../../../src/admin-ui/api";
+import { language, tr } from "../../../src/admin-ui/i18n";
+import { AdminLocalError } from "../../../src/admin-ui/local-errors";
 import {
 	clearAdminKey,
 	confirmDeletion,
@@ -7,6 +10,7 @@ import {
 	currentVerifiedAdminSession,
 	resolveConfirmation,
 	restoreAdminKey,
+	runAdminSessionOperation,
 	saveAdminKey,
 	showToast,
 	updateAdminKey,
@@ -45,7 +49,10 @@ import {
 import { resetAdminSessionState } from "./_support/state.js";
 
 describe("admin UI session owner", () => {
-	afterEach(resetAdminSessionState);
+	afterEach(() => {
+		language.value = "en";
+		resetAdminSessionState();
+	});
 
 	test("invalidates all protected admin state when the credential changes", () => {
 		const overview = uiModelRouting();
@@ -120,6 +127,45 @@ describe("admin UI session owner", () => {
 		const verified = currentVerifiedAdminSession();
 		assert.equal(verified?.adminKey, "admin-secret");
 		assert.equal(verified?.signal.aborted, false);
+	});
+
+	test("localizes local failures, preserves server messages, and falls back for transport errors", async () => {
+		const messages: string[] = [];
+		await withAdminWindow(async () => {
+			updateAdminKey("admin-secret");
+			const session = currentAdminSession();
+			language.value = "zh-CN";
+			const failures = [
+				new AdminApiError("sanitized server message", 400, "safe_error"),
+				new AdminLocalError({
+					key: "Cookie value required",
+					params: { name: "__Secure-1PSID" },
+				}),
+				new AdminLocalError({ key: "Batch row credentials required" }),
+				new TypeError("browser transport detail"),
+				new Error("schema detail"),
+			];
+			for (const failure of failures) {
+				const result = await runAdminSessionOperation(
+					session,
+					async () => {
+						throw failure;
+					},
+					{
+						fallbackMessage: tr("Import failed"),
+						onError: (message) => messages.push(message),
+					},
+				);
+				assert.deepEqual(result, { ok: false });
+			}
+		});
+		assert.deepEqual(messages, [
+			"sanitized server message",
+			"需要填写 __Secure-1PSID",
+			"每行必须包含 PSID 和 PSIDTS",
+			"导入失败",
+			"导入失败",
+		]);
 	});
 
 	test("restores session credentials before local fallback and invalidates prior sessions", async () => {

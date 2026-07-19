@@ -100,6 +100,7 @@ const zh = {
 	"Admin key is required": "需要管理密钥",
 	"Failed to load accounts": "账号加载失败",
 	"Import failed": "导入失败",
+	"Batch row credentials required": "每行必须包含 PSID 和 PSIDTS",
 	"Select at least one account": "请至少选择一个账号",
 	"Update failed": "更新失败",
 	"Delete account?": "删除账号？",
@@ -182,6 +183,8 @@ type TranslationTemplateParameters = {
 	"Move route up": { model: string };
 	"Move route down": { model: string };
 	"Selected count": { count: number };
+	"Cookie value required": { name: string };
+	"Cookie value only": { name: string };
 };
 
 const templateEn = {
@@ -209,6 +212,8 @@ const templateEn = {
 	"Move route up": "Move up {model}",
 	"Move route down": "Move down {model}",
 	"Selected count": "{count} Selected",
+	"Cookie value required": "{name} is required",
+	"Cookie value only": "{name} must be a value only",
 } as const;
 
 const templateZh: Record<keyof typeof templateEn, string> = {
@@ -236,6 +241,8 @@ const templateZh: Record<keyof typeof templateEn, string> = {
 	"Move route up": "上移 {model}",
 	"Move route down": "下移 {model}",
 	"Selected count": "已选择 {count} 个",
+	"Cookie value required": "需要填写 {name}",
+	"Cookie value only": "{name} 只能填写值本身",
 };
 
 export type TranslationTemplateKey = keyof typeof templateEn;

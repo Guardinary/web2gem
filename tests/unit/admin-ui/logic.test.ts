@@ -3,49 +3,19 @@ import { describe, test } from "vitest";
 import {
 	accountBusyLabel,
 	accountDisplayName,
-	accountResourcePath,
 	destructiveConfirmationText,
 	identifier,
 	identifierKey,
 	isCooling,
-	mergeMutationResults,
 	parseBatchImport,
 	relativeTime,
 	resultSummary,
 } from "../../../src/admin-ui/logic";
+import { AdminLocalError } from "../../../src/admin-ui/local-errors";
 import { assert } from "../assertions.js";
 import { uiAccount } from "./_support/fixtures.js";
 
 describe("admin UI logic", () => {
-	test("encodes account IDs in resource paths", () => {
-		assert.equal(
-			accountResourcePath("account/a"),
-			"/admin/accounts/account%2Fa",
-		);
-	});
-
-	test("merges mutation counters and error details", () => {
-		assert.deepEqual(
-			mergeMutationResults([
-				{ processed: 2, changed: 1, unchanged: 1, failed: 0 },
-				{
-					processed: 2,
-					changed: 1,
-					unchanged: 0,
-					failed: 1,
-					errors: [{ id: "b", code: "safe", message: "safe failure" }],
-				},
-			]),
-			{
-				processed: 4,
-				changed: 2,
-				unchanged: 1,
-				failed: 1,
-				errors: [{ id: "b", code: "safe", message: "safe failure" }],
-			},
-		);
-	});
-
 	test("formats compact mutation summaries with the first safe error", () => {
 		assert.equal(
 			resultSummary("refresh", {
@@ -67,10 +37,28 @@ describe("admin UI logic", () => {
 				{ psid: "psid-b", psidts: "psidts-b" },
 			],
 		);
-		assert.throws(
-			() => parseBatchImport("__Secure-1PSID=secret psidts"),
-			/value only/,
-		);
+		let failure: unknown;
+		try {
+			parseBatchImport("__Secure-1PSID=secret psidts");
+		} catch (error) {
+			failure = error;
+		}
+		assert.equal(failure instanceof AdminLocalError, true);
+		assert.deepEqual((failure as AdminLocalError).details, {
+			key: "Cookie value only",
+			params: { name: "__Secure-1PSID" },
+		});
+
+		failure = undefined;
+		try {
+			parseBatchImport("psid-only");
+		} catch (error) {
+			failure = error;
+		}
+		assert.equal(failure instanceof AdminLocalError, true);
+		assert.deepEqual((failure as AdminLocalError).details, {
+			key: "Batch row credentials required",
+		});
 	});
 
 	test("projects account identity, display, busy, and cooling labels", () => {
