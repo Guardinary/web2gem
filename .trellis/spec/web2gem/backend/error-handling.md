@@ -502,6 +502,13 @@ mutation payloads, validation, or D1-backed account administration.
 - Legacy update field or `check` bulk action -> explicit 400.
 - `GET /admin/accounts/stats` or `POST /admin/accounts/:id/check` -> 404.
 - Worker import above 40 -> 413 before hashing/D1; Docker has no count ceiling.
+- Browser Admin UI fallback uses ordered 40-account chunks after the exact
+  `gemini_import_account_limit_exceeded` response. The UI chunk size is a
+  documented wire contract synchronized with the Worker import cap; it must
+  not import backend modules across the browser boundary.
+- Browser bulk actions use ordered 100-ID chunks only after the exact
+  `admin_bulk_action_limit_exceeded` response, matching the backend action
+  limit.
 - Missing account during mutation -> compact failed result with
   `account_not_found`; malformed JSON or invalid route input remains a 4xx
   error envelope.
@@ -575,6 +582,13 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
 - `AdminApiSession` is `{ adminKey: string, signal: AbortSignal }`. Every Admin
   API helper accepts this context instead of a bare key, and every fetch in one
   logical operation, including limit-fallback chunks, reuses its signal.
+- Wire-limit synchronization contract: the Worker import ceiling and the UI
+  import fallback chunk are both `40` accounts; the Worker bulk-action ceiling
+  and the UI bulk-action fallback chunk are both `100` IDs. The corresponding
+  stable 413 codes are `gemini_import_account_limit_exceeded` and
+  `admin_bulk_action_limit_exceeded`. The UI owns browser-local copies of these
+  constants because importing backend modules would cross the browser boundary;
+  any change must update this contract and both owners together.
 - Model-routing overview `version` is the decimal, monotonically increasing D1
   `pool_version`; the UI uses it as the authoritative snapshot order.
 - Row actions: refresh, rename, enable/disable, delete. Bulk actions: refresh,
@@ -653,6 +667,8 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
   non-empty row -> client validation error.
 - Worker import limit -> ordered 40-account retries; other failures -> one
   request and propagate.
+- Bulk action limit -> ordered 100-ID retries; unrelated 413 responses remain
+  single-request failures.
 - `nextCursor = null` -> next disabled; previous at page zero -> disabled.
 - Delete -> scoped in-app confirmation before the first request; cancellation
   performs no mutation.
