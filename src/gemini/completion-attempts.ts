@@ -284,36 +284,47 @@ export class GeminiAccountAttemptOrchestrator {
 		input: CompletionTextInput,
 		prepared = false,
 	): AsyncGenerator<string> {
-		if (!prepared) await this.prepareAuthenticatedGeneration(reason);
-		while (this.lease) {
-			let emitted = false;
-			try {
-				for await (const delta of fn(
-					this.lease.config,
-					this.uploads.remapInput(input),
-				)) {
-					const text = String(delta || "");
-					if (!text) continue;
-					emitted = true;
-					yield text;
+		let finalized = false;
+		try {
+			if (!prepared) await this.prepareAuthenticatedGeneration(reason);
+			while (this.lease) {
+				let emitted = false;
+				try {
+					for await (const delta of fn(
+						this.lease.config,
+						this.uploads.remapInput(input),
+					)) {
+						const text = String(delta || "");
+						if (!text) continue;
+						emitted = true;
+						yield text;
+					}
+					await this.finalizeOutcome("success");
+					finalized = true;
+					return;
+				} catch (error) {
+					if (emitted) {
+						await this.finalizeOutcome("failure", error);
+						finalized = true;
+						throw error;
+					}
+					const recovery = await this.recoverAccount(
+						error,
+						!this.uploads.hasOpaqueRefs(input),
+					);
+					if (recovery.retry) continue;
+					await this.finalizeOutcome("failure", recovery.error);
+					finalized = true;
+					throw recovery.error;
 				}
-				await this.finalizeOutcome("success");
-				return;
-			} catch (error) {
-				if (emitted) {
-					await this.finalizeOutcome("failure", error);
-					throw error;
-				}
-				const recovery = await this.recoverAccount(
-					error,
-					!this.uploads.hasOpaqueRefs(input),
-				);
-				if (recovery.retry) continue;
-				await this.finalizeOutcome("failure", recovery.error);
-				throw recovery.error;
+			}
+			throw noAvailableAccountError();
+		} finally {
+			if (!finalized && this.lease) {
+				this.releaseLease();
+				this.resetAttemptState();
 			}
 		}
-		throw noAvailableAccountError();
 	}
 
 	withUpload<T>(

@@ -2,7 +2,7 @@ import type { RuntimeConfig } from "../config";
 import { errorLogSummary } from "../shared/errors";
 import { log } from "../shared/logging";
 import { GEMINI_WEB_USER_AGENT } from "./constants";
-import { httpFetch } from "./transport";
+import { cancelResponseBody, httpFetch } from "./transport";
 
 export type ActiveCookieState = {
 	cookie: string;
@@ -219,20 +219,21 @@ async function rotateGeminiCookieOnce(
 			cfg,
 		});
 		if (resp.status === 401 || resp.status === 403) {
+			await cancelResponseBody(resp);
 			setRotationReason("rotation_rejected", resp.status);
 			log(cfg, `gemini cookie rotation rejected upstreamStatus=${resp.status}`);
 			return state;
 		}
 		if (!resp.ok) {
+			await cancelResponseBody(resp);
 			setRotationReason("rotation_failed", resp.status);
 			log(cfg, `gemini cookie rotation failed upstreamStatus=${resp.status}`);
 			return state;
 		}
 
-		const mergedCookie = mergeSetCookieHeaders(
-			state.cookie,
-			setCookieHeaders(resp.headers),
-		);
+		const setCookies = setCookieHeaders(resp.headers);
+		await cancelResponseBody(resp);
+		const mergedCookie = mergeSetCookieHeaders(state.cookie, setCookies);
 		const next = stateFromCookie(
 			mergedCookie,
 			state.sourceKey,

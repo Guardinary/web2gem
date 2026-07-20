@@ -106,6 +106,17 @@ export async function httpFetch(
 	}
 }
 
+export async function cancelResponseBody(response: {
+	body?: ReadableStream<Uint8Array> | null;
+}): Promise<void> {
+	if (!response.body) return;
+	try {
+		await response.body.cancel();
+	} catch (_) {
+		// Preserve the status/error that caused the response to be abandoned.
+	}
+}
+
 function socketErrorConsumedRequestBody(error: unknown): boolean {
 	const err = error as
 		| { requestBodyStarted?: unknown; code?: unknown }

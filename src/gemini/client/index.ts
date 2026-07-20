@@ -3,7 +3,7 @@ import { throwIfAborted } from "../../shared/abort";
 import { uuid } from "../../shared/crypto";
 import { log } from "../../shared/logging";
 import { observeGeminiAccountResponseCookies } from "../cookies";
-import { httpFetch } from "../transport";
+import { cancelResponseBody, httpFetch } from "../transport";
 import { getPageTokens } from "../uploads/index";
 import {
 	dataAnalysisEmptyResponseError,
@@ -120,7 +120,10 @@ export async function generate(
 				requestId,
 			);
 			const cookieErr = invalidGeminiCookieError(cfg, resp.status);
-			if (cookieErr) throw cookieErr;
+			if (cookieErr) {
+				await cancelResponseBody(resp);
+				throw cookieErr;
+			}
 			const raw = await resp.text();
 			const fatalCode = extractResponseFatalCode(raw);
 			if (fatalCode) throw geminiSemanticError("stream_generate", fatalCode);
@@ -185,7 +188,10 @@ export async function generateRich(
 				requestId,
 			);
 			const cookieErr = invalidGeminiCookieError(cfg, resp.status);
-			if (cookieErr) throw cookieErr;
+			if (cookieErr) {
+				await cancelResponseBody(resp);
+				throw cookieErr;
+			}
 			const raw = await resp.text();
 			const parts = extractResponseParts(raw);
 			if (parts.fatalCode) throw upstreamImageProviderError(parts.fatalCode);
@@ -270,7 +276,10 @@ export async function* generateStream(
 				requestId,
 			);
 			const cookieErr = invalidGeminiCookieError(cfg, resp.status);
-			if (cookieErr) throw cookieErr;
+			if (cookieErr) {
+				await cancelResponseBody(resp);
+				throw cookieErr;
+			}
 			if (!resp.body) {
 				const raw = await resp.text();
 				const fatalCode = extractResponseFatalCode(raw);

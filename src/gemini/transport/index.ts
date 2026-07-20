@@ -1,4 +1,4 @@
-export { httpFetch } from "./http";
+export { cancelResponseBody, httpFetch } from "./http";
 export {
 	_joinByteChunks,
 	bytesFromBody,

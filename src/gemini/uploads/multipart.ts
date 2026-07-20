@@ -3,7 +3,7 @@ import { sanitizeUploadFilename } from "../../attachments/mime";
 import { TEXT_ENCODER } from "../../shared/encoding";
 import { bytesToHex } from "../../shared/crypto";
 import { GEMINI_WEB_USER_AGENT } from "../constants";
-import { httpFetch } from "../transport";
+import { cancelResponseBody, httpFetch } from "../transport";
 import { contentPushUploadError, validateContentPushFileRef } from "./errors";
 import {
 	contentPushUploadTokens,
@@ -64,6 +64,7 @@ async function uploadMultipartFileWithPushId(
 		cfg,
 	});
 	if (!response.ok) {
+		await cancelResponseBody(response);
 		if (
 			!retriedAfterRefresh &&
 			shouldRefreshPushIdAfterStatus(response.status)

@@ -9,7 +9,7 @@ import { errorLogSummary } from "../../shared/errors";
 import { log, nowSec } from "../../shared/logging";
 import { extractWrbInnerPayloads } from "../client/parse-envelope";
 import { GEMINI_WEB_USER_AGENT } from "../constants";
-import { httpFetch } from "../transport";
+import { cancelResponseBody, httpFetch } from "../transport";
 import { getFreshPageTokensForConfig } from "../uploads/tokens";
 import type { GeminiAccountIssue } from "./domain";
 import { basicRouteForFamily, modelNumberForProviderModelId } from "./routes";
@@ -91,8 +91,10 @@ async function fetchGeminiAccountProbe(
 			cfg,
 		},
 	);
-	if (!response.ok)
+	if (!response.ok) {
+		await cancelResponseBody(response);
 		throw new Error(`Gemini account probe failed with HTTP ${response.status}`);
+	}
 	return decodeGeminiAccountProbe(
 		await readBoundedResponseText(response, MAX_PROBE_RESPONSE_CHARS),
 	);
