@@ -51,6 +51,7 @@ export type ProtectedAdminState = {
 	editBusy: boolean;
 	batchBusy: string;
 	rowBusy: Record<string, string>;
+	operationBusyKeys: Set<string>;
 	confirmationDraft: ConfirmationDraft | null;
 	authExpanded: boolean;
 	modelRouting: ModelRoutingOverview | null;
@@ -73,6 +74,7 @@ export function createProtectedAdminState(): ProtectedAdminState {
 		editBusy: false,
 		batchBusy: "",
 		rowBusy: {},
+		operationBusyKeys: new Set(),
 		confirmationDraft: null,
 		authExpanded: true,
 		modelRouting: null,
@@ -107,6 +109,9 @@ export const importBusy = signal(initialProtectedState.importBusy);
 export const editBusy = signal(initialProtectedState.editBusy);
 export const batchBusy = signal(initialProtectedState.batchBusy);
 export const rowBusy = signal(initialProtectedState.rowBusy);
+export const operationBusyKeys = signal(
+	initialProtectedState.operationBusyKeys,
+);
 export const confirmationDraft = signal(
 	initialProtectedState.confirmationDraft,
 );
@@ -119,3 +124,19 @@ export const modelRoutingLoading = signal(
 export const modelRoutingDrafts = signal(
 	initialProtectedState.modelRoutingDrafts,
 );
+
+export function claimAccountOperation(keys: readonly string[]): boolean {
+	const uniqueKeys = [...new Set(keys.filter(Boolean))];
+	if (uniqueKeys.some((key) => operationBusyKeys.value.has(key))) return false;
+	operationBusyKeys.value = new Set([
+		...operationBusyKeys.value,
+		...uniqueKeys,
+	]);
+	return true;
+}
+
+export function releaseAccountOperation(keys: readonly string[]): void {
+	const next = new Set(operationBusyKeys.value);
+	for (const key of keys) next.delete(key);
+	operationBusyKeys.value = next;
+}

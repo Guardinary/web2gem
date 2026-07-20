@@ -22,6 +22,7 @@ import {
 	modelRoutingDrafts,
 	modelRoutingLoading,
 	nextCursor,
+	operationBusyKeys,
 	pageIndex,
 	rowBusy,
 	selected,
@@ -75,6 +76,10 @@ export function beginAccountLoad(): number {
 	return ++accountLoadGeneration;
 }
 
+export function currentAccountLoadGeneration(): number {
+	return accountLoadGeneration;
+}
+
 export function isCurrentAccountLoad(
 	session: AdminSession,
 	generation: number,
@@ -107,6 +112,7 @@ export function invalidateAdminSession(): void {
 	editBusy.value = reset.editBusy;
 	batchBusy.value = reset.batchBusy;
 	rowBusy.value = reset.rowBusy;
+	operationBusyKeys.value = reset.operationBusyKeys;
 	authExpanded.value = reset.authExpanded;
 }
 

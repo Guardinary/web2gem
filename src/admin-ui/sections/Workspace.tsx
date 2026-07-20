@@ -20,9 +20,11 @@ import { WorkspaceFilters } from "./WorkspaceFilters";
 export function Workspace(): JSX.Element {
 	const rows = accounts.value;
 	const selectVisible = (): void => {
+		if (loading.value) return;
 		selected.value = new Set([...selected.value, ...rows.map(identifierKey)]);
 	};
 	const deleteVisible = (): void => {
+		if (loading.value) return;
 		void runAction("delete", rows.map(identifier), {
 			scope: "batch",
 			targetLabel: tr("loaded account(s)"),

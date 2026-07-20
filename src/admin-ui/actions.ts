@@ -29,10 +29,12 @@ import {
 	importPsid,
 	importPsidts,
 	loading,
+	claimAccountOperation,
 	nextCursor,
 	pageIndex,
 	query,
 	rowBusy,
+	releaseAccountOperation,
 	selected,
 	stateFilter,
 } from "./state";
@@ -40,6 +42,7 @@ import { loadModelRoutingForSession } from "./model-routing-actions";
 import {
 	beginAccountLoad,
 	confirmDeletion,
+	currentAccountLoadGeneration,
 	currentAdminSession,
 	currentVerifiedAdminSession,
 	invalidateAdminSession,
@@ -57,6 +60,7 @@ export {
 } from "./model-routing-actions";
 
 export function selectedIdentifiers(): AccountIdentifier[] {
+	if (loading.value) return [];
 	const current = selected.value;
 	return accounts.value
 		.filter((account) => current.has(identifierKey(account)))
@@ -203,6 +207,7 @@ export async function runAction(
 	identifiers: AccountIdentifier[],
 	options: RunActionOptions = {},
 ): Promise<void> {
+	if (loading.value) return;
 	if (!identifiers.length) {
 		showToast(tr("Select at least one account"), "error");
 		return;
@@ -212,9 +217,16 @@ export async function runAction(
 		const confirmed = await confirmDeletion(identifiers.length, targetLabel);
 		if (!confirmed) return;
 	}
+	if (loading.value) return;
 	const session = currentVerifiedAdminSession();
 	if (!session) return;
 	const keys = identifiers.map((item) => item.id);
+	const loadGeneration = currentAccountLoadGeneration();
+	if (!isCurrentAccountLoad(session, loadGeneration)) return;
+	if (!claimAccountOperation(keys)) {
+		showToast(tr("Account operation already in progress"), "error");
+		return;
+	}
 	const rowScoped = options.scope === "row" && keys.length === 1;
 	try {
 		if (rowScoped)
@@ -224,6 +236,7 @@ export async function runAction(
 			session,
 			() => runAccountAction(session, action, identifiers),
 			{
+				isCurrent: () => isCurrentAccountLoad(session, loadGeneration),
 				fallbackMessage: tr("Action failure", {
 					action: localActionLabel(action, true),
 				}),
@@ -231,12 +244,15 @@ export async function runAction(
 		);
 		if (!operation.ok) return;
 		const result = operation.value;
-		showToast(
-			resultSummary(action, result),
-			result.failed ? "error" : undefined,
-		);
-		await loadAccounts();
+		if (isCurrentAccountLoad(session, loadGeneration)) {
+			showToast(
+				resultSummary(action, result),
+				result.failed ? "error" : undefined,
+			);
+			await loadAccounts();
+		}
 	} finally {
+		releaseAccountOperation(keys);
 		if (isCurrentAdminSession(session)) {
 			if (rowScoped) {
 				const next = { ...rowBusy.value };
@@ -249,6 +265,7 @@ export async function runAction(
 
 export async function submitEdit(event: Event): Promise<void> {
 	event.preventDefault();
+	if (loading.value) return;
 	const session = currentVerifiedAdminSession();
 	if (!session) return;
 	const draft = editDraft.value;
@@ -260,6 +277,12 @@ export async function submitEdit(event: Event): Promise<void> {
 		editDraft.value = null;
 		return;
 	}
+	const loadGeneration = currentAccountLoadGeneration();
+	if (!isCurrentAccountLoad(session, loadGeneration)) return;
+	if (!claimAccountOperation([account.id])) {
+		showToast(tr("Account operation already in progress"), "error");
+		return;
+	}
 	try {
 		editBusy.value = true;
 		const operation = await runAdminSessionOperation(
@@ -269,17 +292,23 @@ export async function submitEdit(event: Event): Promise<void> {
 					...identifier(account),
 					label: draft.label.trim() || null,
 				}),
-			{ fallbackMessage: tr("Update failed") },
+			{
+				isCurrent: () => isCurrentAccountLoad(session, loadGeneration),
+				fallbackMessage: tr("Update failed"),
+			},
 		);
 		if (!operation.ok) return;
 		const result = operation.value;
-		showToast(
-			resultSummary("update", result),
-			result.failed ? "error" : undefined,
-		);
-		editDraft.value = null;
-		await loadAccounts();
+		if (isCurrentAccountLoad(session, loadGeneration)) {
+			showToast(
+				resultSummary("update", result),
+				result.failed ? "error" : undefined,
+			);
+			editDraft.value = null;
+			await loadAccounts();
+		}
 	} finally {
+		releaseAccountOperation([account.id]);
 		if (isCurrentAdminSession(session)) editBusy.value = false;
 	}
 }

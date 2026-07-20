@@ -2,7 +2,7 @@ import type { JSX } from "preact";
 import { runAction, selectedIdentifiers } from "../actions";
 import { tr } from "../i18n";
 import { Icon } from "../icons";
-import { batchBusy, selected } from "../state";
+import { batchBusy, loading, selected } from "../state";
 import type { AccountAction } from "../types";
 
 const batchActions: readonly AccountAction[] = ["refresh", "enable", "disable"];
@@ -31,12 +31,17 @@ export function BulkBar({
 				) : null}
 			</div>
 			<div class="actions">
-				<button type="button" onClick={onSelectVisible}>
+				<button
+					type="button"
+					disabled={loading.value}
+					onClick={onSelectVisible}
+				>
 					{tr("Select visible")}
 				</button>
 				{selected.value.size ? (
 					<button
 						type="button"
+						disabled={loading.value}
 						onClick={() => {
 							selected.value = new Set();
 						}}
@@ -48,7 +53,7 @@ export function BulkBar({
 					? batchActions.map((action) => (
 							<button
 								type="button"
-								disabled={!!batchBusy.value}
+								disabled={loading.value || !!batchBusy.value}
 								key={action}
 								onClick={() =>
 									void runAction(action, selectedIdentifiers(), {
@@ -74,7 +79,7 @@ export function BulkBar({
 							<button
 								class="danger"
 								type="button"
-								disabled={!!batchBusy.value}
+								disabled={loading.value || !!batchBusy.value}
 								onClick={() =>
 									void runAction("delete", selectedIdentifiers(), {
 										scope: "batch",
@@ -87,7 +92,7 @@ export function BulkBar({
 							<button
 								class="danger subtle-danger"
 								type="button"
-								disabled={!!batchBusy.value}
+								disabled={loading.value || !!batchBusy.value}
 								onClick={onDeleteVisible}
 							>
 								{tr("Delete visible")}

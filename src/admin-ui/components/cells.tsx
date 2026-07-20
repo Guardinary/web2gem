@@ -1,10 +1,11 @@
 import type { JSX } from "preact";
 import { statusLabel } from "../i18n";
 import { accountDisplayName, identifierKey, relativeTime } from "../logic";
-import { selected } from "../state";
+import { loading, selected } from "../state";
 import type { GeminiAccount } from "../types";
 
 export function toggleSelected(account: GeminiAccount, checked: boolean): void {
+	if (loading.value) return;
 	const key = identifierKey(account);
 	const next = new Set(selected.value);
 	if (checked) next.add(key);

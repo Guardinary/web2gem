@@ -102,6 +102,7 @@ const zh = {
 	"Import failed": "导入失败",
 	"Batch row credentials required": "每行必须包含 PSID 和 PSIDTS",
 	"Select at least one account": "请至少选择一个账号",
+	"Account operation already in progress": "账号操作正在进行中",
 	"Update failed": "更新失败",
 	"Delete account?": "删除账号？",
 	"Delete accounts?": "删除多个账号？",
