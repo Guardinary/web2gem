@@ -1,11 +1,32 @@
-// @ts-nocheck
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { describe, test } from "vitest";
 import { CONFIG_ENV_KEYS } from "../../src/config";
+import { isRecord, type UnknownRecord } from "../../src/shared/types";
 import { assert } from "./assertions.js";
+
+type CoverageMetric = {
+	total: number;
+	covered: number;
+	skipped: number;
+	pct: number;
+};
+type CoverageEntry = {
+	lines: CoverageMetric;
+	statements: CoverageMetric;
+	functions: CoverageMetric;
+	branches: CoverageMetric;
+};
+type CoverageSummary = Record<string, CoverageEntry>;
+type ScriptResult = {
+	code: number;
+	stdout: string;
+	stderr: string;
+};
+type AsyncPathCallback = (path: string) => Promise<void>;
+type AsyncDirCallback = (path: string) => Promise<void>;
 
 const DEPLOY_SECRET_TEMPLATE_KEYS = ["ADMIN_KEY", "API_KEYS"];
 const DEPLOY_SECRET_KEYS = new Set(DEPLOY_SECRET_TEMPLATE_KEYS);
@@ -18,7 +39,7 @@ const DOCKER_ONLY_ENV_KEYS = [
 	"D1_DATABASE_ID",
 	"D1_API_TOKEN",
 ];
-function coverageEntry(linePct = 100, branchPct = 100) {
+function coverageEntry(linePct = 100, branchPct = 100): CoverageEntry {
 	return {
 		lines: { total: 100, covered: linePct, skipped: 0, pct: linePct },
 		statements: { total: 100, covered: linePct, skipped: 0, pct: linePct },
@@ -26,7 +47,7 @@ function coverageEntry(linePct = 100, branchPct = 100) {
 		branches: { total: 100, covered: branchPct, skipped: 0, pct: branchPct },
 	};
 }
-function fullCoverageSummary() {
+function fullCoverageSummary(): CoverageSummary {
 	return {
 		total: coverageEntry(),
 		"src/admin-ui/logic.ts": coverageEntry(),
@@ -59,7 +80,10 @@ function fullCoverageSummary() {
 		"src/toolcall/sieve.ts": coverageEntry(),
 	};
 }
-async function withCoverageSummary(summary, run) {
+async function withCoverageSummary(
+	summary: CoverageSummary,
+	run: AsyncPathCallback,
+): Promise<void> {
 	const dir = await mkdtemp(join(tmpdir(), "gemini-coverage-"));
 	try {
 		const summaryPath = join(dir, "coverage-summary.json");
@@ -69,7 +93,11 @@ async function withCoverageSummary(summary, run) {
 		await rm(dir, { recursive: true, force: true });
 	}
 }
-async function withTempFile(filename, body, run) {
+async function withTempFile(
+	filename: string,
+	body: string | Uint8Array,
+	run: AsyncPathCallback,
+): Promise<void> {
 	const dir = await mkdtemp(join(tmpdir(), "gemini-script-"));
 	try {
 		const path = join(dir, filename);
@@ -79,7 +107,7 @@ async function withTempFile(filename, body, run) {
 		await rm(dir, { recursive: true, force: true });
 	}
 }
-async function withTempDir(run) {
+async function withTempDir(run: AsyncDirCallback): Promise<void> {
 	const dir = await mkdtemp(join(tmpdir(), "gemini-script-"));
 	try {
 		await run(dir);
@@ -87,8 +115,13 @@ async function withTempDir(run) {
 		await rm(dir, { recursive: true, force: true });
 	}
 }
-function runNodeScript(script, arg, env = {}, cwd = process.cwd()) {
-	return new Promise((done) => {
+function runNodeScript(
+	script: string,
+	arg: string | null,
+	env: Readonly<Record<string, string | undefined>> = {},
+	cwd = process.cwd(),
+): Promise<ScriptResult> {
+	return new Promise<ScriptResult>((done) => {
 		const args = arg == null ? [script] : [script, arg];
 		execFile(
 			process.execPath,
@@ -105,7 +138,7 @@ function runNodeScript(script, arg, env = {}, cwd = process.cwd()) {
 	});
 }
 
-function deterministicBytes(length) {
+function deterministicBytes(length: number): Buffer {
 	let state = 0x6d2b79f5;
 	const bytes = Buffer.alloc(length);
 	for (let index = 0; index < length; index++) {
@@ -115,33 +148,36 @@ function deterministicBytes(length) {
 	}
 	return bytes;
 }
-function parseEnvExampleKeys(source) {
-	const keys = new Set();
+function parseEnvExampleKeys(source: string): Set<string> {
+	const keys = new Set<string>();
 	for (const line of source.split(/\r?\n/)) {
 		const match = /^([A-Z0-9_]+)=/.exec(line.trim());
-		if (match) keys.add(match[1]);
+		if (match?.[1]) keys.add(match[1]);
 	}
 	return keys;
 }
-function parseComposeEnvironmentKeys(source) {
-	const keys = new Set();
+function parseComposeEnvironmentKeys(source: string): Set<string> {
+	const keys = new Set<string>();
 	for (const line of source.split(/\r?\n/)) {
 		const match = /^\s{6}([A-Z0-9_]+):/.exec(line);
-		if (match) keys.add(match[1]);
+		if (match?.[1]) keys.add(match[1]);
 	}
 	return keys;
 }
-function parseComposeVariableReferences(source) {
-	const keys = new Set();
+function parseComposeVariableReferences(source: string): Set<string> {
+	const keys = new Set<string>();
 	for (const match of source.matchAll(/\$\{([A-Z0-9_]+)(?::-[^}]*)?\}/g)) {
-		keys.add(match[1]);
+		if (match[1]) keys.add(match[1]);
 	}
 	return keys;
 }
-function parseJsoncObject(source) {
-	return JSON.parse(removeTrailingJsoncCommas(stripJsoncComments(source)));
+function parseJsoncObject(source: string): UnknownRecord {
+	const parsed: unknown = JSON.parse(
+		removeTrailingJsoncCommas(stripJsoncComments(source)),
+	);
+	return requiredRecord(parsed, "JSONC object");
 }
-function stripJsoncComments(source) {
+function stripJsoncComments(source: string): string {
 	let out = "";
 	let inString = false;
 	let escaped = false;
@@ -165,7 +201,7 @@ function stripJsoncComments(source) {
 			continue;
 		}
 		if (char === "/" && next === "/") {
-			while (i < source.length && !/\r|\n/.test(source[i])) i++;
+			while (i < source.length && !/\r|\n/.test(source[i] ?? "")) i++;
 			out += source[i] || "";
 			continue;
 		}
@@ -180,7 +216,7 @@ function stripJsoncComments(source) {
 	}
 	return out;
 }
-function removeTrailingJsoncCommas(source) {
+function removeTrailingJsoncCommas(source: string): string {
 	let out = "";
 	let inString = false;
 	let escaped = false;
@@ -211,11 +247,63 @@ function removeTrailingJsoncCommas(source) {
 	}
 	return out;
 }
-function missingKeys(expected, actual) {
+function missingKeys(
+	expected: readonly string[],
+	actual: ReadonlySet<string>,
+): string[] {
 	return expected.filter((key) => !actual.has(key));
 }
 
+function requiredRecord(value: unknown, label: string): UnknownRecord {
+	if (!isRecord(value)) throw new Error(`${label} must be an object`);
+	return value;
+}
+
+function requiredRecordArray(value: unknown, label: string): UnknownRecord[] {
+	if (!Array.isArray(value) || !value.every(isRecord))
+		throw new Error(`${label} must be an object array`);
+	return value;
+}
+
+function requiredString(value: unknown, label: string): string {
+	if (typeof value !== "string") throw new Error(`${label} must be a string`);
+	return value;
+}
+
+function typeScriptDirective(suffix: string): string {
+	return ["@", "ts-", suffix].join("");
+}
+
 describe("quality scripts", () => {
+	test("accepts the repository when unit tests contain no type suppressions", async () => {
+		const result = await runNodeScript("scripts/check-test-types.mjs", null);
+		assert.equal(result.code, 0);
+		assert.match(result.stdout, /type suppression check passed/);
+	});
+	test("reports every forbidden type suppression in a temporary test root", async () => {
+		await withTempDir(async (dir) => {
+			const suffixes = ["nocheck", "ignore", "expect-error"];
+			const fixture = join(dir, "fixture.ts");
+			const source = suffixes
+				.map((suffix) => `// ${typeScriptDirective(suffix)}`)
+				.join("\n");
+			await writeFile(fixture, source, "utf8");
+			const result = await runNodeScript("scripts/check-test-types.mjs", dir);
+			assert.equal(result.code, 1);
+			const displayFixture = relative(process.cwd(), fixture).replaceAll(
+				"\\",
+				"/",
+			);
+			for (const [index, suffix] of suffixes.entries()) {
+				assert.equal(
+					result.stderr.includes(
+						`- ${displayFixture}:${index + 1}: ${typeScriptDirective(suffix)}`,
+					),
+					true,
+				);
+			}
+		});
+	});
 	test("accepts coverage summaries that satisfy line and branch gates", async () => {
 		await withCoverageSummary(fullCoverageSummary(), async (summaryPath) => {
 			const result = await runNodeScript(
@@ -240,7 +328,9 @@ describe("quality scripts", () => {
 	});
 	test("rejects coverage summaries below branch gates", async () => {
 		const summary = fullCoverageSummary();
-		summary["src/toolcall/sieve.ts"].branches.covered = 54;
+		const sieveCoverage = summary["src/toolcall/sieve.ts"];
+		if (!sieveCoverage) throw new Error("missing sieve coverage fixture");
+		sieveCoverage.branches.covered = 54;
 		await withCoverageSummary(summary, async (summaryPath) => {
 			const result = await runNodeScript(
 				"scripts/check-coverage.mjs",
@@ -464,7 +554,7 @@ describe("quality scripts", () => {
 		const dockerfile = await readFile("Dockerfile", "utf8");
 		const runtimeImports = Array.from(
 			server.matchAll(/from\s+["']\.\/(.+?\.mjs)["']/g),
-			(match) => match[1],
+			(match) => requiredString(match[1], "runtime import"),
 		);
 		assert.deepEqual(runtimeImports.sort(), ["d1-http-binding.mjs", "io.mjs"]);
 		for (const filename of runtimeImports) {
@@ -567,7 +657,9 @@ describe("quality scripts", () => {
 			);
 		}
 		const wrangler = parseJsoncObject(await readFile("wrangler.jsonc", "utf8"));
-		const workerVars = new Set(Object.keys(wrangler.vars || {}));
+		const workerVars = new Set(
+			Object.keys(requiredRecord(wrangler.vars, "wrangler vars")),
+		);
 		const expectedVisibleVars = CONFIG_ENV_KEYS.filter(
 			(key) => !DEPLOY_SECRET_KEYS.has(key),
 		);
@@ -612,17 +704,28 @@ describe("quality scripts", () => {
 	});
 	test("keeps the Deploy Button config portable across fresh clones", async () => {
 		const wrangler = parseJsoncObject(await readFile("wrangler.jsonc", "utf8"));
-		const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+		const packageJson = requiredRecord(
+			JSON.parse(await readFile("package.json", "utf8")),
+			"package.json",
+		);
+		const packageScripts = requiredRecord(
+			packageJson.scripts,
+			"package scripts",
+		);
+		const build = requiredRecord(wrangler.build, "wrangler build");
 		assert.equal(packageJson.main, "dist/worker.js");
 		assert.equal(wrangler.main, packageJson.main);
-		assert.equal(wrangler.build?.command, "pnpm build");
-		assert.deepEqual(wrangler.build?.watch_dir, ["src", "scripts"]);
-		assert.equal(packageJson.scripts.dev, "wrangler dev");
+		assert.equal(build.command, "pnpm build");
+		assert.deepEqual(build.watch_dir, ["src", "scripts"]);
+		assert.equal(packageScripts.dev, "wrangler dev");
 		assert.equal(
-			packageJson.scripts.deploy,
+			packageScripts.deploy,
 			"pnpm db:migrations:apply && wrangler deploy",
 		);
-		const d1Bindings = wrangler.d1_databases || [];
+		const d1Bindings = requiredRecordArray(
+			wrangler.d1_databases,
+			"wrangler D1 bindings",
+		);
 		const geminiDb = d1Bindings.find(
 			(binding) => binding.binding === "GEMINI_DB",
 		);
@@ -631,7 +734,7 @@ describe("quality scripts", () => {
 		assert.equal(Object.hasOwn(geminiDb || {}, "database_id"), false);
 
 		assert.equal(
-			packageJson.scripts["db:migrations:apply"],
+			packageScripts["db:migrations:apply"],
 			"wrangler d1 migrations apply GEMINI_DB --remote",
 		);
 	});
@@ -684,7 +787,9 @@ describe("quality scripts", () => {
 			readFile("README.zh.md", "utf8"),
 		]);
 
-		for (const [path, readme, patterns] of [
+		const readmeCases: ReadonlyArray<
+			readonly [string, string, readonly RegExp[]]
+		> = [
 			[
 				"README.md",
 				english,
@@ -713,7 +818,8 @@ describe("quality scripts", () => {
 					/git merge --no-edit upstream\/gemini-account-pool/,
 				],
 			],
-		]) {
+		];
+		for (const [path, readme, patterns] of readmeCases) {
 			for (const pattern of patterns) assert.match(readme, pattern, path);
 		}
 	});
@@ -754,14 +860,22 @@ describe("quality scripts", () => {
 		assert.doesNotMatch(vitestConfig, /isolate:\s*false/);
 	});
 	test("keeps the account-pool release control plane on main", async () => {
-		const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+		const packageJson = requiredRecord(
+			JSON.parse(await readFile("package.json", "utf8")),
+			"package.json",
+		);
+		const packageScripts = requiredRecord(
+			packageJson.scripts,
+			"package scripts",
+		);
 		const runner = await readFile("scripts/check-release.mjs", "utf8");
 		assert.equal(
-			packageJson.scripts["check:release"],
+			packageScripts["check:release"],
 			"node scripts/check-release.mjs",
 		);
 		for (const check of [
 			"check:static",
+			"check:test-types",
 			"check:worker-types",
 			"typecheck",
 			"typecheck:tests",
@@ -813,10 +927,15 @@ describe("quality scripts", () => {
 		}
 	});
 	test("keeps esbuild targets aligned with the TypeScript baseline", async () => {
-		const tsconfig = JSON.parse(await readFile("tsconfig.json", "utf8"));
-		const expectedTarget = String(
-			tsconfig.compilerOptions.target,
-		).toLowerCase();
+		const tsconfig = requiredRecord(
+			JSON.parse(await readFile("tsconfig.json", "utf8")),
+			"tsconfig.json",
+		);
+		const compilerOptions = requiredRecord(
+			tsconfig.compilerOptions,
+			"TypeScript compiler options",
+		);
+		const expectedTarget = String(compilerOptions.target).toLowerCase();
 		const buildScript = await readFile("scripts/build.mjs", "utf8");
 		const adminBuildScript = await readFile(
 			"scripts/build-admin-ui.mjs",
@@ -835,10 +954,17 @@ describe("quality scripts", () => {
 		);
 	});
 	test("keeps generated Worker binding types aligned with runtime config", async () => {
-		const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+		const packageJson = requiredRecord(
+			JSON.parse(await readFile("package.json", "utf8")),
+			"package.json",
+		);
+		const packageScripts = requiredRecord(
+			packageJson.scripts,
+			"package scripts",
+		);
 		const generatedTypes = await readFile("worker-configuration.d.ts", "utf8");
-		assert.match(packageJson.scripts["worker:types"], /^wrangler types/);
-		assert.match(packageJson.scripts["check:worker-types"], /^wrangler types/);
+		assert.match(packageScripts["worker:types"], /^wrangler types/);
+		assert.match(packageScripts["check:worker-types"], /^wrangler types/);
 		assert.match(generatedTypes, /interface WorkerBindings/);
 		assert.match(generatedTypes, /GEMINI_DB:\s*D1Database/);
 		for (const key of CONFIG_ENV_KEYS) {
@@ -846,13 +972,20 @@ describe("quality scripts", () => {
 		}
 	});
 	test("keeps static warnings blocking and account-pool branch gates required", async () => {
-		const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+		const packageJson = requiredRecord(
+			JSON.parse(await readFile("package.json", "utf8")),
+			"package.json",
+		);
+		const packageScripts = requiredRecord(
+			packageJson.scripts,
+			"package scripts",
+		);
 		const workflow = await readFile(
 			".github/workflows/quality-gates.yml",
 			"utf8",
 		);
 		assert.match(
-			packageJson.scripts["check:static"],
+			packageScripts["check:static"],
 			/--diagnostic-level=warn.*--error-on-warnings/,
 		);
 		assert.match(

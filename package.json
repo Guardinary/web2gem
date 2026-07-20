@@ -16,6 +16,7 @@
 		"format": "biome format --write",
 		"typecheck": "tsc --noEmit",
 		"typecheck:tests": "tsc --noEmit -p tsconfig.tests.json",
+		"check:test-types": "node scripts/check-test-types.mjs",
 		"check:arch": "node scripts/check-architecture.mjs",
 		"check:size": "pnpm build && node scripts/check-bundle-size.mjs",
 		"check:bench": "node scripts/build.mjs --harness-bundle && node scripts/check-benchmark.mjs",
