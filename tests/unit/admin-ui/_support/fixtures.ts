@@ -1,5 +1,45 @@
-// @ts-nocheck
-export function uiAccount(overrides = {}) {
+import type {
+	AccountOverview,
+	AccountStats,
+	GeminiAccount,
+	ModelRoutingOverview,
+	MutationResult,
+} from "../../../../src/admin-ui/types";
+
+export type RecordedRequest = {
+	path: string;
+	init: RequestInit;
+};
+
+export function recordedRequest(
+	path: RequestInfo | URL,
+	init: RequestInit = {},
+): RecordedRequest {
+	return { path: String(path), init };
+}
+
+export function requestBody(init: RequestInit): string {
+	if (typeof init.body !== "string") {
+		throw new TypeError("expected a string request body");
+	}
+	return init.body;
+}
+
+export function requestHeaders(init: RequestInit): Headers {
+	return new Headers(init.headers);
+}
+
+export function requiredValue<T>(
+	value: T | null | undefined,
+	message = "expected a value",
+): T {
+	if (value === null || value === undefined) throw new Error(message);
+	return value;
+}
+
+export function uiAccount(
+	overrides: Partial<GeminiAccount> = {},
+): GeminiAccount {
 	return {
 		id: "account-a",
 		label: null,
@@ -18,7 +58,9 @@ export function uiAccount(overrides = {}) {
 	};
 }
 
-export function emptyStats(overrides = {}) {
+export function emptyStats(
+	overrides: Partial<AccountStats> = {},
+): AccountStats {
 	return {
 		total: 0,
 		available: 0,
@@ -29,7 +71,7 @@ export function emptyStats(overrides = {}) {
 	};
 }
 
-export function uiModelRouting() {
+export function uiModelRouting(): ModelRoutingOverview {
 	return {
 		version: "1",
 		families: [
@@ -69,7 +111,10 @@ export function uiModelRouting() {
 	};
 }
 
-export function uiAccountOverview(items = [], overrides = {}) {
+export function uiAccountOverview(
+	items: GeminiAccount[] = [],
+	overrides: Partial<AccountOverview> = {},
+): AccountOverview {
 	return {
 		items,
 		nextCursor: null,
@@ -87,7 +132,9 @@ export function uiAccountOverview(items = [], overrides = {}) {
 	};
 }
 
-export function uiMutation(overrides = {}) {
+export function uiMutation(
+	overrides: Partial<MutationResult> = {},
+): MutationResult {
 	return {
 		processed: 1,
 		changed: 1,
@@ -97,7 +144,7 @@ export function uiMutation(overrides = {}) {
 	};
 }
 
-export function uiImportBatch(count) {
+export function uiImportBatch(count: number) {
 	return Array.from({ length: count }, (_value, index) => ({
 		psid: `psid-${index}`,
 		psidts: `psidts-${index}`,
@@ -105,7 +152,7 @@ export function uiImportBatch(count) {
 	}));
 }
 
-export function uiImportBatchText(count) {
+export function uiImportBatchText(count: number) {
 	return uiImportBatch(count)
 		.map((account) => `${account.psid} ${account.psidts} ${account.label}`)
 		.join("\n");

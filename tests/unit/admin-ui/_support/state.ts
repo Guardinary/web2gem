@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { invalidateAdminSession } from "../../../../src/admin-ui/session";
 import {
 	accountStats,

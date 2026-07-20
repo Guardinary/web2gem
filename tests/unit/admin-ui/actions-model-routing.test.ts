@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test } from "vitest";
 import {
 	moveModelRoute,
@@ -11,24 +10,40 @@ import {
 	modelRouting,
 	modelRoutingDrafts,
 } from "../../../src/admin-ui/state";
-import { assert } from "../assertions.js";
+import type {
+	ModelRoutingOverview,
+	ModelRoutingRoute,
+} from "../../../src/admin-ui/types";
 import { deferred } from "../_support/deferred.js";
+import { assert } from "../assertions.js";
 import { withAdminEnvironment } from "./_support/environment.js";
-import { uiModelRouting } from "./_support/fixtures.js";
+import {
+	type RecordedRequest,
+	requestBody,
+	requiredValue,
+	uiModelRouting,
+} from "./_support/fixtures.js";
 import {
 	resetAdminSessionState,
 	resetModelRoutingState,
 } from "./_support/state.js";
 
-function route(providerModelId, overrides = {}) {
+function route(
+	providerModelId: string,
+	overrides: Partial<ModelRoutingRoute> = {},
+): ModelRoutingRoute {
 	return {
-		...uiModelRouting().families[0].routes[0],
+		...requiredValue(requiredValue(uiModelRouting().families[0]).routes[0]),
 		providerModelId,
 		...overrides,
 	};
 }
 
-function routingOverview(version, proRoutes, flashRoutes = []) {
+function routingOverview(
+	version: string,
+	proRoutes: ModelRoutingRoute[],
+	flashRoutes: ModelRoutingRoute[] = [],
+): ModelRoutingOverview {
 	const base = uiModelRouting();
 	return {
 		...base,
@@ -51,7 +66,7 @@ describe("admin UI model-routing actions", () => {
 
 	test("moves one family draft without mutating the saved overview or siblings", () => {
 		const saved = uiModelRouting();
-		const first = saved.families[0].routes[0];
+		const first = requiredValue(requiredValue(saved.families[0]).routes[0]);
 		const second = route("pro-second", { capacity: 4, capacityField: 12 });
 		const flash = route("flash-draft", {
 			capacity: 4,
@@ -79,7 +94,9 @@ describe("admin UI model-routing actions", () => {
 		assert.equal(modelRoutingDrafts.value.pro.dirty, true);
 		assert.equal(modelRoutingDrafts.value.pro.error, null);
 		assert.equal(
-			modelRouting.value.families[0].routes[0].providerModelId,
+			requiredValue(
+				requiredValue(requiredValue(modelRouting.value).families[0]).routes[0],
+			).providerModelId,
 			"9d8ca3786ebdfbea",
 		);
 		assert.deepEqual(modelRoutingDrafts.value.flash.routes, [flash]);
@@ -90,9 +107,9 @@ describe("admin UI model-routing actions", () => {
 		const pro = route("pro-saved");
 		const flashDraft = route("flash-draft", { modelNumber: 1 });
 		const returned = routingOverview("2", [pro]);
-		let request;
+		let request: RecordedRequest | undefined;
 		await withAdminEnvironment(
-			async (path, init = {}) => {
+			async (path: RequestInfo | URL, init: RequestInit = {}) => {
 				request = { path: String(path), init };
 				return Response.json(returned);
 			},
@@ -120,11 +137,12 @@ describe("admin UI model-routing actions", () => {
 			},
 		);
 
+		const savedRequest = requiredValue(request);
 		assert.deepEqual(
-			[request.path, request.init.method],
+			[savedRequest.path, savedRequest.init.method],
 			["/admin/model-routing/pro", "PUT"],
 		);
-		assert.deepEqual(JSON.parse(request.init.body), {
+		assert.deepEqual(JSON.parse(requestBody(savedRequest.init)), {
 			routes: [
 				{
 					providerModelId: "pro-saved",
@@ -134,7 +152,7 @@ describe("admin UI model-routing actions", () => {
 				},
 			],
 		});
-		assert.equal(modelRouting.value.version, "2");
+		assert.equal(requiredValue(modelRouting.value).version, "2");
 		assert.equal(modelRoutingDrafts.value.pro.dirty, false);
 		assert.deepEqual(modelRoutingDrafts.value.flash.routes, [flashDraft]);
 		assert.equal(modelRoutingDrafts.value.flash.dirty, true);
@@ -151,7 +169,7 @@ describe("admin UI model-routing actions", () => {
 		const flashResponse = deferred();
 		try {
 			await withAdminEnvironment(
-				async (path) => {
+				async (path: RequestInfo | URL) => {
 					if (String(path).endsWith("/pro")) {
 						proStarted.resolve();
 						return proResponse.promise;
@@ -199,18 +217,22 @@ describe("admin UI model-routing actions", () => {
 				},
 			);
 
-			assert.equal(modelRouting.value.version, "10");
+			const latestRouting = requiredValue(modelRouting.value);
+			assert.equal(latestRouting.version, "10");
 			assert.equal(
-				modelRouting.value.families.find((family) => family.family === "flash")
-					.routes[0].providerModelId,
+				requiredValue(
+					requiredValue(
+						latestRouting.families.find((family) => family.family === "flash"),
+					).routes[0],
+				).providerModelId,
 				"flash-new",
 			);
 			assert.equal(
-				modelRoutingDrafts.value.pro.routes[0].providerModelId,
+				requiredValue(modelRoutingDrafts.value.pro.routes[0]).providerModelId,
 				"pro-new",
 			);
 			assert.equal(
-				modelRoutingDrafts.value.flash.routes[0].providerModelId,
+				requiredValue(modelRoutingDrafts.value.flash.routes[0]).providerModelId,
 				"flash-new",
 			);
 			assert.deepEqual(
@@ -251,7 +273,7 @@ describe("admin UI model-routing actions", () => {
 				modelRouting.value = overview;
 				modelRoutingDrafts.value = {
 					pro: {
-						routes: overview.families[0].routes,
+						routes: requiredValue(overview.families[0]).routes,
 						busy: false,
 						error: null,
 						dirty: true,
@@ -277,9 +299,9 @@ describe("admin UI model-routing actions", () => {
 	test("resets one family from the server overview", async () => {
 		const discovered = route("pro-discovered");
 		const returned = routingOverview("3", [discovered]);
-		let request;
+		let request: RecordedRequest | undefined;
 		await withAdminEnvironment(
-			async (path, init = {}) => {
+			async (path: RequestInfo | URL, init: RequestInit = {}) => {
 				request = { path: String(path), init };
 				return Response.json(returned);
 			},
@@ -302,11 +324,12 @@ describe("admin UI model-routing actions", () => {
 			},
 		);
 
+		const resetRequest = requiredValue(request);
 		assert.deepEqual(
-			[request.path, request.init.method, request.init.body],
+			[resetRequest.path, resetRequest.init.method, resetRequest.init.body],
 			["/admin/model-routing/pro", "DELETE", undefined],
 		);
-		assert.equal(modelRouting.value.version, "3");
+		assert.equal(requiredValue(modelRouting.value).version, "3");
 		assert.deepEqual(modelRoutingDrafts.value.pro, {
 			routes: [discovered],
 			busy: false,

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test } from "vitest";
 import { loadAccounts } from "../../../src/admin-ui/actions";
 import { language } from "../../../src/admin-ui/i18n";
@@ -18,11 +17,12 @@ import {
 	stateFilter,
 	toastItems,
 } from "../../../src/admin-ui/state";
-import { assert } from "../assertions.js";
 import { deferred } from "../_support/deferred.js";
+import { assert } from "../assertions.js";
 import { withAdminEnvironment } from "./_support/environment.js";
 import {
 	emptyStats,
+	requiredValue,
 	uiAccount,
 	uiAccountOverview,
 	uiModelRouting,
@@ -45,13 +45,13 @@ describe("admin UI account loading actions", () => {
 		const account = uiAccount({ label: "Primary" });
 		const overview = uiAccountOverview([account], { nextCursor: "cursor-2" });
 		const routing = uiModelRouting();
-		const requests = [];
+		const requests: string[] = [];
 		const routingStarted = deferred();
 		const routingResponse = deferred();
 		let verifiedWhenRoutingRequested = false;
 		try {
 			await withAdminEnvironment(
-				async (path) => {
+				async (path: RequestInfo | URL) => {
 					requests.push(String(path));
 					if (String(path) !== "/admin/model-routing")
 						return Response.json(overview);
@@ -103,9 +103,9 @@ describe("admin UI account loading actions", () => {
 		const first = uiAccount({ id: "first" });
 		const retained = uiAccount({ id: "retained", state: "attention" });
 		const third = uiAccount({ id: "third", state: "attention" });
-		const requests = [];
+		const requests: string[] = [];
 		await withAdminEnvironment(
-			async (path) => {
+			async (path: RequestInfo | URL) => {
 				requests.push(String(path));
 				if (requests.length === 1)
 					return Response.json(uiAccountOverview([retained, third]));
@@ -286,7 +286,7 @@ describe("admin UI account loading actions", () => {
 				},
 			);
 
-			assert.equal(accountStats.value.total, 2);
+			assert.equal(requiredValue(accountStats.value).total, 2);
 			assert.equal(connectionVerified.value, true);
 		} finally {
 			firstStarted.resolve();

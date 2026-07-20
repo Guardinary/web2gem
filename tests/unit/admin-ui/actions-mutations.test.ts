@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test } from "vitest";
 import { runAction } from "../../../src/admin-ui/actions";
 import {
@@ -13,7 +12,14 @@ import {
 } from "../../../src/admin-ui/state";
 import { assert } from "../assertions.js";
 import { withAdminEnvironment } from "./_support/environment.js";
-import { uiAccountOverview, uiMutation } from "./_support/fixtures.js";
+import {
+	type RecordedRequest,
+	recordedRequest,
+	requestBody,
+	requiredValue,
+	uiAccountOverview,
+	uiMutation,
+} from "./_support/fixtures.js";
 import {
 	resetAccountViewState,
 	resetAdminSessionState,
@@ -46,10 +52,10 @@ describe("admin UI account mutation actions", () => {
 	});
 
 	test("waits for delete confirmation, mutates exact IDs, and clears row busy state", async () => {
-		const requests = [];
+		const requests: RecordedRequest[] = [];
 		await withAdminEnvironment(
-			async (path, init = {}) => {
-				requests.push({ path: String(path), init });
+			async (path: RequestInfo | URL, init: RequestInit = {}) => {
+				requests.push(recordedRequest(path, init));
 				return init.method === "POST"
 					? Response.json(uiMutation())
 					: Response.json(uiAccountOverview());
@@ -80,7 +86,7 @@ describe("admin UI account mutation actions", () => {
 				["/admin/accounts?limit=200", "GET"],
 			],
 		);
-		assert.deepEqual(JSON.parse(requests[0].init.body), {
+		assert.deepEqual(JSON.parse(requestBody(requiredValue(requests[0]).init)), {
 			action: "delete",
 			ids: ["account/a"],
 		});

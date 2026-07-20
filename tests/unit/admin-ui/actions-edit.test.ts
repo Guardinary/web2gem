@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test } from "vitest";
 import { openEdit, submitEdit } from "../../../src/admin-ui/actions";
 import { updateAdminKey } from "../../../src/admin-ui/session";
@@ -11,6 +10,10 @@ import {
 import { assert } from "../assertions.js";
 import { withAdminEnvironment } from "./_support/environment.js";
 import {
+	type RecordedRequest,
+	recordedRequest,
+	requestBody,
+	requiredValue,
 	uiAccount,
 	uiAccountOverview,
 	uiMutation,
@@ -48,7 +51,7 @@ describe("admin UI edit actions", () => {
 				connectionVerified.value = true;
 				editDraft.value = { key: "missing", label: "New" };
 
-				await submitEdit({ preventDefault() {} });
+				await submitEdit(new Event("submit"));
 			},
 		);
 
@@ -58,10 +61,10 @@ describe("admin UI edit actions", () => {
 
 	test("updates the loaded account, closes the draft, and reloads the page", async () => {
 		const account = uiAccount({ id: "account/a", label: "Old" });
-		const requests = [];
+		const requests: RecordedRequest[] = [];
 		await withAdminEnvironment(
-			async (path, init = {}) => {
-				requests.push({ path: String(path), init });
+			async (path: RequestInfo | URL, init: RequestInit = {}) => {
+				requests.push(recordedRequest(path, init));
 				return init.method === "PATCH"
 					? Response.json(uiMutation())
 					: Response.json(
@@ -73,9 +76,12 @@ describe("admin UI edit actions", () => {
 				connectionVerified.value = true;
 				accounts.value = [account];
 				openEdit(account);
-				editDraft.value = { ...editDraft.value, label: "  New label  " };
+				editDraft.value = {
+					...requiredValue(editDraft.value),
+					label: "  New label  ",
+				};
 
-				await submitEdit({ preventDefault() {} });
+				await submitEdit(new Event("submit"));
 			},
 		);
 
@@ -86,9 +92,11 @@ describe("admin UI edit actions", () => {
 				["/admin/accounts?limit=200", "GET"],
 			],
 		);
-		assert.deepEqual(JSON.parse(requests[0].init.body), { label: "New label" });
+		assert.deepEqual(JSON.parse(requestBody(requiredValue(requests[0]).init)), {
+			label: "New label",
+		});
 		assert.equal(editDraft.value, null);
 		assert.equal(editBusy.value, false);
-		assert.equal(accounts.value[0].label, "New label");
+		assert.equal(requiredValue(accounts.value[0]).label, "New label");
 	});
 });

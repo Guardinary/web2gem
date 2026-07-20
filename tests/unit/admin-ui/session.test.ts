@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test, vi } from "vitest";
 import { AdminApiError } from "../../../src/admin-ui/api";
 import { language, tr } from "../../../src/admin-ui/i18n";
@@ -41,11 +40,16 @@ import {
 	toastItems,
 } from "../../../src/admin-ui/state";
 import { assert } from "../assertions.js";
-import { emptyStats, uiAccount, uiModelRouting } from "./_support/fixtures.js";
 import {
 	createMemoryStorage,
 	withAdminWindow,
 } from "./_support/environment.js";
+import {
+	emptyStats,
+	requiredValue,
+	uiAccount,
+	uiModelRouting,
+} from "./_support/fixtures.js";
 import { resetAdminSessionState } from "./_support/state.js";
 
 describe("admin UI session owner", () => {
@@ -68,7 +72,7 @@ describe("admin UI session owner", () => {
 		modelRouting.value = overview;
 		modelRoutingDrafts.value = {
 			pro: {
-				routes: overview.families[0].routes,
+				routes: requiredValue(overview.families[0]).routes,
 				busy: true,
 				error: null,
 				dirty: true,

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test } from "vitest";
 import { resetImport, submitImport } from "../../../src/admin-ui/actions";
 import { language } from "../../../src/admin-ui/i18n";
@@ -12,10 +11,15 @@ import {
 	importPsidts,
 	toastItems,
 } from "../../../src/admin-ui/state";
-import { assert } from "../assertions.js";
+import { isRecord } from "../../../src/shared/types";
 import { deferred } from "../_support/deferred.js";
+import { assert } from "../assertions.js";
 import { withAdminEnvironment } from "./_support/environment.js";
 import {
+	type RecordedRequest,
+	recordedRequest,
+	requestBody,
+	requiredValue,
 	uiAccountOverview,
 	uiImportBatchText,
 	uiMutation,
@@ -42,7 +46,7 @@ describe("admin UI import actions", () => {
 				importPsid.value = "psid-value";
 				importPsidts.value = "psidts-value";
 
-				await submitImport({ preventDefault() {} });
+				await submitImport(new Event("submit"));
 			},
 		);
 
@@ -50,10 +54,10 @@ describe("admin UI import actions", () => {
 	});
 
 	test("submits a single import, clears its draft, and reloads accounts", async () => {
-		const requests = [];
+		const requests: RecordedRequest[] = [];
 		await withAdminEnvironment(
-			async (path, init = {}) => {
-				requests.push({ path: String(path), init });
+			async (path: RequestInfo | URL, init: RequestInit = {}) => {
+				requests.push(recordedRequest(path, init));
 				return init.method === "POST"
 					? Response.json(uiMutation())
 					: Response.json(uiAccountOverview());
@@ -65,7 +69,7 @@ describe("admin UI import actions", () => {
 				importPsid.value = " psid-value ";
 				importPsidts.value = " psidts-value ";
 
-				await submitImport({ preventDefault() {} });
+				await submitImport(new Event("submit"));
 
 				assert.equal(importBusy.value, false);
 				assert.deepEqual(
@@ -87,7 +91,7 @@ describe("admin UI import actions", () => {
 				["/admin/accounts?limit=200", "GET"],
 			],
 		);
-		assert.deepEqual(JSON.parse(requests[0].init.body), {
+		assert.deepEqual(JSON.parse(requestBody(requiredValue(requests[0]).init)), {
 			provider: "gemini",
 			label: "Primary",
 			"__Secure-1PSID": "psid-value",
@@ -108,7 +112,7 @@ describe("admin UI import actions", () => {
 				connectionVerified.value = true;
 				importBatch.value = "psid-only";
 
-				await submitImport({ preventDefault() {} });
+				await submitImport(new Event("submit"));
 
 				assert.equal(importBusy.value, false);
 				assert.equal(importBatch.value, "psid-only");
@@ -133,7 +137,7 @@ describe("admin UI import actions", () => {
 				importLabel.value = "Primary";
 				importPsidts.value = "psidts-value";
 
-				await submitImport({ preventDefault() {} });
+				await submitImport(new Event("submit"));
 
 				assert.equal(importBusy.value, false);
 				assert.deepEqual(
@@ -167,14 +171,16 @@ describe("admin UI import actions", () => {
 	});
 
 	test("aborts the full import request tree when the admin session changes", async () => {
-		const requestSizes = [];
+		const requestSizes: number[] = [];
 		const chunkStarted = deferred();
 		const chunkResponse = deferred();
-		let activeChunkSignal;
+		let activeChunkSignal: AbortSignal | undefined;
 		try {
 			await withAdminEnvironment(
-				async (_path, init = {}) => {
-					const payload = JSON.parse(String(init.body || "{}"));
+				async (_path: RequestInfo | URL, init: RequestInit = {}) => {
+					const payload: unknown = JSON.parse(requestBody(init));
+					if (!isRecord(payload) || !Array.isArray(payload.accounts))
+						throw new TypeError("expected an accounts payload");
 					requestSizes.push(payload.accounts.length);
 					if (requestSizes.length === 1)
 						return Response.json(
@@ -186,7 +192,7 @@ describe("admin UI import actions", () => {
 							},
 							{ status: 413 },
 						);
-					activeChunkSignal = init.signal;
+					activeChunkSignal = requiredValue(init.signal);
 					activeChunkSignal.addEventListener(
 						"abort",
 						() => chunkResponse.resolve(Response.json(uiMutation())),
@@ -200,13 +206,13 @@ describe("admin UI import actions", () => {
 					connectionVerified.value = true;
 					importBatch.value = uiImportBatchText(81);
 
-					const importing = submitImport({ preventDefault() {} });
+					const importing = submitImport(new Event("submit"));
 					await chunkStarted.promise;
 					updateAdminKey("new-admin-key");
 					await importing;
 
 					assert.deepEqual(requestSizes, [81, 40]);
-					assert.equal(activeChunkSignal.aborted, true);
+					assert.equal(requiredValue(activeChunkSignal).aborted, true);
 					assert.equal(connectionVerified.value, false);
 				},
 			);

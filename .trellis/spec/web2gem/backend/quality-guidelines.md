@@ -104,6 +104,26 @@ production owner contracts:
 This preserves SQL/runtime call order and makes fixture changes fail at the
 same owner boundary as production contract changes.
 
+### Admin UI strict test fixtures
+
+Admin UI tests must keep browser and state doubles aligned with the authored UI
+contracts instead of relying on implicit object and array shapes:
+
+- Fixture factories return complete `GeminiAccount`, `AccountOverview`,
+  `AccountStats`, `ModelRoutingOverview`, or `MutationResult` values; intentional
+  overrides use `Partial<T>`.
+- Fetch recorders accept `RequestInfo | URL` and `RequestInit`, normalize paths
+  with `String(...)`, parse headers through `new Headers(init.headers)`, and
+  require a string body before calling `JSON.parse`.
+- Parsed request bodies remain `unknown` until narrowed with `isRecord` and
+  element checks. Nullable signal state and indexed recorder entries use a
+  reusable throwing guard before assertions.
+- Submit handlers receive a real `Event` when the production callback expects
+  one; do not replace browser event contracts with partial object literals.
+
+These helpers preserve request payload, abort, selection, and state-transition
+assertions while making owner contract changes visible to the test typecheck.
+
 ### Prompt and tool contract tests
 
 Prompt compatibility, completion, and tool-call tests must preserve the same

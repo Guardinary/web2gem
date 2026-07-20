@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test } from "vitest";
 import { hasFilters, metricSummary } from "../../../src/admin-ui/selectors";
 import {

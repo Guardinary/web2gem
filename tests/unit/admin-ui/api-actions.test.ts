@@ -1,16 +1,37 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { runAccountAction } from "../../../src/admin-ui/api";
+import type { AccountIdentifier } from "../../../src/admin-ui/types";
+import { isRecord } from "../../../src/shared/types";
 import { assert } from "../assertions.js";
 import { withAdminFetch } from "./_support/environment.js";
-import { uiAdminApiSession, uiMutation } from "./_support/fixtures.js";
+import {
+	type RecordedRequest,
+	recordedRequest,
+	requestBody,
+	requestHeaders,
+	requiredValue,
+	uiAdminApiSession,
+	uiMutation,
+} from "./_support/fixtures.js";
 
 const BULK_ACTION_LIMIT_CODE = "admin_bulk_action_limit_exceeded";
 
-function accountIdentifiers(count) {
+function accountIdentifiers(count: number): AccountIdentifier[] {
 	return Array.from({ length: count }, (_value, index) => ({
 		id: `account-${index}`,
 	}));
+}
+
+function idsFromRequest(init: RequestInit): string[] {
+	const payload: unknown = JSON.parse(requestBody(init));
+	if (
+		!isRecord(payload) ||
+		!Array.isArray(payload.ids) ||
+		!payload.ids.every((id) => typeof id === "string")
+	) {
+		throw new TypeError("expected an account IDs payload");
+	}
+	return payload.ids;
 }
 
 function bulkLimitResponse(status = 413, code = BULK_ACTION_LIMIT_CODE) {
@@ -28,13 +49,13 @@ function bulkLimitResponse(status = 413, code = BULK_ACTION_LIMIT_CODE) {
 describe("admin UI bulk account action API", () => {
 	test("sends the full action first and returns without chunking when accepted", async () => {
 		const identifiers = accountIdentifiers(205);
-		const requests = [];
+		const requests: RecordedRequest[] = [];
 		const session = uiAdminApiSession();
 		let result;
 
 		await withAdminFetch(
-			async (path, init = {}) => {
-				requests.push({ path, init });
+			async (path: RequestInfo | URL, init: RequestInit = {}) => {
+				requests.push(recordedRequest(path, init));
 				return Response.json(
 					uiMutation({ processed: 205, changed: 204, unchanged: 1 }),
 				);
@@ -51,13 +72,14 @@ describe("admin UI bulk account action API", () => {
 			failed: 0,
 		});
 		assert.equal(requests.length, 1);
+		const request = requiredValue(requests[0]);
 		assert.deepEqual(
 			{
-				path: requests[0].path,
-				method: requests[0].init.method,
-				body: JSON.parse(requests[0].init.body),
-				signal: requests[0].init.signal,
-				authorization: requests[0].init.headers.Authorization,
+				path: request.path,
+				method: request.init.method,
+				body: JSON.parse(requestBody(request.init)),
+				signal: request.init.signal,
+				authorization: requestHeaders(request.init).get("Authorization"),
 			},
 			{
 				path: "/admin/accounts/actions",
@@ -74,12 +96,12 @@ describe("admin UI bulk account action API", () => {
 
 	test("retries the exact Worker limit in ordered 100-account chunks and merges results", async () => {
 		const identifiers = accountIdentifiers(205);
-		const requestIds = [];
+		const requestIds: string[][] = [];
 		let result;
 
 		await withAdminFetch(
-			async (_path, init = {}) => {
-				const ids = JSON.parse(init.body).ids;
+			async (_path: RequestInfo | URL, init: RequestInit = {}) => {
+				const ids = idsFromRequest(init);
 				requestIds.push(ids);
 				if (requestIds.length === 1) return bulkLimitResponse();
 				if (requestIds.length === 2)
@@ -203,12 +225,12 @@ describe("admin UI bulk account action API", () => {
 		const controller = new AbortController();
 		const session = { adminKey: "admin-secret", signal: controller.signal };
 		const identifiers = accountIdentifiers(201);
-		const requestIds = [];
-		let thrown;
+		const requestIds: string[][] = [];
+		let thrown: unknown;
 
 		await withAdminFetch(
-			async (_path, init = {}) => {
-				const ids = JSON.parse(init.body).ids;
+			async (_path: RequestInfo | URL, init: RequestInit = {}) => {
+				const ids = idsFromRequest(init);
 				requestIds.push(ids);
 				if (requestIds.length === 1) return bulkLimitResponse();
 				controller.abort();
@@ -225,8 +247,9 @@ describe("admin UI bulk account action API", () => {
 			},
 		);
 
-		assert.equal(thrown?.name, "AbortError");
-		assert.match(thrown?.message || "", /Admin session is no longer active/);
+		if (!(thrown instanceof Error)) throw new Error("expected an abort error");
+		assert.equal(thrown.name, "AbortError");
+		assert.match(thrown.message, /Admin session is no longer active/);
 		assert.deepEqual(
 			requestIds,
 			[identifiers, identifiers.slice(0, 100)].map((batch) =>

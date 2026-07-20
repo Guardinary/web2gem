@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test } from "vitest";
 import { selectedIdentifiers } from "../../../src/admin-ui/actions";
 import { accounts, selected } from "../../../src/admin-ui/state";

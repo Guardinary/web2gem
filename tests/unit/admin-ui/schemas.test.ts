@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	isAccount,
@@ -7,7 +6,12 @@ import {
 	parseOverview,
 } from "../../../src/admin-ui/schemas";
 import { assert } from "../assertions.js";
-import { emptyStats, uiAccount, uiModelRouting } from "./_support/fixtures.js";
+import {
+	emptyStats,
+	requiredValue,
+	uiAccount,
+	uiModelRouting,
+} from "./_support/fixtures.js";
 
 describe("admin UI response schemas", () => {
 	test("accepts only slim account DTOs", () => {
@@ -68,10 +72,12 @@ describe("admin UI response schemas", () => {
 					...overview,
 					families: [
 						{
-							...overview.families[0],
+							...requiredValue(overview.families[0]),
 							routes: [
 								{
-									...overview.families[0].routes[0],
+									...requiredValue(
+										requiredValue(overview.families[0]).routes[0],
+									),
 									cookie_hash: "secret",
 								},
 							],

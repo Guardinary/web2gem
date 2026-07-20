@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import { AdminLocalError } from "../../../src/admin-ui/local-errors";
 import {
 	accountBusyLabel,
 	accountDisplayName,
@@ -11,7 +11,6 @@ import {
 	relativeTime,
 	resultSummary,
 } from "../../../src/admin-ui/logic";
-import { AdminLocalError } from "../../../src/admin-ui/local-errors";
 import { assert } from "../assertions.js";
 import { uiAccount } from "./_support/fixtures.js";
 

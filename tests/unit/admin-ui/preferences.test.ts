@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { detectLanguage } from "../../../src/admin-ui/i18n";
 import { resolveTheme } from "../../../src/admin-ui/theme";

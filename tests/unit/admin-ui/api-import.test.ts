@@ -1,13 +1,17 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	createAccount,
 	createAccounts,
 	createAccountsWithLimitFallback,
 } from "../../../src/admin-ui/api";
+import { isRecord } from "../../../src/shared/types";
 import { assert } from "../assertions.js";
 import { withAdminFetch } from "./_support/environment.js";
 import {
+	type RecordedRequest,
+	recordedRequest,
+	requestBody,
+	requestHeaders,
 	uiAdminApiSession,
 	uiImportBatch,
 	uiMutation,
@@ -15,11 +19,11 @@ import {
 
 describe("admin UI import API", () => {
 	test("serializes single and batch credentials without empty labels", async () => {
-		const requests = [];
+		const requests: RecordedRequest[] = [];
 		const session = uiAdminApiSession();
 		await withAdminFetch(
-			async (path, init = {}) => {
-				requests.push({ path, init });
+			async (path: RequestInfo | URL, init: RequestInit = {}) => {
+				requests.push(recordedRequest(path, init));
 				return Response.json(uiMutation());
 			},
 			async () => {
@@ -40,9 +44,9 @@ describe("admin UI import API", () => {
 			requests.map(({ path, init }) => ({
 				path,
 				method: init.method,
-				body: JSON.parse(init.body),
+				body: JSON.parse(requestBody(init)),
 				signal: init.signal,
-				authorization: init.headers.Authorization,
+				authorization: requestHeaders(init).get("Authorization"),
 			})),
 			[
 				{
@@ -78,10 +82,12 @@ describe("admin UI import API", () => {
 	});
 
 	test("retries only Worker-limited imports in ordered 40-account chunks", async () => {
-		const requestSizes = [];
+		const requestSizes: number[] = [];
 		await withAdminFetch(
-			async (_path, init) => {
-				const payload = JSON.parse(String(init?.body || "{}"));
+			async (_path: RequestInfo | URL, init: RequestInit = {}) => {
+				const payload: unknown = JSON.parse(requestBody(init));
+				if (!isRecord(payload) || !Array.isArray(payload.accounts))
+					throw new TypeError("expected an accounts payload");
 				requestSizes.push(payload.accounts.length);
 				if (requestSizes.length === 1)
 					return Response.json(

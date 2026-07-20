@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	getModelRoutingOverview,
@@ -7,16 +6,24 @@ import {
 } from "../../../src/admin-ui/api";
 import { assert } from "../assertions.js";
 import { withAdminFetch } from "./_support/environment.js";
-import { uiAdminApiSession, uiModelRouting } from "./_support/fixtures.js";
+import {
+	type RecordedRequest,
+	recordedRequest,
+	requestBody,
+	requestHeaders,
+	requiredValue,
+	uiAdminApiSession,
+	uiModelRouting,
+} from "./_support/fixtures.js";
 
 describe("admin UI model-routing API", () => {
 	test("sends exact methods, bodies, authorization, and abort signals", async () => {
 		const overview = uiModelRouting();
-		const requests = [];
+		const requests: RecordedRequest[] = [];
 		const session = uiAdminApiSession();
 		await withAdminFetch(
-			async (path, init = {}) => {
-				requests.push({ path, init });
+			async (path: RequestInfo | URL, init: RequestInit = {}) => {
+				requests.push(recordedRequest(path, init));
 				return Response.json(overview);
 			},
 			async () => {
@@ -41,7 +48,7 @@ describe("admin UI model-routing API", () => {
 				["/admin/model-routing/pro", "DELETE"],
 			],
 		);
-		assert.deepEqual(JSON.parse(requests[1].init.body), {
+		assert.deepEqual(JSON.parse(requestBody(requiredValue(requests[1]).init)), {
 			routes: [
 				{
 					providerModelId: "9d8ca3786ebdfbea",
@@ -55,7 +62,8 @@ describe("admin UI model-routing API", () => {
 			requests.every(
 				(item) =>
 					item.init.signal === session.signal &&
-					item.init.headers.Authorization === "Bearer admin-secret",
+					requestHeaders(item.init).get("Authorization") ===
+						"Bearer admin-secret",
 			),
 			true,
 		);
