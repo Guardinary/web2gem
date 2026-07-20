@@ -5,27 +5,14 @@ import type {
 	AttachmentPlan,
 } from "../../../../src/attachments/types";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
-import {
-	createRuntimeConfig,
-	getConfig,
-	type RuntimeConfig,
-} from "../../../../src/config";
 import { handleChat } from "../../../../src/http/openai/chat";
-import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
+import type { UnknownRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { withConsoleLog } from "../../_support/globals.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
 import { streamError } from "../_support/provider.js";
 import { strictProvider } from "../_support/provider.js";
-
-function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
-	return { ...createRuntimeConfig(getConfig()), ...overrides };
-}
-
-function record(value: unknown, label: string): UnknownRecord {
-	if (!isRecord(value)) throw new Error(`expected ${label} object`);
-	return value;
-}
+import { openAIConfig, record, required } from "./_support/fixtures.js";
 
 function recordAt(value: unknown, index: number, label: string): UnknownRecord {
 	if (!Array.isArray(value)) throw new Error(`expected ${label} array`);
@@ -42,15 +29,6 @@ function chatMessage(choice: UnknownRecord): UnknownRecord {
 
 function responseError(body: UnknownRecord): UnknownRecord {
 	return record(body.error, "response error");
-}
-
-function required<T>(
-	value: T | null | undefined,
-	label: string,
-): NonNullable<T> {
-	if (value === null || value === undefined)
-		throw new Error(`${label} is required`);
-	return value;
 }
 
 function simplifyAttachmentCandidate(

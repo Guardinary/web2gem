@@ -1,31 +1,13 @@
 import { describe, test } from "vitest";
 import type { AttachmentFileRef } from "../../../../src/attachments/types";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
-import {
-	createRuntimeConfig,
-	getConfig,
-	type RuntimeConfig,
-} from "../../../../src/config";
 import { handleResponses } from "../../../../src/http/openai/responses";
-import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { withConsoleLog } from "../../_support/globals.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
 import { streamError } from "../_support/provider.js";
 import { noWorkProvider, strictProvider } from "../_support/provider.js";
-
-function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
-	return { ...createRuntimeConfig(getConfig()), ...overrides };
-}
-
-function record(value: unknown, label: string): UnknownRecord {
-	if (!isRecord(value)) throw new Error(`expected ${label} object`);
-	return value;
-}
-
-function responseError(value: unknown): UnknownRecord {
-	return record(record(value, "response").error, "response error");
-}
+import { openAIConfig, record, responseError } from "./_support/fixtures.js";
 
 function first<T>(values: readonly T[], label: string): T {
 	const value = values[0];

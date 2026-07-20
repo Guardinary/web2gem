@@ -1,11 +1,7 @@
 import { describe, test } from "vitest";
 import type { AttachmentPlan } from "../../../../src/attachments/types";
 import type { CompletionProvider } from "../../../../src/completion/ports";
-import {
-	createRuntimeConfig,
-	getConfig,
-	type RuntimeConfig,
-} from "../../../../src/config";
+import type { RuntimeConfig } from "../../../../src/config";
 import type {
 	ImageGenerationPrepareError,
 	PreparedImageGenerationCompletion,
@@ -24,14 +20,11 @@ import type {
 import { assert } from "../../assertions.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
 import { strictProvider } from "../_support/provider.js";
+import { openAIConfig } from "./_support/fixtures.js";
 
 type PreparedResult =
 	| PreparedImageGenerationCompletion
 	| { error: ImageGenerationPrepareError };
-
-function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
-	return { ...createRuntimeConfig(getConfig()), ...overrides };
-}
 
 function preparedError(result: PreparedResult): ImageGenerationPrepareError {
 	if (!("error" in result)) throw new Error("expected image-generation error");

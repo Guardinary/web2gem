@@ -1,32 +1,14 @@
 import { describe, test } from "vitest";
 import type { ApplicationExecutionContext } from "../../../../src/app";
-import {
-	createRuntimeConfig,
-	getConfig,
-	type RuntimeConfig,
-} from "../../../../src/config";
 import { handleChat } from "../../../../src/http/openai/chat";
 import { handleResponses } from "../../../../src/http/openai/responses";
-import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import worker from "../../../../src/index";
 import { assert } from "../../assertions.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
 import { noWorkProvider, strictProvider } from "../_support/provider.js";
+import { openAIConfig, responseError } from "./_support/fixtures.js";
 
 const execution: ApplicationExecutionContext = { waitUntil() {} };
-
-function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
-	return { ...createRuntimeConfig(getConfig()), ...overrides };
-}
-
-function record(value: unknown, label: string): UnknownRecord {
-	if (!isRecord(value)) throw new Error(`expected ${label} object`);
-	return value;
-}
-
-function responseError(value: unknown): UnknownRecord {
-	return record(record(value, "response").error, "response error");
-}
 
 function first<T>(values: readonly T[], label: string): T {
 	const value = values[0];

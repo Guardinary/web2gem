@@ -6,12 +6,6 @@ import {
 } from "../_support/provider.js";
 import { describe, test } from "vitest";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
-import {
-	createRuntimeConfig,
-	getConfig,
-	type RuntimeConfig,
-} from "../../../../src/config";
-import type { SSEWrite } from "../../../../src/http/core/sse";
 import { handleChat } from "../../../../src/http/openai/chat";
 import {
 	streamOpenAIChatPlain,
@@ -23,25 +17,15 @@ import { assert } from "../../assertions.js";
 import { chunks } from "../../_support/async-stream.js";
 import { withConsoleLog } from "../../_support/globals.js";
 import { collectSSEData } from "../_support/sse.js";
-
-function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
-	return { ...createRuntimeConfig(getConfig()), ...overrides };
-}
+import {
+	frameObjects,
+	openAIConfig,
+	record,
+	responseError,
+	writeRecorder,
+} from "./_support/fixtures.js";
 
 const baseConfig = openAIConfig;
-
-function record(value: unknown, label: string): UnknownRecord {
-	if (!isRecord(value)) throw new Error(`expected ${label} object`);
-	return value;
-}
-
-function responseError(value: unknown): UnknownRecord {
-	return record(record(value, "response").error, "response error");
-}
-
-function frameObjects(frames: readonly unknown[]): UnknownRecord[] {
-	return frames.filter(isRecord);
-}
 
 function firstObject(frames: readonly unknown[], label: string): UnknownRecord {
 	const object = frameObjects(frames)[0];
@@ -85,16 +69,6 @@ function firstToolName(frame: UnknownRecord): unknown {
 	if (!Array.isArray(calls)) throw new Error("expected tool calls");
 	const call = record(calls[0], "tool call");
 	return record(call.function, "tool function").name;
-}
-
-function writeRecorder(): { writes: string[]; write: SSEWrite } {
-	const writes: string[] = [];
-	return {
-		writes,
-		async write(chunk) {
-			writes.push(chunk);
-		},
-	};
 }
 
 describe("OpenAI Chat streaming", () => {

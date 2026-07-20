@@ -5,19 +5,8 @@ import {
 	unverifiedGeminiCookieError,
 } from "../../../../src/gemini/client/errors";
 import { openAIUpstreamErrorResponse } from "../../../../src/http/openai/errors";
-import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
-
-function record(value: unknown, label: string): UnknownRecord {
-	if (!isRecord(value)) throw new Error(`expected ${label} object`);
-	return value;
-}
-
-function required<T>(value: T | null | undefined, label: string): T {
-	if (value === null || value === undefined)
-		throw new Error(`${label} is required`);
-	return value;
-}
+import { record, required } from "./_support/fixtures.js";
 
 describe("OpenAI error mapping", () => {
 	test("classifies Gemini authentication failures and maps OpenAI 401 envelopes", async () => {

@@ -6,39 +6,24 @@ import {
 } from "../_support/provider.js";
 import { describe, test } from "vitest";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
-import {
-	createRuntimeConfig,
-	getConfig,
-	type RuntimeConfig,
-} from "../../../../src/config";
-import type { SSEWrite } from "../../../../src/http/core/sse";
 import { handleResponses } from "../../../../src/http/openai/responses";
 import { streamResponsesWithToolSieve } from "../../../../src/http/openai/responses-stream";
 import { createToolBundle } from "../../../../src/toolcall/tool-bundle";
-import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
+import type { UnknownRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { chunks } from "../../_support/async-stream.js";
 import { withConsoleLog } from "../../_support/globals.js";
 import { collectSSEData } from "../_support/sse.js";
-
-function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
-	return { ...createRuntimeConfig(getConfig()), ...overrides };
-}
+import {
+	frameObjects,
+	openAIConfig,
+	record,
+	records,
+	responseError,
+	writeRecorder,
+} from "./_support/fixtures.js";
 
 const baseConfig = openAIConfig;
-
-function record(value: unknown, label: string): UnknownRecord {
-	if (!isRecord(value)) throw new Error(`expected ${label} object`);
-	return value;
-}
-
-function responseError(value: unknown): UnknownRecord {
-	return record(record(value, "response").error, "response error");
-}
-
-function frameObjects(frames: readonly unknown[]): UnknownRecord[] {
-	return frames.filter(isRecord);
-}
 
 function eventFrame(
 	frames: readonly UnknownRecord[],
@@ -57,11 +42,6 @@ function eventError(frame: UnknownRecord): UnknownRecord {
 	return record(eventResponse(frame).error, "event error");
 }
 
-function records(value: unknown, label: string): UnknownRecord[] {
-	if (!Array.isArray(value)) throw new Error(`expected ${label} array`);
-	return value.map((item, index) => record(item, `${label} ${index}`));
-}
-
 function firstRecord(value: unknown, label: string): UnknownRecord {
 	const item = records(value, label)[0];
 	if (!item) throw new Error(`expected ${label} item`);
@@ -71,16 +51,6 @@ function firstRecord(value: unknown, label: string): UnknownRecord {
 function completedText(frame: UnknownRecord): unknown {
 	const output = firstRecord(eventResponse(frame).output, "response output");
 	return firstRecord(output.content, "response content").text;
-}
-
-function writeRecorder(): { writes: string[]; write: SSEWrite } {
-	const writes: string[] = [];
-	return {
-		writes,
-		async write(chunk) {
-			writes.push(chunk);
-		},
-	};
 }
 
 describe("OpenAI Responses streaming", () => {

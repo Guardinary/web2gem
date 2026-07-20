@@ -14,14 +14,10 @@ import {
 } from "../../../../src/http/openai/format";
 import { assert } from "../../assertions.js";
 import type { SSEWrite } from "../../../../src/http/core/sse";
-import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
+import type { UnknownRecord } from "../../../../src/shared/types";
 import { streamError } from "../_support/provider.js";
 import { collectSSEData } from "../_support/sse.js";
-
-function record(value: unknown, label: string): UnknownRecord {
-	if (!isRecord(value)) throw new Error(`expected ${label} object`);
-	return value;
-}
+import { record } from "./_support/fixtures.js";
 
 function firstRecord(value: unknown, label: string): UnknownRecord {
 	if (!Array.isArray(value) || value.length === 0)

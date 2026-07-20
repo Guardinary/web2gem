@@ -7,21 +7,21 @@ import type {
 	CompletionTextInput,
 } from "../../../../src/completion/ports";
 import {
-	createRuntimeConfig,
-	getConfig,
-	type RuntimeConfig,
-} from "../../../../src/config";
-import {
 	handleImageEdits,
 	handleImageEditsMultipart,
 	handleImageGenerations,
 } from "../../../../src/http/openai/images";
 import worker from "../../../../src/index";
-import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { withConsoleLog } from "../../_support/globals.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
 import { strictProvider } from "../_support/provider.js";
+import {
+	openAIConfig,
+	record,
+	required,
+	responseError,
+} from "./_support/fixtures.js";
 
 const TINY_PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -30,29 +30,7 @@ const TINY_PNG_BYTES = base64ToBytes(TINY_PNG_BASE64);
 
 const execution: ApplicationExecutionContext = { waitUntil() {} };
 
-function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
-	return { ...createRuntimeConfig(getConfig()), ...overrides };
-}
-
 const baseConfig = openAIConfig;
-
-function record(value: unknown, label: string): UnknownRecord {
-	if (!isRecord(value)) throw new Error(`expected ${label} object`);
-	return value;
-}
-
-function responseError(value: unknown): UnknownRecord {
-	return record(record(value, "response").error, "response error");
-}
-
-function required<T>(
-	value: T | null | undefined,
-	label: string,
-): NonNullable<T> {
-	if (value === null || value === undefined)
-		throw new Error(`${label} is required`);
-	return value;
-}
 
 function tinyPngFile(name = "input.png") {
 	return new File([TINY_PNG_BYTES.buffer as ArrayBuffer], name, {
