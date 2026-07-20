@@ -636,6 +636,13 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
 - Account/model mutations require the same currently verified session even when
   called outside the rendered controls. A non-empty key alone does not authorize
   browser-side mutation flow.
+- Account mutation commands capture the current account-load generation and must
+  fail closed while a new page is loading or after that generation is replaced.
+  They must not reuse the previous page's selection or trigger a refresh from a
+  stale completion.
+- Row, bulk, and edit mutations claim one shared set of target account IDs before
+  issuing a request. Overlapping claims are rejected with local feedback; each
+  claim is released exactly once even when the session is invalidated.
 - Concurrent account reads use latest-request-wins ordering inside one credential
   generation. Rows, stats, next cursor, cursor stack, page index, and selection
   commit together; an older response and its `finally` block are ignored.
@@ -673,6 +680,10 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
 - Delete -> scoped in-app confirmation before the first request; cancellation
   performs no mutation.
 - Row action -> only that row busy; bulk action -> only batch controls busy.
+- Account load in progress -> selection and account mutation controls are
+  disabled, and stale command invocations perform no request.
+- Row and bulk operations overlap on an account ID -> the second operation is
+  rejected locally without changing the first operation's busy state.
 
 ### 5. Good/Base/Bad Cases
 
@@ -686,6 +697,8 @@ protocol decoder, state, actions, responsive table/cards, or generated bundle.
   mutation completion against the newest accepted overview.
 - Good: construct a requested account page without mutating live pagination,
   then atomically commit it only if its load generation is still current.
+- Good: claim target IDs before a row/bulk/edit request, compare the captured
+  load generation on completion, and release the IDs in `finally`.
 - Base: issue is `-` for healthy accounts and shows issue plus remaining
   cooldown for cooling accounts.
 - Bad: mirroring D1 columns in `admin-ui/types.ts`.
