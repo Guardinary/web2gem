@@ -18,10 +18,17 @@ import {
 import type { ResolvedModelOk } from "../../../src/models";
 import { assert } from "../assertions.js";
 import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
+import {
+	accountConfig,
+	captureError,
+	errorRecord,
+	failFastClient,
+	failFastUploads,
+	requireAccount,
+	requireItem,
+} from "./_support/completion-provider-fixtures.js";
 import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
 
-type ClientOverrides = NonNullable<GeminiCompletionProviderOptions["client"]>;
-type UploadOverrides = NonNullable<GeminiCompletionProviderOptions["uploads"]>;
 type LifecycleEvent = [string, ...unknown[]];
 type UploadCall =
 	| [kind: "attachments", accountId: string, plan: AttachmentPlan]
@@ -29,35 +36,6 @@ type UploadCall =
 type GenerateCall = [accountId: string, refs: unknown[]];
 type TestProvider = CompletionProvider &
 	Required<Pick<CompletionProvider, "resolveModel">>;
-
-function requireAccount(config: RuntimeConfig) {
-	const account = config.gemini_account;
-	if (!account) throw new Error("expected Gemini account context");
-	return account;
-}
-
-function requireItem<T>(items: readonly T[], index = 0): T {
-	const item = items[index];
-	if (item === undefined) throw new Error(`expected item at index ${index}`);
-	return item;
-}
-
-function errorRecord(value: unknown): Record<string, unknown> {
-	if (!value || typeof value !== "object") {
-		throw new Error("expected an error object");
-	}
-	return value as Record<string, unknown>;
-}
-
-function accountConfig(accountId: string): RuntimeConfig {
-	return baseGeminiClientConfig({
-		cookie: `__Secure-1PSID=psid-${accountId}`,
-		gemini_account: {
-			accountId,
-			cookieHash: `hash-${accountId}`,
-		},
-	});
-}
 
 function attachmentResult(ref: string): AttachmentUploadResult {
 	const fileRef = { ref, name: "file.txt" };
@@ -78,37 +56,6 @@ function attachmentResult(ref: string): AttachmentUploadResult {
 			droppedFiles: 0,
 			multipartUploads: 1,
 		},
-	};
-}
-
-function failFastClient(
-	overrides: Partial<ClientOverrides> = {},
-): ClientOverrides {
-	return {
-		async generate() {
-			throw new Error("unexpected client.generate call");
-		},
-		async generateRich() {
-			throw new Error("unexpected client.generateRich call");
-		},
-		generateStream() {
-			throw new Error("unexpected client.generateStream call");
-		},
-		...overrides,
-	};
-}
-
-function failFastUploads(
-	overrides: Partial<UploadOverrides> = {},
-): UploadOverrides {
-	return {
-		async resolveAttachments() {
-			throw new Error("unexpected uploads.resolveAttachments call");
-		},
-		async uploadTextFile() {
-			throw new Error("unexpected uploads.uploadTextFile call");
-		},
-		...overrides,
 	};
 }
 
@@ -210,17 +157,6 @@ function createTestProvider(
 
 function rateLimitError(accountId: string) {
 	return Object.assign(new Error(`rate limited ${accountId}`), { status: 429 });
-}
-
-async function captureError(
-	run: () => unknown | PromiseLike<unknown>,
-): Promise<unknown> {
-	try {
-		await run();
-	} catch (error) {
-		return error;
-	}
-	throw new Error("expected rejection");
 }
 
 describe("Gemini upload replay failover", () => {

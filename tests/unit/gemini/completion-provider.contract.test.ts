@@ -20,27 +20,22 @@ import type { GeminiPublicFamily, ResolvedModelOk } from "../../../src/models";
 import { withConsoleLog } from "../_support/globals.js";
 import { assert } from "../assertions.js";
 import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
+import {
+	accountConfig,
+	failFastClient,
+	failFastUploads,
+	flashModel,
+	proModel,
+	requireAccount,
+	requireItem,
+} from "./_support/completion-provider-fixtures.js";
 import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
 
-type ClientOverrides = NonNullable<GeminiCompletionProviderOptions["client"]>;
-type UploadOverrides = NonNullable<GeminiCompletionProviderOptions["uploads"]>;
 type LifecycleEvent = [string, ...unknown[]];
 type TestProvider = CompletionProvider &
 	Required<
 		Pick<CompletionProvider, "resolveModel" | "generateRich" | "dispose">
 	>;
-
-function requireAccount(config: RuntimeConfig) {
-	const account = config.gemini_account;
-	if (!account) throw new Error("expected Gemini account context");
-	return account;
-}
-
-function requireItem<T>(items: readonly T[], index = 0): T {
-	const item = items[index];
-	if (item === undefined) throw new Error(`expected item at index ${index}`);
-	return item;
-}
 
 function attachmentResult(
 	fileRefs: AttachmentFileRef[] | null,
@@ -65,35 +60,6 @@ function attachmentResult(
 	};
 }
 
-function flashModel(extended = false): ResolvedModelOk {
-	return {
-		name: extended ? "gemini-3.5-flash-extended" : "gemini-3.5-flash",
-		family: "flash",
-		extended,
-		dynamicProviderId: null,
-	};
-}
-
-function proModel(extended = false): ResolvedModelOk {
-	return {
-		name: extended ? "gemini-3.1-pro-extended" : "gemini-3.1-pro",
-		family: "pro",
-		extended,
-		dynamicProviderId: null,
-	};
-}
-
-function accountConfig(base: RuntimeConfig, accountId: string): RuntimeConfig {
-	return {
-		...base,
-		cookie: `__Secure-1PSID=psid-${accountId}`,
-		gemini_account: {
-			accountId,
-			cookieHash: `hash-${accountId}`,
-		},
-	};
-}
-
 function routeFor(
 	family: GeminiPublicFamily,
 	overrides: Partial<GeminiRouteTuple> = {},
@@ -103,37 +69,6 @@ function routeFor(
 
 function unexpected(name: string) {
 	return new Error(`unexpected ${name} call`);
-}
-
-function failFastClient(
-	overrides: Partial<ClientOverrides> = {},
-): ClientOverrides {
-	return {
-		async generate() {
-			throw unexpected("client.generate");
-		},
-		async generateRich() {
-			throw unexpected("client.generateRich");
-		},
-		generateStream() {
-			throw unexpected("client.generateStream");
-		},
-		...overrides,
-	};
-}
-
-function failFastUploads(
-	overrides: Partial<UploadOverrides> = {},
-): UploadOverrides {
-	return {
-		async resolveAttachments() {
-			throw unexpected("uploads.resolveAttachments");
-		},
-		async uploadTextFile() {
-			throw unexpected("uploads.uploadTextFile");
-		},
-		...overrides,
-	};
 }
 
 function successfulLease(
@@ -309,7 +244,7 @@ describe("Gemini completion provider delegation", () => {
 		const cfg = baseGeminiClientConfig({
 			gemini_account_capability_ttl_sec: 600,
 		});
-		const selectedCfg = accountConfig(cfg, "text");
+		const selectedCfg = accountConfig("text", cfg);
 		const model = proModel(true);
 		const route = routeFor("pro", { capacity: 4, capacityField: 12 });
 		const events: LifecycleEvent[] = [];
@@ -358,7 +293,7 @@ describe("Gemini completion provider delegation", () => {
 
 	test("delegates rich arguments with default options", async () => {
 		const cfg = baseGeminiClientConfig();
-		const selectedCfg = accountConfig(cfg, "rich-default");
+		const selectedCfg = accountConfig("rich-default", cfg);
 		const model = proModel();
 		const route = routeFor("pro");
 		const calls: unknown[][] = [];
@@ -393,7 +328,7 @@ describe("Gemini completion provider delegation", () => {
 
 	test("delegates rich options by identity", async () => {
 		const cfg = baseGeminiClientConfig();
-		const selectedCfg = accountConfig(cfg, "rich-options");
+		const selectedCfg = accountConfig("rich-options", cfg);
 		const model = proModel();
 		const route = routeFor("pro");
 		const calls: unknown[][] = [];
@@ -420,7 +355,7 @@ describe("Gemini completion provider delegation", () => {
 
 	test("delegates exact stream arguments and filters empty deltas", async () => {
 		const cfg = baseGeminiClientConfig();
-		const selectedCfg = accountConfig(cfg, "stream");
+		const selectedCfg = accountConfig("stream", cfg);
 		const model = proModel(true);
 		const route = routeFor("pro", { capacity: 3, capacityField: 13 });
 		const calls: unknown[][] = [];
@@ -500,7 +435,7 @@ describe("Gemini completion provider delegation", () => {
 
 	test("delegates account attachment resolution after preparing its model route", async () => {
 		const cfg = baseGeminiClientConfig();
-		const selectedCfg = accountConfig(cfg, "attachments");
+		const selectedCfg = accountConfig("attachments", cfg);
 		const route = routeFor("pro");
 		const lease = successfulLease(selectedCfg, route);
 		const runtime = strictRuntime({ leases: [lease], routes: [route] });
@@ -542,7 +477,7 @@ describe("Gemini completion provider delegation", () => {
 
 	test("delegates account text uploads with exact arguments", async () => {
 		const cfg = baseGeminiClientConfig();
-		const selectedCfg = accountConfig(cfg, "text-upload");
+		const selectedCfg = accountConfig("text-upload", cfg);
 		const route = routeFor("pro");
 		const runtime = strictRuntime({
 			leases: [successfulLease(selectedCfg, route)],
@@ -632,7 +567,7 @@ describe("Gemini completion provider delegation", () => {
 			extended: true,
 			dynamicProviderId: "future-model",
 		};
-		const selectedCfg = accountConfig(cfg, "dynamic");
+		const selectedCfg = accountConfig("dynamic", cfg);
 		const runtime = strictRuntime({
 			leases: [successfulLease(selectedCfg, route)],
 			routes: [route],
@@ -713,7 +648,7 @@ describe("Gemini completion provider delegation", () => {
 
 	test("logs route metadata without prompt content", async () => {
 		const cfg = baseGeminiClientConfig({ log_requests: true });
-		const selectedCfg = accountConfig(cfg, "logging");
+		const selectedCfg = accountConfig("logging", cfg);
 		const model = proModel(true);
 		const route = routeFor("pro");
 		const provider = completeProvider(cfg, {
@@ -752,7 +687,7 @@ describe("Gemini completion provider delegation", () => {
 		const model = proModel();
 		const route = routeFor("pro");
 		const leases = ["text", "rich", "stream"].map((id) =>
-			successfulLease(accountConfig(cfg, `session-${id}`), route),
+			successfulLease(accountConfig(`session-${id}`, cfg), route),
 		);
 		const sessionIds: string[] = [];
 		const provider = completeProvider(cfg, {

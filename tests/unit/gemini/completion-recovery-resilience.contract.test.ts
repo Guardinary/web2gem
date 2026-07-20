@@ -14,46 +14,21 @@ import type { ResolvedModelOk } from "../../../src/models";
 import { withConsoleLog } from "../_support/globals.js";
 import { assert } from "../assertions.js";
 import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
+import {
+	accountConfig,
+	failFastClient,
+	failFastUploads,
+	proModel,
+	requireAccount,
+	requireItem,
+} from "./_support/completion-provider-fixtures.js";
 import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
 
-type ClientOverrides = NonNullable<GeminiCompletionProviderOptions["client"]>;
-type UploadOverrides = NonNullable<GeminiCompletionProviderOptions["uploads"]>;
 type LifecycleEvent = [string, ...unknown[]];
 type LeaseOverrides = {
 	refreshForRetry?: (reason?: string) => unknown;
 	markFailure?: (error: unknown) => unknown;
 };
-
-function requireAccount(config: RuntimeConfig) {
-	const account = config.gemini_account;
-	if (!account) throw new Error("expected Gemini account context");
-	return account;
-}
-
-function requireItem<T>(items: readonly T[], index = 0): T {
-	const item = items[index];
-	if (item === undefined) throw new Error(`expected item at index ${index}`);
-	return item;
-}
-
-function proModel(): ResolvedModelOk {
-	return {
-		name: "gemini-3.1-pro",
-		family: "pro",
-		extended: false,
-		dynamicProviderId: null,
-	};
-}
-
-function accountConfig(accountId: string): RuntimeConfig {
-	return baseGeminiClientConfig({
-		cookie: `__Secure-1PSID=psid-${accountId}`,
-		gemini_account: {
-			accountId,
-			cookieHash: `hash-${accountId}`,
-		},
-	});
-}
 
 function proRoutes(): [GeminiRouteTuple, GeminiRouteTuple] {
 	return [
@@ -65,34 +40,6 @@ function proRoutes(): [GeminiRouteTuple, GeminiRouteTuple] {
 			modelNumber: 3,
 		},
 	];
-}
-
-function failFastClient(
-	overrides: Partial<ClientOverrides> = {},
-): ClientOverrides {
-	return {
-		async generate() {
-			throw new Error("unexpected client.generate call");
-		},
-		async generateRich() {
-			throw new Error("unexpected client.generateRich call");
-		},
-		generateStream() {
-			throw new Error("unexpected client.generateStream call");
-		},
-		...overrides,
-	};
-}
-
-function failFastUploads(): UploadOverrides {
-	return {
-		async resolveAttachments() {
-			throw new Error("unexpected uploads.resolveAttachments call");
-		},
-		async uploadTextFile() {
-			throw new Error("unexpected uploads.uploadTextFile call");
-		},
-	};
 }
 
 function failoverLease(

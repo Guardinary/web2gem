@@ -12,86 +12,20 @@ import {
 import type { ResolvedModelOk } from "../../../src/models";
 import { assert } from "../assertions.js";
 import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
+import {
+	accountConfig,
+	captureError,
+	errorRecord,
+	failFastClient,
+	failFastUploads,
+	flashModel,
+	proModel,
+	requireAccount,
+	requireItem,
+} from "./_support/completion-provider-fixtures.js";
 import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
 
-function flashModel(): ResolvedModelOk {
-	return {
-		name: "gemini-3.5-flash",
-		family: "flash",
-		extended: false,
-		dynamicProviderId: null,
-	};
-}
-
-function proModel(): ResolvedModelOk {
-	return {
-		name: "gemini-3.1-pro",
-		family: "pro",
-		extended: false,
-		dynamicProviderId: null,
-	};
-}
-
-function accountConfig(accountId: string): RuntimeConfig {
-	return baseGeminiClientConfig({
-		cookie: `__Secure-1PSID=psid-${accountId}`,
-		gemini_account: {
-			accountId,
-			cookieHash: `hash-${accountId}`,
-		},
-	});
-}
-
-type ClientOverrides = NonNullable<GeminiCompletionProviderOptions["client"]>;
-type UploadOverrides = NonNullable<GeminiCompletionProviderOptions["uploads"]>;
 type LifecycleEvent = [string, ...unknown[]];
-
-function requireItem<T>(items: readonly T[], index = 0): T {
-	const item = items[index];
-	if (item === undefined) throw new Error(`expected item at index ${index}`);
-	return item;
-}
-
-function requireAccount(config: RuntimeConfig) {
-	const account = config.gemini_account;
-	if (!account) throw new Error("expected Gemini account context");
-	return account;
-}
-
-function errorRecord(value: unknown): Record<string, unknown> {
-	if (!value || typeof value !== "object") {
-		throw new Error("expected an error object");
-	}
-	return value as Record<string, unknown>;
-}
-
-function failFastClient(
-	overrides: Partial<ClientOverrides> = {},
-): ClientOverrides {
-	return {
-		async generate() {
-			throw new Error("unexpected client.generate call");
-		},
-		async generateRich() {
-			throw new Error("unexpected client.generateRich call");
-		},
-		generateStream() {
-			throw new Error("unexpected client.generateStream call");
-		},
-		...overrides,
-	};
-}
-
-function failFastUploads(): UploadOverrides {
-	return {
-		async resolveAttachments() {
-			throw new Error("unexpected uploads.resolveAttachments call");
-		},
-		async uploadTextFile() {
-			throw new Error("unexpected uploads.uploadTextFile call");
-		},
-	};
-}
 
 function leaseFor(
 	accountId: string,
@@ -198,17 +132,6 @@ function createTestProvider(
 
 function requestScopedError(message = "model invalid for this request") {
 	return Object.assign(new Error(message), { code: "invalid_model" });
-}
-
-async function captureError(
-	run: () => unknown | PromiseLike<unknown>,
-): Promise<unknown> {
-	try {
-		await run();
-	} catch (error) {
-		return error;
-	}
-	throw new Error("expected rejection");
 }
 
 describe("Gemini anonymous fallback", () => {
