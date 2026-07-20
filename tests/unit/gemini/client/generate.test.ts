@@ -4,9 +4,12 @@ import { resetGeminiBuildLabelCacheForTest } from "../../../../src/gemini/client
 import { resetActiveGeminiCookieForTest } from "../../../../src/gemini/cookies";
 import { resetGeminiUploadCachesForTest } from "../../../../src/gemini/uploads/tokens";
 import type { ErrorWithMetadata } from "../../../../src/shared/types";
-import { assert } from "../../assertions.js";
 import { withFetch } from "../../_support/globals.js";
-import { baseGeminiClientConfig } from "../_support/client-fixtures.js";
+import { assert } from "../../assertions.js";
+import {
+	baseGeminiClientConfig,
+	wrbTextLine,
+} from "../_support/client-fixtures.js";
 
 type TestRequestInit = Omit<RequestInit, "headers"> & {
 	headers?: Record<string, string>;
@@ -18,11 +21,6 @@ type RotationCall = {
 	cookie: string | undefined;
 	body: string;
 };
-
-function wrbLine(texts: readonly string[]) {
-	const inner = [null, null, null, null, [[null, texts]], "x".repeat(160)];
-	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
-}
 
 function isErrorWithMetadata(error: unknown): error is ErrorWithMetadata {
 	return error instanceof Error;
@@ -52,7 +50,7 @@ describe("Gemini client generation", () => {
 			async (url: RequestInfo | URL) => {
 				const href = String(url);
 				assert.match(href, /StreamGenerate/);
-				return new Response(wrbLine(["observed"]), {
+				return new Response(wrbTextLine(["observed"]), {
 					status: 200,
 					headers: {
 						"set-cookie": "__Secure-1PSIDTS=from-generation; Path=/; Secure",
@@ -80,25 +78,7 @@ describe("Gemini client generation", () => {
 				}
 				assert.match(String(url), /StreamGenerate/);
 				assert.match(String(init.body), /&at=at-test/);
-				return new Response(
-					[
-						JSON.stringify([
-							[
-								"wrb.fr",
-								null,
-								JSON.stringify([
-									null,
-									null,
-									null,
-									null,
-									[[null, ["hello"]]],
-									"x".repeat(160),
-								]),
-							],
-						]),
-					].join("\n"),
-					{ status: 200 },
-				);
+				return new Response(wrbTextLine(["hello"]), { status: 200 });
 			},
 			async () => {
 				const text = await generate(cfg, "prompt", 1, false, null);
@@ -203,7 +183,7 @@ describe("Gemini client generation", () => {
 					return new Response("cookie rejected", { status: 401 });
 				assert.match(init.headers?.Cookie ?? "", /__Secure-1PSIDTS=new/);
 				assert.match(String(init.body), /&at=at-2/);
-				return new Response(wrbLine(["after cookie rotation"]), {
+				return new Response(wrbTextLine(["after cookie rotation"]), {
 					status: 200,
 				});
 			},
@@ -238,7 +218,7 @@ describe("Gemini client generation", () => {
 				streamUrls.push(href);
 				if (streamUrls.length === 1)
 					return new Response("no parseable text", { status: 200 });
-				return new Response(wrbLine(["after refresh"]), { status: 200 });
+				return new Response(wrbTextLine(["after refresh"]), { status: 200 });
 			},
 			async () => {
 				const text = await generate(cfg, "prompt", 1, false, null);

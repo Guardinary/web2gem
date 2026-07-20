@@ -5,34 +5,12 @@ import {
 	type GeminiParsedImage,
 } from "../../../../src/gemini/client/parse-images";
 import { assert } from "../../assertions.js";
-
-function richWrbLine(candidate: unknown[]) {
-	const inner = [null, null, null, null, [candidate], "x".repeat(160)];
-	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
-}
-
-function generatedImageEntry(
-	url = "https://lh3.googleusercontent.com/generated=s1024-rj",
-	id = "img_1",
-) {
-	const detail: unknown[] = [];
-	detail[2] = "generated alt";
-	detail[3] = url;
-	const meta: unknown[] = [];
-	meta[3] = detail;
-	return [meta, [id]];
-}
-
-function generatedImageCandidate(
-	text = "final text",
-	url = "https://lh3.googleusercontent.com/generated=s1024-rj",
-) {
-	const candidate: unknown[] = [];
-	candidate[1] = [text];
-	candidate[8] = [2];
-	setGeneratedImageEntries(candidate, [generatedImageEntry(url)]);
-	return candidate;
-}
+import {
+	generatedImageCandidate,
+	generatedImageEntry,
+	wrbCandidateLine,
+	wrbCandidatesLine,
+} from "../_support/client-fixtures.js";
 
 function setGeneratedImageEntries(
 	candidate: unknown[],
@@ -87,7 +65,7 @@ function imageAt(images: readonly GeminiParsedImage[], index: number) {
 
 describe("Gemini candidate images", () => {
 	test("extracts generated image metadata from the selected candidate", () => {
-		const raw = richWrbLine(generatedImageCandidate("image ready"));
+		const raw = wrbCandidateLine(generatedImageCandidate("image ready"));
 		const parts = candidateResponse(raw);
 		assert.equal(parts.text, "image ready");
 		assert.equal(parts.images.length, 1);
@@ -99,7 +77,7 @@ describe("Gemini candidate images", () => {
 		assert.equal(imageAt(parts.images, 0).imageId, "img_1");
 	});
 	test("extracts rich web image metadata and card text", () => {
-		const raw = richWrbLine(webImageCandidate("card answer"));
+		const raw = wrbCandidateLine(webImageCandidate("card answer"));
 		const parts = candidateResponse(raw);
 		assert.equal(parts.text, "card answer");
 		assert.equal(parts.images.length, 1);
@@ -117,8 +95,8 @@ describe("Gemini candidate images", () => {
 
 		const completedGenerated = generatedImageCandidate("final");
 		const completedFirst = [
-			richWrbLine(incompleteTextOnly),
-			richWrbLine(completedGenerated),
+			wrbCandidateLine(incompleteTextOnly),
+			wrbCandidateLine(completedGenerated),
 		].join("\n");
 		const completedParts = candidateResponse(completedFirst);
 		assert.equal(completedParts.text, "final");
@@ -129,8 +107,8 @@ describe("Gemini candidate images", () => {
 		);
 		laterIncomplete[8] = [1];
 		const keepCompleted = [
-			richWrbLine(completedGenerated),
-			richWrbLine(laterIncomplete),
+			wrbCandidateLine(completedGenerated),
+			wrbCandidateLine(laterIncomplete),
 		].join("\n");
 		const keepCompletedParts = candidateResponse(keepCompleted);
 		assert.equal(keepCompletedParts.text, "final");
@@ -139,9 +117,10 @@ describe("Gemini candidate images", () => {
 		const richerIncomplete = generatedImageCandidate("richer");
 		richerIncomplete[8] = [1];
 		const richerParts = candidateResponse(
-			[richWrbLine(incompleteTextOnly), richWrbLine(richerIncomplete)].join(
-				"\n",
-			),
+			[
+				wrbCandidateLine(incompleteTextOnly),
+				wrbCandidateLine(richerIncomplete),
+			].join("\n"),
 		);
 		assert.equal(richerParts.text, "richer");
 		assert.equal(richerParts.images.length, 1);
@@ -165,8 +144,7 @@ describe("Gemini candidate images", () => {
 			),
 		]);
 
-		const inner = [null, null, null, null, [first, second], "x".repeat(160)];
-		const raw = JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
+		const raw = wrbCandidatesLine([first, second]);
 		const parts = candidateResponse(raw);
 		assert.equal(parts.text, "first candidate");
 		assert.equal(parts.images.length, 1);
@@ -181,15 +159,7 @@ describe("Gemini candidate images", () => {
 		textOnly[1] = ["alternative candidate text"];
 		textOnly[8] = [2];
 
-		const inner = [
-			null,
-			null,
-			null,
-			null,
-			[imageOnly, textOnly],
-			"x".repeat(160),
-		];
-		const raw = JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
+		const raw = wrbCandidatesLine([imageOnly, textOnly]);
 		const parts = candidateResponse(raw);
 		assert.equal(parts.text, "");
 		assert.equal(parts.images.length, 1);
@@ -211,15 +181,7 @@ describe("Gemini candidate images", () => {
 			),
 		]);
 
-		const inner = [
-			null,
-			null,
-			null,
-			null,
-			[selectedTextOnly, alternativeImage],
-			"x".repeat(160),
-		];
-		const raw = JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
+		const raw = wrbCandidatesLine([selectedTextOnly, alternativeImage]);
 		const parts = candidateResponse(raw);
 		assert.equal(parts.text, "selected text only");
 		assert.equal(parts.images.length, 0);
@@ -236,7 +198,7 @@ describe("Gemini candidate images", () => {
 				"same-image-id",
 			),
 		]);
-		const raw = richWrbLine(candidate);
+		const raw = wrbCandidateLine(candidate);
 		const parts = candidateResponse(raw);
 		assert.equal(parts.text, "done");
 		assert.equal(parts.images.length, 1);

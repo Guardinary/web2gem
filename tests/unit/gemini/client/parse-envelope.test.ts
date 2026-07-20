@@ -5,15 +5,11 @@ import {
 	wrbResponseShapeSummary,
 } from "../../../../src/gemini/client/parse-envelope";
 import { assert } from "../../assertions.js";
-
-function wrbLine(texts: readonly string[]): string {
-	const inner = [null, null, null, null, [[null, texts]], "x".repeat(160)];
-	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
-}
+import { wrbTextLine } from "../_support/client-fixtures.js";
 
 describe("Gemini WRB envelopes", () => {
 	test("extracts text arrays from valid WRB envelopes", () => {
-		const line = wrbLine(["short", "longer response"]);
+		const line = wrbTextLine(["short", "longer response"]);
 		assert.deepEqual(extractTextsFromLine(line), ["short", "longer response"]);
 		assert.deepEqual(extractTextsFromLine(` \t${line}`), [
 			"short",
@@ -42,7 +38,9 @@ describe("Gemini WRB envelopes", () => {
 			/topIssue=invalid_inner_json:1/,
 		);
 
-		const raw = [wrbLine(["first"]), wrbLine(["first plus more"])].join("\n");
+		const raw = [wrbTextLine(["first"]), wrbTextLine(["first plus more"])].join(
+			"\n",
+		);
 		assert.match(wrbResponseShapeSummary(raw), /wrbLines=2/);
 		assert.match(wrbResponseShapeSummary(raw), /textParts=2/);
 	});

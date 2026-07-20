@@ -1,24 +1,23 @@
 import { describe, test } from "vitest";
 import { createStreamTextExtractor } from "../../../../src/gemini/client/parse-stream";
 import { assert } from "../../assertions.js";
-
-function wrbLine(texts: readonly string[]): string {
-	const inner = [null, null, null, null, [[null, texts]], "x".repeat(160)];
-	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
-}
+import { wrbTextLine } from "../_support/client-fixtures.js";
 
 describe("Gemini stream text extraction", () => {
 	test("streams only new text deltas from repeated WRB lines", () => {
 		const extractor = createStreamTextExtractor();
 		assert.deepEqual(
-			[...extractor.consumeLine(wrbLine([" hello"]))],
+			[...extractor.consumeLine(wrbTextLine([" hello"]))],
 			["hello"],
 		);
 		assert.deepEqual(
-			[...extractor.consumeLine(wrbLine([" hello world"]))],
+			[...extractor.consumeLine(wrbTextLine([" hello world"]))],
 			[" world"],
 		);
-		assert.deepEqual([...extractor.consumeLine(wrbLine([" hello world"]))], []);
+		assert.deepEqual(
+			[...extractor.consumeLine(wrbTextLine([" hello world"]))],
+			[],
+		);
 	});
 	test("streams long cumulative WRB text without losing append state", () => {
 		const extractor = createStreamTextExtractor();
@@ -26,15 +25,15 @@ describe("Gemini stream text extraction", () => {
 		let emitted = "";
 		for (let i = 0; i < 512; i++) {
 			cumulative += `${String(i).padStart(4, "0")}:${"x".repeat(123)}\n`;
-			emitted += [...extractor.consumeLine(wrbLine([cumulative]))].join("");
+			emitted += [...extractor.consumeLine(wrbTextLine([cumulative]))].join("");
 		}
 		assert.equal(emitted, cumulative.trimStart());
 		assert.deepEqual(
-			[...extractor.consumeLine(wrbLine([cumulative.slice(0, -256)]))],
+			[...extractor.consumeLine(wrbTextLine([cumulative.slice(0, -256)]))],
 			[],
 		);
 		assert.deepEqual(
-			[...extractor.consumeLine(wrbLine([`${cumulative}tail`]))],
+			[...extractor.consumeLine(wrbTextLine([`${cumulative}tail`]))],
 			["tail"],
 		);
 	});
@@ -47,11 +46,11 @@ describe("Gemini stream text extraction", () => {
 			"```",
 		].join("\n");
 		assert.equal(
-			[...extractor.consumeLine(wrbLine([artifact]))].join(""),
+			[...extractor.consumeLine(wrbTextLine([artifact]))].join(""),
 			"answer\n",
 		);
 		assert.deepEqual(
-			[...extractor.consumeLine(wrbLine([`${artifact}\nmore visible`]))],
+			[...extractor.consumeLine(wrbTextLine([`${artifact}\nmore visible`]))],
 			["more visible"],
 		);
 	});

@@ -2,24 +2,13 @@ import { afterEach, beforeEach, describe, test } from "vitest";
 import { generateStream } from "../../../../src/gemini/client";
 import { resetGeminiBuildLabelCacheForTest } from "../../../../src/gemini/client/retry";
 import type { ErrorWithMetadata } from "../../../../src/shared/types";
-import { assert } from "../../assertions.js";
 import { withFetch } from "../../_support/globals.js";
-import { baseGeminiClientConfig } from "../_support/client-fixtures.js";
-
-function wrbLine(texts: readonly string[]) {
-	const inner = [null, null, null, null, [[null, texts]], "x".repeat(160)];
-	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
-}
-
-function fatalWrbLine(code: number) {
-	const inner: unknown[] = [null, null, null, null, []];
-	const codeEntry: unknown[] = [];
-	codeEntry[1] = [code];
-	const fatalParts: unknown[] = [];
-	fatalParts[2] = [codeEntry];
-	inner[5] = fatalParts;
-	return JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]);
-}
+import { assert } from "../../assertions.js";
+import {
+	baseGeminiClientConfig,
+	fatalWrbLine,
+	wrbTextLine,
+} from "../_support/client-fixtures.js";
 
 function isErrorWithMetadata(error: unknown): error is ErrorWithMetadata {
 	return error instanceof Error;
@@ -102,23 +91,9 @@ describe("Gemini client streaming", () => {
 		await withFetch(
 			async (url: RequestInfo | URL) => {
 				assert.match(String(url), /StreamGenerate/);
-				return new Response(
-					JSON.stringify([
-						[
-							"wrb.fr",
-							null,
-							JSON.stringify([
-								null,
-								null,
-								null,
-								null,
-								[[null, ["stream fallback"]]],
-								"x".repeat(160),
-							]),
-						],
-					]),
-					{ status: 200 },
-				);
+				return new Response(wrbTextLine(["stream fallback"]), {
+					status: 200,
+				});
 			},
 			async () => {
 				const chunks: string[] = [];
@@ -138,7 +113,7 @@ describe("Gemini client streaming", () => {
 					new ReadableStream({
 						start(controller) {
 							controller.enqueue(
-								new TextEncoder().encode(`${wrbLine(["first"])}\n`),
+								new TextEncoder().encode(`${wrbTextLine(["first"])}\n`),
 							);
 						},
 						cancel() {
@@ -170,7 +145,7 @@ describe("Gemini client streaming", () => {
 					new ReadableStream({
 						start(controller) {
 							controller.enqueue(
-								new TextEncoder().encode(`${wrbLine(["complete"])}\n`),
+								new TextEncoder().encode(`${wrbTextLine(["complete"])}\n`),
 							);
 							controller.close();
 						},
@@ -235,7 +210,7 @@ describe("Gemini client streaming", () => {
 					status: 200,
 					body: null,
 					async text() {
-						return wrbLine(["response-like fallback"]);
+						return wrbTextLine(["response-like fallback"]);
 					},
 				};
 			},
@@ -347,7 +322,7 @@ describe("Gemini client streaming", () => {
 				streamUrls.push(href);
 				if (streamUrls.length === 1)
 					return new Response("not parseable yet", { status: 200 });
-				return new Response(wrbLine(["after stream refresh"]), {
+				return new Response(wrbTextLine(["after stream refresh"]), {
 					status: 200,
 				});
 			},
