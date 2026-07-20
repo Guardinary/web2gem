@@ -492,6 +492,9 @@ mutation payloads, validation, or D1-backed account administration.
   version when selectability changes.
 - Route auth and query/body validation happen before D1 access. Error envelopes
   remain `{ error: { code, message } }`.
+- Model-routing authenticates and matches method/path/family before rejecting
+  query parameters; an unknown route with a query remains a route error rather
+  than becoming a query-validation error.
 
 ### 4. Validation & Error Matrix
 

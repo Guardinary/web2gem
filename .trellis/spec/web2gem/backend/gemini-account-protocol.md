@@ -363,10 +363,12 @@ resolution, model-routing Admin API/WebUI, or route-priority persistence.
   degrades to the anonymous Flash pair.
 - Basic/Plus/Advanced labels and exact tuples are ADMIN_KEY-only internal data.
   Custom model configuration is unsupported.
-- Model-routing handlers authenticate first, then validate query, method, path,
-  family, and body. They construct the D1-backed service only for a recognized,
-  valid operation. Store methods reuse the pure policy validator as
-  defense-in-depth without producing HTTP errors.
+- Model-routing handlers authenticate first, then match method/path/family,
+  validate query and body only for a recognized operation, and construct the
+  D1-backed service only after that validation. Unknown paths and unsupported
+  methods retain the route/method error contract even when query parameters are
+  present. Store methods reuse the pure policy validator as defense-in-depth
+  without producing HTTP errors.
 - Admin overview retains saved missing routes, appends new discovery routes, and
   exposes only bounded tuple facts, known label, availability, configured flag,
   and account count.
