@@ -827,21 +827,30 @@ Use this contract when changing OpenAI Chat, OpenAI Responses, or Google-compati
 
 - Google `functionCallingConfig.mode=ANY` with no normalized tool names -> `invalid_tool_choice`.
 - Google `allowedFunctionNames` containing no declared normalized name -> `invalid_tool_choice`.
+- Google non-stream `functionCallingConfig.mode=NONE` with declared tools and
+  generated DSML/XML calls -> `tool_choice_violation`; the original request
+  bundle remains available for inspection even though no tools enter the prompt.
 - OpenAI `tool_choice=required` with no normalized tool names -> OpenAI tool choice validation error.
 - Parsed tool calls with available schemas -> normalize argument values through the shared schema index.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: add a new schema alias by updating `tool-meta.ts` and reusing it from prompt and schema-normalization code.
+- Good: separate the filtered prompt bundle from the finalization inspection
+  bundle so `NONE` can detect forbidden output without advertising tools.
 - Base: the endpoint boundary calls `createToolBundle(req.tools)` once; downstream completion and tool-call helpers receive `ToolBundle | null`.
 - Bad: Google prompt code loops only over `functionDeclarations`, while validation accepts OpenAI-style tools; this validates a request and then builds a prompt with no tools.
 - Bad: OpenAI Responses normalizes tools in the HTTP adapter, then completion code builds a second schema/name index for the same request.
+- Bad: use `hasTools=false` to skip non-stream output inspection for a `NONE`
+  policy that still has declared tools.
 
 ### 6. Tests Required
 
 - Unit test that Responses/OpenAI tools using `input_schema`, `inputSchema`, and `schema` appear in prompt definitions.
 - Unit test that schema aliases are used by parsed tool-call argument normalization.
 - Unit test that Google-compatible OpenAI-style, flattened, and `functionDeclarations` tools all appear in generated prompts.
+- Unit test Google non-stream `NONE` with declared tools and assert DSML/XML
+  output returns `tool_choice_violation` while ordinary text remains valid.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke`.
 
 ### 7. Wrong vs Correct
@@ -949,6 +958,11 @@ Use this contract when changing `src/promptcompat/responses-input.ts` or any Ope
 - Unknown object items must be ignored. Do not serialize unknown objects into prompt text with `JSON.stringify`, and do not treat bare `text` or `content` fields on unknown item types as user text.
 - Completion mode rejects top-level `input_image` with `unsupported_responses_input`; image-generation mode retains it as a typed user image part.
 - Reasoning/call/result order, pending reasoning, call-name lookup, generated IDs, instruction prepend, role normalization, and adjacent call merging are part of the parser contract.
+- Immediate string fallback items retain their position relative to later
+  reasoning. `fallback -> reasoning` produces user fallback then assistant
+  reasoning; `reasoning -> fallback` preserves the inverse order. Compatibility
+  fallback-deferred items may retain their documented reasoning grouping, but
+  they must not reorder an earlier immediate fallback.
 - Tool argument objects do not cross an internal stringify/parse boundary.
 - Production and compatibility Responses paths reuse the pure recognizers in `responses-semantics.ts` for item types, function-call inputs, reasoning text, call-name lookup, and pending-reasoning joins. Compatibility stringifies arguments only when projecting its final wire record. Their sequence grouping and role/type dispatch must also use the shared semantic reducer in that owner; only the final value projection differs.
 - Compatibility consumer ledger: `normalizeResponsesInputAsMessages` is the only public/harness projection. The former exported helpers `responsesMessagesFromRequest`, `prependInstructionMessage`, `normalizeResponsesInputValueAsMessages`, `normalizeResponsesInputArray`, `normalizeResponsesInputItem`, `normalizeResponsesAssistantMessage`, `assistantReasoningOnlyContent`, `isAssistantMessage`, `isAssistantToolCallMessage`, `mergeResponsesAssistantToolCalls`, `normalizeResponsesFallbackPart`, and `stringifyToolCallArguments` were narrowed to module-private because no public or harness consumer used them directly. The removed `normalizeResponsesInputAsMessagesStrict` wrapper, `isFileInputType` duplicate, and `strictResponsesInputError` branch had no live consumer; the direct typed parser and the harness projection remain the explicit contracts.
@@ -962,19 +976,27 @@ Use this contract when changing `src/promptcompat/responses-input.ts` or any Ope
 - `input: [{ custom: "secret" }]` -> no message for that item.
 - `input: [{ role: "user", content: "x" }]` -> user message containing `x`.
 - Completion `input: [{ type: "input_image", ... }]` -> parse error; image-generation mode -> typed image part.
+- `input: ["user text", { type: "reasoning", text: "r" }]` -> user message
+  followed by assistant reasoning in both typed and compatibility projections.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: add support for a new Responses item by naming its `type` explicitly in the direct typed parser.
+- Good: flush buffered immediate fallback text before accepting a later
+  reasoning event while preserving adjacent fallback grouping.
 - Base: unknown future Responses metadata is ignored until the project intentionally supports it.
 - Bad: convert typed input back to OpenAI wire messages and parse it a second time.
 - Bad: fallback to `JSON.stringify(item)` for unrecognized items, which leaks opaque metadata into the model prompt.
+- Bad: flush pending reasoning before an earlier immediate fallback at end of
+  input, which reverses user/assistant order.
 
 ### 6. Tests Required
 
 - Unit test `parseResponsesInput` for known text, direct object/string tool arguments, unknown omission, and both image modes.
 - Unit test singleton versus one-element-array equivalence for every recognized message part type, plus the explicit unknown-singleton compatibility fallback.
 - Keep the compatibility normalizer covered as a harness contract.
+- Unit test the fallback/reasoning adjacency matrix in the shared reducer and
+  both typed/compatibility projections.
 - Unit or route-level test that `handleResponses` prompt text includes known text and excludes unknown object `text`, nested `content`, and serialized metadata.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke`.
 
