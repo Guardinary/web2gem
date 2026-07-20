@@ -1,10 +1,13 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { ApplicationExecutionContext } from "../../../src/app";
 import worker from "../../../src/index";
-import { assert } from "../assertions.js";
+import { isRecord } from "../../../src/shared/types";
 import { withFetch } from "../_support/globals.js";
+import { assert } from "../assertions.js";
 
-async function withNoUpstream(run) {
+const executionContext: ApplicationExecutionContext = { waitUntil() {} };
+
+async function withNoUpstream<T>(run: () => T | PromiseLike<T>): Promise<T> {
 	let upstreamCalls = 0;
 	const result = await withFetch(async () => {
 		upstreamCalls += 1;
@@ -12,6 +15,20 @@ async function withNoUpstream(run) {
 	}, run);
 	assert.equal(upstreamCalls, 0);
 	return result;
+}
+
+function errorBody(value: unknown): Record<string, unknown> {
+	if (!isRecord(value) || !isRecord(value.error))
+		throw new Error("expected error body");
+	return value.error;
+}
+
+function streamingRequest(url: string, init: RequestInit): Request {
+	const streamingInit: RequestInit & { duplex: "half" } = {
+		...init,
+		duplex: "half",
+	};
+	return new Request(url, streamingInit);
 }
 
 describe("application body-limit contract", () => {
@@ -42,12 +59,12 @@ describe("application body-limit contract", () => {
 							},
 						},
 					},
-					{},
+					executionContext,
 				),
 			);
 			assert.equal(resp.status, 413);
-			const body = await resp.json();
-			assert.equal(body.error.code, "request_body_too_large");
+			const body = errorBody(await resp.json());
+			assert.equal(body.code, "request_body_too_large");
 			assert.equal(d1Reads, 0);
 		}
 	});
@@ -70,14 +87,14 @@ describe("application body-limit contract", () => {
 					GENERIC_FILE_UPLOAD_MAX_BYTES: "0",
 					LOG_REQUESTS: "false",
 				},
-				{},
+				executionContext,
 			),
 		);
 		assert.equal(resp.status, 422);
-		const body = await resp.json();
-		assert.equal(body.error.code, "gemini_authenticated_session_required");
-		assert.equal(body.error.reason, "large_context");
-		assert.match(body.error.message, /40 bytes > inline read limit 10/);
+		const body = errorBody(await resp.json());
+		assert.equal(body.code, "gemini_authenticated_session_required");
+		assert.equal(body.reason, "large_context");
+		assert.match(body.message, /40 bytes > inline read limit 10/);
 	});
 	test("rejects oversized streamed chat body before JSON parsing", async () => {
 		const encoder = new TextEncoder();
@@ -92,11 +109,10 @@ describe("application body-limit contract", () => {
 		});
 		const resp = await withNoUpstream(() =>
 			worker.fetch(
-				new Request("https://worker.example/v1/chat/completions", {
+				streamingRequest("https://worker.example/v1/chat/completions", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: bodyStream,
-					duplex: "half",
 				}),
 				{
 					API_KEYS: "",
@@ -105,12 +121,12 @@ describe("application body-limit contract", () => {
 					GENERIC_FILE_UPLOAD_MAX_BYTES: "0",
 					LOG_REQUESTS: "false",
 				},
-				{},
+				executionContext,
 			),
 		);
 		assert.equal(resp.status, 422);
-		const body = await resp.json();
-		assert.equal(body.error.code, "gemini_authenticated_session_required");
-		assert.match(body.error.message, /exceeds inline read limit 10/);
+		const body = errorBody(await resp.json());
+		assert.equal(body.code, "gemini_authenticated_session_required");
+		assert.match(body.message, /exceeds inline read limit 10/);
 	});
 });

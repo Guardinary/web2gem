@@ -1,12 +1,14 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
-import { handleApplicationRequest } from "../../../src/app";
+import {
+	type ApplicationExecutionContext,
+	handleApplicationRequest,
+} from "../../../src/app";
 import worker from "../../../src/index";
 import { assert } from "../assertions.js";
 
 describe("application routing contract", () => {
 	test("keeps application route policy ordering explicit", async () => {
-		const execution = { waitUntil() {} };
+		const execution: ApplicationExecutionContext = { waitUntil() {} };
 		const routeCases = [
 			{
 				method: "OPTIONS",
@@ -58,7 +60,7 @@ describe("application routing contract", () => {
 	});
 	test("keeps the Worker entrypoint aligned with the application core", async () => {
 		const request = () => new Request("https://worker.example/v1/models");
-		const execution = { waitUntil() {} };
+		const execution: ApplicationExecutionContext = { waitUntil() {} };
 		const direct = await handleApplicationRequest(request(), {}, execution);
 		const workerResponse = await worker.fetch(request(), {}, execution);
 		assert.equal(workerResponse.status, direct.status);
@@ -69,10 +71,11 @@ describe("application routing contract", () => {
 		assert.equal(await workerResponse.text(), await direct.text());
 	});
 	test("handles CORS preflight requested headers and private network opt-in", async () => {
+		const execution: ApplicationExecutionContext = { waitUntil() {} };
 		const defaultResp = await worker.fetch(
 			new Request("https://worker.example/"),
 			{},
-			{},
+			execution,
 		);
 		const defaultAllowHeaders =
 			defaultResp.headers.get("Access-Control-Allow-Headers") || "";
@@ -89,7 +92,7 @@ describe("application routing contract", () => {
 				},
 			}),
 			{},
-			{},
+			execution,
 		);
 		assert.equal(resp.status, 204);
 		assert.equal(
@@ -108,10 +111,11 @@ describe("application routing contract", () => {
 	});
 	test("accepts alternate API key locations and rejects missing keys", async () => {
 		const env = { API_KEYS: '["sk-test", "sk-secondary"]' };
+		const execution: ApplicationExecutionContext = { waitUntil() {} };
 		const missing = await worker.fetch(
 			new Request("https://worker.example/v1/models"),
 			env,
-			{},
+			execution,
 		);
 		assert.equal(missing.status, 401);
 		const bearer = await worker.fetch(
@@ -119,7 +123,7 @@ describe("application routing contract", () => {
 				headers: { Authorization: "  Bearer sk-test  " },
 			}),
 			env,
-			{},
+			execution,
 		);
 		assert.equal(bearer.status, 200);
 		const apiKey = await worker.fetch(
@@ -127,7 +131,7 @@ describe("application routing contract", () => {
 				headers: { "X-API-Key": "sk-test" },
 			}),
 			env,
-			{},
+			execution,
 		);
 		assert.equal(apiKey.status, 200);
 		const googleKey = await worker.fetch(
@@ -135,25 +139,25 @@ describe("application routing contract", () => {
 				headers: { "X-Goog-Api-Key": "sk-test" },
 			}),
 			env,
-			{},
+			execution,
 		);
 		assert.equal(googleKey.status, 200);
 		const queryKey = await worker.fetch(
 			new Request("https://worker.example/v1/models?key=sk-test"),
 			env,
-			{},
+			execution,
 		);
 		assert.equal(queryKey.status, 200);
 		const paddedQueryKey = await worker.fetch(
 			new Request("https://worker.example/v1/models?key=%20sk-test%20"),
 			env,
-			{},
+			execution,
 		);
 		assert.equal(paddedQueryKey.status, 200);
 		const nearMissQueryKey = await worker.fetch(
 			new Request("https://worker.example/v1/models?key=%20sk-test-extra%20"),
 			env,
-			{},
+			execution,
 		);
 		assert.equal(nearMissQueryKey.status, 401);
 	});

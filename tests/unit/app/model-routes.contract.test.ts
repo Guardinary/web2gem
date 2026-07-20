@@ -1,6 +1,8 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
-import worker from "../../../src/index";
+import type { ApplicationExecutionContext } from "../../../src/app";
+import type { WorkerEnv } from "../../../src/config";
+import workerHandler from "../../../src/index";
+import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import { assert } from "../assertions.js";
 
 function modelCatalogD1(includeModels = true) {
@@ -45,12 +47,12 @@ function modelCatalogD1(includeModels = true) {
 			]
 		: [];
 	return {
-		prepare(sql) {
+		prepare(sql: string) {
 			return {
 				bind() {
 					return this;
 				},
-				async first(column) {
+				async first(column?: string) {
 					if (sql.includes("FROM gemini_pool_meta") && column === "value")
 						return "1";
 					return null;
@@ -69,6 +71,34 @@ function modelCatalogD1(includeModels = true) {
 	};
 }
 
+const executionContext: ApplicationExecutionContext = { waitUntil() {} };
+const worker = {
+	fetch(
+		request: Request,
+		env: WorkerEnv = {},
+		_execution?: unknown,
+	): Promise<Response> {
+		return workerHandler.fetch(request, env, executionContext);
+	},
+};
+
+function record(value: unknown, label: string): UnknownRecord {
+	if (!isRecord(value)) throw new Error(`expected ${label}`);
+	return value;
+}
+
+function recordsAt(value: unknown, key: string): UnknownRecord[] {
+	const entries = record(value, "response")[key];
+	if (!Array.isArray(entries)) throw new Error(`expected ${key}`);
+	return entries.map((entry) => record(entry, key));
+}
+
+function stringField(value: UnknownRecord, key: string): string {
+	const field = value[key];
+	if (typeof field !== "string") throw new Error(`expected string ${key}`);
+	return field;
+}
+
 describe("application model route contract", () => {
 	test("serves OpenAI model list route", async () => {
 		const resp = await worker.fetch(
@@ -78,7 +108,9 @@ describe("application model route contract", () => {
 		);
 		assert.equal(resp.status, 200);
 		assert.deepEqual(
-			(await resp.json()).data.map((model) => model.id),
+			recordsAt(await resp.json(), "data").map((model) =>
+				stringField(model, "id"),
+			),
 			["gemini-3.5-flash", "gemini-3.5-flash-extended"],
 		);
 		const emptyD1 = await worker.fetch(
@@ -87,7 +119,9 @@ describe("application model route contract", () => {
 			{},
 		);
 		assert.deepEqual(
-			(await emptyD1.json()).data.map((model) => model.id),
+			recordsAt(await emptyD1.json(), "data").map((model) =>
+				stringField(model, "id"),
+			),
 			["gemini-3.5-flash", "gemini-3.5-flash-extended"],
 		);
 	});
@@ -100,7 +134,7 @@ describe("application model route contract", () => {
 			{},
 		);
 		assert.equal(health.status, 200);
-		const healthBody = await health.json();
+		const healthBody = record(await health.json(), "health body");
 		assert.equal(healthBody.status, "ok");
 		assert.equal(Array.isArray(healthBody.models), true);
 
@@ -110,7 +144,7 @@ describe("application model route contract", () => {
 			{},
 		);
 		assert.equal(model.status, 200);
-		const modelBody = await model.json();
+		const modelBody = record(await model.json(), "model body");
 		assert.equal(modelBody.id, "gemini-3.5-flash");
 		assert.equal(modelBody.object, "model");
 	});
@@ -148,7 +182,9 @@ describe("application model route contract", () => {
 		);
 		assert.equal(openaiModels.status, 200);
 		assert.deepEqual(
-			(await openaiModels.json()).data.map((model) => model.id),
+			recordsAt(await openaiModels.json(), "data").map((model) =>
+				stringField(model, "id"),
+			),
 			["gemini-3.5-flash", "gemini-3.5-flash-extended"],
 		);
 		const googleModels = await worker.fetch(
@@ -160,8 +196,8 @@ describe("application model route contract", () => {
 		);
 		assert.equal(googleModels.status, 200);
 		assert.deepEqual(
-			(await googleModels.json()).models.map((model) =>
-				model.name.slice("models/".length),
+			recordsAt(await googleModels.json(), "models").map((model) =>
+				stringField(model, "name").slice("models/".length),
 			),
 			["gemini-3.5-flash", "gemini-3.5-flash-extended"],
 		);
@@ -174,8 +210,9 @@ describe("application model route contract", () => {
 			env,
 			{},
 		);
-		const openaiBody = await openai.json();
-		const openaiIds = openaiBody.data.map((model) => model.id);
+		const openaiBody = record(await openai.json(), "OpenAI body");
+		const openaiData = recordsAt(openaiBody, "data");
+		const openaiIds = openaiData.map((model) => stringField(model, "id"));
 		assert.deepEqual(openaiIds, [
 			"gemini-3.5-flash",
 			"gemini-3.5-flash-extended",
@@ -184,7 +221,9 @@ describe("application model route contract", () => {
 			"future-model",
 			"future-model-extended",
 		]);
-		assert.deepEqual(Object.keys(openaiBody.data[0]), [
+		const firstOpenAIModel = openaiData[0];
+		if (!firstOpenAIModel) throw new Error("expected OpenAI model");
+		assert.deepEqual(Object.keys(firstOpenAIModel), [
 			"id",
 			"object",
 			"created",
@@ -196,8 +235,8 @@ describe("application model route contract", () => {
 			env,
 			{},
 		);
-		const googleIds = (await google.json()).models.map((model) =>
-			model.name.slice("models/".length),
+		const googleIds = recordsAt(await google.json(), "models").map((model) =>
+			stringField(model, "name").slice("models/".length),
 		);
 		assert.deepEqual(googleIds, openaiIds);
 
@@ -217,7 +256,7 @@ describe("application model route contract", () => {
 			env,
 			{},
 		);
-		assert.deepEqual((await health.json()).models, [
+		assert.deepEqual(record(await health.json(), "health body").models, [
 			"gemini-3.1-pro",
 			"gemini-3.1-pro-extended",
 			"gemini-3.5-flash",
@@ -233,7 +272,7 @@ describe("application model route contract", () => {
 			{},
 		);
 		assert.equal(listResp.status, 200);
-		const listBody = await listResp.json();
+		const listBody = record(await listResp.json(), "model list body");
 		assert.equal(Array.isArray(listBody.models), true);
 		const modelPathResp = await worker.fetch(
 			new Request("https://worker.example/v1beta/models/gemini-3.5-flash"),
@@ -241,7 +280,10 @@ describe("application model route contract", () => {
 			{},
 		);
 		assert.equal(modelPathResp.status, 200);
-		const modelPathBody = await modelPathResp.json();
+		const modelPathBody = record(
+			await modelPathResp.json(),
+			"model detail body",
+		);
 		assert.equal(modelPathBody.name, "models/gemini-3.5-flash");
 		assert.equal(modelPathBody.displayName, "Gemini 3.5 Flash");
 		assert.deepEqual(modelPathBody.supportedGenerationMethods, [
@@ -255,8 +297,14 @@ describe("application model route contract", () => {
 			{},
 		);
 		assert.equal(missingModelResp.status, 404);
-		const missingModelBody = await missingModelResp.json();
-		assert.equal(missingModelBody.error.code, "model_not_found");
+		const missingModelBody = record(
+			await missingModelResp.json(),
+			"missing model body",
+		);
+		assert.equal(
+			record(missingModelBody.error, "error body").code,
+			"model_not_found",
+		);
 		const invalidPrefixResp = await worker.fetch(
 			new Request("https://worker.example/v1beta/modelsXYZ"),
 			{},

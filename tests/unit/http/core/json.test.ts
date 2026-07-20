@@ -1,9 +1,8 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { readJsonRequest } from "../../../../src/http/core/json";
 import { assert } from "../../assertions.js";
 
-function concatBytes(...parts) {
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
 	const total = parts.reduce((sum, part) => sum + part.byteLength, 0);
 	const out = new Uint8Array(total);
 	let offset = 0;
@@ -14,14 +13,29 @@ function concatBytes(...parts) {
 	return out;
 }
 
+function streamingRequest(url: string, init: RequestInit): Request {
+	const streamingInit: RequestInit & { duplex: "half" } = {
+		...init,
+		duplex: "half",
+	};
+	return new Request(url, streamingInit);
+}
+
+function arrayBufferBody(bytes: Uint8Array): ArrayBuffer {
+	const buffer = new ArrayBuffer(bytes.byteLength);
+	new Uint8Array(buffer).set(bytes);
+	return buffer;
+}
+
 describe("readJsonRequest", () => {
 	test("reads object JSON through standard and native byte paths", async () => {
 		const valid = await readJsonRequest(
-			new Request("https://worker.example/", {
+			streamingRequest("https://worker.example/", {
 				method: "POST",
 				body: JSON.stringify({ ok: true }),
 			}),
 		);
+		if (valid.error !== undefined) throw new Error(valid.error);
 		assert.deepEqual(valid.value, { ok: true });
 		assert.equal(valid.bytes > 0, true);
 
@@ -50,7 +64,7 @@ describe("readJsonRequest", () => {
 
 	test("honors declared lengths and cancels oversized streams", async () => {
 		const declaredLarge = await readJsonRequest(
-			new Request("https://worker.example/", {
+			streamingRequest("https://worker.example/", {
 				method: "POST",
 				headers: { "Content-Length": "1000" },
 				body: new ReadableStream({
@@ -59,7 +73,6 @@ describe("readJsonRequest", () => {
 						controller.close();
 					},
 				}),
-				duplex: "half",
 			}),
 			{
 				maxBodyBytes: 1000,
@@ -70,7 +83,7 @@ describe("readJsonRequest", () => {
 		let declaredSmallCanceled = false;
 		let declaredSmallPulls = 0;
 		const declaredSmallActualLarge = await readJsonRequest(
-			new Request("https://worker.example/", {
+			streamingRequest("https://worker.example/", {
 				method: "POST",
 				headers: { "Content-Length": "1" },
 				body: new ReadableStream({
@@ -86,7 +99,6 @@ describe("readJsonRequest", () => {
 						declaredSmallCanceled = true;
 					},
 				}),
-				duplex: "half",
 			}),
 			{
 				maxBodyBytes: 10,
@@ -99,7 +111,7 @@ describe("readJsonRequest", () => {
 
 		let canceled = false;
 		const oversized = await readJsonRequest(
-			new Request("https://worker.example/", {
+			streamingRequest("https://worker.example/", {
 				method: "POST",
 				body: new ReadableStream({
 					start(controller) {
@@ -110,7 +122,6 @@ describe("readJsonRequest", () => {
 						canceled = true;
 					},
 				}),
-				duplex: "half",
 			}),
 			{
 				maxBodyBytes: 3,
@@ -128,14 +139,13 @@ describe("readJsonRequest", () => {
 
 	test("maps request body stream failures", async () => {
 		const failedRead = await readJsonRequest(
-			new Request("https://worker.example/", {
+			streamingRequest("https://worker.example/", {
 				method: "POST",
 				body: new ReadableStream({
 					pull() {
 						throw new Error("stream broke");
 					},
 				}),
-				duplex: "half",
 			}),
 		);
 		assert.equal(failedRead.status, 400);
@@ -154,10 +164,12 @@ describe("readJsonRequest", () => {
 		const invalidUtf8String = await readJsonRequest(
 			new Request("https://worker.example/", {
 				method: "POST",
-				body: concatBytes(
-					new TextEncoder().encode('{"x":"'),
-					new Uint8Array([0xff]),
-					new TextEncoder().encode('"}'),
+				body: arrayBufferBody(
+					concatBytes(
+						new TextEncoder().encode('{"x":"'),
+						new Uint8Array([0xff]),
+						new TextEncoder().encode('"}'),
+					),
 				),
 			}),
 		);

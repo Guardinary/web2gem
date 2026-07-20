@@ -1,20 +1,70 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { ApplicationExecutionContext } from "../../../../src/app";
+import type { AttachmentPlan } from "../../../../src/attachments/types";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
+import type { FileRef } from "../../../../src/completion/types";
+import {
+	createRuntimeConfig,
+	getConfig,
+	type RuntimeConfig,
+} from "../../../../src/config";
 import { invalidGeminiCookieError } from "../../../../src/gemini/client/errors";
 import { handleGoogleGenerate } from "../../../../src/http/google/handlers";
 import { parseGoogleGenerationPath } from "../../../../src/http/google/model-path";
 import worker from "../../../../src/index";
-import { assert } from "../../assertions.js";
+import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import { withConsoleLog } from "../../_support/globals.js";
-import { baseConfig } from "../../_support/runtime-config.js";
+import { assert } from "../../assertions.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
-import { streamError } from "../_support/provider.js";
-import { noWorkProvider, strictProvider } from "../_support/provider.js";
+import {
+	noWorkProvider,
+	streamError,
+	strictProvider,
+} from "../_support/provider.js";
+
+const execution: ApplicationExecutionContext = { waitUntil() {} };
+
+function googleConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
+	return { ...createRuntimeConfig(getConfig()), ...overrides };
+}
+
+function handleGoogle(
+	req: UnknownRecord,
+	cfg: Partial<RuntimeConfig>,
+	provider: Parameters<typeof handleGoogleGenerate>[2],
+	route: Parameters<typeof handleGoogleGenerate>[3],
+): ReturnType<typeof handleGoogleGenerate> {
+	return handleGoogleGenerate(req, googleConfig(cfg), provider, route);
+}
+
+function googleRoute(
+	path: string,
+): NonNullable<ReturnType<typeof parseGoogleGenerationPath>> {
+	const route = parseGoogleGenerationPath(path);
+	if (!route) throw new Error(`invalid Google route: ${path}`);
+	return route;
+}
+
+function responseRecord(value: unknown): UnknownRecord {
+	if (!isRecord(value)) throw new Error("expected response object");
+	return value;
+}
+
+function responseError(value: unknown): UnknownRecord {
+	const error = responseRecord(value).error;
+	if (!isRecord(error)) throw new Error("expected response error");
+	return error;
+}
+
+function first<T>(values: readonly T[]): T {
+	const value = values[0];
+	if (value === undefined) throw new Error("expected recorded value");
+	return value;
+}
 
 describe("Google generate handler", () => {
 	test("rejects invalid Google model before provider generation", async () => {
-		const resp = await handleGoogleGenerate(
+		const resp = await handleGoogle(
 			{
 				contents: [{ role: "user", parts: [{ text: "plain request" }] }],
 			},
@@ -28,16 +78,14 @@ describe("Google generate handler", () => {
 				log_requests: false,
 			},
 			noWorkProvider(),
-			parseGoogleGenerationPath("/v1beta/models/not-a-model:generateContent"),
-			false,
+			googleRoute("/v1beta/models/not-a-model:generateContent"),
 		);
 		assert.equal(resp.status, 400);
-		const body = await resp.json();
-		assert.equal(body.error.code, "model_not_found");
+		assert.equal(responseError(await resp.json()).code, "model_not_found");
 	});
 	test("hands inline Google tools to the provider without polluting plain requests", async () => {
-		const toolPrompts = [];
-		const toolResp = await handleGoogleGenerate(
+		const toolPrompts: string[] = [];
+		const toolResp = await handleGoogle(
 			{
 				contents: [{ role: "user", parts: [{ text: "read the file" }] }],
 				tools: [
@@ -55,51 +103,45 @@ describe("Google generate handler", () => {
 					},
 				],
 			},
-			baseConfig(),
+			googleConfig(),
 			strictProvider({
 				async generateText(input) {
 					toolPrompts.push(input.prompt);
 					return "done";
 				},
 			}),
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:generateContent",
-			),
-			false,
+			googleRoute("/v1beta/models/gemini-3.5-flash:generateContent"),
 		);
 		assert.equal(toolResp.status, 200);
-		assert.match(toolPrompts[0], /Available tools/);
-		assert.match(toolPrompts[0], /<\|DSML\|tool_calls>/);
-		assert.match(toolPrompts[0], /"name": "Read"/);
-		assert.match(toolPrompts[0], /"path"/);
+		assert.match(first(toolPrompts), /Available tools/);
+		assert.match(first(toolPrompts), /<\|DSML\|tool_calls>/);
+		assert.match(first(toolPrompts), /"name": "Read"/);
+		assert.match(first(toolPrompts), /"path"/);
 
-		const plainPrompts = [];
-		const plainResp = await handleGoogleGenerate(
+		const plainPrompts: string[] = [];
+		const plainResp = await handleGoogle(
 			{
 				contents: [{ role: "user", parts: [{ text: "plain request" }] }],
 			},
-			baseConfig(),
+			googleConfig(),
 			strictProvider({
 				async generateText(input) {
 					plainPrompts.push(input.prompt);
 					return "done";
 				},
 			}),
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:generateContent",
-			),
-			false,
+			googleRoute("/v1beta/models/gemini-3.5-flash:generateContent"),
 		);
 		assert.equal(plainResp.status, 200);
 		assert.doesNotMatch(
-			plainPrompts[0],
+			first(plainPrompts),
 			/Available tools|<\|DSML\|tool_calls>/,
 		);
 	});
 	test("maps Google system image and function history into the provider prompt", async () => {
-		const prompts = [];
-		const plans = [];
-		const resp = await handleGoogleGenerate(
+		const prompts: string[] = [];
+		const plans: AttachmentPlan[] = [];
+		const resp = await handleGoogle(
 			{
 				systemInstruction: { parts: [{ text: "be concise" }] },
 				contents: [
@@ -127,7 +169,7 @@ describe("Google generate handler", () => {
 					},
 				],
 			},
-			baseConfig(),
+			googleConfig(),
 			strictProvider({
 				async resolveAttachments(plan) {
 					plans.push(plan);
@@ -138,27 +180,24 @@ describe("Google generate handler", () => {
 					return "done";
 				},
 			}),
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:generateContent",
-			),
-			false,
+			googleRoute("/v1beta/models/gemini-3.5-flash:generateContent"),
 		);
 		assert.equal(resp.status, 200);
-		assert.equal(plans[0].candidates.length, 1);
-		assert.match(prompts[0], /\[System instruction\]: be concise/);
-		assert.match(prompts[0], /inspect image/);
-		assert.match(prompts[0], /\[image input\]/);
+		assert.equal(first(plans).candidates.length, 1);
+		assert.match(first(prompts), /\[System instruction\]: be concise/);
+		assert.match(first(prompts), /inspect image/);
+		assert.match(first(prompts), /\[image input\]/);
 		assert.match(
-			prompts[0],
+			first(prompts),
 			/\[Assistant\]: \n<\|DSML\|tool_calls><\|DSML\|invoke name="Lookup">/,
 		);
-		assert.match(prompts[0], /\[Tool result for Lookup\]: \{"ok":true\}/);
+		assert.match(first(prompts), /\[Tool result for Lookup\]: \{"ok":true\}/);
 	});
 	test("passes Google image context and generic refs in protocol order", async () => {
-		let seenFileRefs = null;
+		let seenFileRefs: FileRef[] | null | undefined;
 		const imageRef = { ref: "/uploaded/image", name: "image.png" };
 		const genericRef = { ref: "/uploaded/file", name: "note.txt" };
-		const resp = await handleGoogleGenerate(
+		const resp = await handleGoogle(
 			{
 				contents: [
 					{
@@ -203,10 +242,7 @@ describe("Google generate handler", () => {
 					return "done";
 				},
 			}),
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:generateContent",
-			),
-			false,
+			googleRoute("/v1beta/models/gemini-3.5-flash:generateContent"),
 		);
 		assert.equal(resp.status, 200);
 		assert.deepEqual(seenFileRefs, [
@@ -238,15 +274,15 @@ describe("Google generate handler", () => {
 					},
 				},
 			},
-			{},
+			execution,
 		);
 		assert.equal(resp.status, 400);
-		const body = await resp.json();
-		assert.equal(body.error.code, "invalid_tool_choice");
-		assert.match(body.error.message, /mode=ANY requires at least one tool/);
+		const error = responseError(await resp.json());
+		assert.equal(error.code, "invalid_tool_choice");
+		assert.match(error.message, /mode=ANY requires at least one tool/);
 	});
 	test("returns Google tool-choice errors for non-stream plain answers", async () => {
-		const resp = await handleGoogleGenerate(
+		const resp = await handleGoogle(
 			{
 				contents: [{ role: "user", parts: [{ text: "call a tool" }] }],
 				tools: [
@@ -272,22 +308,19 @@ describe("Google generate handler", () => {
 					return "plain answer";
 				},
 			}),
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:generateContent",
-			),
-			false,
+			googleRoute("/v1beta/models/gemini-3.5-flash:generateContent"),
 		);
 		assert.equal(resp.status, 422);
-		const body = await resp.json();
-		assert.equal(body.error.code, "tool_choice_violation");
+		const error = responseError(await resp.json());
+		assert.equal(error.code, "tool_choice_violation");
 		assert.match(
-			body.error.message,
+			error.message,
 			/mode=ANY requires at least one valid function call/,
 		);
 	});
 	test("moves large Google tools into attached tools file", async () => {
-		const prompts = [];
-		const uploads = [];
+		const prompts: string[] = [];
+		const uploads: { text: string; filename: string }[] = [];
 		const provider = strictProvider({
 			async generateText(input) {
 				prompts.push(input.prompt);
@@ -298,7 +331,7 @@ describe("Google generate handler", () => {
 				return { ref: `/uploaded/${filename}`, name: filename };
 			},
 		});
-		const resp = await handleGoogleGenerate(
+		const resp = await handleGoogle(
 			{
 				contents: [
 					{ role: "user", parts: [{ text: `lookup id ${"x".repeat(120)}` }] },
@@ -329,32 +362,32 @@ describe("Google generate handler", () => {
 				log_requests: false,
 			},
 			provider,
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:generateContent",
-			),
-			false,
+			googleRoute("/v1beta/models/gemini-3.5-flash:generateContent"),
 		);
 		assert.equal(resp.status, 200);
 		assert.equal(uploads.length, 2);
-		assert.doesNotMatch(prompts[0], /<\|DSML\|tool_calls>/);
+		assert.doesNotMatch(first(prompts), /<\|DSML\|tool_calls>/);
 		assert.match(
-			prompts[0],
+			first(prompts),
 			/Continue from the latest state in the attached `message\.txt` context/,
 		);
-		assert.match(prompts[0], /tools\.txt/);
+		assert.match(first(prompts), /tools\.txt/);
 		assert.match(
-			prompts[0],
+			first(prompts),
 			/All text above this sentence is system prompt content/,
 		);
-		assert.doesNotMatch(prompts[0], /Gemini native hidden tool calls/);
-		assert.doesNotMatch(prompts[0], /Available tools/);
-		assert.doesNotMatch(prompts[0], /"name": "Lookup"|"properties"/);
-		assert.match(uploads[1].text, /Available tool descriptions/);
-		assert.match(uploads[1].text, /Tool call format instructions/);
-		assert.match(uploads[1].text, /<\|DSML\|tool_calls>/);
-		assert.match(uploads[1].text, /Gemini native hidden tool calls/);
-		assert.match(uploads[1].text, /"name": "Lookup"/);
-		assert.match(uploads[1].text, /"id"/);
+		assert.doesNotMatch(first(prompts), /Gemini native hidden tool calls/);
+		assert.doesNotMatch(first(prompts), /Available tools/);
+		assert.doesNotMatch(first(prompts), /"name": "Lookup"|"properties"/);
+		assert.match(first(uploads.slice(1)).text, /Available tool descriptions/);
+		assert.match(first(uploads.slice(1)).text, /Tool call format instructions/);
+		assert.match(first(uploads.slice(1)).text, /<\|DSML\|tool_calls>/);
+		assert.match(
+			first(uploads.slice(1)).text,
+			/Gemini native hidden tool calls/,
+		);
+		assert.match(first(uploads.slice(1)).text, /"name": "Lookup"/);
+		assert.match(first(uploads.slice(1)).text, /"id"/);
 	});
 	test("maps invalid Gemini cookie errors to Google auth responses", async () => {
 		const err = invalidGeminiCookieError({ cookie: "SID=bad" }, 403, 10);
@@ -363,7 +396,7 @@ describe("Google generate handler", () => {
 				throw err;
 			},
 		});
-		const resp = await handleGoogleGenerate(
+		const resp = await handleGoogle(
 			{
 				contents: [{ role: "user", parts: [{ text: "plain request" }] }],
 			},
@@ -377,23 +410,22 @@ describe("Google generate handler", () => {
 				log_requests: false,
 			},
 			provider,
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:generateContent",
-			),
-			false,
+			googleRoute("/v1beta/models/gemini-3.5-flash:generateContent"),
 		);
 		assert.equal(resp.status, 401);
-		const body = await resp.json();
-		assert.equal(body.error.code, "invalid_gemini_cookie");
+		assert.equal(
+			responseError(await resp.json()).code,
+			"invalid_gemini_cookie",
+		);
 	});
 	test("maps non-stream Google upstream errors to Google error envelopes", async () => {
 		const err = streamError("google overloaded secret", "upstream_overloaded");
 		err.status = 503;
-		const logs = [];
+		const logs: string[] = [];
 		const resp = await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
-				handleGoogleGenerate(
+				handleGoogle(
 					{
 						contents: [{ role: "user", parts: [{ text: "plain request" }] }],
 					},
@@ -411,19 +443,13 @@ describe("Google generate handler", () => {
 							throw err;
 						},
 					}),
-					parseGoogleGenerationPath(
-						"/v1beta/models/gemini-3.5-flash:generateContent",
-					),
-					false,
+					googleRoute("/v1beta/models/gemini-3.5-flash:generateContent"),
 				),
 		);
 		assert.equal(resp.status, 503);
-		const body = await resp.json();
-		assert.equal(body.error.code, "upstream_overloaded");
-		assert.match(
-			body.error.message,
-			/upstream error: google overloaded secret/,
-		);
+		const error = responseError(await resp.json());
+		assert.equal(error.code, "upstream_overloaded");
+		assert.match(error.message, /upstream error: google overloaded secret/);
 		const failureLog = logs.find((line) =>
 			line.includes("google generate failed"),
 		);
@@ -434,7 +460,7 @@ describe("Google generate handler", () => {
 		assert.doesNotMatch(failureLog, /google overloaded secret/);
 	});
 	test("returns Google upstream_empty error without fallback candidate", async () => {
-		const resp = await handleGoogleGenerate(
+		const resp = await handleGoogle(
 			{
 				contents: [{ role: "user", parts: [{ text: "plain request" }] }],
 			},
@@ -452,15 +478,13 @@ describe("Google generate handler", () => {
 					return "";
 				},
 			}),
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:generateContent",
-			),
-			false,
+			googleRoute("/v1beta/models/gemini-3.5-flash:generateContent"),
 		);
 		assert.equal(resp.status, 502);
-		const body = await resp.json();
-		assert.equal(body.error.code, "upstream_empty");
-		assert.equal(body.error.message, EMPTY_UPSTREAM_MSG);
+		const body = responseRecord(await resp.json());
+		const error = responseError(body);
+		assert.equal(error.code, "upstream_empty");
+		assert.equal(error.message, EMPTY_UPSTREAM_MSG);
 		assert.equal(body.candidates, undefined);
 	});
 });

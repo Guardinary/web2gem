@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	streamErrorText,
@@ -6,11 +5,12 @@ import {
 	streamWarningObject,
 	writeStreamWarningEvent,
 } from "../../../../src/http/core/stream-errors";
+import type { ErrorWithMetadata } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 
 describe("stream error presentation", () => {
 	test("formats stream warning events with upstream code metadata", async () => {
-		const err = new Error("socket reset");
+		const err: ErrorWithMetadata = new Error("socket reset");
 		err.code = "socket_reset";
 		const warning = streamWarningObject(err, "partial output kept");
 		assert.deepEqual(warning, {
@@ -26,9 +26,12 @@ describe("stream error presentation", () => {
 			/stream interrupted after partial output: socket reset/,
 		);
 
-		const writes = [];
+		const writes: string[] = [];
 		writeStreamWarningEvent(
-			(chunk) => writes.push(chunk),
+			(chunk) => {
+				writes.push(chunk);
+				return Promise.resolve();
+			},
 			err,
 			"partial output kept",
 		);

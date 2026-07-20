@@ -1,14 +1,26 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { sseResponse } from "../../../../src/http/core/sse";
-import { assert } from "../../assertions.js";
+import type { ErrorWithMetadata } from "../../../../src/shared/types";
 import { withPatchedGlobal } from "../../_support/globals.js";
+import { assert } from "../../assertions.js";
+
+function responseBody(response: Response): ReadableStream<Uint8Array> {
+	if (!response.body) throw new Error("expected response body");
+	return response.body;
+}
+
+type TestWriter = {
+	closed: Promise<void>;
+	write(chunk: Uint8Array): Promise<void>;
+	close(): Promise<void>;
+	releaseLock(): void;
+};
 
 describe.sequential("sseResponse", () => {
 	test("aborts SSE producer when client cancels", async () => {
 		let sawAbort = false;
-		let resolveDone;
-		const done = new Promise((resolve) => {
+		let resolveDone!: () => void;
+		const done = new Promise<void>((resolve) => {
 			resolveDone = resolve;
 		});
 		const resp = sseResponse(async (write, signal) => {
@@ -19,7 +31,7 @@ describe.sequential("sseResponse", () => {
 			sawAbort = signal.aborted;
 			resolveDone();
 		});
-		const reader = resp.body.getReader();
+		const reader = responseBody(resp).getReader();
 		const first = await reader.read();
 		assert.equal(first.done, false);
 		await reader.cancel();
@@ -27,13 +39,13 @@ describe.sequential("sseResponse", () => {
 		assert.equal(sawAbort, true);
 	});
 	test("handles SSE writes that race after client cancellation", async () => {
-		let resolveAfterCancel;
-		const afterCancel = new Promise((resolve) => {
+		let resolveAfterCancel!: (reason: unknown) => void;
+		const afterCancel = new Promise<unknown>((resolve) => {
 			resolveAfterCancel = resolve;
 		});
 		const resp = sseResponse(async (write, signal) => {
 			write("data: one\n\n");
-			await new Promise((resolve) => {
+			await new Promise<void>((resolve) => {
 				signal.addEventListener(
 					"abort",
 					() => {
@@ -45,7 +57,7 @@ describe.sequential("sseResponse", () => {
 				);
 			});
 		});
-		const reader = resp.body.getReader();
+		const reader = responseBody(resp).getReader();
 		const first = await reader.read();
 		assert.equal(first.done, false);
 		await reader.cancel();
@@ -53,7 +65,7 @@ describe.sequential("sseResponse", () => {
 	});
 	test("emits SSE error frames and custom onError output", async () => {
 		const errored = sseResponse(() => {
-			const err = new Error("stream failed");
+			const err: ErrorWithMetadata = new Error("stream failed");
 			err.code = "upstream_failed";
 			throw err;
 		});
@@ -68,7 +80,8 @@ describe.sequential("sseResponse", () => {
 			},
 			{
 				onError(write, err) {
-					write(`event: custom\ndata: ${String(err.message)}\n\n`);
+					const message = err instanceof Error ? err.message : String(err);
+					return write(`event: custom\ndata: ${message}\n\n`);
 				},
 			},
 		);
@@ -80,19 +93,22 @@ describe.sequential("sseResponse", () => {
 		await withPatchedGlobal(
 			"TransformStream",
 			class {
+				readonly readable: ReadableStream<Uint8Array>;
+				readonly writable: { getWriter(): TestWriter };
+
 				constructor() {
 					this.readable = new NativeTransformStream().readable;
 					this.writable = {
 						getWriter() {
 							return {
-								closed: new Promise(() => {}),
-								write() {
+								closed: new Promise<void>(() => {}),
+								write(_chunk: Uint8Array) {
 									return Promise.reject(new Error("write rejected"));
 								},
-								close() {
+								close(): Promise<void> {
 									return Promise.resolve();
 								},
-								releaseLock() {},
+								releaseLock(): void {},
 							};
 						},
 					};
@@ -100,7 +116,7 @@ describe.sequential("sseResponse", () => {
 			},
 			async () => {
 				let sawAbort = false;
-				const done = new Promise((resolve) => {
+				const done = new Promise<void>((resolve) => {
 					sseResponse(async (write, signal) => {
 						write("data: rejected\n\n");
 						await new Promise((innerResolve) =>
@@ -118,19 +134,22 @@ describe.sequential("sseResponse", () => {
 		await withPatchedGlobal(
 			"TransformStream",
 			class {
+				readonly readable: ReadableStream<Uint8Array>;
+				readonly writable: { getWriter(): TestWriter };
+
 				constructor() {
 					this.readable = new NativeTransformStream().readable;
 					this.writable = {
 						getWriter() {
 							return {
-								closed: new Promise(() => {}),
-								write() {
+								closed: new Promise<void>(() => {}),
+								write(_chunk: Uint8Array): Promise<void> {
 									throw new Error("write threw");
 								},
-								close() {
+								close(): Promise<void> {
 									return Promise.resolve();
 								},
-								releaseLock() {},
+								releaseLock(): void {},
 							};
 						},
 					};
@@ -138,7 +157,7 @@ describe.sequential("sseResponse", () => {
 			},
 			async () => {
 				let sawAbort = false;
-				const done = new Promise((resolve) => {
+				const done = new Promise<void>((resolve) => {
 					sseResponse(async (write, signal) => {
 						write("data: thrown\n\n");
 						sawAbort = signal.aborted;

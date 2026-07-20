@@ -1,24 +1,85 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import {
+	createRuntimeConfig,
+	getConfig,
+	type RuntimeConfig,
+} from "../../../../src/config";
 import { handleGoogleGenerate } from "../../../../src/http/google/handlers";
 import { parseGoogleGenerationPath } from "../../../../src/http/google/model-path";
 import {
 	streamGooglePlain,
 	streamGoogleTools,
 } from "../../../../src/http/google/stream";
+import { isRecord } from "../../../../src/shared/types";
 import { parseGoogleToolChoicePolicy } from "../../../../src/toolcall/policy-google";
 import { createToolBundle } from "../../../../src/toolcall/tool-bundle";
-import { assert } from "../../assertions.js";
 import { chunks } from "../../_support/async-stream.js";
 import { withConsoleLog } from "../../_support/globals.js";
-import { baseConfig } from "../../_support/runtime-config.js";
-import { resolvedModel, streamError } from "../_support/provider.js";
+import { assert } from "../../assertions.js";
+import {
+	resolvedModel,
+	streamError,
+	streamProvider,
+	strictProvider,
+} from "../_support/provider.js";
 import { collectSSEData } from "../_support/sse.js";
-import { streamProvider, strictProvider } from "../_support/provider.js";
+
+type PathSegment = string | number;
+
+function pathValue(value: unknown, ...path: readonly PathSegment[]): unknown {
+	let current = value;
+	for (const segment of path) {
+		if (typeof segment === "number") {
+			if (!Array.isArray(current)) return undefined;
+			current = current[segment];
+			continue;
+		}
+		if (!isRecord(current)) return undefined;
+		current = current[segment];
+	}
+	return current;
+}
+
+function pathNumber(value: unknown, ...path: readonly PathSegment[]): number {
+	const result = pathValue(value, ...path);
+	if (typeof result !== "number") throw new Error("expected numeric SSE field");
+	return result;
+}
+
+function candidateText(value: unknown): string {
+	const text = pathValue(value, "candidates", 0, "content", "parts", 0, "text");
+	return typeof text === "string" ? text : "";
+}
+
+function requiredResponse(value: Response | null): Response {
+	if (!value) throw new Error("expected response");
+	return value;
+}
+
+function googleConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
+	return { ...createRuntimeConfig(getConfig()), ...overrides };
+}
+
+function handleGoogle(
+	req: Parameters<typeof handleGoogleGenerate>[0],
+	cfg: Partial<RuntimeConfig>,
+	provider: Parameters<typeof handleGoogleGenerate>[2],
+	route: Parameters<typeof handleGoogleGenerate>[3],
+): ReturnType<typeof handleGoogleGenerate> {
+	return handleGoogleGenerate(req, googleConfig(cfg), provider, route);
+}
+
+function googleRoute(
+	path: string,
+): NonNullable<ReturnType<typeof parseGoogleGenerationPath>> {
+	const route = parseGoogleGenerationPath(path);
+	if (!route) throw new Error(`invalid Google route: ${path}`);
+	return route;
+}
 
 describe("Google streaming", () => {
 	test("streams Google tool text warnings through generate handler", async () => {
-		const resp = await handleGoogleGenerate(
+		const resp = await handleGoogle(
 			{
 				contents: [{ role: "user", parts: [{ text: "read a file" }] }],
 				tools: [
@@ -43,37 +104,34 @@ describe("Google streaming", () => {
 					return chunks(["partial answer"], 0);
 				},
 			}),
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
-			),
-			true,
+			googleRoute("/v1beta/models/gemini-3.5-flash:streamGenerateContent"),
 		);
 		assert.equal(resp.status, 200);
 		const events = collectSSEData([await resp.text()]);
 		assert.equal(
-			events.some(
-				(event) =>
-					event.candidates?.[0]?.content?.parts?.[0]?.text === "partial answer",
-			),
+			events.some((event) => candidateText(event) === "partial answer"),
 			true,
 		);
-		const warning = events.find((event) => event.warning);
-		assert.equal(warning.warning.code, "stream_interrupted");
+		const warning = events.find(
+			(event) => pathValue(event, "warning") !== undefined,
+		);
+		assert.equal(pathValue(warning, "warning", "code"), "stream_interrupted");
 		assert.equal(
-			events.some(
-				(event) =>
-					event.candidates &&
-					String(event.candidates[0].content?.parts?.[0]?.text || "").includes(
-						"stream interrupted after partial output",
-					),
+			events.some((event) =>
+				candidateText(event).includes(
+					"stream interrupted after partial output",
+				),
 			),
 			false,
 		);
-		assert.equal(events.at(-1).usageMetadata.totalTokenCount >= 0, true);
+		assert.equal(
+			pathNumber(events.at(-1), "usageMetadata", "totalTokenCount") >= 0,
+			true,
+		);
 	});
 	test("streams safe Google tool-compatible plain deltas before done", async () => {
 		const text = "x".repeat(80);
-		const resp = await handleGoogleGenerate(
+		const resp = await handleGoogle(
 			{
 				contents: [{ role: "user", parts: [{ text: "summarize" }] }],
 				tools: [
@@ -84,31 +142,22 @@ describe("Google streaming", () => {
 					},
 				],
 			},
-			baseConfig(),
+			googleConfig(),
 			streamProvider([text]),
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
-			),
-			true,
+			googleRoute("/v1beta/models/gemini-3.5-flash:streamGenerateContent"),
 		);
 		assert.equal(resp.status, 200);
 		const events = collectSSEData([await resp.text()]);
-		assert.equal(
-			events
-				.flatMap((event) => event.candidates?.[0]?.content?.parts || [])
-				.map((part) => part.text || "")
-				.join(""),
-			text,
-		);
+		assert.equal(events.map(candidateText).join(""), text);
 		const done = events.at(-1);
 		assert.equal(
-			done.usageMetadata.totalTokenCount,
-			done.usageMetadata.promptTokenCount +
-				done.usageMetadata.candidatesTokenCount,
+			pathNumber(done, "usageMetadata", "totalTokenCount"),
+			pathNumber(done, "usageMetadata", "promptTokenCount") +
+				pathNumber(done, "usageMetadata", "candidatesTokenCount"),
 		);
 	});
 	test("streams Google upstream_empty for an empty tool-compatible stream", async () => {
-		const resp = await handleGoogleGenerate(
+		const resp = await handleGoogle(
 			{
 				contents: [{ role: "user", parts: [{ text: "read" }] }],
 				tools: [
@@ -119,27 +168,24 @@ describe("Google streaming", () => {
 					},
 				],
 			},
-			baseConfig(),
+			googleConfig(),
 			streamProvider([]),
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
-			),
-			true,
+			googleRoute("/v1beta/models/gemini-3.5-flash:streamGenerateContent"),
 		);
 		assert.equal(resp.status, 200);
 		const events = collectSSEData([await resp.text()]);
 		assert.equal(events.length, 1);
-		assert.equal(events[0].error.code, "upstream_empty");
-		assert.equal(events[0].modelVersion, "gemini-3.5-flash");
+		assert.equal(pathValue(events[0], "error", "code"), "upstream_empty");
+		assert.equal(pathValue(events[0], "modelVersion"), "gemini-3.5-flash");
 	});
 	test("streams Google plain responses through generate handler", async () => {
-		const logs = [];
-		let resp;
+		const logs: string[] = [];
+		let resp: Response | null = null;
 		let body = "";
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			async () => {
-				resp = await handleGoogleGenerate(
+				resp = await handleGoogle(
 					{
 						contents: [{ role: "user", parts: [{ text: "say hi" }] }],
 					},
@@ -153,25 +199,28 @@ describe("Google streaming", () => {
 						log_requests: true,
 					},
 					streamProvider(["he", "llo"]),
-					parseGoogleGenerationPath(
-						"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
-					),
-					true,
+					googleRoute("/v1beta/models/gemini-3.5-flash:streamGenerateContent"),
 				);
-				body = await resp.text();
+				body = await requiredResponse(resp).text();
 			},
 		);
-		assert.equal(resp.status, 200);
+		assert.equal(requiredResponse(resp).status, 200);
 		assert.match(body, /"text":"he"/);
 		assert.match(body, /"text":"llo"/);
 		assert.match(body, /"finishReason":"STOP"/);
 		const done = collectSSEData([body]).at(-1);
-		assert.equal(done.usageMetadata.promptTokenCount >= 0, true);
-		assert.equal(done.usageMetadata.candidatesTokenCount >= 0, true);
 		assert.equal(
-			done.usageMetadata.totalTokenCount,
-			done.usageMetadata.promptTokenCount +
-				done.usageMetadata.candidatesTokenCount,
+			pathNumber(done, "usageMetadata", "promptTokenCount") >= 0,
+			true,
+		);
+		assert.equal(
+			pathNumber(done, "usageMetadata", "candidatesTokenCount") >= 0,
+			true,
+		);
+		assert.equal(
+			pathNumber(done, "usageMetadata", "totalTokenCount"),
+			pathNumber(done, "usageMetadata", "promptTokenCount") +
+				pathNumber(done, "usageMetadata", "candidatesTokenCount"),
 		);
 		assert.equal(
 			logs.some((line) => line.includes("stage=google_prepare")),
@@ -183,7 +232,7 @@ describe("Google streaming", () => {
 		);
 	});
 	test("streams Google upstream errors through generate handler", async () => {
-		const resp = await handleGoogleGenerate(
+		const resp = await handleGoogle(
 			{
 				contents: [{ role: "user", parts: [{ text: "fail stream" }] }],
 			},
@@ -201,20 +250,20 @@ describe("Google streaming", () => {
 					throw streamError("handler upstream down", "handler_down");
 				},
 			}),
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
-			),
-			true,
+			googleRoute("/v1beta/models/gemini-3.5-flash:streamGenerateContent"),
 		);
 		assert.equal(resp.status, 200);
 		const frames = collectSSEData([await resp.text()]);
 		assert.equal(frames.length, 1);
-		assert.equal(frames[0].error.code, "handler_down");
-		assert.equal(frames[0].error.message, "handler upstream down");
-		assert.equal(frames[0].modelVersion, "gemini-3.5-flash");
+		assert.equal(pathValue(frames[0], "error", "code"), "handler_down");
+		assert.equal(
+			pathValue(frames[0], "error", "message"),
+			"handler upstream down",
+		);
+		assert.equal(pathValue(frames[0], "modelVersion"), "gemini-3.5-flash");
 	});
 	test("streams Google tool upstream errors through generate handler", async () => {
-		const resp = await handleGoogleGenerate(
+		const resp = await handleGoogle(
 			{
 				contents: [{ role: "user", parts: [{ text: "fail tool stream" }] }],
 				tools: [
@@ -225,32 +274,32 @@ describe("Google streaming", () => {
 					},
 				],
 			},
-			baseConfig(),
+			googleConfig(),
 			strictProvider({
 				streamText() {
 					throw streamError("tool handler upstream down", "tool_handler_down");
 				},
 			}),
-			parseGoogleGenerationPath(
-				"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
-			),
-			true,
+			googleRoute("/v1beta/models/gemini-3.5-flash:streamGenerateContent"),
 		);
 		assert.equal(resp.status, 200);
 		const frames = collectSSEData([await resp.text()]);
 		assert.equal(frames.length, 1);
-		assert.equal(frames[0].error.code, "tool_handler_down");
-		assert.equal(frames[0].error.message, "tool handler upstream down");
-		assert.equal(frames[0].modelVersion, "gemini-3.5-flash");
+		assert.equal(pathValue(frames[0], "error", "code"), "tool_handler_down");
+		assert.equal(
+			pathValue(frames[0], "error", "message"),
+			"tool handler upstream down",
+		);
+		assert.equal(pathValue(frames[0], "modelVersion"), "gemini-3.5-flash");
 	});
 	test("streams Google tool calls through generate handler", async () => {
-		const logs = [];
-		let resp;
+		const logs: string[] = [];
+		let resp: Response | null = null;
 		let body = "";
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			async () => {
-				resp = await handleGoogleGenerate(
+				resp = await handleGoogle(
 					{
 						contents: [{ role: "user", parts: [{ text: "read file" }] }],
 						tools: [
@@ -274,27 +323,30 @@ describe("Google streaming", () => {
 					streamProvider([
 						'<tool_calls><invoke name="Read"><parameter name="path">README.md</parameter></invoke></tool_calls>',
 					]),
-					parseGoogleGenerationPath(
-						"/v1beta/models/gemini-3.5-flash:streamGenerateContent",
-					),
-					true,
+					googleRoute("/v1beta/models/gemini-3.5-flash:streamGenerateContent"),
 				);
-				body = await resp.text();
+				body = await requiredResponse(resp).text();
 			},
 		);
-		assert.equal(resp.status, 200);
+		assert.equal(requiredResponse(resp).status, 200);
 		assert.match(
 			body,
 			/"functionCall":\{"name":"Read","args":\{"path":"README.md"\}\}/,
 		);
 		assert.match(body, /"finishReason":"STOP"/);
 		const done = collectSSEData([body]).at(-1);
-		assert.equal(done.usageMetadata.promptTokenCount >= 0, true);
-		assert.equal(done.usageMetadata.candidatesTokenCount >= 0, true);
 		assert.equal(
-			done.usageMetadata.totalTokenCount,
-			done.usageMetadata.promptTokenCount +
-				done.usageMetadata.candidatesTokenCount,
+			pathNumber(done, "usageMetadata", "promptTokenCount") >= 0,
+			true,
+		);
+		assert.equal(
+			pathNumber(done, "usageMetadata", "candidatesTokenCount") >= 0,
+			true,
+		);
+		assert.equal(
+			pathNumber(done, "usageMetadata", "totalTokenCount"),
+			pathNumber(done, "usageMetadata", "promptTokenCount") +
+				pathNumber(done, "usageMetadata", "candidatesTokenCount"),
 		);
 		assert.equal(
 			logs.some((line) => line.includes("stage=google_stream_generate")),
@@ -306,14 +358,16 @@ describe("Google streaming", () => {
 		);
 	});
 	test("streams Google warning and final done after partial output", async () => {
-		const writes = [];
-		const logs = [];
+		const writes: string[] = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				streamGooglePlain(
-					(chunk) => writes.push(chunk),
-					baseConfig({ log_requests: true }),
+					async (chunk) => {
+						writes.push(chunk);
+					},
+					googleConfig({ log_requests: true }),
 					{
 						provider: strictProvider({
 							streamText() {
@@ -330,28 +384,27 @@ describe("Google streaming", () => {
 		);
 		const frames = collectSSEData(writes);
 		assert.equal(
-			frames.some(
-				(frame) =>
-					frame.candidates &&
-					frame.candidates[0].content.parts[0].text === "partial",
-			),
+			frames.some((frame) => candidateText(frame) === "partial"),
 			true,
 		);
 		assert.equal(
 			frames.some(
-				(frame) => frame.warning && frame.warning.code === "stream_interrupted",
+				(frame) => pathValue(frame, "warning", "code") === "stream_interrupted",
 			),
 			true,
 		);
 		assert.equal(
 			frames.some(
 				(frame) =>
-					frame.promptFeedback &&
-					frame.promptFeedback.warning.code === "stream_interrupted",
+					pathValue(frame, "promptFeedback", "warning", "code") ===
+					"stream_interrupted",
 			),
 			true,
 		);
-		assert.equal(frames[frames.length - 1].usageMetadata.promptTokenCount, 4);
+		assert.equal(
+			pathNumber(frames.at(-1), "usageMetadata", "promptTokenCount"),
+			4,
+		);
 		const warningLog = logs.find((line) =>
 			line.includes("google stream interrupted after partial output"),
 		);
@@ -359,8 +412,8 @@ describe("Google streaming", () => {
 		assert.doesNotMatch(warningLog, /stream broke/);
 	});
 	test("streams Google tool warning when stream interrupts after parsed call", async () => {
-		const writes = [];
-		const logs = [];
+		const writes: string[] = [];
+		const logs: string[] = [];
 		const tools = [
 			{
 				functionDeclarations: [
@@ -369,11 +422,13 @@ describe("Google streaming", () => {
 			},
 		];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				streamGoogleTools(
-					(chunk) => writes.push(chunk),
-					baseConfig({ log_requests: true }),
+					async (chunk) => {
+						writes.push(chunk);
+					},
+					googleConfig({ log_requests: true }),
 					{
 						provider: strictProvider({
 							streamText() {
@@ -404,22 +459,38 @@ describe("Google streaming", () => {
 		const frames = collectSSEData(writes);
 		assert.equal(
 			frames.some(
-				(frame) => frame.warning && frame.warning.code === "stream_interrupted",
+				(frame) => pathValue(frame, "warning", "code") === "stream_interrupted",
 			),
 			true,
 		);
-		const callFrame = frames.find((frame) => frame.candidates?.[0].content);
-		const warningIndex = frames.findIndex((frame) => frame.warning);
+		const callFrame = frames.find(
+			(frame) => pathValue(frame, "candidates", 0, "content") !== undefined,
+		);
+		const warningIndex = frames.findIndex(
+			(frame) => pathValue(frame, "warning") !== undefined,
+		);
 		const callIndex = frames.findIndex(
-			(frame) => frame.candidates?.[0].content,
+			(frame) => pathValue(frame, "candidates", 0, "content") !== undefined,
 		);
 		assert.equal(warningIndex >= 0, true);
 		assert.equal(warningIndex < callIndex, true);
 		assert.equal(
-			callFrame.candidates[0].content.parts[0].functionCall.name,
+			pathValue(
+				callFrame,
+				"candidates",
+				0,
+				"content",
+				"parts",
+				0,
+				"functionCall",
+				"name",
+			),
 			"Read",
 		);
-		assert.equal(frames[frames.length - 1].usageMetadata.promptTokenCount, 5);
+		assert.equal(
+			pathNumber(frames.at(-1), "usageMetadata", "promptTokenCount"),
+			5,
+		);
 		const warningLog = logs.find((line) =>
 			line.includes("google tool stream interrupted after partial output"),
 		);
@@ -427,7 +498,7 @@ describe("Google streaming", () => {
 		assert.doesNotMatch(warningLog, /stream broke/);
 	});
 	test("streams Google tool policy violations as error frames", async () => {
-		const writes = [];
+		const writes: string[] = [];
 		const tools = [
 			{
 				functionDeclarations: [
@@ -435,28 +506,40 @@ describe("Google streaming", () => {
 				],
 			},
 		];
-		await streamGoogleTools((chunk) => writes.push(chunk), baseConfig(), {
-			provider: streamProvider([
-				'<tool_calls><invoke name="Read"><parameter name="path">README.md</parameter></invoke></tool_calls>',
-			]),
-			prompt: "do not call tools",
-			rm: resolvedModel(),
-			fileRefs: null,
-			tools: createToolBundle(tools),
-			toolPolicy: parseGoogleToolChoicePolicy(
-				{
-					tools,
-					toolConfig: { functionCallingConfig: { mode: "NONE" } },
-				},
-				createToolBundle(tools),
-			),
-			promptTokens: 5,
-			signal: new AbortController().signal,
-		});
+		await streamGoogleTools(
+			async (chunk) => {
+				writes.push(chunk);
+			},
+			googleConfig(),
+			{
+				provider: streamProvider([
+					'<tool_calls><invoke name="Read"><parameter name="path">README.md</parameter></invoke></tool_calls>',
+				]),
+				prompt: "do not call tools",
+				rm: resolvedModel(),
+				fileRefs: null,
+				tools: createToolBundle(tools),
+				toolPolicy: parseGoogleToolChoicePolicy(
+					{
+						tools,
+						toolConfig: { functionCallingConfig: { mode: "NONE" } },
+					},
+					createToolBundle(tools),
+				),
+				promptTokens: 5,
+				signal: new AbortController().signal,
+			},
+		);
 		const frames = collectSSEData(writes);
 		assert.equal(frames.length, 1);
-		assert.equal(frames[0].error.code, "tool_choice_violation");
-		assert.match(frames[0].error.message, /does not allow function\(s\): Read/);
-		assert.equal(frames[0].modelVersion, "gemini-3.5-flash");
+		assert.equal(
+			pathValue(frames[0], "error", "code"),
+			"tool_choice_violation",
+		);
+		assert.match(
+			pathValue(frames[0], "error", "message"),
+			/does not allow function\(s\): Read/,
+		);
+		assert.equal(pathValue(frames[0], "modelVersion"), "gemini-3.5-flash");
 	});
 });

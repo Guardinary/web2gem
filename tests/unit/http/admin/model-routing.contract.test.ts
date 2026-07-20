@@ -1,17 +1,29 @@
-// @ts-nocheck
 import { afterEach, describe, test, vi } from "vitest";
+import {
+	createRuntimeConfig,
+	getConfig,
+	type RuntimeConfig,
+	type WorkerEnv,
+} from "../../../../src/config";
+import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
 import { handleGeminiModelRoutingAdminRequest } from "../../../../src/http/admin/gemini-model-routing";
-import { baseConfig } from "../../_support/runtime-config.js";
+import type { GeminiPublicFamily } from "../../../../src/models";
+import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
-import { RecordingD1 } from "../../gemini/accounts/_support/store-fixtures.js";
+import {
+	type D1Expectation,
+	RecordingD1,
+} from "../../gemini/accounts/_support/store-fixtures.js";
 
 const nowMs = 10_000;
 const durableIssues = ["auth", "user_action", "location"];
-const cfg = baseConfig({
-	admin_key: "admin-secret",
-	runtime_profile: "worker",
-	gemini_account_capability_ttl_sec: 3600,
-});
+const cfg: RuntimeConfig = createRuntimeConfig(
+	getConfig({
+		ADMIN_KEY: "admin-secret",
+		GEMINI_ACCOUNT_CAPABILITY_TTL_SEC: "3600",
+	}),
+	{ runtime_profile: "worker" },
+);
 const discoveredCapabilities = [
 	{
 		account_id: "basic",
@@ -62,7 +74,7 @@ const discoveredCapabilities = [
 		checked_at_ms: nowMs,
 	},
 ];
-const routesByFamily = {
+const routesByFamily: Record<GeminiPublicFamily, GeminiRouteTuple[]> = {
 	pro: [
 		{
 			providerModelId: "e6fa609c3fa255c0",
@@ -99,7 +111,10 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-function overviewExpectations(version, priorities = []) {
+function overviewExpectations(
+	version: string,
+	priorities: readonly UnknownRecord[] = [],
+): D1Expectation[] {
 	return [
 		{
 			sql: "SELECT value FROM gemini_pool_meta WHERE key = ?",
@@ -129,7 +144,10 @@ function overviewExpectations(version, priorities = []) {
 	];
 }
 
-function priorityMutationExpectations(family, routes) {
+function priorityMutationExpectations(
+	family: GeminiPublicFamily,
+	routes: readonly GeminiRouteTuple[],
+): D1Expectation[] {
 	return [
 		{
 			sql: "DELETE FROM gemini_model_route_priority WHERE family = ?",
@@ -137,7 +155,7 @@ function priorityMutationExpectations(family, routes) {
 			operation: "batch",
 			result: { meta: { changes: 1 } },
 		},
-		...routes.map((route, priority) => ({
+		...routes.map<D1Expectation>((route, priority) => ({
 			sql: /INSERT INTO gemini_model_route_priority \( family, provider_model_id, capacity, capacity_field, model_number, priority, updated_at_ms \) VALUES \(\?, \?, \?, \?, \?, \?, \?\)/,
 			binds: [
 				family,
@@ -160,7 +178,10 @@ function priorityMutationExpectations(family, routes) {
 	];
 }
 
-function priorityRows(family, routes) {
+function priorityRows(
+	family: GeminiPublicFamily,
+	routes: readonly GeminiRouteTuple[],
+): UnknownRecord[] {
 	return routes.map((route, priority) => ({
 		family,
 		provider_model_id: route.providerModelId,
@@ -172,7 +193,7 @@ function priorityRows(family, routes) {
 	}));
 }
 
-function request(db, path, init = {}) {
+function request(db: RecordingD1, path: string, init: RequestInit = {}) {
 	const url = new URL(`https://worker.example${path}`);
 	return handleGeminiModelRoutingAdminRequest(
 		new Request(url, {
@@ -188,14 +209,52 @@ function request(db, path, init = {}) {
 	);
 }
 
-function proFamily(body) {
-	return body.families.find((family) => family.family === "pro");
+function responseRecord(value: unknown): UnknownRecord {
+	if (!isRecord(value)) throw new Error("expected response object");
+	return value;
 }
 
-async function expectRejectedBeforeD1({ path, body, status, code, message }) {
+function familyItems(value: unknown): UnknownRecord[] {
+	const families = responseRecord(value).families;
+	if (!Array.isArray(families)) throw new Error("expected families");
+	return families.filter(isRecord);
+}
+
+function requiredFamily(
+	body: unknown,
+	familyName: GeminiPublicFamily,
+): UnknownRecord {
+	const family = familyItems(body).find((item) => item.family === familyName);
+	if (!family) throw new Error(`expected ${familyName} family`);
+	return family;
+}
+
+function proFamily(body: unknown): UnknownRecord {
+	return requiredFamily(body, "pro");
+}
+
+function routeItems(family: UnknownRecord): UnknownRecord[] {
+	if (!Array.isArray(family.routes)) throw new Error("expected family routes");
+	return family.routes.filter(isRecord);
+}
+
+function errorCode(value: unknown): unknown {
+	const error = responseRecord(value).error;
+	if (!isRecord(error)) throw new Error("expected error object");
+	return error.code;
+}
+
+async function expectRejectedBeforeD1(input: {
+	path: string;
+	body: UnknownRecord;
+	status: number;
+	code: string;
+	message: string;
+}): Promise<void> {
+	const { path, body, status, code, message } = input;
 	const db = new RecordingD1();
 	let accessed = false;
-	const env = {};
+	const env: WorkerEnv = {};
 	Object.defineProperty(env, "GEMINI_DB", {
 		get() {
 			accessed = true;
@@ -237,7 +296,7 @@ describe("Gemini model-routing admin HTTP contract", () => {
 			url,
 		);
 		assert.equal(response.status, 401);
-		assert.equal((await response.json()).error.code, "invalid_admin_key");
+		assert.equal(errorCode(await response.json()), "invalid_admin_key");
 		db.assertBatches([]);
 		db.assertDrained();
 	});
@@ -325,7 +384,7 @@ describe("Gemini model-routing admin HTTP contract", () => {
 		const pro = proFamily(await response.json());
 		assert.equal(pro.configured, false);
 		assert.deepEqual(
-			pro.routes.map((route) => [
+			routeItems(pro).map((route) => [
 				route.providerModelId,
 				route.capacity,
 				route.capacityField,
@@ -357,7 +416,7 @@ describe("Gemini model-routing admin HTTP contract", () => {
 			}),
 		});
 		assert.equal(response.status, 400);
-		assert.equal((await response.json()).error.code, "unknown_model_route");
+		assert.equal(errorCode(await response.json()), "unknown_model_route");
 		assert.equal(
 			db.records.some((record) =>
 				record.sql.startsWith("DELETE FROM gemini_model_route_priority"),
@@ -385,20 +444,20 @@ describe("Gemini model-routing admin HTTP contract", () => {
 		const body = await response.json();
 		assert.equal(proFamily(body).configured, true);
 		assert.deepEqual(
-			proFamily(body).routes.map((route) => route.providerModelId),
+			routeItems(proFamily(body)).map((route) => route.providerModelId),
 			["e6fa609c3fa255c0", "9d8ca3786ebdfbea"],
 		);
-		assert.equal(
-			body.families.find((family) => family.family === "flash").configured,
-			false,
-		);
+		assert.equal(requiredFamily(body, "flash").configured, false);
 		db.assertBatches([[4, 5, 6, 7]]);
 		db.assertDrained();
 	});
 
 	test("keeps flash and flash-lite policy mutations independent from pro", async () => {
 		vi.spyOn(Date, "now").mockReturnValue(nowMs);
-		for (const family of ["flash", "flash_lite"]) {
+		for (const family of [
+			"flash",
+			"flash_lite",
+		] as const satisfies readonly GeminiPublicFamily[]) {
 			const routes = routesByFamily[family];
 			const db = new RecordingD1([
 				...overviewExpectations("7"),
@@ -412,12 +471,12 @@ describe("Gemini model-routing admin HTTP contract", () => {
 			});
 			assert.equal(response.status, 200);
 			const body = await response.json();
-			for (const item of body.families)
+			for (const item of familyItems(body))
 				assert.equal(item.configured, item.family === family);
 			assert.deepEqual(
-				body.families
-					.find((item) => item.family === family)
-					.routes.map((route) => route.providerModelId),
+				routeItems(requiredFamily(body, family)).map(
+					(route) => route.providerModelId,
+				),
 				routes.map((route) => route.providerModelId),
 			);
 			db.assertBatches([[4, 5, 6]]);

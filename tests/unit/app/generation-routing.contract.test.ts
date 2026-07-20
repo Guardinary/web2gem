@@ -1,10 +1,28 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { ApplicationExecutionContext } from "../../../src/app";
 import worker from "../../../src/index";
-import { assert } from "../assertions.js";
+import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import { withFetch } from "../_support/globals.js";
+import { assert } from "../assertions.js";
 
-function geminiTextResponse(text) {
+const executionContext: ApplicationExecutionContext = { waitUntil() {} };
+
+function record(value: unknown, label: string): UnknownRecord {
+	if (!isRecord(value)) throw new Error(`expected ${label}`);
+	return value;
+}
+
+function firstRecord(value: unknown, label: string): UnknownRecord {
+	if (!Array.isArray(value) || !isRecord(value[0]))
+		throw new Error(`expected ${label}`);
+	return value[0];
+}
+
+function errorBody(value: unknown): UnknownRecord {
+	return record(record(value, "response body").error, "error body");
+}
+
+function geminiTextResponse(text: string): Response {
 	const inner = [null, null, null, null, [[null, [text]]], "x".repeat(160)];
 	return new Response(
 		JSON.stringify([["wrb.fr", null, JSON.stringify(inner)]]),
@@ -29,7 +47,7 @@ describe.sequential("application generation routing contract", () => {
 					API_KEYS: "",
 					LOG_REQUESTS: "false",
 				},
-				{},
+				executionContext,
 			);
 		const resp = await withFetch(async () => {
 			fetchCalls += 1;
@@ -37,7 +55,11 @@ describe.sequential("application generation routing contract", () => {
 		}, run);
 		assert.equal(resp.status, 200);
 		const body = await resp.json();
-		assert.equal(body.choices[0].message.content, "anonymous answer");
+		const choice = firstRecord(
+			record(body, "response body").choices,
+			"choices",
+		);
+		assert.equal(record(choice.message, "message").content, "anonymous answer");
 		assert.equal(fetchCalls, 1);
 	});
 	test("shares anonymous routing with Google and keeps Pro account-required", async () => {
@@ -60,14 +82,15 @@ describe.sequential("application generation routing contract", () => {
 						},
 					),
 					{},
-					{},
+					executionContext,
 				),
 		);
 		assert.equal(google.status, 200);
-		assert.equal(
-			(await google.json()).candidates[0].content.parts[0].text,
-			"google anonymous",
-		);
+		const googleBody = record(await google.json(), "response body");
+		const candidate = firstRecord(googleBody.candidates, "candidates");
+		const content = record(candidate.content, "content");
+		const part = firstRecord(content.parts, "parts");
+		assert.equal(part.text, "google anonymous");
 		assert.equal(fetchCalls, 1);
 
 		const pro = await withFetch(
@@ -86,13 +109,13 @@ describe.sequential("application generation routing contract", () => {
 						}),
 					}),
 					{},
-					{},
+					executionContext,
 				),
 		);
 		assert.equal(pro.status, 422);
-		const proBody = await pro.json();
-		assert.equal(proBody.error.code, "gemini_authenticated_session_required");
-		assert.equal(proBody.error.reason, "pro_model");
+		const proBody = errorBody(await pro.json());
+		assert.equal(proBody.code, "gemini_authenticated_session_required");
+		assert.equal(proBody.reason, "pro_model");
 		assert.equal(fetchCalls, 1);
 	});
 	test("returns authenticated-session errors for oversized context without D1", async () => {
@@ -109,12 +132,12 @@ describe.sequential("application generation routing contract", () => {
 				CURRENT_INPUT_FILE_ENABLED: "true",
 				CURRENT_INPUT_FILE_MIN_BYTES: "10",
 			},
-			{},
+			executionContext,
 		);
 		assert.equal(resp.status, 422);
-		const body = await resp.json();
-		assert.equal(body.error.code, "gemini_authenticated_session_required");
-		assert.equal(body.error.reason, "large_context");
+		const body = errorBody(await resp.json());
+		assert.equal(body.code, "gemini_authenticated_session_required");
+		assert.equal(body.reason, "large_context");
 
 		const google = await worker.fetch(
 			new Request(
@@ -131,15 +154,12 @@ describe.sequential("application generation routing contract", () => {
 				CURRENT_INPUT_FILE_ENABLED: "true",
 				CURRENT_INPUT_FILE_MIN_BYTES: "10",
 			},
-			{},
+			executionContext,
 		);
 		assert.equal(google.status, 422);
-		const googleBody = await google.json();
-		assert.equal(
-			googleBody.error.code,
-			"gemini_authenticated_session_required",
-		);
-		assert.equal(googleBody.error.reason, "large_context");
+		const googleBody = errorBody(await google.json());
+		assert.equal(googleBody.code, "gemini_authenticated_session_required");
+		assert.equal(googleBody.reason, "large_context");
 
 		const image = await worker.fetch(
 			new Request("https://worker.example/v1/images/generations", {
@@ -148,12 +168,12 @@ describe.sequential("application generation routing contract", () => {
 				body: JSON.stringify({ prompt: "draw a square" }),
 			}),
 			{},
-			{},
+			executionContext,
 		);
 		assert.equal(image.status, 422);
-		const imageBody = await image.json();
-		assert.equal(imageBody.error.code, "gemini_authenticated_session_required");
-		assert.equal(imageBody.error.reason, "image");
+		const imageBody = errorBody(await image.json());
+		assert.equal(imageBody.code, "gemini_authenticated_session_required");
+		assert.equal(imageBody.reason, "image");
 
 		const attachment = await worker.fetch(
 			new Request("https://worker.example/v1/chat/completions", {
@@ -178,14 +198,11 @@ describe.sequential("application generation routing contract", () => {
 				}),
 			}),
 			{},
-			{},
+			executionContext,
 		);
 		assert.equal(attachment.status, 422);
-		const attachmentBody = await attachment.json();
-		assert.equal(
-			attachmentBody.error.code,
-			"gemini_authenticated_session_required",
-		);
-		assert.equal(attachmentBody.error.reason, "attachment");
+		const attachmentBody = errorBody(await attachment.json());
+		assert.equal(attachmentBody.code, "gemini_authenticated_session_required");
+		assert.equal(attachmentBody.reason, "attachment");
 	});
 });

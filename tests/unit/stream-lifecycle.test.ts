@@ -1,6 +1,7 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { CompletionProvider } from "../../src/completion/ports";
 import {
+	type CompletionStreamEvent,
 	createCompletionStreamLifecycle,
 	createSieveLoopContext,
 	recordCompletionStreamEvent,
@@ -9,16 +10,44 @@ import {
 	streamToolSieveCompletionEvents,
 } from "../../src/completion/stream-events";
 import { tokenCountFromCounts } from "../../src/promptcompat/token-accounting";
+import { type ErrorWithMetadata, isRecord } from "../../src/shared/types";
+import type { ToolChoicePolicy } from "../../src/toolcall/policy-openai";
 import { toolSieveBufferedText } from "../../src/toolcall/sieve";
-import { assert } from "./assertions.js";
 import { chunks } from "./_support/async-stream.js";
+import { assert } from "./assertions.js";
+import { resolvedModel, strictProvider } from "./http/_support/provider.js";
 
-async function collectEvents(iterable) {
-	const events = [];
+function required<T>(value: T | null | undefined, message: string): T {
+	if (value === null || value === undefined) throw new Error(message);
+	return value;
+}
+
+function errorMessage(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	if (isRecord(error) && typeof error.message === "string")
+		return error.message;
+	return String(error);
+}
+
+function firstTextEvent(
+	events: readonly CompletionStreamEvent[],
+): Extract<CompletionStreamEvent, { type: "text_delta" }> {
+	const event = events.find(
+		(
+			candidate,
+		): candidate is Extract<CompletionStreamEvent, { type: "text_delta" }> =>
+			candidate.type === "text_delta",
+	);
+	return required(event, "expected text delta event");
+}
+
+async function collectEvents<T>(iterable: AsyncIterable<T>): Promise<T[]> {
+	const events: T[] = [];
 	for await (const event of iterable) events.push(event);
 	return events;
 }
-function abortingAsyncIterable(error) {
+
+function abortingAsyncIterable<T>(error: unknown): AsyncIterable<T> {
 	return {
 		[Symbol.asyncIterator]() {
 			return {
@@ -29,14 +58,22 @@ function abortingAsyncIterable(error) {
 		},
 	};
 }
-function streamProvider(deltas) {
-	return {
+function streamProvider(deltas: AsyncIterable<unknown>): CompletionProvider {
+	return strictProvider({
 		streamText() {
-			return deltas;
+			return (async function* normalizeDeltas() {
+				for await (const delta of deltas) {
+					if (delta !== null && delta !== undefined) yield String(delta);
+				}
+			})();
 		},
-	};
+	});
 }
-async function consumeCompletionEvents(events, onText) {
+
+async function consumeCompletionEvents(
+	events: AsyncIterable<CompletionStreamEvent>,
+	onText: (text: string) => void,
+) {
 	const lifecycle = createCompletionStreamLifecycle();
 	let completionTokens = 0;
 	for await (const event of events) {
@@ -54,34 +91,47 @@ async function consumeCompletionEvents(events, onText) {
 		violation: lifecycle.violation,
 	};
 }
-function consumePlainTextDeltas(deltas, onText) {
+function consumePlainTextDeltas(
+	deltas: AsyncIterable<string>,
+	onText: (text: string) => void,
+) {
 	return consumeCompletionEvents(
 		streamPlainCompletionEvents(streamProvider(deltas), {
 			prompt: "test",
-			rm: { name: "gemini-3.5-flash" },
+			rm: resolvedModel(),
 			fileRefs: null,
 		}),
 		onText,
 	);
 }
-function consumeToolSieveTextDeltas(deltas, input, onText) {
+function consumeToolSieveTextDeltas(
+	deltas: AsyncIterable<string>,
+	input: {
+		tools?: unknown;
+		toolPolicy?: ToolChoicePolicy | null;
+	},
+	onText: (text: string) => void,
+) {
 	return consumeCompletionEvents(
 		streamToolSieveCompletionEvents(streamProvider(deltas), {
 			prompt: "test",
-			rm: { name: "gemini-3.5-flash" },
+			rm: resolvedModel(),
 			fileRefs: null,
 			...input,
 		}),
 		onText,
 	);
 }
-async function consumeSievedTextDeltas(deltas, onText) {
+async function consumeSievedTextDeltas(
+	deltas: AsyncIterable<string>,
+	onText: (text: string) => void,
+) {
 	const ctx = createSieveLoopContext();
 	for await (const event of streamSievedTextDeltas(
 		streamProvider(deltas),
 		{
 			prompt: "test",
-			rm: { name: "gemini-3.5-flash" },
+			rm: resolvedModel(),
 			fileRefs: null,
 		},
 		{},
@@ -92,7 +142,7 @@ async function consumeSievedTextDeltas(deltas, onText) {
 	return {
 		emittedText: ctx.emittedText,
 		streamErr: ctx.streamErr,
-		errMsg: ctx.streamErr?.message || "",
+		errMsg: ctx.streamErr ? errorMessage(ctx.streamErr) : "",
 		bufferedText: toolSieveBufferedText(ctx.state),
 	};
 }
@@ -103,33 +153,36 @@ describe("completion stream lifecycle", () => {
 		const failure = new Error("late failure");
 		const toolCalls = [
 			{
-				id: "call_1",
-				type: "function",
-				function: { name: "x", arguments: "{}" },
+				name: "x",
+				input: {},
 			},
 		];
-		for (const event of [
+		const lifecycleEvents: CompletionStreamEvent[] = [
 			{ type: "text_delta", text: "partial" },
 			{ type: "tool_calls", toolCalls },
 			{ type: "warning", error: failure, message: "late failure" },
 			{
 				type: "done",
 				emittedText: true,
-				completionCounts: { ascii: 7, nonAscii: 0, hasText: true },
+				completionCounts: { asciiChars: 7, nonASCIIChars: 0, hasText: true },
 			},
-		])
+		];
+		for (const event of lifecycleEvents)
 			recordCompletionStreamEvent(lifecycle, event);
 		assert.equal(lifecycle.emittedText, true);
-		assert.equal(lifecycle.issue.error, failure);
+		assert.equal(
+			required(lifecycle.issue, "expected lifecycle issue").error,
+			failure,
+		);
 		assert.deepEqual(lifecycle.toolCalls, toolCalls);
 		assert.deepEqual(lifecycle.completionCounts, {
-			ascii: 7,
-			nonAscii: 0,
+			asciiChars: 7,
+			nonASCIIChars: 0,
 			hasText: true,
 		});
 	});
 	test("emits plain text deltas and token counts", async () => {
-		const emitted = [];
+		const emitted: string[] = [];
 		const result = await consumePlainTextDeltas(
 			chunks(["hello", "", " world"]),
 			(text) => emitted.push(text),
@@ -140,7 +193,7 @@ describe("completion stream lifecycle", () => {
 		assert.equal(result.completionTokens > 0, true);
 	});
 	test("preserves emitted deltas when stream later errors", async () => {
-		const emitted = [];
+		const emitted: string[] = [];
 		const result = await consumePlainTextDeltas(
 			chunks(["partial"], 0),
 			(text) => emitted.push(text),
@@ -160,7 +213,7 @@ describe("completion stream lifecycle", () => {
 				streamProvider(chunks([null, emptyTextObject, "ok"])),
 				{
 					prompt: "plain prompt",
-					rm: { name: "gemini-3.5-flash" },
+					rm: resolvedModel(),
 					fileRefs: null,
 				},
 			),
@@ -169,7 +222,7 @@ describe("completion stream lifecycle", () => {
 			events.map((event) => event.type),
 			["text_delta", "done"],
 		);
-		assert.equal(events[0].text, "ok");
+		assert.equal(firstTextEvent(events).text, "ok");
 
 		const plainAbort = new Error("plain abort");
 		plainAbort.name = "AbortError";
@@ -180,7 +233,7 @@ describe("completion stream lifecycle", () => {
 						streamProvider(abortingAsyncIterable(plainAbort)),
 						{
 							prompt: "plain prompt",
-							rm: { name: "gemini-3.5-flash" },
+							rm: resolvedModel(),
 							fileRefs: null,
 						},
 					),
@@ -197,7 +250,7 @@ describe("completion stream lifecycle", () => {
 		const events = await collectEvents(
 			streamPlainCompletionEvents(streamProvider(brokenDeltas()), {
 				prompt: "plain prompt",
-				rm: { name: "gemini-3.5-flash" },
+				rm: resolvedModel(),
 				fileRefs: null,
 			}),
 		);
@@ -217,21 +270,20 @@ describe("completion stream lifecycle", () => {
 			yield "<tool_calls>";
 			throw new Error("tool stream broke");
 		}
-		const emitted = [];
+		const emitted: string[] = [];
 		const result = await consumeToolSieveTextDeltas(
 			brokenToolDeltas(),
 			{
-				tools: null,
 				toolPolicy: null,
 			},
 			(text) => emitted.push(text),
 		);
 		assert.deepEqual(emitted, ["<tool_calls>"]);
 		assert.equal(result.emittedText, true);
-		assert.equal(result.streamErr.message, "tool stream broke");
+		assert.equal(errorMessage(result.streamErr), "tool stream broke");
 		assert.equal(result.errMsg, "tool stream broke");
 
-		const toolAbort = new Error("tool abort");
+		const toolAbort: ErrorWithMetadata = new Error("tool abort");
 		toolAbort.code = "request_aborted";
 		await assert.rejects(
 			() =>
@@ -248,9 +300,8 @@ describe("completion stream lifecycle", () => {
 		const toolEvents = await collectEvents(
 			streamToolSieveCompletionEvents(streamProvider(chunks([longText])), {
 				prompt: "tool prompt",
-				rm: { name: "gemini-3.5-flash" },
+				rm: resolvedModel(),
 				fileRefs: null,
-				tools: null,
 				toolPolicy: null,
 			}),
 		);
@@ -261,7 +312,10 @@ describe("completion stream lifecycle", () => {
 				.join(""),
 			longText,
 		);
-		assert.equal(toolEvents.at(-1).type, "done");
+		assert.equal(
+			required(toolEvents.at(-1), "expected done event").type,
+			"done",
+		);
 
 		const bufferedCtx = createSieveLoopContext();
 		const bufferedEvents = await collectEvents(
@@ -269,7 +323,7 @@ describe("completion stream lifecycle", () => {
 				streamProvider(chunks([longText])),
 				{
 					prompt: "buffered prompt",
-					rm: { name: "gemini-3.5-flash" },
+					rm: resolvedModel(),
 					fileRefs: null,
 				},
 				{},
@@ -281,7 +335,8 @@ describe("completion stream lifecycle", () => {
 			["text_delta"],
 		);
 		assert.equal(
-			bufferedEvents[0].text + toolSieveBufferedText(bufferedCtx.state),
+			firstTextEvent(bufferedEvents).text +
+				toolSieveBufferedText(bufferedCtx.state),
 			longText,
 		);
 
@@ -291,7 +346,7 @@ describe("completion stream lifecycle", () => {
 				streamProvider(chunks([])),
 				{
 					prompt: "empty buffered prompt",
-					rm: { name: "gemini-3.5-flash" },
+					rm: resolvedModel(),
 					fileRefs: null,
 				},
 				{},
@@ -312,7 +367,7 @@ describe("completion stream lifecycle", () => {
 				streamProvider(chunks(splitHeldCandidate)),
 				{
 					prompt: "split buffered prompt",
-					rm: { name: "gemini-3.5-flash" },
+					rm: resolvedModel(),
 					fileRefs: null,
 				},
 				{},
@@ -326,7 +381,7 @@ describe("completion stream lifecycle", () => {
 		);
 	});
 	test("summarizes buffered tool text streams across success error and abort paths", async () => {
-		const emitted = [];
+		const emitted: string[] = [];
 		const longText = "y".repeat(100);
 		const summary = await consumeSievedTextDeltas(chunks([longText]), (text) =>
 			emitted.push(text),
@@ -335,14 +390,14 @@ describe("completion stream lifecycle", () => {
 		assert.equal(summary.streamErr, null);
 		assert.equal(emitted.join("") + summary.bufferedText, longText);
 
-		const errored = [];
+		const errored: string[] = [];
 		const errorSummary = await consumeSievedTextDeltas(
 			chunks([longText], 0),
 			(text) => errored.push(text),
 		);
 		assert.equal(errorSummary.emittedText, true);
 		assert.equal(errorSummary.errMsg, "stream broke");
-		assert.equal(errorSummary.streamErr.message, "stream broke");
+		assert.equal(errorMessage(errorSummary.streamErr), "stream broke");
 		assert.equal(errored.join("") + errorSummary.bufferedText, longText);
 
 		const splitHeldCandidate = [
@@ -364,7 +419,7 @@ describe("completion stream lifecycle", () => {
 		);
 	});
 	test("sieves DSML tool calls out of streamed text", async () => {
-		const emitted = [];
+		const emitted: string[] = [];
 		const [prefix, suffix] = [
 			'before <|DSML|tool_calls><|DSML|invoke name="Read"><|DSML|parameter name="file_path"><![CDATA[',
 			"README.md]]></|DSML|parameter></|DSML|invoke></|DSML|tool_calls>",
@@ -384,7 +439,13 @@ describe("completion stream lifecycle", () => {
 		);
 		assert.deepEqual(emitted, ["before "]);
 		assert.equal(Array.isArray(result.toolCalls), true);
-		assert.equal(result.toolCalls[0].name, "Read");
+		assert.equal(
+			required(
+				required(result.toolCalls, "expected tool calls")[0],
+				"expected first tool call",
+			).name,
+			"Read",
+		);
 		assert.equal(result.violation, null);
 	});
 	test("reports required tool choice violation for plain output", async () => {
@@ -409,6 +470,9 @@ describe("completion stream lifecycle", () => {
 			() => {},
 		);
 		assert.equal(result.toolCalls, null);
-		assert.equal(result.violation.code, "tool_choice_violation");
+		assert.equal(
+			required(result.violation, "expected policy violation").code,
+			"tool_choice_violation",
+		);
 	});
 });

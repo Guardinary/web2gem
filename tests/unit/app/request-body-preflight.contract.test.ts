@@ -1,10 +1,13 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { ApplicationExecutionContext } from "../../../src/app";
 import worker from "../../../src/index";
-import { assert } from "../assertions.js";
+import { isRecord } from "../../../src/shared/types";
 import { withFetch } from "../_support/globals.js";
+import { assert } from "../assertions.js";
 
-async function withNoUpstream(run) {
+const executionContext: ApplicationExecutionContext = { waitUntil() {} };
+
+async function withNoUpstream<T>(run: () => T | PromiseLike<T>): Promise<T> {
 	let upstreamCalls = 0;
 	const result = await withFetch(async () => {
 		upstreamCalls += 1;
@@ -30,11 +33,13 @@ describe("application request-body preflight contract", () => {
 					CURRENT_INPUT_FILE_MIN_BYTES: "1",
 					GENERIC_FILE_UPLOAD_MAX_BYTES: "0",
 				},
-				{},
+				executionContext,
 			),
 		);
 		assert.equal(resp.status, 422);
 		const body = await resp.json();
+		if (!isRecord(body) || !isRecord(body.error))
+			throw new Error("expected error body");
 		assert.equal(body.error.code, "gemini_authenticated_session_required");
 		assert.equal(body.error.reason, "large_context");
 		assert.match(body.error.message, /authenticated Gemini session/);

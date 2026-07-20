@@ -1,7 +1,9 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { ApplicationExecutionContext } from "../../../../src/app";
 import worker from "../../../../src/index";
 import { assert } from "../../assertions.js";
+
+const execution: ApplicationExecutionContext = { waitUntil() {} };
 
 describe("admin WebUI HTTP contract", () => {
 	test("serves the simplified admin UI without D1 reads or removed controls", async () => {
@@ -18,7 +20,7 @@ describe("admin WebUI HTTP contract", () => {
 		const response = await worker.fetch(
 			new Request("https://worker.example/admin"),
 			env,
-			{},
+			execution,
 		);
 		assert.equal(response.status, 200);
 		assert.equal(prepareCalls, 0);
@@ -65,7 +67,7 @@ describe("admin WebUI HTTP contract", () => {
 					},
 				},
 			},
-			{},
+			execution,
 		);
 
 		assert.equal(response.status, 404);

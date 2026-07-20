@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { afterEach, describe, test, vi } from "vitest";
 import { createDeltaCoalescer } from "../../../../src/http/stream/coalescer";
 import { assert } from "../../assertions.js";
@@ -9,8 +8,14 @@ describe.sequential("createDeltaCoalescer", () => {
 		vi.useRealTimers();
 	});
 	test("coalesces stream deltas by field and flush threshold", async () => {
-		const frames = [];
-		const coalescer = createDeltaCoalescer((delta) => frames.push(delta), 5, 0);
+		const frames: Array<Record<string, string>> = [];
+		const coalescer = createDeltaCoalescer(
+			(delta) => {
+				frames.push(delta);
+			},
+			5,
+			0,
+		);
 		await coalescer.append("content", "hi");
 		assert.deepEqual(frames, []);
 		await coalescer.append("content", "!");
@@ -22,9 +27,11 @@ describe.sequential("createDeltaCoalescer", () => {
 		assert.deepEqual(frames, [{ content: "hi!" }, { tool_calls: "xyzabc" }]);
 	});
 	test("can emit the first stream delta immediately before throttling", async () => {
-		const frames = [];
+		const frames: Array<Record<string, string>> = [];
 		const coalescer = createDeltaCoalescer(
-			(delta) => frames.push(delta),
+			(delta) => {
+				frames.push(delta);
+			},
 			5,
 			0,
 			{ emitFirstImmediately: true },
@@ -38,7 +45,7 @@ describe.sequential("createDeltaCoalescer", () => {
 	});
 	test("flushes buffered stream deltas after the coalescing timer", async () => {
 		vi.useFakeTimers();
-		const frames = [];
+		const frames: Array<Record<string, string>> = [];
 		const coalescer = createDeltaCoalescer(
 			async (delta) => {
 				frames.push(delta);
@@ -53,9 +60,11 @@ describe.sequential("createDeltaCoalescer", () => {
 		await coalescer.flush();
 	});
 	test("coalesces stream deltas after unknown input normalization", async () => {
-		const frames = [];
+		const frames: Array<Record<string, string>> = [];
 		const coalescer = createDeltaCoalescer(
-			(delta) => frames.push(delta),
+			(delta) => {
+				frames.push(delta);
+			},
 			16,
 			0,
 		);

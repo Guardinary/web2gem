@@ -1,9 +1,9 @@
-// @ts-nocheck
-import { strictProvider } from "../_support/provider.js";
 import { describe, test } from "vitest";
+import { createRuntimeConfig, getConfig } from "../../../../src/config";
 import { handleGoogleGenerate } from "../../../../src/http/google/handlers";
 import { parseGoogleGenerationPath } from "../../../../src/http/google/model-path";
 import { assert } from "../../assertions.js";
+import { strictProvider } from "../_support/provider.js";
 
 describe("Google model path", () => {
 	test("parses the final Google generation action without truncating model IDs", async () => {
@@ -45,33 +45,30 @@ describe("Google model path", () => {
 		let resolvedName = "";
 		const provider = strictProvider({
 			async resolveModel(name) {
-				resolvedName = name;
+				const modelName = String(name);
+				resolvedName = modelName;
 				return {
-					name,
+					name: modelName,
 					family: null,
 					extended: false,
-					dynamicProviderId: name,
+					dynamicProviderId: modelName,
 				};
 			},
 			async generateText() {
 				return "done";
 			},
 		});
+		const route = parseGoogleGenerationPath(
+			"/v1beta/models/future:model:generateContent",
+		);
+		if (!route) throw new Error("expected generation route");
 		const response = await handleGoogleGenerate(
 			{
 				contents: [{ role: "user", parts: [{ text: "plain request" }] }],
 			},
-			{
-				default_model: "gemini-3.5-flash",
-				current_input_file_enabled: false,
-				current_input_file_min_bytes: 1000000,
-				current_input_file_name: "message.txt",
-				current_tools_file_name: "tools.txt",
-				cookie: "",
-				log_requests: false,
-			},
+			createRuntimeConfig(getConfig()),
 			provider,
-			parseGoogleGenerationPath("/v1beta/models/future:model:generateContent"),
+			route,
 		);
 		assert.equal(response.status, 200);
 		assert.equal(resolvedName, "future:model");

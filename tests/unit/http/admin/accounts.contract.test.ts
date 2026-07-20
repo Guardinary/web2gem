@@ -1,20 +1,24 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import {
+	createRuntimeConfig,
+	getConfig,
+	type WorkerEnv,
+} from "../../../../src/config";
 import { handleGeminiAccountAdminRequest } from "../../../../src/http/admin/gemini-accounts";
+import { isRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 
-const cfg = { ...baseConfig(), admin_key: "admin-secret" };
+const cfg = createRuntimeConfig(getConfig({ ADMIN_KEY: "admin-secret" }));
 
 function failOnD1() {
 	return {
-		prepare(sql) {
+		prepare(sql: string) {
 			throw new Error(`unexpected D1 access: ${sql}`);
 		},
 	};
 }
 
-function request(path, init = {}, env = {}) {
+function request(path: string, init: RequestInit = {}, env: WorkerEnv = {}) {
 	const url = new URL(`https://worker.example${path}`);
 	return handleGeminiAccountAdminRequest(
 		new Request(url, {
@@ -30,6 +34,12 @@ function request(path, init = {}, env = {}) {
 	);
 }
 
+function errorCode(value: unknown): unknown {
+	if (!isRecord(value) || !isRecord(value.error))
+		throw new Error("expected error body");
+	return value.error.code;
+}
+
 describe("Gemini account admin HTTP contract", () => {
 	test("rejects an unauthorized request before D1 access", async () => {
 		const url = new URL("https://worker.example/admin/accounts");
@@ -40,14 +50,14 @@ describe("Gemini account admin HTTP contract", () => {
 			url,
 		);
 		assert.equal(response.status, 401);
-		assert.equal((await response.json()).error.code, "invalid_admin_key");
+		assert.equal(errorCode(await response.json()), "invalid_admin_key");
 	});
 
 	test("returns 404 for retired stats and account-check routes without D1 access", async () => {
 		for (const path of ["/admin/accounts/stats", "/admin/accounts/a/check"]) {
 			const response = await request(path, {}, { GEMINI_DB: failOnD1() });
 			assert.equal(response.status, 404);
-			assert.equal((await response.json()).error.code, "admin_route_not_found");
+			assert.equal(errorCode(await response.json()), "admin_route_not_found");
 		}
 	});
 
@@ -70,7 +80,7 @@ describe("Gemini account admin HTTP contract", () => {
 		const list = await request("/admin/accounts");
 		assert.equal(list.status, 503);
 		assert.equal(
-			(await list.json()).error.code,
+			errorCode(await list.json()),
 			"gemini_account_store_unavailable",
 		);
 
@@ -84,7 +94,7 @@ describe("Gemini account admin HTTP contract", () => {
 		});
 		assert.equal(create.status, 503);
 		assert.equal(
-			(await create.json()).error.code,
+			errorCode(await create.json()),
 			"gemini_account_store_unavailable",
 		);
 	});
@@ -97,13 +107,13 @@ describe("Gemini account admin HTTP contract", () => {
 		});
 		assert.equal(response.status, 503);
 		assert.equal(
-			(await response.json()).error.code,
+			errorCode(await response.json()),
 			"gemini_account_store_unavailable",
 		);
 	});
 
 	test("recognizes update, delete, and refresh resource commands", async () => {
-		for (const [path, init] of [
+		const cases = [
 			[
 				"/admin/accounts/a",
 				{
@@ -114,11 +124,12 @@ describe("Gemini account admin HTTP contract", () => {
 			],
 			["/admin/accounts/a", { method: "DELETE" }],
 			["/admin/accounts/a/refresh", { method: "POST" }],
-		]) {
+		] satisfies readonly (readonly [string, RequestInit])[];
+		for (const [path, init] of cases) {
 			const response = await request(path, init);
 			assert.equal(response.status, 503);
 			assert.equal(
-				(await response.json()).error.code,
+				errorCode(await response.json()),
 				"gemini_account_store_unavailable",
 			);
 		}
@@ -135,7 +146,7 @@ describe("Gemini account admin HTTP contract", () => {
 			{ GEMINI_DB: failOnD1() },
 		);
 		assert.equal(response.status, 400);
-		assert.equal((await response.json()).error.code, "invalid_admin_json");
+		assert.equal(errorCode(await response.json()), "invalid_admin_json");
 	});
 
 	test("rejects a delete body and an unknown resource action before D1 access", async () => {
@@ -146,7 +157,7 @@ describe("Gemini account admin HTTP contract", () => {
 		);
 		assert.equal(deleteBody.status, 400);
 		assert.equal(
-			(await deleteBody.json()).error.code,
+			errorCode(await deleteBody.json()),
 			"admin_request_body_not_allowed",
 		);
 
@@ -156,6 +167,6 @@ describe("Gemini account admin HTTP contract", () => {
 			{ GEMINI_DB: failOnD1() },
 		);
 		assert.equal(unknown.status, 404);
-		assert.equal((await unknown.json()).error.code, "admin_route_not_found");
+		assert.equal(errorCode(await unknown.json()), "admin_route_not_found");
 	});
 });
