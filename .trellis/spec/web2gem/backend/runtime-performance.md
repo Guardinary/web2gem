@@ -845,6 +845,10 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - `/app` page tokens and content-push `push_id` caches must include account identity or cookie hash when `gemini_account` is present. Build-label cache remains origin-scoped.
 - Raw cookies, `SNlM0e`, `at`, `SAPISID`, session tokens, SQL bind values, and D1 API tokens must not appear in cache keys, log fields, or public error messages.
 - Successful `/app` token bootstrap updates only the account-scoped page/push-token caches. It must not write page tokens or push IDs into D1 or outbound Cookie headers.
+- `createOriginScopedStringCache.setCached` must isolate a synchronous
+  `execution_ctx.waitUntil` registration failure from the fresh value. The
+  background write promise remains self-guarded; non-Worker callers still await
+  that guarded promise.
 - Content-push upload may send selected `Push-ID`, but must not send Gemini `Cookie` or SAPISID-derived `Authorization` to `content-push.googleapis.com`.
 
 ### 4. Validation & Error Matrix
@@ -872,6 +876,9 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - Anonymous abort or stream error after a non-empty delta -> no account lease.
 - Upload then generation -> one lease acquisition, same account config in both calls, one success, one release.
 - `/app` page token fetch for account A then account B -> distinct cache keys; tokens cannot cross accounts.
+- Fresh build-label or push-ID fetch plus synchronous `waitUntil` throw -> return
+  the fresh value and log registration failure; do not convert it into an
+  upstream/cache error.
 - Account stream yields a first delta -> no success marked yet; stream completion -> success and release.
 - Account stream throws after partial output -> failure and release; no alternate-account retry after visible output.
 - Account stream consumer calls `return()` after a delta -> nested stream closes,
@@ -906,6 +913,8 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
   skips that continuation.
 - Bad: calling `AccountPoolService.acquireLease` while parsing JSON, checking public API keys, listing models, or serving health checks.
 - Bad: keying page tokens or push IDs by raw cookie header.
+- Bad: call `execution_ctx.waitUntil(write)` without guarding its synchronous
+  registration path.
 - Bad: releasing the lease immediately after successful upload and selecting another account for generation.
 - Bad: await `markSuccess()` inside the generation `try` with an unguarded
   rejection; a persistence failure then enters the upstream failure branch.
@@ -933,6 +942,9 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - Cache tests proving account-scoped page-token and push-id isolation.
 - Upload tests proving content-push requests omit Cookie and Authorization.
 - Runtime/cache tests proving page tokens and push IDs are account-scoped, never written to D1, and never added to outbound Cookie headers.
+- Runtime/cache tests proving synchronous background registration failure does
+  not replace a successful fresh value, while asynchronous write rejection is
+  still logged.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm check:static`, `pnpm unit`, and `pnpm smoke`.
 
 ### 7. Wrong vs Correct
