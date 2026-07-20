@@ -154,7 +154,7 @@ async function runGoogleGeneration(
 	const text = generated.text;
 
 	const finalized = finalizeGoogleCompletionResult(text, {
-		tools,
+		tools: streamMode.type === "tool_sieve" ? streamMode.tools : tools,
 		toolPolicy,
 		hasTools,
 	});

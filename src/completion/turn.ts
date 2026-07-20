@@ -128,7 +128,10 @@ export function finalizeGoogleCompletionResult(
 			},
 		};
 	}
-	if (options.hasTools && source) {
+	const inspectTools =
+		options.hasTools ||
+		(options.toolPolicy?.mode === "none" && options.tools !== null);
+	if (inspectTools && source) {
 		const [clean, fcs] = parseGoogleFunctionCalls(source, options.tools);
 		const violation = validateGoogleToolPolicyCalls(options.toolPolicy, fcs);
 		if (violation) return { error: violationError(violation) };

@@ -120,6 +120,7 @@ export function reduceResponsesSequence<T>(
 	const values: T[] = [];
 	let pendingReasoning = "";
 	let fallbackParts: string[] = [];
+	let fallbackHasImmediatePart = false;
 	const flushReasoning = () => {
 		if (!pendingReasoning) return;
 		values.push(options.createReasoning(pendingReasoning));
@@ -130,14 +131,19 @@ export function reduceResponsesSequence<T>(
 		flushReasoning();
 		values.push(options.createFallback(fallbackParts.join("\n")));
 		fallbackParts = [];
+		fallbackHasImmediatePart = false;
 	};
 	for (const event of events) {
 		if (event.kind === "reasoning") {
+			if (fallbackHasImmediatePart) flushFallback();
 			pendingReasoning = appendResponsesReasoning(pendingReasoning, event.text);
 			continue;
 		}
 		if (event.kind === "fallback" || event.kind === "fallback-deferred") {
-			if (event.kind === "fallback") flushReasoning();
+			if (event.kind === "fallback") {
+				flushReasoning();
+				fallbackHasImmediatePart = true;
+			}
 			fallbackParts.push(event.text);
 			continue;
 		}
