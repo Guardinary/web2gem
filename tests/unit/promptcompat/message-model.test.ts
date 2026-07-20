@@ -1,46 +1,18 @@
 import { describe, test } from "vitest";
 import {
-	type FilePart,
 	flattenText,
 	historyContentText,
-	type ImagePart,
-	type InternalMessage,
 	parseMessageContent,
 	parseOpenAIMessages,
 	rawRecordReasoningText,
-	type TextPart,
 } from "../../../src/promptcompat/message-model";
 import { assert } from "../assertions.js";
-
-function messageAt(
-	messages: readonly InternalMessage[],
-	index: number,
-): InternalMessage {
-	const message = messages[index];
-	if (!message) throw new TypeError(`expected message at index ${index}`);
-	return message;
-}
-
-function textPartAt(message: InternalMessage, index: number): TextPart {
-	const part = message.parts[index];
-	if (part?.kind !== "text")
-		throw new TypeError(`expected text part at index ${index}`);
-	return part;
-}
-
-function imagePartAt(message: InternalMessage, index: number): ImagePart {
-	const part = message.parts[index];
-	if (part?.kind !== "image")
-		throw new TypeError(`expected image part at index ${index}`);
-	return part;
-}
-
-function filePartAt(message: InternalMessage, index: number): FilePart {
-	const part = message.parts[index];
-	if (part?.kind !== "file")
-		throw new TypeError(`expected file part at index ${index}`);
-	return part;
-}
+import {
+	filePartAt,
+	imagePartAt,
+	messageAt,
+	textPartAt,
+} from "./_support/message-parts.js";
 
 describe("prompt compatibility", () => {
 	test("keeps recognized singleton content parts equivalent to arrays", () => {
