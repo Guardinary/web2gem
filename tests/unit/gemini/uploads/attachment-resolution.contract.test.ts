@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, test } from "vitest";
 import { createAttachmentPlan } from "../../../../src/attachments/plan";
 import { resolveAttachments } from "../../../../src/gemini/uploads/execute";
-import { assert } from "../../assertions.js";
 import { deferred } from "../../_support/deferred.js";
 import { withConsoleLog, withFetch } from "../../_support/globals.js";
+import { assert } from "../../assertions.js";
 import {
 	assertMultipartRequest,
 	baseUploadConfig,
+	createUploadFetchRouter,
 	multipartRequestText,
 	resetUploadState,
-	type UploadRequestInit,
 } from "./_support/upload-fixtures.js";
 
 describe("AttachmentPlan to Gemini resolution", () => {
@@ -142,18 +142,9 @@ describe("AttachmentPlan to Gemini resolution", () => {
 			],
 		});
 
-		await withFetch(
-			async (
-				url: RequestInfo | URL,
-				init: UploadRequestInit = { headers: {} },
-			) => {
-				const href = String(url);
-				if (href === "https://gemini.example/app") {
-					return new Response('{"qKIAYe":"push-mixed"}', { status: 200 });
-				}
-				if (href !== "https://content-push.googleapis.com/upload") {
-					throw new Error(`unexpected fetch ${href}`);
-				}
+		const router = createUploadFetchRouter({
+			app: () => new Response('{"qKIAYe":"push-mixed"}', { status: 200 }),
+			async contentPush(init) {
 				assert.equal(init.headers["Push-ID"], "push-mixed");
 				const text = await multipartRequestText(init);
 				if (text.includes('filename="photo.jpg"')) {
@@ -178,39 +169,40 @@ describe("AttachmentPlan to Gemini resolution", () => {
 				}
 				throw new Error(`unexpected multipart body ${text}`);
 			},
-			async () => {
-				const operation = resolveAttachments(
-					baseUploadConfig({ cookie: "__Secure-1PSID=psid" }),
-					plan,
-				);
-				await fastUploadsStarted.promise;
-				releaseImage.resolve();
-				const result = await operation;
-				assert.deepEqual(result.fileRefs, [
-					{ ref: "/uploaded/photo", name: "photo.jpg" },
-					{ ref: "/uploaded/main", name: "main.py" },
-					{ ref: "/uploaded/pdf", name: "file-1.pdf" },
-				]);
-				assert.deepEqual(result.imageFileRefs, [
-					{ ref: "/uploaded/photo", name: "photo.jpg" },
-				]);
-				assert.deepEqual(result.genericFileRefs, [
-					{ ref: "/uploaded/main", name: "main.py" },
-					{ ref: "/uploaded/pdf", name: "file-1.pdf" },
-				]);
-				assert.equal(result.supportsFileRefs, true);
-				assert.deepEqual(result.usage, {
-					uploadedFiles: 3,
-					dedupedFiles: 0,
-					uploadedBytes: 23,
-					fileRefBytes: 23,
-					inlinedFiles: 0,
-					inlinedBytes: 0,
-					droppedFiles: 0,
-					multipartUploads: 3,
-				});
-			},
-		);
+		});
+
+		await withFetch(router.fetch, async () => {
+			const operation = resolveAttachments(
+				baseUploadConfig({ cookie: "__Secure-1PSID=psid" }),
+				plan,
+			);
+			await fastUploadsStarted.promise;
+			releaseImage.resolve();
+			const result = await operation;
+			assert.deepEqual(result.fileRefs, [
+				{ ref: "/uploaded/photo", name: "photo.jpg" },
+				{ ref: "/uploaded/main", name: "main.py" },
+				{ ref: "/uploaded/pdf", name: "file-1.pdf" },
+			]);
+			assert.deepEqual(result.imageFileRefs, [
+				{ ref: "/uploaded/photo", name: "photo.jpg" },
+			]);
+			assert.deepEqual(result.genericFileRefs, [
+				{ ref: "/uploaded/main", name: "main.py" },
+				{ ref: "/uploaded/pdf", name: "file-1.pdf" },
+			]);
+			assert.equal(result.supportsFileRefs, true);
+			assert.deepEqual(result.usage, {
+				uploadedFiles: 3,
+				dedupedFiles: 0,
+				uploadedBytes: 23,
+				fileRefBytes: 23,
+				inlinedFiles: 0,
+				inlinedBytes: 0,
+				droppedFiles: 0,
+				multipartUploads: 3,
+			});
+		});
 	});
 
 	test("deduplicates an identical candidate while its upload is pending", async () => {
@@ -253,18 +245,9 @@ describe("AttachmentPlan to Gemini resolution", () => {
 		});
 
 		try {
-			await withFetch(
-				async (
-					url: RequestInfo | URL,
-					init: UploadRequestInit = { headers: {} },
-				) => {
-					const href = String(url);
-					if (href === "https://gemini.example/app") {
-						return new Response('{"qKIAYe":"push-dedupe"}', { status: 200 });
-					}
-					if (href !== "https://content-push.googleapis.com/upload") {
-						throw new Error(`unexpected fetch ${href}`);
-					}
+			const router = createUploadFetchRouter({
+				app: () => new Response('{"qKIAYe":"push-dedupe"}', { status: 200 }),
+				async contentPush(init) {
 					uploadCalls += 1;
 					await assertMultipartRequest(init, {
 						filename: "a.txt",
@@ -275,25 +258,25 @@ describe("AttachmentPlan to Gemini resolution", () => {
 					await releaseFirstUpload.promise;
 					return new Response("/uploaded/plain-a", { status: 200 });
 				},
-				async () => {
-					const operation = resolveAttachments(
-						baseUploadConfig({ cookie: "__Secure-1PSID=psid" }),
-						plan,
-					);
-					await firstUploadStarted.promise;
-					allowDuplicateDigest.resolve();
-					await duplicateContinued.promise;
-					releaseFirstUpload.resolve();
-					const result = await operation;
-					assert.deepEqual(result.fileRefs, [
-						{ ref: "/uploaded/plain-a", name: "a.txt" },
-						{ ref: "/uploaded/plain-a", name: "a.txt" },
-					]);
-					assert.equal(result.usage.uploadedFiles, 1);
-					assert.equal(result.usage.dedupedFiles, 1);
-					assert.equal(result.usage.multipartUploads, 1);
-				},
-			);
+			});
+			await withFetch(router.fetch, async () => {
+				const operation = resolveAttachments(
+					baseUploadConfig({ cookie: "__Secure-1PSID=psid" }),
+					plan,
+				);
+				await firstUploadStarted.promise;
+				allowDuplicateDigest.resolve();
+				await duplicateContinued.promise;
+				releaseFirstUpload.resolve();
+				const result = await operation;
+				assert.deepEqual(result.fileRefs, [
+					{ ref: "/uploaded/plain-a", name: "a.txt" },
+					{ ref: "/uploaded/plain-a", name: "a.txt" },
+				]);
+				assert.equal(result.usage.uploadedFiles, 1);
+				assert.equal(result.usage.dedupedFiles, 1);
+				assert.equal(result.usage.multipartUploads, 1);
+			});
 		} finally {
 			if (originalDigestDescriptor) {
 				Object.defineProperty(
@@ -318,18 +301,9 @@ describe("AttachmentPlan to Gemini resolution", () => {
 			],
 		});
 
-		await withFetch(
-			async (
-				url: RequestInfo | URL,
-				init: UploadRequestInit = { headers: {} },
-			) => {
-				const href = String(url);
-				if (href === "https://gemini.example/app") {
-					return new Response('{"qKIAYe":"push-identity"}', { status: 200 });
-				}
-				if (href !== "https://content-push.googleapis.com/upload") {
-					throw new Error(`unexpected fetch ${href}`);
-				}
+		const router = createUploadFetchRouter({
+			app: () => new Response('{"qKIAYe":"push-identity"}', { status: 200 }),
+			async contentPush(init) {
 				const text = await multipartRequestText(init);
 				uploadBodies.push(text);
 				if (text.includes("Content-Type: text/csv")) {
@@ -340,21 +314,22 @@ describe("AttachmentPlan to Gemini resolution", () => {
 				}
 				return new Response("/uploaded/plain-a", { status: 200 });
 			},
-			async () => {
-				const result = await resolveAttachments(
-					baseUploadConfig({ cookie: "__Secure-1PSID=psid" }),
-					plan,
-				);
-				assert.deepEqual(result.fileRefs, [
-					{ ref: "/uploaded/plain-a", name: "a.txt" },
-					{ ref: "/uploaded/csv-a", name: "a.txt" },
-					{ ref: "/uploaded/plain-b", name: "b.txt" },
-				]);
-				assert.equal(result.usage.uploadedFiles, 3);
-				assert.equal(result.usage.dedupedFiles, 0);
-				assert.equal(result.usage.multipartUploads, 3);
-			},
-		);
+		});
+
+		await withFetch(router.fetch, async () => {
+			const result = await resolveAttachments(
+				baseUploadConfig({ cookie: "__Secure-1PSID=psid" }),
+				plan,
+			);
+			assert.deepEqual(result.fileRefs, [
+				{ ref: "/uploaded/plain-a", name: "a.txt" },
+				{ ref: "/uploaded/csv-a", name: "a.txt" },
+				{ ref: "/uploaded/plain-b", name: "b.txt" },
+			]);
+			assert.equal(result.usage.uploadedFiles, 3);
+			assert.equal(result.usage.dedupedFiles, 0);
+			assert.equal(result.usage.multipartUploads, 3);
+		});
 		assert.equal(uploadBodies.length, 3);
 	});
 
@@ -391,44 +366,33 @@ describe("AttachmentPlan to Gemini resolution", () => {
 	});
 
 	test("degrades invalid multipart refs without auth fallback", async () => {
-		const requests: string[] = [];
 		const plan = createAttachmentPlan({
 			files: [{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" }],
 		});
-		await withFetch(
-			async (
-				url: RequestInfo | URL,
-				init: UploadRequestInit = { headers: {} },
-			) => {
-				const href = String(url);
-				requests.push(href);
-				if (href === "https://gemini.example/app") {
-					return new Response('{"qKIAYe":"push-invalid-ref"}', { status: 200 });
-				}
-				if (href === "https://content-push.googleapis.com/upload") {
-					await assertMultipartRequest(init, {
-						filename: "note.txt",
-						mime: "text/plain",
-						bodyText: "hello",
-					});
-					return new Response("not-a-content-push-ref", { status: 200 });
-				}
-				throw new Error(`unexpected fetch ${href}`);
+		const router = createUploadFetchRouter({
+			app: () => new Response('{"qKIAYe":"push-invalid-ref"}', { status: 200 }),
+			async contentPush(init) {
+				await assertMultipartRequest(init, {
+					filename: "note.txt",
+					mime: "text/plain",
+					bodyText: "hello",
+				});
+				return new Response("not-a-content-push-ref", { status: 200 });
 			},
-			async () => {
-				const result = await resolveAttachments(
-					baseUploadConfig({
-						cookie: "__Secure-1PSID=psid; SAPISID=sapi",
-						sapisid: "sapi",
-					}),
-					plan,
-				);
-				assert.equal(result.fileRefs, null);
-				assert.match(result.droppedNote, /attachment upload failed/);
-				assert.equal(result.usage.droppedFiles, 1);
-			},
-		);
-		assert.deepEqual(requests, [
+		});
+		await withFetch(router.fetch, async () => {
+			const result = await resolveAttachments(
+				baseUploadConfig({
+					cookie: "__Secure-1PSID=psid; SAPISID=sapi",
+					sapisid: "sapi",
+				}),
+				plan,
+			);
+			assert.equal(result.fileRefs, null);
+			assert.match(result.droppedNote, /attachment upload failed/);
+			assert.equal(result.usage.droppedFiles, 1);
+		});
+		assert.deepEqual(router.requests, [
 			"https://gemini.example/app",
 			"https://content-push.googleapis.com/upload",
 		]);
@@ -442,32 +406,24 @@ describe("AttachmentPlan to Gemini resolution", () => {
 				{ b64: "aGVsbG8=", mime: "text/plain", filename: "secret-name.txt" },
 			],
 		});
+		const router = createUploadFetchRouter({
+			app: () => new Response('{"qKIAYe":"push-log"}', { status: 200 }),
+			contentPush: () => new Response("/uploaded/log-ref", { status: 200 }),
+		});
 		await withConsoleLog(
 			(line: unknown) => logs.push(String(line)),
 			() =>
-				withFetch(
-					async (url: RequestInfo | URL) => {
-						const href = String(url);
-						if (href === "https://gemini.example/app") {
-							return new Response('{"qKIAYe":"push-log"}', { status: 200 });
-						}
-						if (href === "https://content-push.googleapis.com/upload") {
-							return new Response("/uploaded/log-ref", { status: 200 });
-						}
-						throw new Error(`unexpected fetch ${href}`);
-					},
-					async () => {
-						const result = await resolveAttachments(
-							baseUploadConfig({
-								cookie: "__Secure-1PSID=psid-secret",
-								log_requests: true,
-							}),
-							plan,
-						);
-						assert.equal(result.usage.uploadedFiles, 1);
-						assert.equal(result.usage.dedupedFiles, 1);
-					},
-				),
+				withFetch(router.fetch, async () => {
+					const result = await resolveAttachments(
+						baseUploadConfig({
+							cookie: "__Secure-1PSID=psid-secret",
+							log_requests: true,
+						}),
+						plan,
+					);
+					assert.equal(result.usage.uploadedFiles, 1);
+					assert.equal(result.usage.dedupedFiles, 1);
+				}),
 		);
 		const stageLog =
 			logs.find((line) => line.includes("stage=attachment_upload")) || "";
@@ -489,45 +445,34 @@ describe("AttachmentPlan to Gemini resolution", () => {
 				{ b64: "aGVsbG8=", mime: "text/plain", filename: "fallback.txt" },
 			],
 		});
+		const router = createUploadFetchRouter({
+			app: () => new Response('{"qKIAYe":"push-log-failure"}', { status: 200 }),
+			async contentPush(init) {
+				await assertMultipartRequest(init, {
+					filename: "fallback.txt",
+					mime: "text/plain",
+					bodyText: "hello",
+				});
+				return new Response("upstream unavailable", { status: 500 });
+			},
+		});
 		await withConsoleLog(
 			(line: unknown) => logs.push(String(line)),
 			() =>
-				withFetch(
-					async (
-						url: RequestInfo | URL,
-						init: UploadRequestInit = { headers: {} },
-					) => {
-						const href = String(url);
-						if (href === "https://gemini.example/app") {
-							return new Response('{"qKIAYe":"push-log-failure"}', {
-								status: 200,
-							});
-						}
-						if (href === "https://content-push.googleapis.com/upload") {
-							await assertMultipartRequest(init, {
-								filename: "fallback.txt",
-								mime: "text/plain",
-								bodyText: "hello",
-							});
-							return new Response("upstream unavailable", { status: 500 });
-						}
-						throw new Error(`unexpected fetch ${href}`);
-					},
-					async () => {
-						const result = await resolveAttachments(
-							baseUploadConfig({
-								cookie: "__Secure-1PSID=psid",
-								log_requests: true,
-							}),
-							plan,
-						);
-						assert.equal(result.fileRefs, null);
-						assert.match(result.droppedNote, /attachment upload failed/);
-						assert.equal(result.usage.uploadedFiles, 0);
-						assert.equal(result.usage.multipartUploads, 0);
-						assert.equal(result.usage.droppedFiles, 1);
-					},
-				),
+				withFetch(router.fetch, async () => {
+					const result = await resolveAttachments(
+						baseUploadConfig({
+							cookie: "__Secure-1PSID=psid",
+							log_requests: true,
+						}),
+						plan,
+					);
+					assert.equal(result.fileRefs, null);
+					assert.match(result.droppedNote, /attachment upload failed/);
+					assert.equal(result.usage.uploadedFiles, 0);
+					assert.equal(result.usage.multipartUploads, 0);
+					assert.equal(result.usage.droppedFiles, 1);
+				}),
 		);
 		const stageLog =
 			logs.find((line) => line.includes("stage=attachment_upload")) || "";

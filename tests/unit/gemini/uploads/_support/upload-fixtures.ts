@@ -1,10 +1,10 @@
-import { resetActiveGeminiCookieForTest } from "../../../../../src/gemini/cookies";
-import { resetGeminiUploadCachesForTest } from "../../../../../src/gemini/uploads/tokens";
 import {
 	createRuntimeConfig,
 	getConfig,
 	type RuntimeConfig,
 } from "../../../../../src/config";
+import { resetActiveGeminiCookieForTest } from "../../../../../src/gemini/cookies";
+import { resetGeminiUploadCachesForTest } from "../../../../../src/gemini/uploads/tokens";
 import { assert } from "../../../assertions.js";
 
 export type UploadRequestInit = RequestInit & {
@@ -15,6 +15,16 @@ type ExpectedMultipartRequest = {
 	filename: string;
 	mime: string;
 	bodyText?: string;
+};
+type PushIdCacheWriter = {
+	put(request: Request, response: Response): Promise<void>;
+};
+type UploadRouteHandler = (
+	init: UploadRequestInit,
+) => Response | Promise<Response>;
+type UploadFetchHandlers = {
+	app?: UploadRouteHandler;
+	contentPush?: UploadRouteHandler;
 };
 
 export function baseUploadConfig(
@@ -49,6 +59,57 @@ export function accountUploadConfig(
 export function resetUploadState() {
 	resetActiveGeminiCookieForTest();
 	resetGeminiUploadCachesForTest();
+}
+
+export function pushIdCacheRequest(cfg: RuntimeConfig): Request {
+	const origin = (cfg.gemini_origin || "https://gemini.google.com").replace(
+		/\/$/,
+		"",
+	);
+	const account = cfg.gemini_account;
+	const scope = account
+		? `${origin}\x00account:${account.accountId || ""}\x00cookie:${account.cookieHash || ""}`
+		: origin;
+	return new Request(
+		`https://internal-cache/gemini-push-id/${encodeURIComponent(scope)}`,
+	);
+}
+
+export async function seedCachedPushId(
+	cache: PushIdCacheWriter,
+	cfg: RuntimeConfig,
+	pushId: string,
+	createdAtMs = Date.now(),
+): Promise<void> {
+	await cache.put(
+		pushIdCacheRequest(cfg),
+		new Response(
+			JSON.stringify({ push_id: pushId, created_at_ms: createdAtMs }),
+		),
+	);
+}
+
+export function createUploadFetchRouter(handlers: UploadFetchHandlers): {
+	requests: string[];
+	fetch: (
+		url: RequestInfo | URL,
+		init?: UploadRequestInit,
+	) => Promise<Response>;
+} {
+	const requests: string[] = [];
+	return {
+		requests,
+		async fetch(url, init = { headers: {} }) {
+			const href = String(url);
+			requests.push(href);
+			let handler: UploadRouteHandler | undefined;
+			if (href === "https://gemini.example/app") handler = handlers.app;
+			else if (href === "https://content-push.googleapis.com/upload")
+				handler = handlers.contentPush;
+			if (!handler) throw new Error(`unexpected fetch ${href}`);
+			return handler(init);
+		},
+	};
 }
 
 export async function assertMultipartRequest(

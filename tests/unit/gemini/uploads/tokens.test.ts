@@ -13,38 +13,11 @@ import {
 	accountUploadConfig,
 	baseUploadConfig,
 	resetUploadState,
+	seedCachedPushId,
 } from "./_support/upload-fixtures.js";
 
 type MemoryCache = ReturnType<typeof createMemoryCache>;
 type FetchInit = RequestInit & { headers: Record<string, string> };
-
-function pushIdCacheRequest(cfg: RuntimeConfig): Request {
-	const origin = (cfg.gemini_origin || "https://gemini.google.com").replace(
-		/\/$/,
-		"",
-	);
-	const account = cfg.gemini_account;
-	const scope = account
-		? `${origin}\x00account:${account.accountId || ""}\x00cookie:${account.cookieHash || ""}`
-		: origin;
-	return new Request(
-		`https://internal-cache/gemini-push-id/${encodeURIComponent(scope)}`,
-	);
-}
-
-async function seedCachedPushId(
-	cache: MemoryCache,
-	cfg: RuntimeConfig,
-	pushId: string,
-	createdAtMs: number = Date.now(),
-): Promise<void> {
-	await cache.put(
-		pushIdCacheRequest(cfg),
-		new Response(
-			JSON.stringify({ push_id: pushId, created_at_ms: createdAtMs }),
-		),
-	);
-}
 
 function recordingMemoryCache(): {
 	requestUrls: string[];
