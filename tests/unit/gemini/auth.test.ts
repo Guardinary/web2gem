@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { _sapisidHashCache, makeSapisidHash } from "../../../src/gemini/auth";
 import { assert } from "../assertions.js";
@@ -18,7 +17,7 @@ describe("Gemini SAPISID authorization", () => {
 				"crypto",
 				{
 					subtle: {
-						async digest(algorithm, data) {
+						async digest(algorithm: AlgorithmIdentifier, data: BufferSource) {
 							digestCalls++;
 							assert.equal(algorithm, "SHA-1");
 							digestInput = new TextDecoder().decode(data);

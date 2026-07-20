@@ -1,13 +1,16 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { RuntimeConfig } from "../../../src/config";
 import { createOriginScopedStringCache } from "../../../src/gemini/cache";
 import { withConsoleLog, withPatchedGlobal } from "../_support/globals.js";
 import { assert } from "../assertions.js";
 import { createMemoryCache, withCaches } from "./_support/cache.js";
+import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
 
 const CACHE_PREFIX = "https://internal-cache/test-metadata/";
 
-function createMetadataCache(overrides = {}) {
+type MetadataCacheOptions = Parameters<typeof createOriginScopedStringCache>[0];
+
+function createMetadataCache(overrides: Partial<MetadataCacheOptions> = {}) {
 	return createOriginScopedStringCache({
 		cachePrefix: CACHE_PREFIX,
 		ttlSec: 60,
@@ -17,26 +20,33 @@ function createMetadataCache(overrides = {}) {
 	});
 }
 
-function cacheConfig(overrides = {}) {
-	return {
+function cacheConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
+	return baseGeminiClientConfig({
 		gemini_origin: "https://gemini.example/",
 		log_requests: false,
 		...overrides,
-	};
+	});
 }
 
-function accountConfig(accountId, cookieHash, overrides = {}) {
+function accountConfig(
+	accountId: string,
+	cookieHash: string,
+	overrides: Partial<RuntimeConfig> = {},
+): RuntimeConfig {
 	return cacheConfig({
 		gemini_account: { accountId, cookieHash },
 		...overrides,
 	});
 }
 
-function cacheRequest(scope) {
+function cacheRequest(scope: string): Request {
 	return new Request(`${CACHE_PREFIX}${encodeURIComponent(scope)}`);
 }
 
-async function withNow(initialNow, run) {
+async function withNow<T>(
+	initialNow: number,
+	run: (setNow: (nextNow: number) => void) => T | PromiseLike<T>,
+): Promise<T> {
 	const originalNow = Date.now;
 	let now = initialNow;
 	Date.now = () => now;
@@ -51,12 +61,12 @@ async function withNow(initialNow, run) {
 
 describe("origin-scoped string cache", () => {
 	test("uses origin and account context in cache URLs", async () => {
-		const writes = [];
+		const writes: string[] = [];
 		const workerCache = {
 			async match() {
 				return undefined;
 			},
-			async put(request, response) {
+			async put(request: Request, response: Response) {
 				writes.push(request.url);
 				await response.arrayBuffer();
 			},
@@ -137,12 +147,17 @@ describe("origin-scoped string cache", () => {
 	});
 
 	test("writes the exact cache URL payload and freshness headers", async () => {
-		const writes = [];
+		const writes: Array<{
+			url: string;
+			cacheControl: string | null;
+			contentType: string | null;
+			payload: unknown;
+		}> = [];
 		const workerCache = {
 			async match() {
 				return undefined;
 			},
-			async put(request, response) {
+			async put(request: Request, response: Response) {
 				writes.push({
 					url: request.url,
 					cacheControl: response.headers.get("cache-control"),
@@ -172,12 +187,12 @@ describe("origin-scoped string cache", () => {
 	test("registers cache writes with executionContext.waitUntil", async () => {
 		const workerCache = createMemoryCache();
 		const metadata = createMetadataCache();
-		const pending = [];
+		const pending: Promise<unknown>[] = [];
 		await withCaches(workerCache, async () => {
 			await metadata.setCached(
 				cacheConfig({
 					execution_ctx: {
-						waitUntil(promise) {
+						waitUntil(promise: Promise<unknown>) {
 							pending.push(promise);
 						},
 					},
@@ -253,10 +268,10 @@ describe("origin-scoped string cache", () => {
 		};
 		const metadata = createMetadataCache();
 		const cfg = cacheConfig({ log_requests: true });
-		const logs = [];
+		const logs: string[] = [];
 		await withCaches(rejectingCache, async () => {
 			await withConsoleLog(
-				(line) => logs.push(String(line)),
+				(line: unknown) => logs.push(String(line)),
 				async () => {
 					assert.equal(await metadata.getCached(cfg), "");
 					await metadata.setCached(cfg, "value");
@@ -276,14 +291,13 @@ describe("origin-scoped string cache", () => {
 		const accountA = accountConfig("a", "ha");
 		const accountB = accountConfig("b", "hb");
 		let calls = 0;
-		let release;
-		const gate = new Promise((resolve) => {
-			release = resolve;
-		});
-		const fetchFresh = async (cfg) => {
+		const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+		const fetchFresh = async (cfg: RuntimeConfig) => {
 			calls += 1;
 			await gate;
-			return `fresh-${cfg.gemini_account.accountId}`;
+			const account = cfg.gemini_account;
+			if (!account) throw new Error("expected account-scoped config");
+			return `fresh-${account.accountId}`;
 		};
 
 		const firstA = metadata.getFresh(accountA, fetchFresh);
@@ -326,7 +340,7 @@ describe("origin-scoped string cache", () => {
 		const cfg = cacheConfig();
 		await withCaches(workerCache, async () => {
 			for (const value of ["", "   ", null, undefined, 123])
-				await metadata.setCached(cfg, value);
+				await Reflect.apply(metadata.setCached, metadata, [cfg, value]);
 			assert.equal(workerCache.stats.put, 0);
 			metadata.reset();
 			assert.equal(await metadata.getCached(cfg), "");
@@ -339,7 +353,13 @@ describe("origin-scoped string cache", () => {
 		const cfg = cacheConfig();
 		await withCaches(workerCache, async () => {
 			for (const value of ["", "   ", null, undefined, 123]) {
-				assert.equal(await metadata.getFresh(cfg, async () => value), "");
+				assert.equal(
+					await Reflect.apply(metadata.getFresh, metadata, [
+						cfg,
+						async () => value,
+					]),
+					"",
+				);
 			}
 		});
 		assert.equal(workerCache.stats.put, 0);

@@ -1,16 +1,43 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { createAttachmentPlan } from "../../../src/attachments/plan";
-import { UploadReplayState } from "../../../src/gemini/upload-replay";
-import { assert } from "../assertions.js";
+import type {
+	AttachmentFileRef,
+	AttachmentUploadResult,
+} from "../../../src/attachments/types";
+import type { CompletionTextInput } from "../../../src/completion/ports";
+import type { RuntimeConfig } from "../../../src/config";
+import {
+	type GeminiUploadDelegates,
+	UploadReplayState,
+} from "../../../src/gemini/upload-replay";
 import { deferred } from "../_support/deferred.js";
+import { assert } from "../assertions.js";
 import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
 
-function attachmentResult(refs) {
-	return { fileRefs: refs };
+function attachmentResult(refs: AttachmentFileRef[]): AttachmentUploadResult {
+	return {
+		fileRefs: refs,
+		imageFileRefs: null,
+		genericFileRefs: refs,
+		promptText: "",
+		droppedNote: "",
+		supportsFileRefs: true,
+		usage: {
+			uploadedFiles: refs.length,
+			dedupedFiles: 0,
+			uploadedBytes: 0,
+			fileRefBytes: 0,
+			inlinedFiles: 0,
+			inlinedBytes: 0,
+			droppedFiles: 0,
+			multipartUploads: 0,
+		},
+	};
 }
 
-function failFastDelegates(overrides = {}) {
+function failFastDelegates(
+	overrides: Partial<GeminiUploadDelegates> = {},
+): GeminiUploadDelegates {
 	return {
 		async resolveAttachments() {
 			throw new Error("unexpected resolveAttachments call");
@@ -22,13 +49,40 @@ function failFastDelegates(overrides = {}) {
 	};
 }
 
-async function captureError(run) {
+async function captureError(
+	run: () => unknown | PromiseLike<unknown>,
+): Promise<unknown> {
 	try {
 		await run();
 	} catch (error) {
 		return error;
 	}
 	throw new Error("expected rejection");
+}
+
+function completionInput(fileRefs: AttachmentFileRef[]): CompletionTextInput {
+	return {
+		prompt: "prompt",
+		rm: {
+			name: "model",
+			family: null,
+			extended: false,
+			dynamicProviderId: "model",
+		},
+		fileRefs,
+	};
+}
+
+function accountConfig(accountId: string): RuntimeConfig {
+	return baseGeminiClientConfig({
+		gemini_account: { accountId, cookieHash: `hash-${accountId}` },
+	});
+}
+
+type ReplayError = Error & { code?: unknown; status?: unknown };
+
+function isReplayError(error: unknown): error is ReplayError {
+	return error instanceof Error;
 }
 
 describe("Gemini upload replay state", () => {
@@ -39,11 +93,7 @@ describe("Gemini upload replay state", () => {
 		});
 		const initialRef = { ref: "/attachment/a", name: "a.txt" };
 		state.recordAttachments(plan, attachmentResult([initialRef]));
-		const input = {
-			prompt: "prompt",
-			rm: { name: "model" },
-			fileRefs: [initialRef],
-		};
+		const input = completionInput([initialRef]);
 		const remapped = state.remapInput(input);
 		assert.equal(remapped === input, false);
 		assert.equal(remapped.fileRefs === input.fileRefs, false);
@@ -60,20 +110,24 @@ describe("Gemini upload replay state", () => {
 	});
 
 	test("replays recipes in order and carries aliases across A to B to C", async () => {
-		const calls = [];
+		const calls: unknown[][] = [];
 		const state = new UploadReplayState(
 			failFastDelegates({
 				async resolveAttachments(activeCfg, activePlan) {
-					const accountId = activeCfg.gemini_account.accountId;
+					const account = activeCfg.gemini_account;
+					if (!account) throw new Error("expected account config");
+					const accountId = account.accountId;
 					calls.push(["attachments", accountId, activePlan]);
 					return attachmentResult([
 						{ ref: `/attachment/${accountId}`, name: "file.txt" },
 					]);
 				},
 				async uploadTextFile(activeCfg, text, filename) {
-					const accountId = activeCfg.gemini_account.accountId;
+					const account = activeCfg.gemini_account;
+					if (!account) throw new Error("expected account config");
+					const accountId = account.accountId;
 					calls.push(["text", accountId, text, filename]);
-					return { ref: `/text/${accountId}`, name: filename };
+					return { ref: `/text/${accountId}`, name: String(filename) };
 				},
 			}),
 		);
@@ -88,25 +142,17 @@ describe("Gemini upload replay state", () => {
 			ref: "/text/a",
 			name: "context.txt",
 		});
-		const input = {
-			prompt: "prompt",
-			rm: { name: "model" },
-			fileRefs: [
-				{ ref: "/attachment/a", name: "file.txt" },
-				{ ref: "/text/a", name: "context.txt" },
-			],
-		};
+		const input = completionInput([
+			{ ref: "/attachment/a", name: "file.txt" },
+			{ ref: "/text/a", name: "context.txt" },
+		]);
 
-		await state.replay(
-			baseGeminiClientConfig({ gemini_account: { accountId: "b" } }),
-		);
+		await state.replay(accountConfig("b"));
 		assert.deepEqual(state.remapInput(input).fileRefs, [
 			{ ref: "/attachment/b", name: "file.txt" },
 			{ ref: "/text/b", name: "context.txt" },
 		]);
-		await state.replay(
-			baseGeminiClientConfig({ gemini_account: { accountId: "c" } }),
-		);
+		await state.replay(accountConfig("c"));
 		assert.deepEqual(state.remapInput(input).fileRefs, [
 			{ ref: "/attachment/c", name: "file.txt" },
 			{ ref: "/text/c", name: "context.txt" },
@@ -124,7 +170,7 @@ describe("Gemini upload replay state", () => {
 	});
 
 	test("rejects replacement ref-count changes before later recipes", async () => {
-		const calls = [];
+		const calls: string[] = [];
 		const state = new UploadReplayState(
 			failFastDelegates({
 				async resolveAttachments() {
@@ -146,11 +192,8 @@ describe("Gemini upload replay state", () => {
 			ref: "/text/a",
 			name: "context.txt",
 		});
-		const error = await captureError(() =>
-			state.replay(
-				baseGeminiClientConfig({ gemini_account: { accountId: "b" } }),
-			),
-		);
+		const error = await captureError(() => state.replay(accountConfig("b")));
+		if (!isReplayError(error)) throw new Error("expected replay error");
 		assert.equal(error.code, "gemini_upload_replay_failed");
 		assert.equal(error.status, 502);
 		assert.match(error.message, /reference count changed/);
@@ -170,18 +213,15 @@ describe("Gemini upload replay state", () => {
 			plan,
 			attachmentResult([{ ref: "/attachment/a", name: "file.txt" }]),
 		);
-		const error = await captureError(() =>
-			state.replay(
-				baseGeminiClientConfig({ gemini_account: { accountId: "b" } }),
-			),
-		);
+		const error = await captureError(() => state.replay(accountConfig("b")));
+		if (!isReplayError(error)) throw new Error("expected replay error");
 		assert.equal(error.code, "gemini_upload_replay_failed");
 		assert.match(error.message, /reference is invalid/);
 	});
 
 	test("serializes operations and recovers the queue after rejection", async () => {
 		const state = new UploadReplayState(failFastDelegates());
-		const events = [];
+		const events: string[] = [];
 		const firstStarted = deferred();
 		const releaseFirst = deferred();
 		const first = state.serialize(async () => {
@@ -217,13 +257,11 @@ describe("Gemini upload replay state", () => {
 		const plan = createAttachmentPlan();
 		const ref = { ref: "/attachment/a", name: "file.txt" };
 		state.recordAttachments(plan, attachmentResult([ref]));
-		const input = { prompt: "prompt", rm: { name: "model" }, fileRefs: [ref] };
+		const input = completionInput([ref]);
 		assert.equal(state.hasOpaqueRefs(input), false);
 		state.reset();
 		assert.equal(state.hasOpaqueRefs(input), true);
-		await state.replay(
-			baseGeminiClientConfig({ gemini_account: { accountId: "b" } }),
-		);
+		await state.replay(accountConfig("b"));
 		assert.equal(replayCalls, 0);
 	});
 });

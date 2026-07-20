@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { afterEach, beforeEach, describe, test } from "vitest";
+import type { RuntimeConfig } from "../../../src/config";
 import {
 	configWithActiveGeminiCookie,
 	mergeSetCookieHeaders,
@@ -14,6 +14,12 @@ import {
 } from "../../../src/gemini/uploads/tokens";
 import { withFetch } from "../_support/globals.js";
 import { assert } from "../assertions.js";
+import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
+
+type CookieFetchInit = RequestInit & { headers: Record<string, string> };
+function cookieConfig(overrides: Partial<RuntimeConfig>): RuntimeConfig {
+	return baseGeminiClientConfig(overrides);
+}
 
 describe("Gemini cookies", () => {
 	beforeEach(resetActiveGeminiCookieForTest);
@@ -43,10 +49,10 @@ describe("Gemini cookies", () => {
 		);
 	});
 	test("derives active Gemini cookie config without mutating input", () => {
-		const cfg = {
+		const cfg = cookieConfig({
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old; SAPISID=sapi",
 			sapisid: "",
-		};
+		});
 		const active = configWithActiveGeminiCookie(cfg);
 		assert.equal(
 			active.cookie,
@@ -56,14 +62,16 @@ describe("Gemini cookies", () => {
 		assert.equal(cfg.sapisid, "");
 	});
 	test("observes Set-Cookie only from successful managed-account responses", () => {
-		const observed = [];
-		const cfg = {
+		const observed: string[][] = [];
+		const cfg = baseGeminiClientConfig({
 			gemini_account: {
-				observeSetCookie(values) {
+				accountId: "cookie-test",
+				cookieHash: "cookie-hash",
+				observeSetCookie(values: readonly string[]) {
 					observed.push([...values]);
 				},
 			},
-		};
+		});
 		observeGeminiAccountResponseCookies(
 			cfg,
 			new Response("", {
@@ -82,15 +90,15 @@ describe("Gemini cookies", () => {
 	});
 	test("rotates Gemini cookie with safe RotateCookies headers", async () => {
 		let calls = 0;
-		const cfg = {
+		const cfg = cookieConfig({
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old; SAPISID=sapi",
 			sapisid: "",
 			request_timeout_sec: 180,
 			upstream_socket: false,
 			log_requests: false,
-		};
+		});
 		await withFetch(
-			async (url, init) => {
+			async (url: RequestInfo | URL, init: CookieFetchInit) => {
 				calls += 1;
 				assert.equal(String(url), "https://accounts.google.com/RotateCookies");
 				assert.equal(init.method, "POST");
@@ -106,6 +114,7 @@ describe("Gemini cookies", () => {
 			},
 			async () => {
 				const rotated = await rotateGeminiCookieForRetryWithReason(cfg);
+				if (!rotated.config) throw new Error("expected rotated config");
 				assert.equal(calls, 1);
 				assert.equal(
 					rotated.config.cookie,
@@ -116,15 +125,15 @@ describe("Gemini cookies", () => {
 		);
 	});
 	test("debounces failed cookie rotation after upstream rejection", async () => {
-		const cfg = {
+		const cfg = cookieConfig({
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old",
 			sapisid: "",
 			request_timeout_sec: 180,
 			upstream_socket: false,
 			log_requests: false,
-		};
+		});
 		await withFetch(
-			async (url, init) => {
+			async (url: RequestInfo | URL, init: CookieFetchInit) => {
 				assert.equal(String(url), "https://accounts.google.com/RotateCookies");
 				assert.equal(init.method, "POST");
 				return new Response("", { status: 401 });
@@ -141,15 +150,15 @@ describe("Gemini cookies", () => {
 		);
 	});
 	test("rejects cookie rotation when no updated cookie returns", async () => {
-		const cfg = {
+		const cfg = cookieConfig({
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old",
 			sapisid: "",
 			request_timeout_sec: 180,
 			upstream_socket: false,
 			log_requests: false,
-		};
+		});
 		await withFetch(
-			async (url, init) => {
+			async (url: RequestInfo | URL, init: CookieFetchInit) => {
 				assert.equal(String(url), "https://accounts.google.com/RotateCookies");
 				assert.equal(init.method, "POST");
 				return new Response("", { status: 200 });
@@ -164,19 +173,16 @@ describe("Gemini cookies", () => {
 	});
 	test("coalesces concurrent cookie rotation requests", async () => {
 		let calls = 0;
-		let release;
-		const gate = new Promise((resolve) => {
-			release = resolve;
-		});
-		const cfg = {
+		const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+		const cfg = cookieConfig({
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old",
 			sapisid: "",
 			request_timeout_sec: 180,
 			upstream_socket: false,
 			log_requests: false,
-		};
+		});
 		await withFetch(
-			async (url, init) => {
+			async (url: RequestInfo | URL, init: CookieFetchInit) => {
 				calls += 1;
 				assert.equal(String(url), "https://accounts.google.com/RotateCookies");
 				assert.equal(init.method, "POST");
@@ -191,28 +197,31 @@ describe("Gemini cookies", () => {
 				const second = rotateGeminiCookieForRetryWithReason(cfg);
 				release();
 				const results = await Promise.all([first, second]);
+				const [firstResult, secondResult] = results;
+				if (!firstResult?.config || !secondResult?.config)
+					throw new Error("expected coalesced rotated configs");
 				assert.equal(calls, 1);
 				assert.equal(
-					results[0].config.cookie,
+					firstResult.config.cookie,
 					"__Secure-1PSID=psid; __Secure-1PSIDTS=new",
 				);
 				assert.equal(
-					results[1].config.cookie,
+					secondResult.config.cookie,
 					"__Secure-1PSID=psid; __Secure-1PSIDTS=new",
 				);
 			},
 		);
 	});
 	test("reports rejected cookie rotation reason and upstream status", async () => {
-		const cfg = {
+		const cfg = cookieConfig({
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old",
 			sapisid: "",
 			request_timeout_sec: 180,
 			upstream_socket: false,
 			log_requests: false,
-		};
+		});
 		await withFetch(
-			async (url, init) => {
+			async (url: RequestInfo | URL, init: CookieFetchInit) => {
 				assert.equal(String(url), "https://accounts.google.com/RotateCookies");
 				assert.equal(init.method, "POST");
 				return new Response("", { status: 403 });
@@ -228,22 +237,24 @@ describe("Gemini cookies", () => {
 	test("invalidates page token cache after cookie rotation", async () => {
 		resetGeminiUploadCachesForTest();
 		try {
-			const cfg = {
+			const cfg = cookieConfig({
 				gemini_origin: "https://gemini.example",
 				cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old; SAPISID=sapi",
 				sapisid: "",
 				request_timeout_sec: 180,
 				upstream_socket: false,
 				log_requests: false,
-			};
-			const pageCookies = [];
+			});
+			const pageCookies: string[] = [];
 			let appCalls = 0;
 			await withFetch(
-				async (url, init) => {
+				async (url: RequestInfo | URL, init: CookieFetchInit) => {
 					const href = String(url);
 					if (href === "https://gemini.example/app") {
 						appCalls += 1;
-						pageCookies.push(init.headers.Cookie);
+						const cookie = init.headers.Cookie;
+						if (!cookie) throw new Error("expected Cookie header");
+						pageCookies.push(cookie);
 						return new Response(`{"SNlM0e":"at-${appCalls}"}`, { status: 200 });
 					}
 					if (href === "https://accounts.google.com/RotateCookies") {
@@ -258,6 +269,7 @@ describe("Gemini cookies", () => {
 					const first = await getPageTokens(cfg);
 					assert.equal(first.at, "at-1");
 					const rotated = await rotateGeminiCookieForRetryWithReason(cfg);
+					if (!rotated.config) throw new Error("expected rotated config");
 					assert.equal(
 						rotated.config.cookie,
 						"__Secure-1PSID=psid; __Secure-1PSIDTS=new; SAPISID=sapi",
@@ -276,11 +288,13 @@ describe("Gemini cookies", () => {
 		}
 	});
 	test("deduplicates repeated active cookie names", () => {
-		const active = configWithActiveGeminiCookie({
-			cookie:
-				"__Secure-1PSID=psid; __Secure-1PSIDTS=old; __Secure-1PSIDTS=new; SAPISID=sapi",
-			sapisid: "",
-		});
+		const active = configWithActiveGeminiCookie(
+			cookieConfig({
+				cookie:
+					"__Secure-1PSID=psid; __Secure-1PSIDTS=old; __Secure-1PSIDTS=new; SAPISID=sapi",
+				sapisid: "",
+			}),
+		);
 		assert.equal(
 			active.cookie,
 			"__Secure-1PSID=psid; __Secure-1PSIDTS=new; SAPISID=sapi",

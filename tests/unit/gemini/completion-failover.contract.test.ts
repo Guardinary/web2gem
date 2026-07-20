@@ -1,11 +1,53 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { CompletionProvider } from "../../../src/completion/ports";
+import type { RuntimeConfig } from "../../../src/config";
+import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease-types";
+import { AccountPoolService } from "../../../src/gemini/accounts/pool";
+import type { GeminiRouteTuple } from "../../../src/gemini/accounts/route-types";
 import { basicRouteForFamily } from "../../../src/gemini/accounts/routes";
-import { createGeminiCompletionProvider } from "../../../src/gemini/completion-provider";
+import { GeminiAccountRuntime } from "../../../src/gemini/accounts/runtime";
+import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/runtime-types";
+import {
+	createGeminiCompletionProvider,
+	type GeminiCompletionProviderOptions,
+} from "../../../src/gemini/completion-provider";
+import type { ResolvedModelOk } from "../../../src/models";
 import { assert } from "../assertions.js";
 import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
+import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
 
-function flashModel() {
+type ClientOverrides = NonNullable<GeminiCompletionProviderOptions["client"]>;
+type UploadOverrides = NonNullable<GeminiCompletionProviderOptions["uploads"]>;
+type LifecycleEvent = [string, ...unknown[]];
+type TestProvider = CompletionProvider &
+	Required<Pick<CompletionProvider, "generateRich">>;
+
+function requireAccount(config: RuntimeConfig) {
+	const account = config.gemini_account;
+	if (!account) throw new Error("expected Gemini account context");
+	return account;
+}
+
+function requireItem<T>(items: readonly T[], index = 0): T {
+	const item = items[index];
+	if (item === undefined) throw new Error(`expected item at index ${index}`);
+	return item;
+}
+
+function requireKey<T>(record: Readonly<Record<string, T>>, key: string): T {
+	const value = record[key];
+	if (value === undefined) throw new Error(`expected record key ${key}`);
+	return value;
+}
+
+function errorRecord(value: unknown): Record<string, unknown> {
+	if (!value || typeof value !== "object") {
+		throw new Error("expected an error object");
+	}
+	return value as Record<string, unknown>;
+}
+
+function flashModel(): ResolvedModelOk {
 	return {
 		name: "gemini-3.5-flash",
 		family: "flash",
@@ -14,7 +56,7 @@ function flashModel() {
 	};
 }
 
-function proModel() {
+function proModel(): ResolvedModelOk {
 	return {
 		name: "gemini-3.1-pro",
 		family: "pro",
@@ -23,18 +65,17 @@ function proModel() {
 	};
 }
 
-function accountConfig(accountId) {
+function accountConfig(accountId: string): RuntimeConfig {
 	return baseGeminiClientConfig({
 		cookie: `__Secure-1PSID=psid-${accountId}`,
 		gemini_account: {
 			accountId,
-			rowId: `row-${accountId}`,
 			cookieHash: `hash-${accountId}`,
 		},
 	});
 }
 
-function proRoutes() {
+function proRoutes(): [GeminiRouteTuple, GeminiRouteTuple] {
 	return [
 		basicRouteForFamily("pro"),
 		{
@@ -46,7 +87,9 @@ function proRoutes() {
 	];
 }
 
-function failFastClient(overrides = {}) {
+function failFastClient(
+	overrides: Partial<ClientOverrides> = {},
+): ClientOverrides {
 	return {
 		async generate() {
 			throw new Error("unexpected client.generate call");
@@ -61,7 +104,7 @@ function failFastClient(overrides = {}) {
 	};
 }
 
-function failFastUploads() {
+function failFastUploads(): UploadOverrides {
 	return {
 		async resolveAttachments() {
 			throw new Error("unexpected uploads.resolveAttachments call");
@@ -72,26 +115,25 @@ function failFastUploads() {
 	};
 }
 
-function failoverLease(accountId, selectedRoute, events, overrides = {}) {
+function failoverLease(
+	accountId: string,
+	selectedRoute: GeminiRouteTuple | null,
+	events: LifecycleEvent[],
+): GeminiAccountLease {
 	const config = accountConfig(accountId);
 	let released = false;
 	return {
 		accountId,
-		rowId: config.gemini_account.rowId,
-		selectedCookieHash: config.gemini_account.cookieHash,
 		selectedRoute,
 		modelCapability: null,
 		config,
-		async recordPageState() {
-			throw new Error("unexpected lease.recordPageState call");
-		},
 		async refreshForRetry() {
 			throw new Error("unexpected lease.refreshForRetry call");
 		},
 		async markSuccess() {
 			events.push(["markSuccess", accountId]);
 		},
-		async markFailure(error) {
+		async markFailure(error: unknown) {
 			events.push(["markFailure", accountId, error]);
 		},
 		async flushObservedCookies() {
@@ -105,50 +147,82 @@ function failoverLease(accountId, selectedRoute, events, overrides = {}) {
 			released = true;
 			events.push(["release", accountId]);
 		},
-		...overrides,
 	};
 }
 
-function scriptedRuntime(leases, routes) {
+type AcquisitionRecord = {
+	base: RuntimeConfig;
+	excludeAccountIds: string[];
+	routeRequirement: GeminiAccountAcquireOptions["routeRequirement"];
+	capabilityMode: GeminiAccountAcquireOptions["capabilityMode"];
+	capabilityFreshAfterMs: GeminiAccountAcquireOptions["capabilityFreshAfterMs"];
+};
+
+function scriptedRuntime(
+	leases: GeminiAccountLease[],
+	routes: GeminiRouteTuple[],
+): GeminiAccountRuntime & {
+	records: {
+		route: [ResolvedModelOk, number][];
+		acquire: AcquisitionRecord[];
+	};
+} {
 	const pending = [...leases];
-	const records = { route: [], acquire: [] };
-	return {
-		records,
-		async resolveModel() {
-			throw new Error("unexpected runtime.resolveModel call");
-		},
-		async routeCandidatesForModel(model, freshAfterMs) {
-			records.route.push([model, freshAfterMs]);
-			return routes;
-		},
-		async acquireLease(base, options) {
-			records.acquire.push({
-				base,
-				excludeAccountIds: [...(options.excludeAccountIds || [])],
-				routeRequirement: options.routeRequirement,
-				capabilityMode: options.capabilityMode,
-				capabilityFreshAfterMs: options.capabilityFreshAfterMs,
-			});
-			if (!pending.length)
-				throw new Error("unexpected extra account acquisition");
-			return pending.shift();
-		},
+	const records: {
+		route: [ResolvedModelOk, number][];
+		acquire: AcquisitionRecord[];
+	} = { route: [], acquire: [] };
+	const runtime = new GeminiAccountRuntime(
+		new AccountPoolService(createRuntimeStore([]), {
+			async rotateCookie() {
+				throw new Error("unexpected cookie rotation");
+			},
+		}),
+	);
+	runtime.routeCandidatesForModel = async (
+		model: ResolvedModelOk,
+		freshAfterMs: number,
+	) => {
+		records.route.push([model, freshAfterMs]);
+		return routes;
 	};
+	runtime.acquireLease = async (
+		base: RuntimeConfig,
+		options: GeminiAccountAcquireOptions = {},
+	) => {
+		records.acquire.push({
+			base,
+			excludeAccountIds: [...(options.excludeAccountIds || [])],
+			routeRequirement: options.routeRequirement,
+			capabilityMode: options.capabilityMode,
+			capabilityFreshAfterMs: options.capabilityFreshAfterMs,
+		});
+		if (!pending.length)
+			throw new Error("unexpected extra account acquisition");
+		return pending.shift() ?? null;
+	};
+	return Object.assign(runtime, { records });
 }
 
-function createTestProvider(cfg, options) {
-	return createGeminiCompletionProvider(cfg, {
-		accountRuntime: options.accountRuntime,
+function createTestProvider(
+	cfg: RuntimeConfig,
+	options: GeminiCompletionProviderOptions,
+): TestProvider {
+	const provider = createGeminiCompletionProvider(cfg, {
+		...options,
 		client: failFastClient(options.client),
 		uploads: failFastUploads(),
 	});
+	const { generateRich } = provider;
+	if (!generateRich) throw new Error("expected rich generation support");
+	return Object.assign(provider, { generateRich });
 }
 
-function rateLimitError(accountId) {
+function rateLimitError(accountId: string) {
 	return Object.assign(new Error(`rate limited ${accountId}`), { status: 429 });
 }
 
-function semanticError(code) {
+function semanticError(code: number) {
 	return Object.assign(new Error(`Gemini semantic ${code}`), {
 		code: "gemini_semantic_error",
 		geminiSource: "stream_generate",
@@ -160,7 +234,9 @@ function requestScopedError(message = "model invalid for this request") {
 	return Object.assign(new Error(message), { code: "invalid_model" });
 }
 
-async function captureError(run) {
+async function captureError(
+	run: () => unknown | PromiseLike<unknown>,
+): Promise<unknown> {
 	try {
 		await run();
 	} catch (error) {
@@ -169,15 +245,24 @@ async function captureError(run) {
 	throw new Error("expected rejection");
 }
 
-function modelHeaderProviderId(headers) {
-	return JSON.parse(headers["x-goog-ext-525001261-jspb"])[4];
+function modelHeaderProviderId(
+	headers: Record<string, string> | null | undefined,
+): string {
+	if (!headers) throw new Error("expected Gemini model headers");
+	const encoded = headers["x-goog-ext-525001261-jspb"];
+	if (!encoded) throw new Error("expected Gemini model header");
+	const payload: unknown = JSON.parse(encoded);
+	if (!Array.isArray(payload) || typeof payload[4] !== "string") {
+		throw new Error("expected provider model id in Gemini model header");
+	}
+	return payload[4];
 }
 
 describe("Gemini account failover", () => {
 	test("treats a missing dynamic selected route as terminal", async () => {
 		const cfg = baseGeminiClientConfig();
-		const events = [];
-		const dynamicRoute = {
+		const events: LifecycleEvent[] = [];
+		const dynamicRoute: GeminiRouteTuple = {
 			providerModelId: "abcdef0123456789",
 			capacity: 3,
 			capacityField: 13,
@@ -191,17 +276,19 @@ describe("Gemini account failover", () => {
 			accountRuntime: runtime,
 			client: {},
 		});
-		const error = await captureError(() =>
-			provider.generateText({
-				prompt: "dynamic",
-				rm: {
-					name: "future-model",
-					family: null,
-					extended: false,
-					dynamicProviderId: "abcdef0123456789",
-				},
-				fileRefs: null,
-			}),
+		const error = errorRecord(
+			await captureError(() =>
+				provider.generateText({
+					prompt: "dynamic",
+					rm: {
+						name: "future-model",
+						family: null,
+						extended: false,
+						dynamicProviderId: "abcdef0123456789",
+					},
+					fileRefs: null,
+				}),
+			),
 		);
 		assert.equal(error.code, "gemini_route_not_selected");
 		assert.equal(error.status, 502);
@@ -211,12 +298,12 @@ describe("Gemini account failover", () => {
 			events.map((event) => event[0]),
 			["markFailure", "release"],
 		);
-		assert.equal(events[0][2], error);
+		assert.equal(requireItem(events)[2], error);
 	});
 	test("fails over text to an excluded account and recomputes its selected route", async () => {
 		const cfg = baseGeminiClientConfig();
 		const routes = proRoutes();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const runtime = scriptedRuntime(
 			[
 				failoverLease("a", routes[0], events),
@@ -225,7 +312,7 @@ describe("Gemini account failover", () => {
 			routes,
 		);
 		const firstError = rateLimitError("a");
-		const calls = [];
+		const calls: unknown[][] = [];
 		const provider = createTestProvider(cfg, {
 			accountRuntime: runtime,
 			client: {
@@ -237,7 +324,7 @@ describe("Gemini account failover", () => {
 					_refs,
 					headers,
 				) {
-					const accountId = activeCfg.gemini_account.accountId;
+					const accountId = requireAccount(activeCfg).accountId;
 					calls.push([accountId, modelNumber, modelHeaderProviderId(headers)]);
 					if (accountId === "a") throw firstError;
 					return "alternate result";
@@ -260,7 +347,7 @@ describe("Gemini account failover", () => {
 			runtime.records.acquire.map((item) => item.excludeAccountIds),
 			[[], ["a"]],
 		);
-		assert.equal(events[0][2], firstError);
+		assert.equal(requireItem(events)[2], firstError);
 		assert.deepEqual(
 			events.map((event) => event.slice(0, 2)),
 			[
@@ -274,7 +361,7 @@ describe("Gemini account failover", () => {
 	});
 	test("rejects a distinct lease that reuses an attempted account ID", async () => {
 		const routes = proRoutes();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const runtime = scriptedRuntime(
 			[
 				failoverLease("duplicate", routes[0], events),
@@ -303,15 +390,16 @@ describe("Gemini account failover", () => {
 		assert.equal(error, firstError);
 		assert.equal(clientCalls, 1);
 		assert.equal(runtime.records.acquire.length, 2);
-		assert.deepEqual(runtime.records.acquire[1].excludeAccountIds, [
-			"duplicate",
-		]);
+		assert.deepEqual(
+			requireItem(runtime.records.acquire, 1).excludeAccountIds,
+			["duplicate"],
+		);
 		assert.equal(events.filter((event) => event[0] === "release").length, 2);
 	});
 	test("stops at the configured two-account budget", async () => {
 		const cfg = baseGeminiClientConfig({ gemini_account_max_attempts: 2 });
 		const routes = proRoutes();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const runtime = scriptedRuntime(
 			[
 				failoverLease("a", routes[0], events),
@@ -320,12 +408,16 @@ describe("Gemini account failover", () => {
 			],
 			routes,
 		);
-		const errors = { a: rateLimitError("a"), b: rateLimitError("b") };
+		const errors: Record<string, ReturnType<typeof rateLimitError>> = {
+			a: rateLimitError("a"),
+			b: rateLimitError("b"),
+		};
 		const provider = createTestProvider(cfg, {
 			accountRuntime: runtime,
 			client: {
 				async generate(activeCfg) {
-					throw errors[activeCfg.gemini_account.accountId];
+					const accountId = requireAccount(activeCfg).accountId;
+					throw requireKey(errors, accountId);
 				},
 			},
 		});
@@ -346,14 +438,21 @@ describe("Gemini account failover", () => {
 	test("returns the third account error at a three-account budget", async () => {
 		const cfg = baseGeminiClientConfig({ gemini_account_max_attempts: 3 });
 		const routes = proRoutes();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const accounts = ["a", "b", "c"];
-		const errors = Object.fromEntries(
+		const errors: Record<
+			string,
+			ReturnType<typeof rateLimitError>
+		> = Object.fromEntries(
 			accounts.map((accountId) => [accountId, rateLimitError(accountId)]),
 		);
 		const runtime = scriptedRuntime(
 			accounts.map((accountId, index) =>
-				failoverLease(accountId, routes[index % routes.length], events),
+				failoverLease(
+					accountId,
+					requireItem(routes, index % routes.length),
+					events,
+				),
 			),
 			routes,
 		);
@@ -361,7 +460,8 @@ describe("Gemini account failover", () => {
 			accountRuntime: runtime,
 			client: {
 				async generate(activeCfg) {
-					throw errors[activeCfg.gemini_account.accountId];
+					const accountId = requireAccount(activeCfg).accountId;
+					throw requireKey(errors, accountId);
 				},
 			},
 		});
@@ -381,7 +481,7 @@ describe("Gemini account failover", () => {
 	});
 	test("switches accounts for semantic code 1050", async () => {
 		const routes = proRoutes();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const runtime = scriptedRuntime(
 			[
 				failoverLease("a", routes[0], events),
@@ -394,7 +494,7 @@ describe("Gemini account failover", () => {
 			accountRuntime: runtime,
 			client: {
 				async generate(activeCfg) {
-					if (activeCfg.gemini_account.accountId === "a") throw error1050;
+					if (requireAccount(activeCfg).accountId === "a") throw error1050;
 					return "switched";
 				},
 			},
@@ -408,11 +508,11 @@ describe("Gemini account failover", () => {
 			"switched",
 		);
 		assert.equal(runtime.records.acquire.length, 2);
-		assert.equal(events[0][2], error1050);
+		assert.equal(requireItem(events)[2], error1050);
 	});
 	test("keeps semantic code 1052 on the selected account", async () => {
 		const routes = proRoutes();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const error1052 = semanticError(1052);
 		const runtime = scriptedRuntime(
 			[
@@ -445,7 +545,7 @@ describe("Gemini account failover", () => {
 	});
 	test("keeps request-scoped model errors on one account", async () => {
 		const routes = proRoutes();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const modelError = requestScopedError();
 		const runtime = scriptedRuntime(
 			[
@@ -471,11 +571,11 @@ describe("Gemini account failover", () => {
 		);
 		assert.equal(error, modelError);
 		assert.equal(runtime.records.acquire.length, 1);
-		assert.equal(events[0][2], modelError);
+		assert.equal(requireItem(events)[2], modelError);
 	});
 	test("keeps aborts on one account without marking failure", async () => {
 		const routes = proRoutes();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const abort = Object.assign(new Error("cancelled"), { name: "AbortError" });
 		const runtime = scriptedRuntime(
 			[
@@ -505,7 +605,7 @@ describe("Gemini account failover", () => {
 	});
 	test("fails over rich generation and recomputes the selected route", async () => {
 		const routes = proRoutes();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const runtime = scriptedRuntime(
 			[
 				failoverLease("a", routes[0], events),
@@ -513,7 +613,7 @@ describe("Gemini account failover", () => {
 			],
 			routes,
 		);
-		const calls = [];
+		const calls: unknown[][] = [];
 		const provider = createTestProvider(baseGeminiClientConfig(), {
 			accountRuntime: runtime,
 			client: {
@@ -525,7 +625,7 @@ describe("Gemini account failover", () => {
 					_refs,
 					headers,
 				) {
-					const accountId = activeCfg.gemini_account.accountId;
+					const accountId = requireAccount(activeCfg).accountId;
 					calls.push([accountId, modelNumber, modelHeaderProviderId(headers)]);
 					if (accountId === "a") throw rateLimitError("a");
 					return { text: "rich result", images: [] };
@@ -546,8 +646,8 @@ describe("Gemini account failover", () => {
 		]);
 	});
 	test("supports the anonymous to A to B text chain", async () => {
-		const routes = [basicRouteForFamily("flash")];
-		const events = [];
+		const routes: [GeminiRouteTuple] = [basicRouteForFamily("flash")];
+		const events: LifecycleEvent[] = [];
 		const runtime = scriptedRuntime(
 			[
 				failoverLease("a", routes[0], events),
@@ -555,7 +655,7 @@ describe("Gemini account failover", () => {
 			],
 			routes,
 		);
-		const calls = [];
+		const calls: Array<string | null> = [];
 		const provider = createTestProvider(baseGeminiClientConfig(), {
 			accountRuntime: runtime,
 			client: {

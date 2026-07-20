@@ -1,13 +1,56 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import { createAttachmentPlan } from "../../../src/attachments/plan";
+import type { AttachmentUploadResult } from "../../../src/attachments/types";
+import type { CompletionProvider } from "../../../src/completion/ports";
+import type { RuntimeConfig } from "../../../src/config";
+import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease-types";
+import { AccountPoolService } from "../../../src/gemini/accounts/pool";
 import { basicRouteForFamily } from "../../../src/gemini/accounts/routes";
-import { createGeminiCompletionProvider } from "../../../src/gemini/completion-provider";
-import { assert } from "../assertions.js";
+import { GeminiAccountRuntime } from "../../../src/gemini/accounts/runtime";
+import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/runtime-types";
+import {
+	createGeminiCompletionProvider,
+	type GeminiCompletionProviderOptions,
+} from "../../../src/gemini/completion-provider";
+import type { ResolvedModelOk } from "../../../src/models";
 import { withConsoleLog } from "../_support/globals.js";
+import { assert } from "../assertions.js";
 import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
+import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
 
-function proModel() {
+type ClientOverrides = NonNullable<GeminiCompletionProviderOptions["client"]>;
+type UploadOverrides = NonNullable<GeminiCompletionProviderOptions["uploads"]>;
+type LifecycleEvent = [string, ...unknown[]];
+type LeaseOverrides = {
+	markSuccess?: () => unknown;
+	markFailure?: (error: unknown) => unknown;
+	maintainSessionIfStale?: (intervalMs: number) => unknown;
+};
+type TestProvider = CompletionProvider &
+	Required<
+		Pick<CompletionProvider, "resolveModel" | "generateRich" | "dispose">
+	>;
+
+function requireAccount(config: RuntimeConfig) {
+	const account = config.gemini_account;
+	if (!account) throw new Error("expected Gemini account context");
+	return account;
+}
+
+function requireItem<T>(items: readonly T[], index = 0): T {
+	const item = items[index];
+	if (item === undefined) throw new Error(`expected item at index ${index}`);
+	return item;
+}
+
+function errorRecord(value: unknown): Record<string, unknown> {
+	if (!value || typeof value !== "object") {
+		throw new Error("expected an error object");
+	}
+	return value as Record<string, unknown>;
+}
+
+function proModel(): ResolvedModelOk {
 	return {
 		name: "gemini-3.1-pro",
 		family: "pro",
@@ -16,19 +59,20 @@ function proModel() {
 	};
 }
 
-function accountConfig(base, accountId) {
+function accountConfig(base: RuntimeConfig, accountId: string): RuntimeConfig {
 	return {
 		...base,
 		cookie: `__Secure-1PSID=psid-${accountId}`,
 		gemini_account: {
 			accountId,
-			rowId: `row-${accountId}`,
 			cookieHash: `hash-${accountId}`,
 		},
 	};
 }
 
-function failFastClient(overrides = {}) {
+function failFastClient(
+	overrides: Partial<ClientOverrides> = {},
+): ClientOverrides {
 	return {
 		async generate() {
 			throw new Error("unexpected client.generate call");
@@ -43,7 +87,9 @@ function failFastClient(overrides = {}) {
 	};
 }
 
-function failFastUploads(overrides = {}) {
+function failFastUploads(
+	overrides: Partial<UploadOverrides> = {},
+): UploadOverrides {
 	return {
 		async resolveAttachments() {
 			throw new Error("unexpected uploads.resolveAttachments call");
@@ -55,32 +101,31 @@ function failFastUploads(overrides = {}) {
 	};
 }
 
-function lifecycleLease(config, events, overrides = {}) {
+function lifecycleLease(
+	config: RuntimeConfig,
+	events: LifecycleEvent[],
+	overrides: LeaseOverrides = {},
+): GeminiAccountLease {
 	let released = false;
-	const accountId = config.gemini_account.accountId;
-	return {
+	const accountId = requireAccount(config).accountId;
+	const lease: GeminiAccountLease = {
 		accountId,
-		rowId: config.gemini_account.rowId,
-		selectedCookieHash: config.gemini_account.cookieHash,
 		selectedRoute: basicRouteForFamily("pro"),
 		modelCapability: null,
 		config,
-		async recordPageState() {
-			throw new Error("unexpected lease.recordPageState call");
-		},
 		async refreshForRetry() {
 			throw new Error("unexpected lease.refreshForRetry call");
 		},
 		async markSuccess() {
 			events.push(["markSuccess", accountId]);
 		},
-		async markFailure(error) {
+		async markFailure(error: unknown) {
 			events.push(["markFailure", accountId, error]);
 		},
 		async flushObservedCookies() {
 			events.push(["flushObservedCookies", accountId]);
 		},
-		async maintainSessionIfStale(intervalMs) {
+		async maintainSessionIfStale(intervalMs: number) {
 			events.push(["maintainSessionIfStale", accountId, intervalMs]);
 		},
 		release() {
@@ -88,46 +133,81 @@ function lifecycleLease(config, events, overrides = {}) {
 			released = true;
 			events.push(["release", accountId]);
 		},
-		...overrides,
 	};
+	for (const name of [
+		"markSuccess",
+		"markFailure",
+		"maintainSessionIfStale",
+	] as const) {
+		const replacement = overrides[name];
+		if (replacement) Reflect.set(lease, name, replacement);
+	}
+	return lease;
 }
 
-function singleLeaseRuntime(lease) {
-	const records = { route: [], acquire: [] };
+type AcquireRecord = {
+	base: RuntimeConfig;
+	options: GeminiAccountAcquireOptions & { excludeAccountIds: string[] };
+};
+
+function singleLeaseRuntime(lease: GeminiAccountLease): GeminiAccountRuntime & {
+	records: {
+		route: [ResolvedModelOk, number][];
+		acquire: AcquireRecord[];
+	};
+} {
+	const records: {
+		route: [ResolvedModelOk, number][];
+		acquire: AcquireRecord[];
+	} = { route: [], acquire: [] };
 	let acquired = false;
-	return {
-		records,
-		async resolveModel() {
-			throw new Error("unexpected runtime.resolveModel call");
-		},
-		async routeCandidatesForModel(model, freshAfterMs) {
-			records.route.push([model, freshAfterMs]);
-			return [basicRouteForFamily(model.family)];
-		},
-		async acquireLease(base, options) {
-			records.acquire.push({
-				base,
-				options: {
-					...options,
-					excludeAccountIds: [...(options.excludeAccountIds || [])],
-				},
-			});
-			if (acquired) throw new Error("unexpected second account acquisition");
-			acquired = true;
-			return lease;
-		},
+	const runtime = new GeminiAccountRuntime(
+		new AccountPoolService(createRuntimeStore([]), {
+			async rotateCookie() {
+				throw new Error("unexpected cookie rotation");
+			},
+		}),
+	);
+	runtime.routeCandidatesForModel = async (model, freshAfterMs) => {
+		records.route.push([model, freshAfterMs]);
+		if (!model.family) throw new Error("expected static model family");
+		return [basicRouteForFamily(model.family)];
 	};
+	runtime.acquireLease = async (
+		base: RuntimeConfig,
+		options: GeminiAccountAcquireOptions = {},
+	) => {
+		records.acquire.push({
+			base,
+			options: {
+				...options,
+				excludeAccountIds: [...(options.excludeAccountIds || [])],
+			},
+		});
+		if (acquired) throw new Error("unexpected second account acquisition");
+		acquired = true;
+		return lease;
+	};
+	return Object.assign(runtime, { records });
 }
 
-function createTestProvider(cfg, options) {
-	return createGeminiCompletionProvider(cfg, {
+function createTestProvider(
+	cfg: RuntimeConfig,
+	options: GeminiCompletionProviderOptions,
+): TestProvider {
+	const provider = createGeminiCompletionProvider(cfg, {
 		...options,
 		client: failFastClient(options.client),
 		uploads: failFastUploads(options.uploads),
 	});
+	const { resolveModel, generateRich, dispose } = provider;
+	if (!resolveModel || !generateRich || !dispose) {
+		throw new Error("expected complete Gemini provider contract");
+	}
+	return Object.assign(provider, { resolveModel, generateRich, dispose });
 }
 
-function attachmentResult(ref) {
+function attachmentResult(ref: string): AttachmentUploadResult {
 	const fileRef = { ref, name: "file.txt" };
 	return {
 		fileRefs: [fileRef],
@@ -149,11 +229,13 @@ function attachmentResult(ref) {
 	};
 }
 
-function requestScopedError(message) {
+function requestScopedError(message: string) {
 	return Object.assign(new Error(message), { code: "invalid_model" });
 }
 
-async function captureError(run) {
+async function captureError(
+	run: () => unknown | PromiseLike<unknown>,
+): Promise<unknown> {
 	try {
 		await run();
 	} catch (error) {
@@ -165,10 +247,10 @@ async function captureError(run) {
 describe("Gemini account lease lifecycle", () => {
 	test("reuses one routed lease across attachment upload and text generation", async () => {
 		const cfg = baseGeminiClientConfig();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const selectedCfg = accountConfig(cfg, "reuse");
 		const runtime = singleLeaseRuntime(lifecycleLease(selectedCfg, events));
-		const seenConfigs = [];
+		const seenConfigs: RuntimeConfig[] = [];
 		const provider = createTestProvider(cfg, {
 			accountRuntime: runtime,
 			uploads: {
@@ -206,10 +288,13 @@ describe("Gemini account lease lifecycle", () => {
 		);
 		assert.deepEqual(seenConfigs, [selectedCfg, selectedCfg]);
 		assert.equal(runtime.records.acquire.length, 1);
-		assert.deepEqual(runtime.records.acquire[0].options.routeRequirement, {
-			candidates: [basicRouteForFamily("pro")],
-			fallbackRoute: basicRouteForFamily("pro"),
-		});
+		assert.deepEqual(
+			requireItem(runtime.records.acquire).options.routeRequirement,
+			{
+				candidates: [basicRouteForFamily("pro")],
+				fallbackRoute: basicRouteForFamily("pro"),
+			},
+		);
 		assert.deepEqual(
 			events.map((event) => event[0]),
 			[
@@ -223,7 +308,7 @@ describe("Gemini account lease lifecycle", () => {
 
 	test("marks an upload failure with the original error and releases the lease", async () => {
 		const cfg = baseGeminiClientConfig();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const uploadError = requestScopedError("model invalid upload");
 		const provider = createTestProvider(cfg, {
 			accountRuntime: singleLeaseRuntime(
@@ -241,8 +326,8 @@ describe("Gemini account lease lifecycle", () => {
 			provider.uploadTextFile("body", "context.txt"),
 		);
 		assert.equal(error, uploadError);
-		assert.equal(events[0][0], "markFailure");
-		assert.equal(events[0][2], uploadError);
+		assert.equal(requireItem(events)[0], "markFailure");
+		assert.equal(requireItem(events)[2], uploadError);
 		assert.deepEqual(
 			events.map((event) => event[0]),
 			["markFailure", "release"],
@@ -251,7 +336,7 @@ describe("Gemini account lease lifecycle", () => {
 
 	test("finalizes an account stream only after iterator completion", async () => {
 		const cfg = baseGeminiClientConfig();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const provider = createTestProvider(cfg, {
 			accountRuntime: singleLeaseRuntime(
 				lifecycleLease(accountConfig(cfg, "stream-success"), events),
@@ -286,7 +371,7 @@ describe("Gemini account lease lifecycle", () => {
 
 	test("marks a post-output stream failure and releases the selected lease", async () => {
 		const cfg = baseGeminiClientConfig();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const streamError = new Error("account stream broke");
 		const provider = createTestProvider(cfg, {
 			accountRuntime: singleLeaseRuntime(
@@ -300,7 +385,7 @@ describe("Gemini account lease lifecycle", () => {
 			},
 			uploads: {},
 		});
-		const output = [];
+		const output: string[] = [];
 		const error = await captureError(async () => {
 			for await (const delta of provider.streamText({
 				prompt: "prompt",
@@ -311,7 +396,7 @@ describe("Gemini account lease lifecycle", () => {
 		});
 		assert.equal(error, streamError);
 		assert.deepEqual(output, ["partial"]);
-		assert.equal(events[0][2], streamError);
+		assert.equal(requireItem(events)[2], streamError);
 		assert.deepEqual(
 			events.map((event) => event[0]),
 			["markFailure", "release"],
@@ -320,7 +405,7 @@ describe("Gemini account lease lifecycle", () => {
 
 	test("keeps a successful result when markSuccess persistence rejects", async () => {
 		const cfg = baseGeminiClientConfig({ log_requests: true });
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const lease = lifecycleLease(accountConfig(cfg, "success-reject"), events, {
 			async markSuccess() {
 				events.push(["markSuccess", "success-reject"]);
@@ -336,9 +421,9 @@ describe("Gemini account lease lifecycle", () => {
 			},
 			uploads: {},
 		});
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			async () => {
 				assert.equal(
 					await provider.generateText({
@@ -368,7 +453,7 @@ describe("Gemini account lease lifecycle", () => {
 
 	test("keeps a successful result when markSuccess throws synchronously", async () => {
 		const cfg = baseGeminiClientConfig({ log_requests: true });
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const lease = lifecycleLease(accountConfig(cfg, "success-sync"), events, {
 			markSuccess() {
 				events.push(["markSuccess", "success-sync"]);
@@ -384,9 +469,9 @@ describe("Gemini account lease lifecycle", () => {
 			},
 			uploads: {},
 		});
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			async () => {
 				assert.equal(
 					await provider.generateText({
@@ -415,11 +500,11 @@ describe("Gemini account lease lifecycle", () => {
 	});
 
 	test("orders markSuccess release and scheduled session maintenance", async () => {
-		let releasePersistence;
-		const persistenceGate = new Promise((resolve) => {
-			releasePersistence = resolve;
+		let releasePersistence: (() => void) | undefined;
+		const persistenceGate = new Promise<void>((resolve) => {
+			releasePersistence = () => resolve();
 		});
-		const pending = [];
+		const pending: Promise<unknown>[] = [];
 		const cfg = baseGeminiClientConfig({
 			gemini_account_refresh_interval_sec: 60,
 			execution_ctx: {
@@ -428,7 +513,7 @@ describe("Gemini account lease lifecycle", () => {
 				},
 			},
 		});
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const lease = lifecycleLease(accountConfig(cfg, "maintenance"), events, {
 			async markSuccess() {
 				events.push(["markSuccess", "maintenance"]);
@@ -457,8 +542,10 @@ describe("Gemini account lease lifecycle", () => {
 			["markSuccess", "release"],
 		);
 		assert.equal(pending.length, 1);
-		releasePersistence();
-		await pending[0];
+		const release = releasePersistence;
+		if (!release) throw new Error("persistence release was not initialized");
+		release();
+		await requireItem(pending);
 		assert.deepEqual(
 			events.map((event) => event[0]),
 			[
@@ -468,7 +555,7 @@ describe("Gemini account lease lifecycle", () => {
 				"maintainSessionIfStale",
 			],
 		);
-		assert.equal(events[3][2], 60_000);
+		assert.equal(requireItem(events, 3)[2], 60_000);
 	});
 
 	test("isolates opportunistic session maintenance failures", async () => {
@@ -476,7 +563,7 @@ describe("Gemini account lease lifecycle", () => {
 			gemini_account_refresh_interval_sec: 60,
 			log_requests: true,
 		});
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const lease = lifecycleLease(
 			accountConfig(cfg, "maintenance-fail"),
 			events,
@@ -500,9 +587,9 @@ describe("Gemini account lease lifecycle", () => {
 			},
 			uploads: {},
 		});
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			async () => {
 				assert.equal(
 					await provider.generateText({
@@ -530,7 +617,7 @@ describe("Gemini account lease lifecycle", () => {
 				},
 			},
 		});
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const provider = createTestProvider(cfg, {
 			accountRuntime: singleLeaseRuntime(
 				lifecycleLease(accountConfig(cfg, "waituntil"), events),
@@ -542,9 +629,9 @@ describe("Gemini account lease lifecycle", () => {
 			},
 			uploads: {},
 		});
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			async () => {
 				assert.equal(
 					await provider.generateText({
@@ -567,7 +654,7 @@ describe("Gemini account lease lifecycle", () => {
 	test("preserves the original error when markFailure persistence rejects", async () => {
 		const cfg = baseGeminiClientConfig({ log_requests: true });
 		const originalError = requestScopedError("model invalid original");
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const lease = lifecycleLease(accountConfig(cfg, "failure-reject"), events, {
 			async markFailure(failureError) {
 				events.push(["markFailure", "failure-reject", failureError]);
@@ -583,10 +670,10 @@ describe("Gemini account lease lifecycle", () => {
 			},
 			uploads: {},
 		});
-		const logs = [];
+		const logs: string[] = [];
 		let error;
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			async () => {
 				error = await captureError(() =>
 					provider.generateText({
@@ -598,7 +685,7 @@ describe("Gemini account lease lifecycle", () => {
 			},
 		);
 		assert.equal(error, originalError);
-		assert.equal(events[0][2], originalError);
+		assert.equal(requireItem(events)[2], originalError);
 		assert.deepEqual(
 			events.map((event) => event[0]),
 			["markFailure", "release"],
@@ -612,7 +699,7 @@ describe("Gemini account lease lifecycle", () => {
 
 	test("dispose releases a held upload lease once and rejects later acquisition", async () => {
 		const cfg = baseGeminiClientConfig();
-		const events = [];
+		const events: LifecycleEvent[] = [];
 		const runtime = singleLeaseRuntime(
 			lifecycleLease(accountConfig(cfg, "dispose"), events),
 		);
@@ -623,7 +710,7 @@ describe("Gemini account lease lifecycle", () => {
 			uploads: {
 				async uploadTextFile(_activeCfg, _text, filename) {
 					uploadCalls += 1;
-					return { ref: "/held", name: filename };
+					return { ref: "/held", name: String(filename) };
 				},
 			},
 		});
@@ -636,7 +723,7 @@ describe("Gemini account lease lifecycle", () => {
 		const error = await captureError(() =>
 			provider.uploadTextFile("again", "again.txt"),
 		);
-		assert.match(error.message, /provider is disposed/);
+		assert.match(errorRecord(error).message, /provider is disposed/);
 		assert.equal(uploadCalls, 1);
 		assert.equal(runtime.records.acquire.length, 1);
 	});

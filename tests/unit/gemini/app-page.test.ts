@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	extractGeminiAppPageTokens,
@@ -7,7 +6,7 @@ import {
 } from "../../../src/gemini/app-page";
 import { assert } from "../assertions.js";
 
-function textResponse(text) {
+function textResponse(text: string): Response {
 	return new Response(text);
 }
 

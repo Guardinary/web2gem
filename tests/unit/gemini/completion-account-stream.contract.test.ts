@@ -1,11 +1,28 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { CompletionProvider } from "../../../src/completion/ports";
+import type { RuntimeConfig } from "../../../src/config";
+import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease-types";
+import { AccountPoolService } from "../../../src/gemini/accounts/pool";
+import type { GeminiRouteTuple } from "../../../src/gemini/accounts/route-types";
 import { basicRouteForFamily } from "../../../src/gemini/accounts/routes";
+import type { GeminiAccountRuntime } from "../../../src/gemini/accounts/runtime";
+import type { GeminiAccountAcquireOptions } from "../../../src/gemini/accounts/runtime-types";
+import type { generateStream as geminiGenerateStream } from "../../../src/gemini/client";
 import { createGeminiCompletionProvider } from "../../../src/gemini/completion-provider";
+import type { ResolvedModelOk } from "../../../src/models";
 import { assert } from "../assertions.js";
 import { baseGeminiClientConfig } from "./_support/client-fixtures.js";
+import { createRuntimeStore } from "./accounts/_support/runtime-fixtures.js";
 
-function proModel() {
+type GenerateStream = typeof geminiGenerateStream;
+
+function required<T>(value: T | null | undefined, label: string): T {
+	if (value === null || value === undefined)
+		throw new Error(`missing ${label}`);
+	return value;
+}
+
+function proModel(): ResolvedModelOk {
 	return {
 		name: "gemini-3.1-pro",
 		family: "pro",
@@ -14,7 +31,7 @@ function proModel() {
 	};
 }
 
-function routes() {
+function routes(): GeminiRouteTuple[] {
 	return [
 		basicRouteForFamily("pro"),
 		{
@@ -26,33 +43,31 @@ function routes() {
 	];
 }
 
-function streamLease(accountId, selectedRoute, events) {
+function streamLease(
+	accountId: string,
+	selectedRoute: GeminiRouteTuple,
+	events: unknown[][],
+): GeminiAccountLease {
 	const config = baseGeminiClientConfig({
 		cookie: `__Secure-1PSID=psid-${accountId}`,
 		gemini_account: {
 			accountId,
-			rowId: `row-${accountId}`,
 			cookieHash: `hash-${accountId}`,
 		},
 	});
 	let released = false;
 	return {
 		accountId,
-		rowId: config.gemini_account.rowId,
-		selectedCookieHash: config.gemini_account.cookieHash,
 		selectedRoute,
 		modelCapability: null,
 		config,
-		async recordPageState() {
-			throw new Error("unexpected lease.recordPageState call");
-		},
 		async refreshForRetry() {
 			throw new Error("unexpected lease.refreshForRetry call");
 		},
 		async markSuccess() {
 			events.push(["markSuccess", accountId]);
 		},
-		async markFailure(error) {
+		async markFailure(error: unknown) {
 			events.push(["markFailure", accountId, error]);
 		},
 		async flushObservedCookies() {
@@ -69,27 +84,47 @@ function streamLease(accountId, selectedRoute, events) {
 	};
 }
 
-function streamRuntime(leases, routeCandidates) {
+function streamRuntime(
+	leases: GeminiAccountLease[],
+	routeCandidates: GeminiRouteTuple[],
+): GeminiAccountRuntime & { acquire: string[][] } {
 	const pending = [...leases];
-	const acquire = [];
+	const acquire: string[][] = [];
 	return {
+		pool: new AccountPoolService(createRuntimeStore([]), {
+			async rotateCookie() {
+				throw new Error("unexpected cookie rotation");
+			},
+		}),
 		acquire,
-		async resolveModel() {
+		async resolveModel(): Promise<never> {
 			throw new Error("unexpected runtime.resolveModel call");
+		},
+		async modelCatalog(): Promise<never> {
+			throw new Error("unexpected runtime.modelCatalog call");
+		},
+		async modelRoutingOverview(): Promise<never> {
+			throw new Error("unexpected runtime.modelRoutingOverview call");
 		},
 		async routeCandidatesForModel() {
 			return routeCandidates;
 		},
-		async acquireLease(_base, options) {
+		async acquireLease(
+			_base: RuntimeConfig,
+			options: GeminiAccountAcquireOptions = {},
+		) {
 			acquire.push([...(options.excludeAccountIds || [])]);
 			if (!pending.length)
 				throw new Error("unexpected extra account acquisition");
-			return pending.shift();
+			return pending.shift() ?? null;
 		},
 	};
 }
 
-function createStreamProvider(runtime, generateStream) {
+function createStreamProvider(
+	runtime: GeminiAccountRuntime,
+	generateStream: GenerateStream,
+): CompletionProvider {
 	return createGeminiCompletionProvider(baseGeminiClientConfig(), {
 		accountRuntime: runtime,
 		client: {
@@ -112,7 +147,10 @@ function createStreamProvider(runtime, generateStream) {
 	});
 }
 
-async function captureStream(provider, output) {
+async function captureStream(
+	provider: CompletionProvider,
+	output: string[],
+): Promise<unknown> {
 	try {
 		for await (const delta of provider.streamText({
 			prompt: "prompt",
@@ -129,18 +167,20 @@ async function captureStream(provider, output) {
 describe("Gemini account stream failover", () => {
 	test("switches accounts only before the first visible delta", async () => {
 		const routeCandidates = routes();
-		const events = [];
+		const events: unknown[][] = [];
+		const firstRoute = required(routeCandidates[0], "first route");
+		const secondRoute = required(routeCandidates[1], "second route");
 		const runtime = streamRuntime(
 			[
-				streamLease("a", routeCandidates[0], events),
-				streamLease("b", routeCandidates[1], events),
+				streamLease("a", firstRoute, events),
+				streamLease("b", secondRoute, events),
 			],
 			routeCandidates,
 		);
 		const firstError = Object.assign(new Error("rate limited a"), {
 			status: 429,
 		});
-		const calls = [];
+		const calls: unknown[][] = [];
 		const provider = createStreamProvider(
 			runtime,
 			async function* (
@@ -152,34 +192,36 @@ describe("Gemini account stream failover", () => {
 				_options,
 				headers,
 			) {
-				const accountId = activeCfg.gemini_account.accountId;
-				calls.push([
-					accountId,
-					modelNumber,
-					JSON.parse(headers["x-goog-ext-525001261-jspb"])[4],
-				]);
+				const account = activeCfg.gemini_account;
+				if (!account || !headers) throw new Error("expected account headers");
+				const header = headers["x-goog-ext-525001261-jspb"];
+				if (!header) throw new Error("expected model header");
+				const accountId = account.accountId;
+				calls.push([accountId, modelNumber, JSON.parse(header)[4]]);
 				if (accountId === "a") throw firstError;
 				yield "account b";
 			},
 		);
-		const output = [];
+		const output: string[] = [];
 		assert.equal(await captureStream(provider, output), null);
 		assert.deepEqual(output, ["account b"]);
 		assert.deepEqual(calls, [
-			["a", routeCandidates[0].modelNumber, routeCandidates[0].providerModelId],
-			["b", routeCandidates[1].modelNumber, routeCandidates[1].providerModelId],
+			["a", firstRoute.modelNumber, firstRoute.providerModelId],
+			["b", secondRoute.modelNumber, secondRoute.providerModelId],
 		]);
 		assert.deepEqual(runtime.acquire, [[], ["a"]]);
-		assert.equal(events[0][2], firstError);
+		assert.equal(required(events[0], "first event")[2], firstError);
 	});
 
 	test("pins a stream to the selected account after visible output", async () => {
 		const routeCandidates = routes();
-		const events = [];
+		const events: unknown[][] = [];
+		const firstRoute = required(routeCandidates[0], "first route");
+		const secondRoute = required(routeCandidates[1], "second route");
 		const runtime = streamRuntime(
 			[
-				streamLease("a", routeCandidates[0], events),
-				streamLease("b", routeCandidates[1], events),
+				streamLease("a", firstRoute, events),
+				streamLease("b", secondRoute, events),
 			],
 			routeCandidates,
 		);
@@ -190,11 +232,11 @@ describe("Gemini account stream failover", () => {
 			yield "partial";
 			throw streamError;
 		});
-		const output = [];
+		const output: string[] = [];
 		assert.equal(await captureStream(provider, output), streamError);
 		assert.deepEqual(output, ["partial"]);
 		assert.deepEqual(runtime.acquire, [[]]);
-		assert.equal(events[0][2], streamError);
+		assert.equal(required(events[0], "first event")[2], streamError);
 		assert.equal(
 			events.some((event) => event[1] === "b"),
 			false,
@@ -203,11 +245,13 @@ describe("Gemini account stream failover", () => {
 
 	test("does not switch accounts for a request-scoped pre-output error", async () => {
 		const routeCandidates = routes();
-		const events = [];
+		const events: unknown[][] = [];
+		const firstRoute = required(routeCandidates[0], "first route");
+		const secondRoute = required(routeCandidates[1], "second route");
 		const runtime = streamRuntime(
 			[
-				streamLease("a", routeCandidates[0], events),
-				streamLease("b", routeCandidates[1], events),
+				streamLease("a", firstRoute, events),
+				streamLease("b", secondRoute, events),
 			],
 			routeCandidates,
 		);
@@ -218,11 +262,11 @@ describe("Gemini account stream failover", () => {
 			yield* [];
 			throw requestError;
 		});
-		const output = [];
+		const output: string[] = [];
 		assert.equal(await captureStream(provider, output), requestError);
 		assert.deepEqual(output, []);
 		assert.deepEqual(runtime.acquire, [[]]);
-		assert.equal(events[0][2], requestError);
+		assert.equal(required(events[0], "first event")[2], requestError);
 		assert.equal(
 			events.some((event) => event[1] === "b"),
 			false,
