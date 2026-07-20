@@ -1,12 +1,38 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { ApplicationExecutionContext } from "../../../../src/app";
+import {
+	createRuntimeConfig,
+	getConfig,
+	type RuntimeConfig,
+} from "../../../../src/config";
 import { handleChat } from "../../../../src/http/openai/chat";
 import { handleResponses } from "../../../../src/http/openai/responses";
+import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import worker from "../../../../src/index";
 import { assert } from "../../assertions.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
 import { noWorkProvider, strictProvider } from "../_support/provider.js";
+
+const execution: ApplicationExecutionContext = { waitUntil() {} };
+
+function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
+	return { ...createRuntimeConfig(getConfig()), ...overrides };
+}
+
+function record(value: unknown, label: string): UnknownRecord {
+	if (!isRecord(value)) throw new Error(`expected ${label} object`);
+	return value;
+}
+
+function responseError(value: unknown): UnknownRecord {
+	return record(record(value, "response").error, "response error");
+}
+
+function first<T>(values: readonly T[], label: string): T {
+	const value = values[0];
+	if (value === undefined) throw new Error(`expected ${label}`);
+	return value;
+}
 
 describe("OpenAI request validation", () => {
 	test("rejects invalid Responses model before provider generation", async () => {
@@ -15,17 +41,16 @@ describe("OpenAI request validation", () => {
 				model: "",
 				input: "plain request",
 			},
-			{
+			openAIConfig({
 				default_model: "gemini-3.5-flash",
 				current_input_file_enabled: false,
 				current_input_file_min_bytes: 1000000,
 				log_requests: false,
-			},
+			}),
 			noWorkProvider(),
 		);
 		assert.equal(resp.status, 400);
-		const body = await resp.json();
-		assert.equal(body.error.code, "model_not_found");
+		assert.equal(responseError(await resp.json()).code, "model_not_found");
 	});
 	test("rejects invalid OpenAI response format before provider generation", async () => {
 		const resp = await handleChat(
@@ -37,14 +62,14 @@ describe("OpenAI request validation", () => {
 					json_schema: { name: "missing_schema" },
 				},
 			},
-			baseConfig(),
+			openAIConfig(),
 			noWorkProvider(),
 		);
 		assert.equal(resp.status, 400);
-		const body = await resp.json();
-		assert.equal(body.error.code, "invalid_response_format");
+		const body = responseError(await resp.json());
+		assert.equal(body.code, "invalid_response_format");
 		assert.equal(
-			body.error.message,
+			body.message,
 			"response_format json_schema requires a schema object",
 		);
 	});
@@ -54,22 +79,22 @@ describe("OpenAI request validation", () => {
 				model: "gemini-3.5-flash",
 				messages: [],
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider(),
 		);
 		assert.equal(chat.status, 400);
-		assert.equal((await chat.json()).error.message, "empty prompt");
+		assert.equal(responseError(await chat.json()).message, "empty prompt");
 
 		const responses = await handleResponses(
 			{
 				model: "gemini-3.5-flash",
 				input: [],
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider(),
 		);
 		assert.equal(responses.status, 400);
-		assert.equal((await responses.json()).error.message, "empty input");
+		assert.equal(responseError(await responses.json()).message, "empty input");
 	});
 	test("rejects oversized inline context before resolving attachments", async () => {
 		const resp = await handleChat(
@@ -89,7 +114,7 @@ describe("OpenAI request validation", () => {
 					},
 				],
 			},
-			baseConfig({
+			openAIConfig({
 				current_input_file_enabled: true,
 				current_input_file_min_bytes: 1,
 				cookie: "",
@@ -97,9 +122,9 @@ describe("OpenAI request validation", () => {
 			noWorkProvider(),
 		);
 		assert.equal(resp.status, 422);
-		const body = await resp.json();
-		assert.equal(body.error.code, "gemini_authenticated_session_required");
-		assert.equal(body.error.reason, "large_context");
+		const body = responseError(await resp.json());
+		assert.equal(body.code, "gemini_authenticated_session_required");
+		assert.equal(body.reason, "large_context");
 	});
 	test("fails context upload before resolving request-local attachments", async () => {
 		const uploadErr = new Error("upload refused before attachment fetch");
@@ -120,7 +145,7 @@ describe("OpenAI request validation", () => {
 					},
 				],
 			},
-			baseConfig({
+			openAIConfig({
 				current_input_file_enabled: true,
 				current_input_file_min_bytes: 1,
 				cookie: "SID=ok",
@@ -133,16 +158,13 @@ describe("OpenAI request validation", () => {
 			}),
 		);
 		assert.equal(resp.status, 502);
-		const body = await resp.json();
-		assert.equal(body.error.code, "large_context_file_upload_failed");
-		assert.match(
-			body.error.message,
-			/failed to upload history context text file/,
-		);
+		const body = responseError(await resp.json());
+		assert.equal(body.code, "large_context_file_upload_failed");
+		assert.match(body.message, /failed to upload history context text file/);
 	});
 	test("adds dropped image note when Responses image upload is unavailable", async () => {
 		let generated = false;
-		const prompts = [];
+		const prompts: string[] = [];
 		const provider = strictProvider({
 			async generateText(input) {
 				generated = true;
@@ -172,21 +194,24 @@ describe("OpenAI request validation", () => {
 					},
 				],
 			},
-			{
+			openAIConfig({
 				default_model: "gemini-3.5-flash",
 				current_input_file_enabled: false,
 				current_input_file_min_bytes: 1000000,
 				log_requests: false,
-			},
+			}),
 			provider,
 		);
 		assert.equal(resp.status, 200);
 		assert.equal(generated, true);
-		assert.match(prompts[0], /image\(s\) were provided but ignored/);
+		assert.match(
+			first(prompts, "image prompt"),
+			/image\(s\) were provided but ignored/,
+		);
 	});
 	test("moves large Responses tools into attached tools file", async () => {
-		const prompts = [];
-		const uploads = [];
+		const prompts: string[] = [];
+		const uploads: { text: string; filename: string }[] = [];
 		const provider = strictProvider({
 			async generateText(input) {
 				prompts.push(input.prompt);
@@ -213,7 +238,7 @@ describe("OpenAI request validation", () => {
 					},
 				],
 			},
-			{
+			openAIConfig({
 				default_model: "gemini-3.5-flash",
 				current_input_file_enabled: true,
 				current_input_file_min_bytes: 40,
@@ -222,33 +247,41 @@ describe("OpenAI request validation", () => {
 				cookie: "SID=ok",
 				supports_authenticated_session: true,
 				log_requests: false,
-			},
+			}),
 			provider,
 		);
 		assert.equal(resp.status, 200);
 		assert.equal(uploads.length, 2);
-		assert.doesNotMatch(prompts[0], /<\|DSML\|tool_calls>/);
+		assert.doesNotMatch(
+			first(prompts, "context prompt"),
+			/<\|DSML\|tool_calls>/,
+		);
 		assert.match(
-			prompts[0],
+			first(prompts, "context prompt"),
 			/Continue from the latest state in the attached `message\.txt` context/,
 		);
-		assert.match(prompts[0], /tools\.txt/);
+		assert.match(first(prompts, "context prompt"), /tools\.txt/);
 		assert.match(
-			prompts[0],
+			first(prompts, "context prompt"),
 			/All text above this sentence is system prompt content/,
 		);
-		assert.doesNotMatch(prompts[0], /Gemini native hidden tool calls/);
-		assert.doesNotMatch(prompts[0], /Available tools/);
-		assert.doesNotMatch(prompts[0], /"query"/);
-		assert.match(uploads[1].text, /Available tool descriptions/);
-		assert.match(uploads[1].text, /Tool call format instructions/);
-		assert.match(uploads[1].text, /<\|DSML\|tool_calls>/);
-		assert.match(uploads[1].text, /Gemini native hidden tool calls/);
-		assert.match(uploads[1].text, /"name": "Search"/);
-		assert.match(uploads[1].text, /"query"/);
+		assert.doesNotMatch(
+			first(prompts, "context prompt"),
+			/Gemini native hidden tool calls/,
+		);
+		assert.doesNotMatch(first(prompts, "context prompt"), /Available tools/);
+		assert.doesNotMatch(first(prompts, "context prompt"), /"query"/);
+		const toolsUpload = uploads[1];
+		if (!toolsUpload) throw new Error("expected tools upload");
+		assert.match(toolsUpload.text, /Available tool descriptions/);
+		assert.match(toolsUpload.text, /Tool call format instructions/);
+		assert.match(toolsUpload.text, /<\|DSML\|tool_calls>/);
+		assert.match(toolsUpload.text, /Gemini native hidden tool calls/);
+		assert.match(toolsUpload.text, /"name": "Search"/);
+		assert.match(toolsUpload.text, /"query"/);
 	});
 	test("ignores unknown Responses input events without leaking their payload", async () => {
-		const prompts = [];
+		const prompts: string[] = [];
 		const resp = await handleResponses(
 			{
 				model: "gemini-3.5-flash",
@@ -262,12 +295,12 @@ describe("OpenAI request validation", () => {
 					},
 				],
 			},
-			{
+			openAIConfig({
 				default_model: "gemini-3.5-flash",
 				current_input_file_enabled: false,
 				current_input_file_min_bytes: 1000000,
 				log_requests: false,
-			},
+			}),
 			strictProvider({
 				async generateText(input) {
 					prompts.push(input.prompt);
@@ -277,11 +310,12 @@ describe("OpenAI request validation", () => {
 		);
 		assert.equal(resp.status, 200);
 		assert.equal(prompts.length, 1);
-		assert.match(prompts[0], /visible request/);
-		assert.doesNotMatch(prompts[0], /custom_event/);
-		assert.doesNotMatch(prompts[0], /do not leak text/);
-		assert.doesNotMatch(prompts[0], /do not leak content/);
-		assert.doesNotMatch(prompts[0], /do not leak json/);
+		const prompt = first(prompts, "visible prompt");
+		assert.match(prompt, /visible request/);
+		assert.doesNotMatch(prompt, /custom_event/);
+		assert.doesNotMatch(prompt, /do not leak text/);
+		assert.doesNotMatch(prompt, /do not leak content/);
+		assert.doesNotMatch(prompt, /do not leak json/);
 	});
 	test("rejects oversized parsed chat prompt before account work", async () => {
 		const resp = await worker.fetch(
@@ -304,11 +338,11 @@ describe("OpenAI request validation", () => {
 				},
 				LOG_REQUESTS: "false",
 			},
-			{},
+			execution,
 		);
 		assert.equal(resp.status, 422);
-		const body = await resp.json();
-		assert.equal(body.error.code, "large_context_inline_unsupported");
-		assert.match(body.error.message, /at least 40 UTF-8 bytes > 10/);
+		const body = responseError(await resp.json());
+		assert.equal(body.code, "large_context_inline_unsupported");
+		assert.match(body.message, /at least 40 UTF-8 bytes > 10/);
 	});
 });

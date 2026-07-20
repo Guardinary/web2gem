@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
 import {
 	openAIErrorResponse,
@@ -14,8 +13,22 @@ import {
 	writeOpenAIChatUsageTokenChunk,
 } from "../../../../src/http/openai/format";
 import { assert } from "../../assertions.js";
+import type { SSEWrite } from "../../../../src/http/core/sse";
+import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import { streamError } from "../_support/provider.js";
 import { collectSSEData } from "../_support/sse.js";
+
+function record(value: unknown, label: string): UnknownRecord {
+	if (!isRecord(value)) throw new Error(`expected ${label} object`);
+	return value;
+}
+
+function firstRecord(value: unknown, label: string): UnknownRecord {
+	if (!Array.isArray(value) || value.length === 0)
+		throw new Error(`expected ${label}`);
+	const item = value[0];
+	return record(item, label);
+}
 
 describe("OpenAI response format", () => {
 	test("formats OpenAI response helper payloads", () => {
@@ -26,7 +39,7 @@ describe("OpenAI response format", () => {
 			null,
 		);
 		assert.equal(chatChunk.object, "chat.completion.chunk");
-		assert.equal(chatChunk.choices[0].delta.content, "hi");
+		assert.equal(chatChunk.choices[0]?.delta.content, "hi");
 		assert.deepEqual(openAIChatUsageFromCompletionTokens(-1, "2"), {
 			prompt_tokens: 0,
 			completion_tokens: 2,
@@ -43,8 +56,8 @@ describe("OpenAI response format", () => {
 			],
 			"msg_1",
 		);
-		assert.equal(output[0].type, "function_call");
-		assert.equal(output[1].type, "message");
+		assert.equal(output[0]?.type, "function_call");
+		assert.equal(output[1]?.type, "message");
 	});
 
 	test("formats OpenAI error status types envelopes and upstream failures", async () => {
@@ -67,29 +80,31 @@ describe("OpenAI response format", () => {
 				param: null,
 			},
 		});
-		const defaultErr = await openAIErrorResponse("bad request").json();
-		assert.equal(defaultErr.error.type, "invalid_request_error");
-		assert.equal(defaultErr.error.code, null);
+		const defaultErr = record(
+			await openAIErrorResponse("bad request").json(),
+			"default error",
+		);
+		const defaultErrBody = record(defaultErr.error, "default error body");
+		assert.equal(defaultErrBody.type, "invalid_request_error");
+		assert.equal(defaultErrBody.code, null);
 
 		const upstream = streamError("gateway down", "upstream_down");
 		const upstreamResp = openAIUpstreamErrorResponse(upstream);
 		assert.equal(upstreamResp.status, 502);
-		const upstreamBody = await upstreamResp.json();
-		assert.equal(upstreamBody.error.type, "api_error");
-		assert.equal(upstreamBody.error.code, "upstream_down");
-		assert.match(upstreamBody.error.message, /upstream error: gateway down/);
+		const upstreamBody = record(await upstreamResp.json(), "upstream error");
+		const upstreamError = record(upstreamBody.error, "upstream error body");
+		assert.equal(upstreamError.type, "api_error");
+		assert.equal(upstreamError.code, "upstream_down");
+		assert.match(upstreamError.message, /upstream error: gateway down/);
 	});
 
 	test("formats OpenAI Chat usage and error stream frames", async () => {
-		const usageWrites = [];
-		writeOpenAIChatUsageTokenChunk(
-			(chunk) => usageWrites.push(chunk),
-			"chatcmpl_usage",
-			0,
-			-2,
-			"3",
-		);
-		const usageFrame = collectSSEData(usageWrites)[0];
+		const usageWrites: string[] = [];
+		const writeUsage: SSEWrite = async (chunk) => {
+			usageWrites.push(chunk);
+		};
+		writeOpenAIChatUsageTokenChunk(writeUsage, "chatcmpl_usage", 0, -2, "3");
+		const usageFrame = firstRecord(collectSSEData(usageWrites), "usage frame");
 		assert.equal(usageFrame.id, "chatcmpl_usage");
 		assert.deepEqual(usageFrame.choices, []);
 		assert.deepEqual(usageFrame.usage, {
@@ -99,9 +114,9 @@ describe("OpenAI response format", () => {
 		});
 
 		const upstream = streamError("gateway down", "upstream_down");
-		const errorWrites = [];
+		const errorWrites: string[] = [];
 		await writeOpenAIChatStreamError(
-			(chunk) => {
+			async (chunk) => {
 				errorWrites.push(chunk);
 			},
 			"chatcmpl_error",
@@ -109,9 +124,11 @@ describe("OpenAI response format", () => {
 			upstream,
 		);
 		const errorFrames = collectSSEData(errorWrites);
-		assert.equal(errorFrames[0].error.code, "upstream_down");
-		assert.equal(errorFrames[0].error.message, "gateway down");
-		assert.equal(errorFrames[0].choices, undefined);
+		const errorFrame = firstRecord(errorFrames, "error frame");
+		const errorBody = record(errorFrame.error, "stream error");
+		assert.equal(errorBody.code, "upstream_down");
+		assert.equal(errorBody.message, "gateway down");
+		assert.equal(errorFrame.choices, undefined);
 		assert.equal(errorFrames[1], "[DONE]");
 	});
 
@@ -134,13 +151,20 @@ describe("OpenAI response format", () => {
 			"msg_skip",
 		);
 		assert.equal(onlyValidTool.length, 1);
-		assert.equal(onlyValidTool[0].type, "function_call");
-		assert.equal(onlyValidTool[0].call_id, "call_1");
+		assert.equal(onlyValidTool[0]?.type, "function_call");
+		assert.equal(onlyValidTool[0]?.call_id, "call_1");
 
 		const emptyArrayOutput = buildResponsesOutput("", [], "msg_empty");
-		assert.equal(emptyArrayOutput[0].type, "message");
-		assert.equal(emptyArrayOutput[0].content[0].text, "");
+		assert.equal(emptyArrayOutput[0]?.type, "message");
+		const emptyContent = record(emptyArrayOutput[0], "empty output").content;
+		assert.equal(
+			record(
+				Array.isArray(emptyContent) ? emptyContent[0] : null,
+				"empty content",
+			).text,
+			"",
+		);
 		const nonArrayOutput = buildResponsesOutput("", null, "msg_null");
-		assert.equal(nonArrayOutput[0].type, "message");
+		assert.equal(nonArrayOutput[0]?.type, "message");
 	});
 });

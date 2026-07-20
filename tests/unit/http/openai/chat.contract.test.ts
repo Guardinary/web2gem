@@ -1,17 +1,63 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type {
+	AttachmentCandidate,
+	AttachmentFileRef,
+	AttachmentPlan,
+} from "../../../../src/attachments/types";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
+import {
+	createRuntimeConfig,
+	getConfig,
+	type RuntimeConfig,
+} from "../../../../src/config";
 import { handleChat } from "../../../../src/http/openai/chat";
+import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { withConsoleLog } from "../../_support/globals.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
 import { streamError } from "../_support/provider.js";
 import { strictProvider } from "../_support/provider.js";
 
-function simplifyAttachmentCandidate(candidate) {
-	const out = {};
-	if (candidate.source?.type === "base64") out.b64 = candidate.source.data;
+function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
+	return { ...createRuntimeConfig(getConfig()), ...overrides };
+}
+
+function record(value: unknown, label: string): UnknownRecord {
+	if (!isRecord(value)) throw new Error(`expected ${label} object`);
+	return value;
+}
+
+function recordAt(value: unknown, index: number, label: string): UnknownRecord {
+	if (!Array.isArray(value)) throw new Error(`expected ${label} array`);
+	return record(value[index], `${label} ${index}`);
+}
+
+function chatChoice(body: UnknownRecord): UnknownRecord {
+	return recordAt(body.choices, 0, "chat choices");
+}
+
+function chatMessage(choice: UnknownRecord): UnknownRecord {
+	return record(choice.message, "chat message");
+}
+
+function responseError(body: UnknownRecord): UnknownRecord {
+	return record(body.error, "response error");
+}
+
+function required<T>(
+	value: T | null | undefined,
+	label: string,
+): NonNullable<T> {
+	if (value === null || value === undefined)
+		throw new Error(`${label} is required`);
+	return value;
+}
+
+function simplifyAttachmentCandidate(
+	candidate: AttachmentCandidate,
+): UnknownRecord {
+	const out: UnknownRecord = {};
+	if (candidate.source.type === "base64") out.b64 = candidate.source.data;
 	if (candidate.mime) out.mime = candidate.mime;
 	if (candidate.filename) out.filename = candidate.filename;
 	return out;
@@ -24,12 +70,12 @@ describe("OpenAI Chat completion", () => {
 				model: "gemini-3.5-flash",
 				messages: [{ role: "user", content: "say hi" }],
 			},
-			{
+			openAIConfig({
 				default_model: "gemini-3.5-flash",
 				current_input_file_enabled: false,
 				current_input_file_min_bytes: 1000000,
 				log_requests: false,
-			},
+			}),
 			strictProvider({
 				async generateText(input) {
 					assert.match(input.prompt, /say hi/);
@@ -38,14 +84,21 @@ describe("OpenAI Chat completion", () => {
 			}),
 		);
 		assert.equal(resp.status, 200);
-		const body = await resp.json();
+		const body = record(await resp.json(), "chat response");
+		const choice = chatChoice(body);
 		assert.equal(body.object, "chat.completion");
-		assert.equal(body.choices[0].message.content, "hello");
-		assert.equal(body.choices[0].finish_reason, "stop");
-		assert.equal(body.usage.total_tokens >= body.usage.prompt_tokens, true);
+		assert.equal(chatMessage(choice).content, "hello");
+		assert.equal(choice.finish_reason, "stop");
+		const usage = record(body.usage, "chat usage");
+		if (
+			typeof usage.total_tokens !== "number" ||
+			typeof usage.prompt_tokens !== "number"
+		)
+			throw new Error("expected numeric chat usage");
+		assert.equal(usage.total_tokens >= usage.prompt_tokens, true);
 	});
 	test("passes OpenAI file-id aliases to the provider in request order", async () => {
-		let seenFileRefs = null;
+		let seenFileRefs: AttachmentFileRef[] | null | undefined = null;
 		const resp = await handleChat(
 			{
 				model: "gemini-3.5-flash",
@@ -64,7 +117,7 @@ describe("OpenAI Chat completion", () => {
 					},
 				],
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider({
 				async generateText(input) {
 					seenFileRefs = input.fileRefs;
@@ -80,8 +133,8 @@ describe("OpenAI Chat completion", () => {
 		]);
 	});
 	test("passes OpenAI inline input_file uploads to provider without treating bytes as file ids", async () => {
-		let seenFiles = null;
-		let seenFileRefs = null;
+		let seenFiles: UnknownRecord[] | null = null;
+		let seenFileRefs: AttachmentFileRef[] | null | undefined = null;
 		const resp = await handleChat(
 			{
 				model: "gemini-3.5-flash",
@@ -101,7 +154,7 @@ describe("OpenAI Chat completion", () => {
 					},
 				],
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider({
 				async resolveAttachments(plan) {
 					seenFiles = plan.candidates.map(simplifyAttachmentCandidate);
@@ -126,8 +179,8 @@ describe("OpenAI Chat completion", () => {
 		]);
 	});
 	test("keeps nested inline and top-level OpenAI attachments distinct", async () => {
-		let seenPlan = null;
-		let seenFileRefs = null;
+		let seenPlan: AttachmentPlan | null = null;
+		let seenFileRefs: AttachmentFileRef[] | null | undefined = null;
 		const resolvedRefs = [
 			{ id: "file_existing", name: "existing.txt" },
 			{ ref: "/uploaded/top", name: "top.txt" },
@@ -168,10 +221,10 @@ describe("OpenAI Chat completion", () => {
 					},
 				],
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider({
-				async resolveAttachments(plan) {
-					seenPlan = plan;
+				async resolveAttachments(attachmentPlan) {
+					seenPlan = attachmentPlan;
 					return attachmentResult({
 						fileRefs: resolvedRefs,
 						genericFileRefs: resolvedRefs,
@@ -184,18 +237,20 @@ describe("OpenAI Chat completion", () => {
 			}),
 		);
 		assert.equal(resp.status, 200);
-		assert.deepEqual(seenPlan.candidates.map(simplifyAttachmentCandidate), [
+		const plan = required<AttachmentPlan>(seenPlan, "attachment plan");
+		assert.deepEqual(plan.candidates.map(simplifyAttachmentCandidate), [
 			{ b64: "dG9w", mime: "text/plain", filename: "top.txt" },
 			{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" },
 		]);
-		assert.deepEqual(seenPlan.existingFileRefs, [
+		assert.deepEqual(plan.existingFileRefs, [
 			{ id: "file_existing", name: "existing.txt" },
 		]);
 		assert.deepEqual(seenFileRefs, resolvedRefs);
 	});
 	test("adds dropped generic file note and continues OpenAI chat generation", async () => {
 		let seenPrompt = "";
-		let seenFileRefs = "unset";
+		let seenFileRefs: AttachmentFileRef[] | null | "unset" | undefined =
+			"unset";
 		const resp = await handleChat(
 			{
 				model: "gemini-3.5-flash",
@@ -208,7 +263,7 @@ describe("OpenAI Chat completion", () => {
 					},
 				],
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider({
 				async resolveAttachments() {
 					return attachmentResult({
@@ -224,8 +279,8 @@ describe("OpenAI Chat completion", () => {
 			}),
 		);
 		assert.equal(resp.status, 200);
-		const body = await resp.json();
-		assert.equal(body.choices[0].message.content, "continued");
+		const body = record(await resp.json(), "dropped-file chat response");
+		assert.equal(chatMessage(chatChoice(body)).content, "continued");
 		assert.match(
 			seenPrompt,
 			/\[Note: 1 file\(s\) were provided but ignored - attachment upload failed\.\]/,
@@ -234,7 +289,8 @@ describe("OpenAI Chat completion", () => {
 	});
 	test("inlines anonymous generic file text and suppresses file refs before OpenAI chat generation", async () => {
 		let seenPrompt = "";
-		let seenFileRefs = "unset";
+		let seenFileRefs: AttachmentFileRef[] | null | "unset" | undefined =
+			"unset";
 		const resp = await handleChat(
 			{
 				model: "gemini-3.5-flash",
@@ -254,7 +310,7 @@ describe("OpenAI Chat completion", () => {
 					},
 				],
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider({
 				async resolveAttachments() {
 					return attachmentResult({
@@ -271,8 +327,8 @@ describe("OpenAI Chat completion", () => {
 			}),
 		);
 		assert.equal(resp.status, 200);
-		const body = await resp.json();
-		assert.equal(body.choices[0].message.content, "continued");
+		const body = record(await resp.json(), "inlined-file chat response");
+		assert.equal(chatMessage(chatChoice(body)).content, "continued");
 		assert.match(seenPrompt, /summarize this/);
 		assert.match(
 			seenPrompt,
@@ -286,12 +342,12 @@ describe("OpenAI Chat completion", () => {
 				model: "gemini-3.5-flash",
 				messages: [{ role: "user", content: "say something" }],
 			},
-			{
+			openAIConfig({
 				default_model: "gemini-3.5-flash",
 				current_input_file_enabled: false,
 				current_input_file_min_bytes: 1000000,
 				log_requests: false,
-			},
+			}),
 			strictProvider({
 				async generateText() {
 					return "";
@@ -299,9 +355,10 @@ describe("OpenAI Chat completion", () => {
 			}),
 		);
 		assert.equal(resp.status, 502);
-		const body = await resp.json();
-		assert.equal(body.error.code, "upstream_empty");
-		assert.equal(body.error.message, EMPTY_UPSTREAM_MSG);
+		const body = record(await resp.json(), "empty chat response");
+		const error = responseError(body);
+		assert.equal(error.code, "upstream_empty");
+		assert.equal(error.message, EMPTY_UPSTREAM_MSG);
 		assert.equal(body.choices, undefined);
 	});
 	test("canonicalizes successful non-stream OpenAI json_object output", async () => {
@@ -311,7 +368,7 @@ describe("OpenAI Chat completion", () => {
 				messages: [{ role: "user", content: "return json" }],
 				response_format: { type: "json_object" },
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider({
 				async generateText(input) {
 					assert.match(input.prompt, /STRUCTURED OUTPUT REQUIREMENT/);
@@ -320,9 +377,10 @@ describe("OpenAI Chat completion", () => {
 			}),
 		);
 		assert.equal(resp.status, 200);
-		const body = await resp.json();
-		assert.equal(body.choices[0].message.content, '{"ok":true}');
-		assert.equal(body.choices[0].finish_reason, "stop");
+		const body = record(await resp.json(), "JSON chat response");
+		const choice = chatChoice(body);
+		assert.equal(chatMessage(choice).content, '{"ok":true}');
+		assert.equal(choice.finish_reason, "stop");
 	});
 	test("rejects invalid non-stream structured OpenAI chat JSON schema output", async () => {
 		const resp = await handleChat(
@@ -342,12 +400,12 @@ describe("OpenAI Chat completion", () => {
 					},
 				},
 			},
-			{
+			openAIConfig({
 				default_model: "gemini-3.5-flash",
 				current_input_file_enabled: false,
 				current_input_file_min_bytes: 1000000,
 				log_requests: false,
-			},
+			}),
 			strictProvider({
 				async generateText(input) {
 					assert.match(input.prompt, /Schema name: strict_result/);
@@ -356,28 +414,30 @@ describe("OpenAI Chat completion", () => {
 			}),
 		);
 		assert.equal(resp.status, 502);
-		const body = await resp.json();
-		assert.equal(body.error.code, "structured_output_validation_failed");
-		assert.match(body.error.message, /extra is not allowed/);
+		const error = responseError(
+			record(await resp.json(), "schema error response"),
+		);
+		assert.equal(error.code, "structured_output_validation_failed");
+		assert.match(error.message, /extra is not allowed/);
 	});
 	test("maps non-stream OpenAI Chat upstream errors to OpenAI error format", async () => {
 		const err = streamError("chat overloaded secret", "chat_overloaded");
 		err.status = 503;
-		const logs = [];
+		const logs: string[] = [];
 		const resp = await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				handleChat(
 					{
 						model: "gemini-3.5-flash",
 						messages: [{ role: "user", content: "try once" }],
 					},
-					{
+					openAIConfig({
 						default_model: "gemini-3.5-flash",
 						current_input_file_enabled: false,
 						current_input_file_min_bytes: 1000000,
 						log_requests: true,
-					},
+					}),
 					strictProvider({
 						async generateText() {
 							throw err;
@@ -386,10 +446,12 @@ describe("OpenAI Chat completion", () => {
 				),
 		);
 		assert.equal(resp.status, 503);
-		const body = await resp.json();
-		assert.equal(body.error.code, "chat_overloaded");
-		assert.equal(body.error.type, "service_unavailable_error");
-		assert.match(body.error.message, /upstream error: chat overloaded secret/);
+		const error = responseError(
+			record(await resp.json(), "upstream chat response"),
+		);
+		assert.equal(error.code, "chat_overloaded");
+		assert.equal(error.type, "service_unavailable_error");
+		assert.match(error.message, /upstream error: chat overloaded secret/);
 		const failureLog = logs.find((line) =>
 			line.includes("openai chat generate failed"),
 		);
@@ -407,16 +469,16 @@ describe("OpenAI Chat completion", () => {
 		err.status = 502;
 		err.upstreamStatus = 200;
 		err.rawLength = 31;
-		const logs = [];
+		const logs: string[] = [];
 		const resp = await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				handleChat(
 					{
 						model: "gemini-3.5-flash",
 						messages: [{ role: "user", content: "try once" }],
 					},
-					baseConfig({ log_requests: true }),
+					openAIConfig({ log_requests: true }),
 					strictProvider({
 						async generateText() {
 							throw err;
@@ -425,11 +487,13 @@ describe("OpenAI Chat completion", () => {
 				),
 		);
 		assert.equal(resp.status, 502);
-		const body = await resp.json();
-		assert.equal(body.error.code, "upstream_empty_response");
-		assert.equal(body.error.type, "api_error");
+		const error = responseError(
+			record(await resp.json(), "empty upstream response"),
+		);
+		assert.equal(error.code, "upstream_empty_response");
+		assert.equal(error.type, "api_error");
 		assert.match(
-			body.error.message,
+			error.message,
 			/upstream error: Gemini upstream HTTP 200 returned no parseable text/,
 		);
 		const failureLog = logs.find((line) =>

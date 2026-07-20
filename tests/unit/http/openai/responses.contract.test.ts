@@ -1,18 +1,48 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { AttachmentFileRef } from "../../../../src/attachments/types";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
+import {
+	createRuntimeConfig,
+	getConfig,
+	type RuntimeConfig,
+} from "../../../../src/config";
 import { handleResponses } from "../../../../src/http/openai/responses";
+import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { withConsoleLog } from "../../_support/globals.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
 import { streamError } from "../_support/provider.js";
 import { noWorkProvider, strictProvider } from "../_support/provider.js";
 
+function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
+	return { ...createRuntimeConfig(getConfig()), ...overrides };
+}
+
+function record(value: unknown, label: string): UnknownRecord {
+	if (!isRecord(value)) throw new Error(`expected ${label} object`);
+	return value;
+}
+
+function responseError(value: unknown): UnknownRecord {
+	return record(record(value, "response").error, "response error");
+}
+
+function first<T>(values: readonly T[], label: string): T {
+	const value = values[0];
+	if (value === undefined) throw new Error(`expected ${label}`);
+	return value;
+}
+
 describe("OpenAI Responses completion", () => {
 	test("passes top-level Responses input_file uploads to provider", async () => {
-		let seenFiles = null;
-		let seenFileRefs = null;
+		let seenFiles:
+			| {
+					b64: unknown;
+					mime: string | undefined;
+					filename: string | undefined;
+			  }[]
+			| null = null;
+		let seenFileRefs: AttachmentFileRef[] | null | undefined = null;
 		const resp = await handleResponses(
 			{
 				model: "gemini-3.5-flash",
@@ -25,11 +55,14 @@ describe("OpenAI Responses completion", () => {
 					},
 				],
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider({
 				async resolveAttachments(plan) {
 					seenFiles = plan.candidates.map((candidate) => ({
-						b64: candidate.source.data,
+						b64:
+							candidate.source.type === "base64"
+								? candidate.source.data
+								: candidate.source.bytes,
 						mime: candidate.mime,
 						filename: candidate.filename,
 					}));
@@ -53,7 +86,7 @@ describe("OpenAI Responses completion", () => {
 		]);
 	});
 	test("hands inline Responses tools to the provider without polluting plain input", async () => {
-		const toolPrompts = [];
+		const toolPrompts: string[] = [];
 		const toolResp = await handleResponses(
 			{
 				model: "gemini-3.5-flash",
@@ -70,7 +103,7 @@ describe("OpenAI Responses completion", () => {
 					},
 				],
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider({
 				async generateText(input) {
 					toolPrompts.push(input.prompt);
@@ -79,18 +112,19 @@ describe("OpenAI Responses completion", () => {
 			}),
 		);
 		assert.equal(toolResp.status, 200);
-		assert.match(toolPrompts[0], /Available tools/);
-		assert.match(toolPrompts[0], /<\|DSML\|tool_calls>/);
-		assert.match(toolPrompts[0], /"name": "Search"/);
-		assert.match(toolPrompts[0], /"query"/);
+		const toolPrompt = first(toolPrompts, "tool prompt");
+		assert.match(toolPrompt, /Available tools/);
+		assert.match(toolPrompt, /<\|DSML\|tool_calls>/);
+		assert.match(toolPrompt, /"name": "Search"/);
+		assert.match(toolPrompt, /"query"/);
 
-		const plainPrompts = [];
+		const plainPrompts: string[] = [];
 		const plainResp = await handleResponses(
 			{
 				model: "gemini-3.5-flash",
 				input: "plain request",
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider({
 				async generateText(input) {
 					plainPrompts.push(input.prompt);
@@ -100,7 +134,7 @@ describe("OpenAI Responses completion", () => {
 		);
 		assert.equal(plainResp.status, 200);
 		assert.doesNotMatch(
-			plainPrompts[0],
+			first(plainPrompts, "plain prompt"),
 			/Available tools|<\|DSML\|tool_calls>/,
 		);
 	});
@@ -122,12 +156,12 @@ describe("OpenAI Responses completion", () => {
 					},
 				},
 			},
-			{
+			openAIConfig({
 				default_model: "gemini-3.5-flash",
 				current_input_file_enabled: false,
 				current_input_file_min_bytes: 1000000,
 				log_requests: false,
-			},
+			}),
 			strictProvider({
 				async generateText(input) {
 					assert.match(input.prompt, /Schema name: strict_response/);
@@ -136,9 +170,9 @@ describe("OpenAI Responses completion", () => {
 			}),
 		);
 		assert.equal(resp.status, 502);
-		const body = await resp.json();
-		assert.equal(body.error.code, "structured_output_validation_failed");
-		assert.match(body.error.message, /extra is not allowed/);
+		const error = responseError(await resp.json());
+		assert.equal(error.code, "structured_output_validation_failed");
+		assert.match(error.message, /extra is not allowed/);
 	});
 	test("maps non-stream OpenAI Responses upstream errors to OpenAI error format", async () => {
 		const err = streamError(
@@ -146,21 +180,21 @@ describe("OpenAI Responses completion", () => {
 			"upstream_overloaded",
 		);
 		err.status = 503;
-		const logs = [];
+		const logs: string[] = [];
 		const resp = await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			() =>
 				handleResponses(
 					{
 						model: "gemini-3.5-flash",
 						input: "try once",
 					},
-					{
+					openAIConfig({
 						default_model: "gemini-3.5-flash",
 						current_input_file_enabled: false,
 						current_input_file_min_bytes: 1000000,
 						log_requests: true,
-					},
+					}),
 					strictProvider({
 						async generateText() {
 							throw err;
@@ -169,13 +203,10 @@ describe("OpenAI Responses completion", () => {
 				),
 		);
 		assert.equal(resp.status, 503);
-		const body = await resp.json();
-		assert.equal(body.error.code, "upstream_overloaded");
-		assert.equal(body.error.type, "service_unavailable_error");
-		assert.match(
-			body.error.message,
-			/upstream error: responses overloaded secret/,
-		);
+		const error = responseError(await resp.json());
+		assert.equal(error.code, "upstream_overloaded");
+		assert.equal(error.type, "service_unavailable_error");
+		assert.match(error.message, /upstream error: responses overloaded secret/);
 		const failureLog = logs.find((line) =>
 			line.includes("openai responses generate failed"),
 		);
@@ -188,12 +219,14 @@ describe("OpenAI Responses completion", () => {
 	test("rejects missing OpenAI Responses request objects", async () => {
 		const resp = await handleResponses(
 			undefined,
-			baseConfig(),
+			openAIConfig(),
 			noWorkProvider(),
 		);
 		assert.equal(resp.status, 400);
-		const body = await resp.json();
-		assert.equal(body.error.message, "request body must be a JSON object");
+		assert.equal(
+			responseError(await resp.json()).message,
+			"request body must be a JSON object",
+		);
 	});
 	test("returns OpenAI Responses upstream_empty error without model output", async () => {
 		const resp = await handleResponses(
@@ -201,7 +234,7 @@ describe("OpenAI Responses completion", () => {
 				model: "gemini-3.5-flash",
 				input: "say something",
 			},
-			baseConfig(),
+			openAIConfig(),
 			strictProvider({
 				async generateText() {
 					return "";
@@ -209,9 +242,10 @@ describe("OpenAI Responses completion", () => {
 			}),
 		);
 		assert.equal(resp.status, 502);
-		const body = await resp.json();
-		assert.equal(body.error.code, "upstream_empty");
-		assert.equal(body.error.message, EMPTY_UPSTREAM_MSG);
+		const body = record(await resp.json(), "empty response");
+		const error = record(body.error, "empty response error");
+		assert.equal(error.code, "upstream_empty");
+		assert.equal(error.message, EMPTY_UPSTREAM_MSG);
 		assert.equal(body.output, undefined);
 	});
 });

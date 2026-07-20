@@ -1,5 +1,15 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { AttachmentPlan } from "../../../../src/attachments/types";
+import type { CompletionProvider } from "../../../../src/completion/ports";
+import {
+	createRuntimeConfig,
+	getConfig,
+	type RuntimeConfig,
+} from "../../../../src/config";
+import type {
+	ImageGenerationPrepareError,
+	PreparedImageGenerationCompletion,
+} from "../../../../src/completion/image-generation";
 import { prepareOpenAIImageGenerationCompletion as prepareOpenAIImageGenerationFromMessages } from "../../../../src/completion/image-generation";
 import {
 	imageGenerationMode,
@@ -7,24 +17,49 @@ import {
 } from "../../../../src/http/openai/image-generation";
 import { parseOpenAIMessages } from "../../../../src/promptcompat/message-model";
 import { parseResponsesInput } from "../../../../src/promptcompat/responses-input";
+import type {
+	ErrorWithMetadata,
+	UnknownRecord,
+} from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
 import { strictProvider } from "../_support/provider.js";
 
+type PreparedResult =
+	| PreparedImageGenerationCompletion
+	| { error: ImageGenerationPrepareError };
+
+function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
+	return { ...createRuntimeConfig(getConfig()), ...overrides };
+}
+
+function preparedError(result: PreparedResult): ImageGenerationPrepareError {
+	if (!("error" in result)) throw new Error("expected image-generation error");
+	return result.error;
+}
+
+function preparedSuccess(
+	result: PreparedResult,
+): PreparedImageGenerationCompletion {
+	if ("error" in result) throw new Error(result.error.message);
+	return result;
+}
+
 function prepareOpenAIImageGenerationCompletion(
-	cfg,
-	provider,
-	req,
-	route,
-	forced,
-) {
+	cfg: RuntimeConfig,
+	provider: CompletionProvider,
+	req: UnknownRecord,
+	route: "chat" | "responses",
+	forced: boolean,
+): Promise<PreparedResult> {
 	const parsed =
 		route === "responses"
 			? parseResponsesInput(req, "image-generation")
 			: { messages: parseOpenAIMessages(req.messages) };
-	if (parsed.error)
+	if (parsed.error !== undefined)
 		throw new Error(`invalid image-generation fixture: ${parsed.error}`);
+	if (parsed.messages === undefined)
+		throw new Error("image-generation fixture did not produce messages");
 	return prepareOpenAIImageGenerationFromMessages(
 		cfg,
 		provider,
@@ -68,7 +103,7 @@ describe("OpenAI image generation preparation", () => {
 	});
 	test("rejects empty or oversized image-generation prompts and unknown models", async () => {
 		const noPrompt = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			strictProvider(),
 			{
 				model: "gemini-3.5-flash",
@@ -77,10 +112,10 @@ describe("OpenAI image generation preparation", () => {
 			"chat",
 			false,
 		);
-		assert.equal(noPrompt.error.code, "image_generation_empty_prompt");
+		assert.equal(preparedError(noPrompt).code, "image_generation_empty_prompt");
 
 		const invalidModel = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			strictProvider(),
 			{
 				model: "not-a-model",
@@ -89,10 +124,10 @@ describe("OpenAI image generation preparation", () => {
 			"responses",
 			false,
 		);
-		assert.equal(invalidModel.error.code, "model_not_found");
+		assert.equal(preparedError(invalidModel).code, "model_not_found");
 
 		const tooLarge = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({
+			openAIConfig({
 				cookie: "SID=ok",
 				current_input_file_min_bytes: 10,
 			}),
@@ -104,15 +139,18 @@ describe("OpenAI image generation preparation", () => {
 			"responses",
 			false,
 		);
-		assert.equal(tooLarge.error.code, "image_generation_prompt_too_large");
+		assert.equal(
+			preparedError(tooLarge).code,
+			"image_generation_prompt_too_large",
+		);
 	});
 
 	test("maps image-generation attachment resolve failures and missing refs", async () => {
-		const uploadErr = new Error("upload refused");
+		const uploadErr: ErrorWithMetadata = new Error("upload refused");
 		uploadErr.status = 504;
 		uploadErr.code = "image_upload_refused";
 		const uploadFailed = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			strictProvider({
 				async resolveAttachments() {
 					throw uploadErr;
@@ -136,11 +174,11 @@ describe("OpenAI image generation preparation", () => {
 			"responses",
 			true,
 		);
-		assert.equal(uploadFailed.error.status, 504);
-		assert.equal(uploadFailed.error.code, "image_upload_refused");
+		assert.equal(preparedError(uploadFailed).status, 504);
+		assert.equal(preparedError(uploadFailed).code, "image_upload_refused");
 
 		const missingUploadRef = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			strictProvider({
 				async resolveAttachments() {
 					return attachmentResult({ fileRefs: [] });
@@ -164,12 +202,15 @@ describe("OpenAI image generation preparation", () => {
 			"responses",
 			false,
 		);
-		assert.equal(missingUploadRef.error.code, "image_input_upload_failed");
+		assert.equal(
+			preparedError(missingUploadRef).code,
+			"image_input_upload_failed",
+		);
 	});
 
 	test("rejects invalid image base64 and excessive image counts", async () => {
 		const invalidBase64 = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			strictProvider(),
 			{
 				model: "gemini-3.5-flash",
@@ -186,10 +227,10 @@ describe("OpenAI image generation preparation", () => {
 			"responses",
 			false,
 		);
-		assert.equal(invalidBase64.error.code, "image_input_unsupported");
+		assert.equal(preparedError(invalidBase64).code, "image_input_unsupported");
 
 		const tooManyImages = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			strictProvider(),
 			{
 				model: "gemini-3.5-flash",
@@ -209,12 +250,12 @@ describe("OpenAI image generation preparation", () => {
 			"responses",
 			false,
 		);
-		assert.equal(tooManyImages.error.code, "image_input_unsupported");
-		assert.match(tooManyImages.error.message, /at most 50/);
+		assert.equal(preparedError(tooManyImages).code, "image_input_unsupported");
+		assert.match(preparedError(tooManyImages).message, /at most 50/);
 	});
 	test("extracts image-generation prompts from Responses and Chat input shapes", async () => {
 		const responseObject = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			strictProvider(),
 			{
 				model: "gemini-3.5-flash",
@@ -223,11 +264,11 @@ describe("OpenAI image generation preparation", () => {
 			"responses",
 			false,
 		);
-		assert.equal("error" in responseObject, false);
-		assert.match(responseObject.prompt, /draw from a direct object/);
+		const responseSuccess = preparedSuccess(responseObject);
+		assert.match(responseSuccess.prompt, /draw from a direct object/);
 
 		const inputMessageText = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			strictProvider(),
 			{
 				model: "gemini-3.5-flash",
@@ -236,11 +277,10 @@ describe("OpenAI image generation preparation", () => {
 			"responses",
 			false,
 		);
-		assert.equal("error" in inputMessageText, false);
-		assert.match(inputMessageText.prompt, /42/);
+		assert.match(preparedSuccess(inputMessageText).prompt, /42/);
 
 		const chatTextFallback = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			strictProvider(),
 			{
 				model: "gemini-3.5-flash",
@@ -252,13 +292,15 @@ describe("OpenAI image generation preparation", () => {
 			"chat",
 			false,
 		);
-		assert.equal("error" in chatTextFallback, false);
-		assert.match(chatTextFallback.prompt, /draw from message text/);
+		assert.match(
+			preparedSuccess(chatTextFallback).prompt,
+			/draw from message text/,
+		);
 	});
 
 	test("extracts existing and inline image-generation file references", async () => {
 		const nestedExistingRef = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			strictProvider(),
 			{
 				model: "gemini-3.5-flash",
@@ -278,14 +320,13 @@ describe("OpenAI image generation preparation", () => {
 			"responses",
 			false,
 		);
-		assert.equal("error" in nestedExistingRef, false);
-		assert.deepEqual(nestedExistingRef.fileRefs, [
+		assert.deepEqual(preparedSuccess(nestedExistingRef).fileRefs, [
 			{ id: "nested_file", name: "nested.png" },
 		]);
 
-		const inlineFilePlans = [];
+		const inlineFilePlans: AttachmentPlan[] = [];
 		const inlineFile = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			strictProvider({
 				async resolveAttachments(plan) {
 					inlineFilePlans.push(plan);
@@ -313,11 +354,14 @@ describe("OpenAI image generation preparation", () => {
 			"responses",
 			false,
 		);
-		assert.equal("error" in inlineFile, false);
+		const inlineFileSuccess = preparedSuccess(inlineFile);
 		assert.equal(inlineFilePlans.length, 1);
-		assert.equal(inlineFilePlans[0].candidates[0].filename, "inline-file.png");
-		assert.equal(inlineFilePlans[0].candidates[0].mime, "image/png");
-		assert.deepEqual(inlineFile.fileRefs, [
+		const inlinePlan = inlineFilePlans[0];
+		if (!inlinePlan?.candidates[0])
+			throw new Error("expected inline file plan");
+		assert.equal(inlinePlan.candidates[0].filename, "inline-file.png");
+		assert.equal(inlinePlan.candidates[0].mime, "image/png");
+		assert.deepEqual(inlineFileSuccess.fileRefs, [
 			{ ref: "/uploaded/inline-file.png", name: "inline-file.png" },
 		]);
 	});
@@ -330,7 +374,7 @@ describe("OpenAI image generation preparation", () => {
 			},
 		});
 		const prepared = await prepareOpenAIImageGenerationCompletion(
-			baseConfig({ cookie: "SID=ok" }),
+			openAIConfig({ cookie: "SID=ok" }),
 			provider,
 			{
 				model: "gemini-3.5-flash",
@@ -364,8 +408,7 @@ describe("OpenAI image generation preparation", () => {
 			"responses",
 			false,
 		);
-		assert.equal(!("error" in prepared), true);
-		assert.deepEqual(prepared.fileRefs, [
+		assert.deepEqual(preparedSuccess(prepared).fileRefs, [
 			{ id: "file_first", name: "first.png" },
 			{ ref: "/uploaded/second.png", name: "second.png" },
 			{ id: "file_first", name: "first-again.png" },
@@ -393,7 +436,7 @@ describe("OpenAI image generation preparation", () => {
 		];
 		for (const part of variants) {
 			const prepared = await prepareOpenAIImageGenerationCompletion(
-				baseConfig({ cookie: "SID=ok" }),
+				openAIConfig({ cookie: "SID=ok" }),
 				strictProvider({
 					async resolveAttachments() {
 						throw new Error(
@@ -413,7 +456,7 @@ describe("OpenAI image generation preparation", () => {
 				"responses",
 				false,
 			);
-			assert.equal(prepared.error.code, "image_input_unsupported");
+			assert.equal(preparedError(prepared).code, "image_input_unsupported");
 		}
 	});
 });

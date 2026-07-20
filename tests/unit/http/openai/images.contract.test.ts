@@ -1,30 +1,68 @@
-// @ts-nocheck
-import { strictProvider } from "../_support/provider.js";
 import { describe, test } from "vitest";
+import type { ApplicationExecutionContext } from "../../../../src/app";
 import { base64ToBytes } from "../../../../src/attachments/base64";
+import type { AttachmentPlan } from "../../../../src/attachments/types";
+import type {
+	CompletionRichOptions,
+	CompletionTextInput,
+} from "../../../../src/completion/ports";
+import {
+	createRuntimeConfig,
+	getConfig,
+	type RuntimeConfig,
+} from "../../../../src/config";
 import {
 	handleImageEdits,
 	handleImageEditsMultipart,
 	handleImageGenerations,
 } from "../../../../src/http/openai/images";
 import worker from "../../../../src/index";
+import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { withConsoleLog } from "../../_support/globals.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
+import { strictProvider } from "../_support/provider.js";
 
 const TINY_PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 const TINY_PNG_BYTES = base64ToBytes(TINY_PNG_BASE64);
 
+const execution: ApplicationExecutionContext = { waitUntil() {} };
+
+function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
+	return { ...createRuntimeConfig(getConfig()), ...overrides };
+}
+
+const baseConfig = openAIConfig;
+
+function record(value: unknown, label: string): UnknownRecord {
+	if (!isRecord(value)) throw new Error(`expected ${label} object`);
+	return value;
+}
+
+function responseError(value: unknown): UnknownRecord {
+	return record(record(value, "response").error, "response error");
+}
+
+function required<T>(
+	value: T | null | undefined,
+	label: string,
+): NonNullable<T> {
+	if (value === null || value === undefined)
+		throw new Error(`${label} is required`);
+	return value;
+}
+
 function tinyPngFile(name = "input.png") {
-	return new File([TINY_PNG_BYTES], name, { type: "image/png" });
+	return new File([TINY_PNG_BYTES.buffer as ArrayBuffer], name, {
+		type: "image/png",
+	});
 }
 
 describe("OpenAI Images endpoint", () => {
 	test("routes OpenAI Images generations through forced image mode", async () => {
-		let seenInput = null;
+		let seenInput: CompletionTextInput | null = null;
 		const resp = await handleImageGenerations(
 			{
 				model: "gemini-3.5-flash",
@@ -32,8 +70,8 @@ describe("OpenAI Images endpoint", () => {
 			},
 			baseConfig({ cookie: "SID=ok" }),
 			strictProvider({
-				async generateRich(input) {
-					seenInput = input;
+				async generateRich(generationInput) {
+					seenInput = generationInput;
 					return {
 						text: "ignored text",
 						images: [
@@ -49,14 +87,12 @@ describe("OpenAI Images endpoint", () => {
 			}),
 		);
 		assert.equal(resp.status, 200);
-		assert.match(seenInput.prompt, /draw an endpoint logo/);
-		assert.match(seenInput.prompt, /IMAGE GENERATION ENABLED/);
-		assert.doesNotMatch(
-			seenInput.prompt,
-			/Available tools|<\|DSML\|tool_calls>/,
-		);
-		assert.equal(seenInput.fileRefs, null);
-		const body = await resp.json();
+		const input = required<CompletionTextInput>(seenInput, "generation input");
+		assert.match(input.prompt, /draw an endpoint logo/);
+		assert.match(input.prompt, /IMAGE GENERATION ENABLED/);
+		assert.doesNotMatch(input.prompt, /Available tools|<\|DSML\|tool_calls>/);
+		assert.equal(input.fileRefs, null);
+		const body = record(await resp.json(), "image generation response");
 		assert.equal(typeof body.created, "number");
 		assert.deepEqual(body.data, [{ b64_json: TINY_PNG_BASE64 }]);
 	});
@@ -101,7 +137,7 @@ describe("OpenAI Images endpoint", () => {
 		);
 		assert.equal(trueString.status, 400);
 		assert.equal(
-			(await trueString.json()).error.code,
+			responseError(await trueString.json()).code,
 			"unsupported_image_generation_stream",
 		);
 
@@ -114,12 +150,15 @@ describe("OpenAI Images endpoint", () => {
 			provider,
 		);
 		assert.equal(invalidString.status, 400);
-		assert.equal((await invalidString.json()).error.code, "invalid_request");
+		assert.equal(
+			responseError(await invalidString.json()).code,
+			"invalid_request",
+		);
 		assert.equal(generated, 1);
 	});
 	test("routes OpenAI Images edits through JSON image inputs", async () => {
-		const plans = [];
-		let seenInput = null;
+		const plans: AttachmentPlan[] = [];
+		let seenInput: CompletionTextInput | null = null;
 		const resp = await handleImageEdits(
 			{
 				model: "gemini-3.5-flash",
@@ -132,8 +171,8 @@ describe("OpenAI Images endpoint", () => {
 			},
 			baseConfig({ cookie: "SID=ok" }),
 			strictProvider({
-				async resolveAttachments(plan) {
-					plans.push(plan);
+				async resolveAttachments(jsonPlan) {
+					plans.push(jsonPlan);
 					return attachmentResult({
 						fileRefs: [
 							{ ref: "/uploaded/first.png", name: "first.png" },
@@ -141,8 +180,8 @@ describe("OpenAI Images endpoint", () => {
 						],
 					});
 				},
-				async generateRich(input) {
-					seenInput = input;
+				async generateRich(jsonInput) {
+					seenInput = jsonInput;
 					return {
 						text: "",
 						images: [
@@ -159,16 +198,18 @@ describe("OpenAI Images endpoint", () => {
 		);
 		assert.equal(resp.status, 200);
 		assert.equal(plans.length, 1);
-		assert.equal(plans[0].candidates.length, 2);
+		const plan = required<AttachmentPlan>(plans[0], "JSON image plan");
+		const input = required<CompletionTextInput>(seenInput, "JSON image input");
+		assert.equal(plan.candidates.length, 2);
 		assert.deepEqual(
-			plans[0].candidates.map((candidate) => candidate.kind),
+			plan.candidates.map((candidate) => candidate.kind),
 			["image", "image"],
 		);
-		assert.deepEqual(seenInput.fileRefs, [
+		assert.deepEqual(input.fileRefs, [
 			{ ref: "/uploaded/first.png", name: "first.png" },
 			{ ref: "/uploaded/second.png", name: "second.png" },
 		]);
-		const body = await resp.json();
+		const body = record(await resp.json(), "JSON edit response");
 		assert.deepEqual(body.data, [{ b64_json: TINY_PNG_BASE64 }]);
 	});
 	test("routes OpenAI Images multipart edits through ordered image inputs", async () => {
@@ -179,8 +220,8 @@ describe("OpenAI Images endpoint", () => {
 		form.append("image_url", `data:image/png;base64,${TINY_PNG_BASE64}`);
 		form.append("images[]", tinyPngFile("third.png"));
 
-		const plans = [];
-		let seenInput = null;
+		const plans: AttachmentPlan[] = [];
+		let seenInput: CompletionTextInput | null = null;
 		const resp = await handleImageEditsMultipart(
 			new Request("https://worker.example/v1/images/edits", {
 				method: "POST",
@@ -188,8 +229,8 @@ describe("OpenAI Images endpoint", () => {
 			}),
 			baseConfig({ cookie: "SID=ok" }),
 			strictProvider({
-				async resolveAttachments(plan) {
-					plans.push(plan);
+				async resolveAttachments(multipartPlan) {
+					plans.push(multipartPlan);
 					return attachmentResult({
 						fileRefs: [
 							{ ref: "/uploaded/first.png", name: "first.png" },
@@ -198,8 +239,8 @@ describe("OpenAI Images endpoint", () => {
 						],
 					});
 				},
-				async generateRich(input) {
-					seenInput = input;
+				async generateRich(multipartInput) {
+					seenInput = multipartInput;
 					return {
 						text: "",
 						images: [
@@ -216,17 +257,22 @@ describe("OpenAI Images endpoint", () => {
 		);
 
 		assert.equal(resp.status, 200);
+		const plan = required<AttachmentPlan>(plans[0], "multipart image plan");
+		const input = required<CompletionTextInput>(
+			seenInput,
+			"multipart image input",
+		);
 		assert.equal(plans.length, 1);
 		assert.deepEqual(
-			plans[0].candidates.map((candidate) => candidate.filename),
+			plan.candidates.map((candidate) => candidate.filename),
 			["first.png", "image-2.png", "third.png"],
 		);
-		assert.deepEqual(seenInput.fileRefs, [
+		assert.deepEqual(input.fileRefs, [
 			{ ref: "/uploaded/first.png", name: "first.png" },
 			{ ref: "/uploaded/second.png", name: "second.png" },
 			{ ref: "/uploaded/third.png", name: "third.png" },
 		]);
-		const body = await resp.json();
+		const body = record(await resp.json(), "multipart edit response");
 		assert.deepEqual(body.data, [{ b64_json: TINY_PNG_BASE64 }]);
 	});
 	test("accepts OpenAI Images multipart edit field aliases and JSON reference strings", async () => {
@@ -252,8 +298,8 @@ describe("OpenAI Images endpoint", () => {
 		);
 		form.append("input_image[]", tinyPngFile("input-bracket.png"));
 
-		const plans = [];
-		let seenInput = null;
+		const plans: AttachmentPlan[] = [];
+		let seenInput: CompletionTextInput | null = null;
 		const resp = await handleImageEditsMultipart(
 			new Request("https://worker.example/v1/images/edits", {
 				method: "POST",
@@ -261,17 +307,18 @@ describe("OpenAI Images endpoint", () => {
 			}),
 			baseConfig({ cookie: "SID=ok" }),
 			strictProvider({
-				async resolveAttachments(plan) {
-					plans.push(plan);
+				async resolveAttachments(aliasAttachmentPlan) {
+					plans.push(aliasAttachmentPlan);
 					return attachmentResult({
-						fileRefs: plan.candidates.map((candidate) => ({
-							ref: `/uploaded/${candidate.filename}`,
-							name: candidate.filename,
-						})),
+						fileRefs: aliasAttachmentPlan.candidates.map((candidate) => {
+							const filename = candidate.filename;
+							if (!filename) throw new Error("expected candidate filename");
+							return { ref: `/uploaded/${filename}`, name: filename };
+						}),
 					});
 				},
-				async generateRich(input) {
-					seenInput = input;
+				async generateRich(aliasGenerationInput) {
+					seenInput = aliasGenerationInput;
 					return {
 						text: "",
 						images: [
@@ -297,15 +344,20 @@ describe("OpenAI Images endpoint", () => {
 			"input-json.png",
 			"input-bracket.png",
 		];
+		const aliasPlan = required<AttachmentPlan>(plans[0], "alias image plan");
+		const aliasInput = required<CompletionTextInput>(
+			seenInput,
+			"alias image input",
+		);
 		assert.deepEqual(
-			plans[0].candidates.map((candidate) => candidate.filename),
+			aliasPlan.candidates.map((candidate) => candidate.filename),
 			expectedNames,
 		);
 		assert.deepEqual(
-			seenInput.fileRefs,
+			aliasInput.fileRefs,
 			expectedNames.map((name) => ({ ref: `/uploaded/${name}`, name })),
 		);
-		const body = await resp.json();
+		const body = record(await resp.json(), "alias edit response");
 		assert.deepEqual(body.data, [{ b64_json: TINY_PNG_BASE64 }]);
 	});
 	test("dispatches multipart OpenAI Images edits before JSON parsing", async () => {
@@ -325,12 +377,12 @@ describe("OpenAI Images endpoint", () => {
 					},
 				},
 			},
-			{},
+			execution,
 		);
 
 		assert.equal(resp.status, 400);
 		assert.equal(
-			(await resp.json()).error.code,
+			responseError(await resp.json()).code,
 			"unsupported_image_generation_stream",
 		);
 	});
@@ -354,7 +406,10 @@ describe("OpenAI Images endpoint", () => {
 			}),
 		);
 		assert.equal(remote.status, 400);
-		assert.equal((await remote.json()).error.code, "image_input_unsupported");
+		assert.equal(
+			responseError(await remote.json()).code,
+			"image_input_unsupported",
+		);
 
 		const textFileForm = new FormData();
 		textFileForm.append("model", "gemini-3.5-flash");
@@ -379,7 +434,10 @@ describe("OpenAI Images endpoint", () => {
 			}),
 		);
 		assert.equal(textFile.status, 400);
-		assert.equal((await textFile.json()).error.code, "image_input_unsupported");
+		assert.equal(
+			responseError(await textFile.json()).code,
+			"image_input_unsupported",
+		);
 
 		const tooLargeForm = new FormData();
 		tooLargeForm.append("model", "gemini-3.5-flash");
@@ -399,7 +457,10 @@ describe("OpenAI Images endpoint", () => {
 			}),
 		);
 		assert.equal(tooLarge.status, 413);
-		assert.equal((await tooLarge.json()).error.code, "image_input_too_large");
+		assert.equal(
+			responseError(await tooLarge.json()).code,
+			"image_input_too_large",
+		);
 
 		const declaredTooLarge = await handleImageEditsMultipart(
 			new Request("https://worker.example/v1/images/edits", {
@@ -420,13 +481,13 @@ describe("OpenAI Images endpoint", () => {
 		);
 		assert.equal(declaredTooLarge.status, 413);
 		assert.equal(
-			(await declaredTooLarge.json()).error.code,
+			responseError(await declaredTooLarge.json()).code,
 			"image_input_too_large",
 		);
 		assert.equal(generated, false);
 	});
 	test("supports OpenAI Images url response format without Worker-hosted image URLs", async () => {
-		let generateOptions;
+		let generateOptions: CompletionRichOptions | undefined;
 		const resp = await handleImageGenerations(
 			{
 				model: "gemini-3.5-flash",
@@ -452,11 +513,13 @@ describe("OpenAI Images endpoint", () => {
 			}),
 		);
 		assert.equal(resp.status, 200);
-		const body = await resp.json();
+		const body = record(await resp.json(), "URL image response");
+		const data = Array.isArray(body.data) ? body.data : [];
+		const firstData = record(data[0], "URL image data");
 		assert.deepEqual(body.data, [
 			{ url: "https://images.example/generated.png" },
 		]);
-		assert.equal(String(body.data[0].url).startsWith("/images/"), false);
+		assert.equal(String(firstData.url).startsWith("/images/"), false);
 		assert.deepEqual(generateOptions, { hydrateGeneratedImageBytes: false });
 	});
 	test("rejects unsupported OpenAI Images endpoint options before upstream work", async () => {
@@ -481,11 +544,11 @@ describe("OpenAI Images endpoint", () => {
 					},
 				},
 			},
-			{},
+			execution,
 		);
 		assert.equal(stream.status, 400);
 		assert.equal(
-			(await stream.json()).error.code,
+			responseError(await stream.json()).code,
 			"unsupported_image_generation_stream",
 		);
 
@@ -495,7 +558,10 @@ describe("OpenAI Images endpoint", () => {
 			provider,
 		);
 		assert.equal(count.status, 400);
-		assert.equal((await count.json()).error.code, "unsupported_image_count");
+		assert.equal(
+			responseError(await count.json()).code,
+			"unsupported_image_count",
+		);
 
 		const format = await handleImageGenerations(
 			{ prompt: "draw", response_format: "base64" },
@@ -503,7 +569,10 @@ describe("OpenAI Images endpoint", () => {
 			provider,
 		);
 		assert.equal(format.status, 400);
-		assert.equal((await format.json()).error.code, "invalid_response_format");
+		assert.equal(
+			responseError(await format.json()).code,
+			"invalid_response_format",
+		);
 		assert.equal(generated, false);
 	});
 	test("normalizes scalar image options and rejects invalid option types", async () => {
@@ -543,7 +612,7 @@ describe("OpenAI Images endpoint", () => {
 		);
 		assert.equal(emptyPrompt.status, 400);
 		assert.equal(
-			(await emptyPrompt.json()).error.code,
+			responseError(await emptyPrompt.json()).code,
 			"image_generation_empty_prompt",
 		);
 
@@ -554,7 +623,7 @@ describe("OpenAI Images endpoint", () => {
 		);
 		assert.equal(nonStringPrompt.status, 400);
 		assert.equal(
-			(await nonStringPrompt.json()).error.code,
+			responseError(await nonStringPrompt.json()).code,
 			"image_generation_empty_prompt",
 		);
 
@@ -565,7 +634,7 @@ describe("OpenAI Images endpoint", () => {
 		);
 		assert.equal(nonStringFormat.status, 400);
 		assert.equal(
-			(await nonStringFormat.json()).error.code,
+			responseError(await nonStringFormat.json()).code,
 			"invalid_response_format",
 		);
 
@@ -575,7 +644,10 @@ describe("OpenAI Images endpoint", () => {
 			provider,
 		);
 		assert.equal(nonStringStream.status, 400);
-		assert.equal((await nonStringStream.json()).error.code, "invalid_request");
+		assert.equal(
+			responseError(await nonStringStream.json()).code,
+			"invalid_request",
+		);
 
 		const badNumberStream = await handleImageGenerations(
 			{ prompt: "draw", stream: 2 },
@@ -583,7 +655,10 @@ describe("OpenAI Images endpoint", () => {
 			provider,
 		);
 		assert.equal(badNumberStream.status, 400);
-		assert.equal((await badNumberStream.json()).error.code, "invalid_request");
+		assert.equal(
+			responseError(await badNumberStream.json()).code,
+			"invalid_request",
+		);
 		assert.equal(generated, 1);
 	});
 	test("rejects OpenAI Images edits without local image inputs", async () => {
@@ -603,7 +678,10 @@ describe("OpenAI Images endpoint", () => {
 			}),
 		);
 		assert.equal(remote.status, 400);
-		assert.equal((await remote.json()).error.code, "image_input_unsupported");
+		assert.equal(
+			responseError(await remote.json()).code,
+			"image_input_unsupported",
+		);
 
 		const missing = await handleImageEdits(
 			{
@@ -619,7 +697,10 @@ describe("OpenAI Images endpoint", () => {
 			}),
 		);
 		assert.equal(missing.status, 400);
-		assert.equal((await missing.json()).error.code, "image_input_unsupported");
+		assert.equal(
+			responseError(await missing.json()).code,
+			"image_input_unsupported",
+		);
 		assert.equal(generated, false);
 	});
 	test("fails forced OpenAI Images endpoints on text-only or URL-only b64_json output", async () => {
@@ -637,7 +718,7 @@ describe("OpenAI Images endpoint", () => {
 		);
 		assert.equal(textOnly.status, 502);
 		assert.equal(
-			(await textOnly.json()).error.code,
+			responseError(await textOnly.json()).code,
 			"upstream_image_generation_empty",
 		);
 
@@ -663,7 +744,7 @@ describe("OpenAI Images endpoint", () => {
 		);
 		assert.equal(urlOnly.status, 502);
 		assert.equal(
-			(await urlOnly.json()).error.code,
+			responseError(await urlOnly.json()).code,
 			"upstream_image_fetch_failed",
 		);
 	});
@@ -681,6 +762,7 @@ describe("OpenAI Images endpoint", () => {
 						text: "",
 						images: [
 							{
+								url: "",
 								source: "generated",
 								base64: TINY_PNG_BASE64,
 								outputFormat: "png",
@@ -691,9 +773,9 @@ describe("OpenAI Images endpoint", () => {
 			}),
 		);
 		assert.equal(resp.status, 502);
-		const body = await resp.json();
-		assert.equal(body.error.code, "upstream_image_generation_empty");
-		assert.match(body.error.message, /without usable URLs/);
+		const error = responseError(await resp.json());
+		assert.equal(error.code, "upstream_image_generation_empty");
+		assert.match(error.message, /without usable URLs/);
 	});
 	test("rejects multipart OpenAI Images edits with invalid form fields or no images", async () => {
 		const invalidStreamForm = new FormData();
@@ -715,7 +797,10 @@ describe("OpenAI Images endpoint", () => {
 			}),
 		);
 		assert.equal(invalidStream.status, 400);
-		assert.equal((await invalidStream.json()).error.code, "invalid_request");
+		assert.equal(
+			responseError(await invalidStream.json()).code,
+			"invalid_request",
+		);
 
 		const noImageForm = new FormData();
 		noImageForm.append("prompt", "edit");
@@ -737,12 +822,15 @@ describe("OpenAI Images endpoint", () => {
 			}),
 		);
 		assert.equal(noImage.status, 400);
-		assert.equal((await noImage.json()).error.code, "image_input_unsupported");
+		assert.equal(
+			responseError(await noImage.json()).code,
+			"image_input_unsupported",
+		);
 	});
 	test("logs image generation stages when request logging is enabled", async () => {
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			async () => {
 				const resp = await handleImageGenerations(
 					{

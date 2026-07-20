@@ -1,13 +1,72 @@
-// @ts-nocheck
 import { describe, test } from "vitest";
+import type { AttachmentPlan } from "../../../../src/attachments/types";
+import type { CompletionTextInput } from "../../../../src/completion/ports";
+import {
+	createRuntimeConfig,
+	getConfig,
+	type RuntimeConfig,
+} from "../../../../src/config";
 import { handleChat } from "../../../../src/http/openai/chat";
 import { handleImageGenerations } from "../../../../src/http/openai/images";
 import { handleResponses } from "../../../../src/http/openai/responses";
+import {
+	isRecord,
+	type ErrorWithMetadata,
+	type UnknownRecord,
+} from "../../../../src/shared/types";
 import { assert } from "../../assertions.js";
 import { withConsoleLog } from "../../_support/globals.js";
-import { baseConfig } from "../../_support/runtime-config.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
 import { strictProvider } from "../_support/provider.js";
+
+function openAIConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
+	return { ...createRuntimeConfig(getConfig()), ...overrides };
+}
+
+const baseConfig = openAIConfig;
+
+function record(value: unknown, label: string): UnknownRecord {
+	if (!isRecord(value)) throw new Error(`expected ${label} object`);
+	return value;
+}
+
+function responseError(value: unknown): UnknownRecord {
+	return record(record(value, "response").error, "response error");
+}
+
+function records(value: unknown, label: string): UnknownRecord[] {
+	if (!Array.isArray(value)) throw new Error(`expected ${label} array`);
+	return value.map((item, index) => record(item, `${label} ${index}`));
+}
+
+function firstRecord(value: unknown, label: string): UnknownRecord {
+	if (!Array.isArray(value) || value.length === 0)
+		throw new Error(`expected ${label}`);
+	return record(value[0], label);
+}
+
+function chatMessageText(value: unknown): unknown {
+	const body = record(value, "chat response");
+	const choice = firstRecord(body.choices, "chat choice");
+	const message = record(choice.message, "chat message");
+	if (typeof message.content === "string") return message.content;
+	return firstRecord(message.content, "chat message content").text;
+}
+
+function outputMessageText(value: unknown): unknown {
+	const body = record(value, "Responses response");
+	const item = firstRecord(body.output, "Responses output");
+	return firstRecord(item.content, "Responses message content").text;
+}
+
+function required<T>(
+	value: T | null | undefined,
+	label: string,
+): NonNullable<T> {
+	if (value === null || value === undefined)
+		throw new Error(`${label} is required`);
+	return value;
+}
 
 const TINY_PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -31,12 +90,9 @@ describe("OpenAI image-mode handler", () => {
 			}),
 		);
 		assert.equal(noCookie.status, 422);
-		const noCookieBody = await noCookie.json();
-		assert.equal(
-			noCookieBody.error.code,
-			"gemini_authenticated_session_required",
-		);
-		assert.equal(noCookieBody.error.reason, "image");
+		const noCookieBody = responseError(await noCookie.json());
+		assert.equal(noCookieBody.code, "gemini_authenticated_session_required");
+		assert.equal(noCookieBody.reason, "image");
 		assert.equal(generated, false);
 
 		const noCookieEndpoint = await handleImageGenerations(
@@ -54,12 +110,12 @@ describe("OpenAI image-mode handler", () => {
 			}),
 		);
 		assert.equal(noCookieEndpoint.status, 422);
-		const noCookieEndpointBody = await noCookieEndpoint.json();
+		const noCookieEndpointBody = responseError(await noCookieEndpoint.json());
 		assert.equal(
-			noCookieEndpointBody.error.code,
+			noCookieEndpointBody.code,
 			"gemini_authenticated_session_required",
 		);
-		assert.equal(noCookieEndpointBody.error.reason, "image");
+		assert.equal(noCookieEndpointBody.reason, "image");
 		assert.equal(generated, false);
 
 		const stream = await handleChat(
@@ -79,7 +135,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(stream.status, 400);
 		assert.equal(
-			(await stream.json()).error.code,
+			responseError(await stream.json()).code,
 			"unsupported_image_generation_stream",
 		);
 		assert.equal(generated, false);
@@ -96,7 +152,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(unsupportedChat.status, 502);
 		assert.equal(
-			(await unsupportedChat.json()).error.code,
+			responseError(await unsupportedChat.json()).code,
 			"image_generation_provider_unsupported",
 		);
 
@@ -111,7 +167,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(unsupportedResponses.status, 502);
 		assert.equal(
-			(await unsupportedResponses.json()).error.code,
+			responseError(await unsupportedResponses.json()).code,
 			"image_generation_provider_unsupported",
 		);
 
@@ -124,13 +180,15 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(unsupportedImages.status, 502);
 		assert.equal(
-			(await unsupportedImages.json()).error.code,
+			responseError(await unsupportedImages.json()).code,
 			"image_generation_provider_unsupported",
 		);
 	});
 
 	test("maps image-generation upstream errors through Responses", async () => {
-		const upstreamErr = new Error("upstream refused image generation");
+		const upstreamErr: ErrorWithMetadata = new Error(
+			"upstream refused image generation",
+		);
 		upstreamErr.status = 503;
 		upstreamErr.code = "upstream_refused";
 		const upstreamFailure = await handleResponses(
@@ -147,7 +205,10 @@ describe("OpenAI image-mode handler", () => {
 			}),
 		);
 		assert.equal(upstreamFailure.status, 503);
-		assert.equal((await upstreamFailure.json()).error.code, "upstream_refused");
+		assert.equal(
+			responseError(await upstreamFailure.json()).code,
+			"upstream_refused",
+		);
 	});
 
 	test("rejects streaming Responses image generation before provider work", async () => {
@@ -167,16 +228,16 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(responseStream.status, 400);
 		assert.equal(
-			(await responseStream.json()).error.code,
+			responseError(await responseStream.json()).code,
 			"unsupported_image_generation_stream",
 		);
 	});
 	test("routes Responses image generation through user-only prompt and image_generation_call output", async () => {
-		const prompts = [];
-		const plans = [];
+		const prompts: CompletionTextInput[] = [];
+		const plans: AttachmentPlan[] = [];
 		const provider = strictProvider({
-			async resolveAttachments(plan) {
-				plans.push(plan);
+			async resolveAttachments(attachmentPlan) {
+				plans.push(attachmentPlan);
 				return attachmentResult({
 					fileRefs: [{ ref: "/uploaded/input.png", name: "input.png" }],
 					imageFileRefs: [{ ref: "/uploaded/input.png", name: "input.png" }],
@@ -240,29 +301,39 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(resp.status, 200);
 		assert.equal(plans.length, 1);
-		assert.equal(plans[0].candidates.length, 1);
+		const plan = required<AttachmentPlan>(plans[0], "attachment plan");
+		const prompt = required<CompletionTextInput>(
+			prompts[0],
+			"generation prompt",
+		);
+		assert.equal(plan.candidates.length, 1);
 		assert.equal(prompts.length, 1);
-		assert.match(prompts[0].prompt, /draw a small blue logo/);
-		assert.match(prompts[0].prompt, /IMAGE GENERATION ENABLED/);
+		assert.match(prompt.prompt, /draw a small blue logo/);
+		assert.match(prompt.prompt, /IMAGE GENERATION ENABLED/);
 		assert.doesNotMatch(
-			prompts[0].prompt,
+			prompt.prompt,
 			/LEAK|Available tools|<\|DSML\|tool_calls>|\[image input\]/,
 		);
-		assert.deepEqual(prompts[0].fileRefs, [
+		assert.deepEqual(prompt.fileRefs, [
 			{ ref: "/uploaded/input.png", name: "input.png" },
 		]);
 
-		const body = await resp.json();
-		const message = body.output.find((item) => item.type === "message");
-		assert.equal(message.content[0].text, "caption");
-		assert.doesNotMatch(message.content[0].text, /data:image/);
-		const imageCall = body.output.find(
+		const body = record(await resp.json(), "image Responses response");
+		const output = records(body.output, "Responses output");
+		const message = required(
+			output.find((item) => item.type === "message"),
+			"message output",
+		);
+		const messageText = firstRecord(message.content, "message content").text;
+		assert.equal(messageText, "caption");
+		assert.doesNotMatch(messageText, /data:image/);
+		const imageCall = output.find(
 			(item) => item.type === "image_generation_call",
 		);
-		assert.equal(!!imageCall, true);
-		assert.equal(imageCall.status, "completed");
-		assert.equal(imageCall.result, TINY_PNG_BASE64);
-		assert.equal(imageCall.output_format, "png");
+		const completedCall = required(imageCall, "image generation call");
+		assert.equal(completedCall.status, "completed");
+		assert.equal(completedCall.result, TINY_PNG_BASE64);
+		assert.equal(completedCall.output_format, "png");
 	});
 	test("rejects unsupported image-mode inputs clearly", async () => {
 		const remote = await handleResponses(
@@ -290,7 +361,10 @@ describe("OpenAI image-mode handler", () => {
 			}),
 		);
 		assert.equal(remote.status, 400);
-		assert.equal((await remote.json()).error.code, "image_input_unsupported");
+		assert.equal(
+			responseError(await remote.json()).code,
+			"image_input_unsupported",
+		);
 
 		const remoteWithPartID = await handleResponses(
 			{
@@ -319,7 +393,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(remoteWithPartID.status, 400);
 		assert.equal(
-			(await remoteWithPartID.json()).error.code,
+			responseError(await remoteWithPartID.json()).code,
 			"image_input_unsupported",
 		);
 
@@ -349,7 +423,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(textBytes.status, 400);
 		assert.equal(
-			(await textBytes.json()).error.code,
+			responseError(await textBytes.json()).code,
 			"image_input_unsupported",
 		);
 
@@ -382,7 +456,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(nonImageFile.status, 400);
 		assert.equal(
-			(await nonImageFile.json()).error.code,
+			responseError(await nonImageFile.json()).code,
 			"image_input_unsupported",
 		);
 	});
@@ -426,10 +500,14 @@ describe("OpenAI image-mode handler", () => {
 		assert.equal(resp.status, 200);
 		const body = await resp.json();
 		assert.match(
-			body.choices[0].message.content,
+			chatMessageText(body),
 			/^done\n\n!\[image\]\(data:image\/png;base64,/,
 		);
-		assert.equal(body.usage.completion_tokens < 10, true);
+		const imageBody = record(body, "chat image response");
+		const usage = record(imageBody.usage, "chat image usage");
+		if (typeof usage.completion_tokens !== "number")
+			throw new Error("expected completion token count");
+		assert.equal(usage.completion_tokens < 10, true);
 	});
 	test("passes through tools-only image mode text when upstream returns no image", async () => {
 		const resp = await handleResponses(
@@ -447,9 +525,12 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(resp.status, 200);
 		const body = await resp.json();
-		assert.equal(body.output[0].content[0].text, "upstream text only");
+		assert.equal(outputMessageText(body), "upstream text only");
 		assert.equal(
-			body.output.some((item) => item.type === "image_generation_call"),
+			records(
+				record(body, "text-only Responses response").output,
+				"Responses output",
+			).some((item) => item.type === "image_generation_call"),
 			false,
 		);
 	});
@@ -469,7 +550,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(chat.status, 502);
 		assert.equal(
-			(await chat.json()).error.code,
+			responseError(await chat.json()).code,
 			"upstream_image_generation_empty",
 		);
 
@@ -488,7 +569,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(responses.status, 502);
 		assert.equal(
-			(await responses.json()).error.code,
+			responseError(await responses.json()).code,
 			"upstream_image_generation_empty",
 		);
 	});
@@ -508,7 +589,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(resp.status, 502);
 		assert.equal(
-			(await resp.json()).error.code,
+			responseError(await resp.json()).code,
 			"upstream_image_generation_empty",
 		);
 
@@ -530,7 +611,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(webOnlyChat.status, 502);
 		assert.equal(
-			(await webOnlyChat.json()).error.code,
+			responseError(await webOnlyChat.json()).code,
 			"upstream_image_generation_empty",
 		);
 
@@ -552,7 +633,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(webOnlyResponses.status, 502);
 		assert.equal(
-			(await webOnlyResponses.json()).error.code,
+			responseError(await webOnlyResponses.json()).code,
 			"upstream_image_generation_empty",
 		);
 	});
@@ -581,7 +662,7 @@ describe("OpenAI image-mode handler", () => {
 		);
 		assert.equal(chat.status, 200);
 		assert.equal(
-			(await chat.json()).choices[0].message.content,
+			chatMessageText(await chat.json()),
 			"see image\n\n![generated result](https://images.example/generated.png)",
 		);
 
@@ -608,20 +689,24 @@ describe("OpenAI image-mode handler", () => {
 			}),
 		);
 		assert.equal(responses.status, 200);
-		const body = await responses.json();
+		const body = record(await responses.json(), "URL-only Responses response");
+		const output = records(body.output, "Responses output");
 		assert.equal(
-			body.output[0].content[0].text,
+			firstRecord(
+				firstRecord(output, "Responses output").content,
+				"image output content",
+			).text,
 			"![web result](https://images.example/web.png)",
 		);
 		assert.equal(
-			body.output.some((item) => item.type === "image_generation_call"),
+			output.some((item) => item.type === "image_generation_call"),
 			false,
 		);
 	});
 	test("logs Chat and Responses image generation stages when request logging is enabled", async () => {
-		const logs = [];
+		const logs: string[] = [];
 		await withConsoleLog(
-			(line) => logs.push(String(line)),
+			(line: unknown) => logs.push(String(line)),
 			async () => {
 				const provider = strictProvider({
 					async generateRich() {
