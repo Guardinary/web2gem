@@ -34,6 +34,11 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
   iterator close) must attempt `reader.cancel()` before releasing the lock.
   Cleanup errors must not replace the primary return or exception. A normal EOF
   must release without canceling so a keep-alive response remains reusable.
+- A caller that abandons an upstream response based only on status or headers
+  must call `cancelResponseBody(response)` before retrying, throwing, or
+  returning. This includes invalid-cookie generation responses, non-success
+  account probes/uploads, and Cookie-rotation status paths. Cancellation failure
+  must never replace the status-derived result.
 
 ### 4. Validation & Error Matrix
 
@@ -46,14 +51,20 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 - `acceptCompressed=false`, unsolicited gzip response -> response bytes and `content-encoding` / `content-length` remain unchanged.
 - Chunk size line `5;foo=bar` -> parse as `5`.
 - Chunk size line `a ;ext=1`, `Z`, or an unsafe integer -> stream error with `socket: invalid chunk size`.
+- Status/header-only response path -> cancel the body once before preserving the
+  existing retry, return, or error result.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: pass one resolved compression contract from request-header construction to response-body handling, then cover both supported decoding and raw-response paths.
+- Good: cancel a non-success response body before refreshing credentials or
+  recursively retrying the request.
 - Base: socket transport preserves method, headers, body, timeout, auth cookies, model selection, and file references when falling back through `httpFetch`.
 - Bad: fall back to anonymous or header-stripped fetch after a socket failure.
 - Bad: send `Accept-Encoding: gzip` from socket code when the runtime cannot build a gzip `DecompressionStream`.
 - Bad: parse chunk sizes with `parseInt(TEXT_DECODER.decode(line), 16)` without validating the full size token.
+- Bad: return or throw from a status-only branch while leaving the response body
+  unread and uncancelled.
 
 ### 6. Tests Required
 
@@ -65,6 +76,8 @@ Use this contract when changing Gemini upstream transport, socket pooling, respo
 - Unit test reader lifecycle for normal EOF, read/parse failure, size limits,
   and early async-iterator close; assert both cancellation policy and unlocked
   bodies.
+- Unit test status/header-only response branches and assert body cancellation
+  without replacing the primary result when cancellation rejects.
 - Unit test a long chunk extension split across one-byte queue pushes and assert the parsed size plus remaining body bytes.
 - Run `pnpm typecheck`, `pnpm check:arch`, `pnpm unit`, and `pnpm smoke` after changing transport fallback or socket response parsing.
 
@@ -785,6 +798,10 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
   leases after account-scoped failures, excluding every previously failed ID.
 - Upload-only provider calls keep the lease for the later generation call. If preparation returns an error after upload/bootstrap, the HTTP handler must call `provider.dispose()` before returning.
 - Non-streaming generation marks account success only after the Gemini call resolves. Streaming marks success only after the async iterator completes normally.
+- If a downstream consumer closes the account-backed async iterator early,
+  cancel the nested stream through iterator close, release the current lease,
+  and reset request-local attempt/upload state. Consumer close is neutral: it
+  must not persist success or failure and must release the lease exactly once.
 - Non-abort provider failures mark the selected account failure and release the
   lease. Failover is allowed only when the shared classifier returns a normalized
   account issue. Abort/disconnect and request-scoped model/capability errors do
@@ -857,6 +874,8 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 - `/app` page token fetch for account A then account B -> distinct cache keys; tokens cannot cross accounts.
 - Account stream yields a first delta -> no success marked yet; stream completion -> success and release.
 - Account stream throws after partial output -> failure and release; no alternate-account retry after visible output.
+- Account stream consumer calls `return()` after a delta -> nested stream closes,
+  lease releases once, and neither success nor failure is persisted.
 - Successful generation plus D1 outcome rejection -> preserve the generated
   result, release once, and handle the background rejection.
 - Upstream generation failure plus D1 outcome rejection -> preserve the original
@@ -867,6 +886,8 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
 
 - Good: provider coordinator stores one active lease, an attempted-ID set, and
   upload recipes; it releases a failed lease before acquiring an untried one.
+- Good: wrap the complete async-generation attempt loop in an idempotent
+  `finally` that performs only neutral cleanup when no terminal outcome ran.
 - Good: create one guarded outcome promise, release the lease, then pass the
   guarded promise to `waitUntil`.
 - Good: HTTP prepare-error branches call `provider.dispose?.()` before returning a validation error after possible upload work.
@@ -881,6 +902,8 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
   known, because that defeats anonymous preference and consumes pool capacity.
 - Bad: retry through an account after a streamed delta, which duplicates visible
   output.
+- Bad: place lease cleanup only after the `for await` loop; consumer `return()`
+  skips that continuation.
 - Bad: calling `AccountPoolService.acquireLease` while parsing JSON, checking public API keys, listing models, or serving health checks.
 - Bad: keying page tokens or push IDs by raw cookie header.
 - Bad: releasing the lease immediately after successful upload and selecting another account for generation.
@@ -898,7 +921,8 @@ Use this contract when wiring `GeminiAccountRuntime` into `src/gemini/completion
   fails, and abort exclusion.
 - Stream tests for fallback before output, empty-stream fallback, and no fallback
   after a delta or abort.
-- Provider stream tests for success only after iterator completion and release on stream failure.
+- Provider stream tests for success only after iterator completion, release on
+  stream failure, and neutral release on consumer `return()`.
 - Provider tests proving `waitUntil` registration, successful-result
   preservation, original-error preservation, handled intermediate/terminal
   outcome-write rejection, auth refresh, recipe replay/ref remapping, and opaque
