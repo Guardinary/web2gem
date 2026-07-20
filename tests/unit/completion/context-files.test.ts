@@ -12,13 +12,16 @@ import {
 	shouldUseContextFiles,
 } from "../../../src/completion/context-files";
 import {
-	hasCompletionError,
 	type ContextFileFailure,
 	type ContextFileResult,
+	hasCompletionError,
 } from "../../../src/completion/types";
 import { assert } from "../assertions.js";
-
-type RecordedUpload = { text: string; filename: string };
+import {
+	contextFileConfig,
+	type RecordedUpload,
+	recordedUploadAt,
+} from "./_support/context-fixtures.js";
 
 function requireContextFileFailure(
 	result: ContextFileResult | ContextFileFailure | null,
@@ -43,34 +46,11 @@ function requireError(value: unknown): Error {
 	return value;
 }
 
-function requireUpload(
-	uploads: readonly RecordedUpload[],
-	index: number,
-): RecordedUpload {
-	const upload = uploads[index];
-	if (!upload) throw new Error(`expected upload at index ${index}`);
-	return upload;
-}
-
 describe("context-file policy", () => {
 	test("builds oversized inline context failure metadata", async () => {
-		const check = contextFilePromptByteCheck(
-			{
-				current_input_file_enabled: true,
-				current_input_file_min_bytes: 10,
-				supports_authenticated_session: false,
-			},
-			"x".repeat(40),
-		);
-		const err = oversizedInlineContextFailure(
-			{
-				current_input_file_enabled: true,
-				current_input_file_min_bytes: 10,
-				supports_authenticated_session: false,
-			},
-			"x".repeat(40),
-			check,
-		);
+		const cfg = contextFileConfig({ supports_authenticated_session: false });
+		const check = contextFilePromptByteCheck(cfg, "x".repeat(40));
+		const err = oversizedInlineContextFailure(cfg, "x".repeat(40), check);
 		assert.equal(err.code, "gemini_authenticated_session_required");
 		assert.equal(err.status, 422);
 		assert.equal(err.reason, "large_context");
@@ -79,12 +59,7 @@ describe("context-file policy", () => {
 		assert.match(err.message, /at least 11 UTF-8 bytes > 10/);
 	});
 	test("decides context-file eligibility without requiring uploads", async () => {
-		const cfg = {
-			current_input_file_enabled: true,
-			current_input_file_min_bytes: 10,
-			current_input_file_name: "history.txt",
-			supports_authenticated_session: true,
-		};
+		const cfg = contextFileConfig({ current_input_file_name: "history.txt" });
 		const check = contextFilePromptByteCheck(cfg, "x".repeat(40));
 		assert.equal(contextFileThreshold({ current_input_file_min_bytes: -1 }), 0);
 		assert.equal(
@@ -123,18 +98,14 @@ describe("context-file policy", () => {
 		);
 	});
 	test("formats latest context-file prompt around the inline byte limit", async () => {
-		const smallCfg = {
-			current_input_file_enabled: true,
+		const smallCfg = contextFileConfig({
 			current_input_file_min_bytes: 12,
 			current_input_file_name: "conversation.txt",
-			cookie: "SID=ok",
-		};
-		const largeCfg = {
-			current_input_file_enabled: true,
+		});
+		const largeCfg = contextFileConfig({
 			current_input_file_min_bytes: 120000,
 			current_input_file_name: "conversation.txt",
-			cookie: "SID=ok",
-		};
+		});
 		assert.equal(latestInputInlineLimit(smallCfg), 4000);
 		assert.equal(latestInputInlineLimit(largeCfg), 16000);
 		assert.equal(
@@ -153,14 +124,7 @@ describe("context-file policy", () => {
 		assert.doesNotMatch(longPrompt, /x{100}/);
 	});
 	test("returns upload failure metadata when large context has no uploader", async () => {
-		const cfg = {
-			current_input_file_enabled: true,
-			current_input_file_min_bytes: 10,
-			current_input_file_name: "message.txt",
-			current_tools_file_name: "tools.txt",
-			cookie: "SID=ok",
-			supports_authenticated_session: true,
-		};
+		const cfg = contextFileConfig();
 		const check = contextFilePromptByteCheck(cfg, "x".repeat(40));
 		const result = requireContextFileFailure(
 			await prepareContextFiles(
@@ -190,15 +154,7 @@ describe("context-file policy", () => {
 		assert.equal(direct.cause, "network down");
 	});
 	test("refuses oversized inline fallback when history context upload fails", async () => {
-		const cfg = {
-			current_input_file_enabled: true,
-			current_input_file_min_bytes: 10,
-			current_input_file_name: "message.txt",
-			current_tools_file_name: "tools.txt",
-			cookie: "SID=ok",
-			supports_authenticated_session: true,
-			log_requests: false,
-		};
+		const cfg = contextFileConfig();
 		const result = requireContextFileFailure(
 			await prepareContextFilesWithUploader(
 				cfg,
@@ -223,15 +179,7 @@ describe("context-file policy", () => {
 		);
 	});
 	test("refuses oversized inline fallback when tools context upload fails", async () => {
-		const cfg = {
-			current_input_file_enabled: true,
-			current_input_file_min_bytes: 10,
-			current_input_file_name: "message.txt",
-			current_tools_file_name: "tools.txt",
-			cookie: "SID=ok",
-			supports_authenticated_session: true,
-			log_requests: false,
-		};
+		const cfg = contextFileConfig();
 		const uploads: RecordedUpload[] = [];
 		const result = requireContextFileFailure(
 			await prepareContextFilesWithUploader(
@@ -266,15 +214,7 @@ describe("context-file policy", () => {
 		);
 	});
 	test("moves large tool context into the attached tools file", async () => {
-		const cfg = {
-			current_input_file_enabled: true,
-			current_input_file_min_bytes: 10,
-			current_input_file_name: "message.txt",
-			current_tools_file_name: "tools.txt",
-			cookie: "SID=ok",
-			supports_authenticated_session: true,
-			log_requests: false,
-		};
+		const cfg = contextFileConfig();
 		const uploads: RecordedUpload[] = [];
 		const result = requireContextFileResult(
 			await prepareContextFilesWithUploader(
@@ -298,8 +238,8 @@ describe("context-file policy", () => {
 		);
 		assert.equal(result.error, undefined);
 		assert.equal(result.fileRefs.length, 2);
-		assert.equal(requireUpload(uploads, 0).filename, "message.txt");
-		assert.equal(requireUpload(uploads, 1).filename, "tools.txt");
+		assert.equal(recordedUploadAt(uploads, 0).filename, "message.txt");
+		assert.equal(recordedUploadAt(uploads, 1).filename, "tools.txt");
 		assert.match(
 			result.prompt,
 			/Continue from the latest state in the attached `message\.txt` context/,
@@ -311,7 +251,7 @@ describe("context-file policy", () => {
 		assert.doesNotMatch(result.prompt, /<\|DSML\|tool_calls>/);
 		assert.doesNotMatch(result.prompt, /must call Read/);
 		assert.doesNotMatch(result.prompt, /Gemini native hidden tool calls/);
-		const toolsUpload = requireUpload(uploads, 1);
+		const toolsUpload = recordedUploadAt(uploads, 1);
 		assert.match(toolsUpload.text, /Available tool descriptions/);
 		assert.match(toolsUpload.text, /Tool call format instructions/);
 		assert.match(toolsUpload.text, /<\|DSML\|tool_calls>/);

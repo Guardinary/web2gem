@@ -10,10 +10,14 @@ import type {
 } from "../../../src/completion/types";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
-import { assert } from "../assertions.js";
 import { withConsoleLog } from "../_support/globals.js";
+import { assert } from "../assertions.js";
 import { attachmentResult } from "../attachments/_support/result.js";
-import { baseGeminiClientConfig } from "../gemini/_support/client-fixtures.js";
+import {
+	contextFileConfig,
+	type RecordedUpload,
+	recordedUploadAt,
+} from "./_support/context-fixtures.js";
 
 type ContextProviderCallbacks = {
 	resolveAttachments: (
@@ -24,8 +28,6 @@ type ContextProviderCallbacks = {
 		filename: string,
 	) => FileRef | Promise<FileRef>;
 };
-
-type RecordedUpload = { text: string; filename: string };
 
 function createContextProvider({
 	resolveAttachments,
@@ -71,24 +73,10 @@ function requirePreparedContext(
 	return result;
 }
 
-function requireRecordedUpload(
-	uploads: readonly RecordedUpload[],
-	index: number,
-): RecordedUpload {
-	const upload = uploads[index];
-	if (!upload) throw new Error(`expected upload at index ${index}`);
-	return upload;
-}
-
 describe.sequential("OpenAI context preparation contract", () => {
 	test("logs context-file metadata without leaking latest user text", async () => {
-		const cfg = baseGeminiClientConfig({
-			current_input_file_enabled: true,
+		const cfg = contextFileConfig({
 			current_input_file_min_bytes: 40,
-			current_input_file_name: "message.txt",
-			current_tools_file_name: "tools.txt",
-			cookie: "SID=ok",
-			supports_authenticated_session: true,
 			log_requests: true,
 		});
 		const logs: string[] = [];
@@ -141,11 +129,11 @@ describe.sequential("OpenAI context preparation contract", () => {
 				);
 				assert.doesNotMatch(result.prompt, /Gemini native hidden tool calls/);
 				assert.equal(
-					requireRecordedUpload(calls.uploadTextFile, 1).filename,
+					recordedUploadAt(calls.uploadTextFile, 1).filename,
 					"tools.txt",
 				);
 				assert.match(
-					requireRecordedUpload(calls.uploadTextFile, 1).text,
+					recordedUploadAt(calls.uploadTextFile, 1).text,
 					/Gemini native hidden tool calls/,
 				);
 			},
@@ -157,14 +145,9 @@ describe.sequential("OpenAI context preparation contract", () => {
 		assert.doesNotMatch(logText, /SecretSearchTool/);
 	});
 	test("adds file-ref attachment bytes to prepared prompt token usage", async () => {
-		const cfg = baseGeminiClientConfig({
+		const cfg = contextFileConfig({
 			current_input_file_enabled: false,
 			current_input_file_min_bytes: 1000000,
-			current_input_file_name: "message.txt",
-			current_tools_file_name: "tools.txt",
-			cookie: "SID=ok",
-			supports_authenticated_session: true,
-			log_requests: false,
 		});
 		const messages = parseOpenAIMessages([
 			{
