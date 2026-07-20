@@ -155,7 +155,15 @@ export function createOriginScopedStringCache(
 		setL1(scope, value, now);
 		const write = put(cfg, scope, value, now);
 		if (cfg.execution_ctx) {
-			cfg.execution_ctx.waitUntil(write);
+			try {
+				cfg.execution_ctx.waitUntil(write);
+			} catch (e) {
+				logCacheError(
+					cfg,
+					`failed to register ${options.logLabel} cache write`,
+					e,
+				);
+			}
 			return;
 		}
 		await write;
