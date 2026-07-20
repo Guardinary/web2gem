@@ -1,17 +1,16 @@
 import { describe, test } from "vitest";
-import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
-import { basicRouteForFamily } from "../../../../src/gemini/accounts/routes";
 import type { GeminiModelRoutePriorityRow } from "../../../../src/gemini/accounts/route-types";
+import { basicRouteForFamily } from "../../../../src/gemini/accounts/routes";
 import { assert } from "../../assertions.js";
 import {
 	account,
 	capabilityRow,
+	createPool,
 	createRuntimeStore,
-	resolvedModel,
-	rejectUnexpectedCookieRotation,
 	required,
-	runtimeConfig,
+	resolvedModel,
 	runtimeCall,
+	runtimeConfig,
 } from "./_support/runtime-fixtures.js";
 
 function savedProPriorities(nowMs: number): GeminiModelRoutePriorityRow[] {
@@ -67,10 +66,7 @@ describe("gemini account runtime", () => {
 			),
 			runtimeCall("listModelRoutePriorities", [], savedProPriorities(nowMs)),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 		const resolved = resolvedModel(
 			await pool.resolveModel(
 				"gemini-3.1-pro",
@@ -127,10 +123,7 @@ describe("gemini account runtime", () => {
 			),
 			runtimeCall("listModelRoutePriorities", [], savedProPriorities(nowMs)),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 
 		const overview = await pool.modelRoutingOverview(nowMs - 1000);
 		assert.equal(overview.version, "1");
@@ -201,10 +194,7 @@ describe("gemini account runtime", () => {
 			),
 			runtimeCall("listModelRoutePriorities", [], savedProPriorities(nowMs)),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 		const resolved = resolvedModel(
 			await pool.resolveModel(
 				"gemini-3.1-pro",
@@ -235,10 +225,7 @@ describe("gemini account runtime", () => {
 			runtimeCall("listSelectableAccounts", [nowMs, 100], []),
 			runtimeCall("listAllAccountCapabilities", [12800], persistedCapabilities),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 		assert.deepEqual(
 			(await pool.modelCatalog(nowMs - 1000)).entries.map((entry) => entry.id),
 			[
@@ -264,10 +251,7 @@ describe("gemini account runtime", () => {
 			runtimeCall("listSelectableAccounts", [nowMs, 100], rows),
 			runtimeCall("listAccountCapabilities", [["dynamic"]], capabilities),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 
 		const catalog = await pool.modelCatalog(nowMs - 1000);
 		assert.deepEqual(
@@ -325,10 +309,7 @@ describe("gemini account runtime", () => {
 				capabilities,
 			),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 
 		const catalog = await pool.modelCatalog(nowMs - 1000);
 		const proEntry = catalog.entries.find(

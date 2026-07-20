@@ -2,13 +2,14 @@ import type {
 	GeminiAccountRuntimeContext,
 	RuntimeConfig,
 } from "../../../../../src/config/types.js";
+import { AccountPoolService } from "../../../../../src/gemini/accounts/pool.js";
+import type { GeminiAccountCapabilityRow } from "../../../../../src/gemini/accounts/route-types.js";
+import type { GeminiAccountRuntimeStore } from "../../../../../src/gemini/accounts/runtime-types.js";
+import type { GeminiAccountRow } from "../../../../../src/gemini/accounts/storage-types.js";
 import type {
 	ResolvedModel,
 	ResolvedModelOk,
 } from "../../../../../src/models/index.js";
-import type { GeminiAccountCapabilityRow } from "../../../../../src/gemini/accounts/route-types.js";
-import type { GeminiAccountRuntimeStore } from "../../../../../src/gemini/accounts/runtime-types.js";
-import type { GeminiAccountRow } from "../../../../../src/gemini/accounts/storage-types.js";
 import { assert } from "../../../assertions.js";
 
 export function account(
@@ -284,4 +285,23 @@ export function resolvedModel(value: ResolvedModel): ResolvedModelOk {
 
 export async function rejectUnexpectedCookieRotation(): Promise<never> {
 	throw new Error("Unexpected Gemini account cookie rotation");
+}
+
+type PoolOverrides = Partial<
+	Omit<
+		ConstructorParameters<typeof AccountPoolService>[1],
+		"nowMs" | "rotateCookie" | "verifyAccount"
+	>
+>;
+
+export function createPool(
+	store: GeminiAccountRuntimeStore,
+	nowMs: number,
+	overrides: PoolOverrides = {},
+): AccountPoolService {
+	return new AccountPoolService(store, {
+		...overrides,
+		nowMs: () => nowMs,
+		rotateCookie: rejectUnexpectedCookieRotation,
+	});
 }

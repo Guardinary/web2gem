@@ -1,24 +1,23 @@
 import { describe, test } from "vitest";
-import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
 import type { RuntimeConfig } from "../../../../src/config/types";
 import type { GeminiModelRoutingOverview } from "../../../../src/gemini/accounts/admin-types";
 import type { GeminiAccountLease } from "../../../../src/gemini/accounts/lease-types";
-import type { GeminiAccountAcquireOptions } from "../../../../src/gemini/accounts/runtime-types";
 import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
-import type { ResolvedModelOk } from "../../../../src/models";
 import {
 	d1BindingFromEnv,
 	GeminiAccountRuntime,
 	getGeminiAccountRuntimeFromEnv,
 } from "../../../../src/gemini/accounts/runtime";
+import type { GeminiAccountAcquireOptions } from "../../../../src/gemini/accounts/runtime-types";
+import type { ResolvedModelOk } from "../../../../src/models";
 import { assert } from "../../assertions.js";
 import {
 	account,
 	capabilityRow,
+	createPool,
 	createRuntimeStore,
-	rejectUnexpectedCookieRotation,
-	runtimeConfig,
 	runtimeCall,
+	runtimeConfig,
 } from "./_support/runtime-fixtures.js";
 
 describe("gemini account public runtime facade", () => {
@@ -50,12 +49,7 @@ describe("gemini account public runtime facade", () => {
 				capabilities,
 			),
 		]);
-		const runtime = new GeminiAccountRuntime(
-			new AccountPoolService(store, {
-				nowMs: () => nowMs,
-				rotateCookie: rejectUnexpectedCookieRotation,
-			}),
-		);
+		const runtime = new GeminiAccountRuntime(createPool(store, nowMs));
 
 		assert.deepEqual(
 			(await runtime.modelCatalog(nowMs - 1000)).entries.map(
@@ -118,10 +112,7 @@ describe("gemini account public runtime facade", () => {
 		};
 		const overview: GeminiModelRoutingOverview = { version: "7", families: [] };
 		const calls: unknown[][] = [];
-		const pool = new AccountPoolService(createRuntimeStore([]), {
-			nowMs: () => 100000,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(createRuntimeStore([]), 100000);
 		pool.acquireLease = async (
 			baseConfig: RuntimeConfig,
 			acquireOptions: GeminiAccountAcquireOptions = {},

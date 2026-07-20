@@ -1,15 +1,14 @@
 import { describe, test } from "vitest";
-import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
 import type { GeminiAccountOutcome } from "../../../../src/gemini/accounts/runtime-types";
 import { assert } from "../../assertions.js";
 import {
 	account,
 	accountContext,
+	createPool,
 	createRuntimeStore,
-	rejectUnexpectedCookieRotation,
 	required,
-	runtimeConfig,
 	runtimeCall,
+	runtimeConfig,
 } from "./_support/runtime-fixtures.js";
 
 describe("gemini account runtime", () => {
@@ -25,10 +24,7 @@ describe("gemini account runtime", () => {
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [3000, 100], rows),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => 3000,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, 3000);
 		const lease = required(
 			await pool.acquireLease(runtimeConfig()),
 			"first account lease",
@@ -49,10 +45,7 @@ describe("gemini account runtime", () => {
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [1000, 100], rows),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => 1000,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, 1000);
 
 		const first = required(
 			await pool.acquireLease(runtimeConfig()),
@@ -112,10 +105,7 @@ describe("gemini account runtime", () => {
 				undefined,
 			),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => 1000,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, 1000);
 		const lease = required(
 			await pool.acquireLease(runtimeConfig()),
 			"health update lease",
@@ -161,10 +151,7 @@ describe("gemini account runtime", () => {
 			runtimeCall("listSelectableAccounts", [1000, 100], [row]),
 			runtimeCall("writeAccountOutcome", ["cooling", outcome], undefined),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => 1000,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, 1000);
 		const lease = required(
 			await pool.acquireLease(runtimeConfig()),
 			"cached snapshot lease",
@@ -181,10 +168,7 @@ describe("gemini account runtime", () => {
 			runtimeCall("getPoolVersion", [], "1"),
 			runtimeCall("listSelectableAccounts", [1000, 100], rows),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => 1000,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, 1000);
 		const lease = required(
 			await pool.acquireLease(runtimeConfig(), {
 				excludeAccountIds: new Set(["a"]),

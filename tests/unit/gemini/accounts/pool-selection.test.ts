@@ -1,17 +1,16 @@
 import { describe, test } from "vitest";
-import { AccountPoolService } from "../../../../src/gemini/accounts/pool";
-import { basicRouteForFamily } from "../../../../src/gemini/accounts/routes";
 import type { GeminiRouteTuple } from "../../../../src/gemini/accounts/route-types";
+import { basicRouteForFamily } from "../../../../src/gemini/accounts/routes";
 import type { GeminiAccountAcquireOptions } from "../../../../src/gemini/accounts/runtime-types";
 import { assert } from "../../assertions.js";
 import {
 	account,
 	capabilityRow,
+	createPool,
 	createRuntimeStore,
-	rejectUnexpectedCookieRotation,
 	required,
-	runtimeConfig,
 	runtimeCall,
+	runtimeConfig,
 } from "./_support/runtime-fixtures.js";
 
 describe("gemini account runtime", () => {
@@ -43,10 +42,7 @@ describe("gemini account runtime", () => {
 				capabilities,
 			),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 
 		const lease = required(
 			await pool.acquireLease(runtimeConfig(), {
@@ -100,10 +96,7 @@ describe("gemini account runtime", () => {
 				capabilities,
 			),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 		const options = {
 			routeRequirement: {
 				candidates: [route],
@@ -158,10 +151,7 @@ describe("gemini account runtime", () => {
 			runtimeCall("listSelectableAccounts", [nowMs, 100], rows),
 			runtimeCall("listAccountCapabilities", [["stale"]], capabilities),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 
 		const lease = required(
 			await pool.acquireLease(runtimeConfig(), {
@@ -206,10 +196,7 @@ describe("gemini account runtime", () => {
 			runtimeCall("listSelectableAccounts", [nowMs, 100], rows),
 			runtimeCall("listAccountCapabilities", [["stale"]], capabilities),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 
 		const capabilityModes: readonly NonNullable<
 			GeminiAccountAcquireOptions["capabilityMode"]
@@ -255,10 +242,7 @@ describe("gemini account runtime", () => {
 			runtimeCall("listSelectableAccounts", [nowMs, 100], rows),
 			runtimeCall("listAccountCapabilities", [["dynamic"]], capabilities),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 
 		const capabilityModes: readonly NonNullable<
 			GeminiAccountAcquireOptions["capabilityMode"]
@@ -314,10 +298,7 @@ describe("gemini account runtime", () => {
 				capabilities,
 			),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 		const options = {
 			routeRequirement: {
 				candidates: [plusRoute, basicRoute],
@@ -380,10 +361,7 @@ describe("gemini account runtime", () => {
 				selectedCapabilities,
 			),
 		]);
-		const pool = new AccountPoolService(store, {
-			nowMs: () => nowMs,
-			rotateCookie: rejectUnexpectedCookieRotation,
-		});
+		const pool = createPool(store, nowMs);
 
 		const lease = required(
 			await pool.acquireLease(runtimeConfig(), {
