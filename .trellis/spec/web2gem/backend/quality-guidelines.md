@@ -124,6 +124,30 @@ contracts instead of relying on implicit object and array shapes:
 These helpers preserve request payload, abort, selection, and state-transition
 assertions while making owner contract changes visible to the test typecheck.
 
+### Test deduplication helpers
+
+Test helper extraction is allowed only when the complete owned diff, including
+new support files, is physically net-negative:
+
+- Freeze the owned-file line count and `vitest list --json` full IDs before the
+  refactor. Afterward compare physical LOC, `git diff --numstat`, and IDs; a
+  helper that does not delete more consumer code than it adds is rejected.
+- Keep protocol-specific payload indexes, SSE frame fields, SQL/runtime call
+  order, lease lifecycle, retry decisions, and error assertions at the call
+  site. A helper may construct a stable fixture, but it must not become a
+  generic harness that hides the behavior being tested.
+- Share only byte-identical or contract-identical setup. Preserve explicit local
+  overrides when account identity, headers, body bytes, stream events, error
+  variants, or timing differ.
+- Each child owns a disjoint support/test set and reports its focused tests,
+  forbidden-pattern scan, typecheck, static, architecture, and diff checks
+  before commit. Full discovery and test IDs must remain unchanged.
+
+Good: a typed `createPool` helper removes repeated default service wiring while
+ordered runtime scripts remain in each test. Bad: a universal request/router
+fake replaces visible status, frame, or payload assertions merely to shorten a
+suite.
+
 ### Prompt and tool contract tests
 
 Prompt compatibility, completion, and tool-call tests must preserve the same
