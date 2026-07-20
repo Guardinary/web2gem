@@ -39,15 +39,16 @@ export async function handleGeminiModelRoutingAdminRequest(
 		);
 
 	try {
-		assertNoAdminQueryParams(url.searchParams);
 		const method = request.method.toUpperCase();
 		if (method === "GET" && url.pathname === MODEL_ROUTING_PREFIX) {
+			assertNoAdminQueryParams(url.searchParams);
 			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
 			return jsonResponse(await service.modelRoutingOverview());
 		}
 
 		const family = modelRoutingFamilyFromPath(url.pathname);
 		if (family && method === "PUT") {
+			assertNoAdminQueryParams(url.searchParams);
 			const body = await readAdminJson(request);
 			normalizeModelRoutePriority(body, family);
 			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
@@ -56,6 +57,7 @@ export async function handleGeminiModelRoutingAdminRequest(
 			);
 		}
 		if (family && method === "DELETE") {
+			assertNoAdminQueryParams(url.searchParams);
 			assertAdminBodyAbsent(request);
 			const service = createGeminiAccountAdminServiceFromEnv(env, cfg);
 			return jsonResponse(await service.clearModelRoutePriority(family));
