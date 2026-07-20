@@ -3,11 +3,7 @@ import { isRecord } from "../../../src/shared/types";
 import { parseGoogleFunctionCalls } from "../../../src/toolcall/google";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
-
-function required<T>(value: T | null | undefined): T {
-	if (value == null) throw new Error("expected a value");
-	return value;
-}
+import { required } from "./_support/assertions.js";
 
 describe("Google tool-call formatting", () => {
 	test("keeps Google legacy function-call syntaxes as plain text", async () => {

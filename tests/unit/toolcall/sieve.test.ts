@@ -15,10 +15,7 @@ import { assert } from "../assertions.js";
 const sieveState = (overrides = {}) =>
 	Object.assign(createToolSieveState(), overrides);
 
-function required<T>(value: T | null | undefined): T {
-	if (value == null) throw new Error("expected a value");
-	return value;
-}
+import { required } from "./_support/assertions.js";
 
 describe("toolcall", () => {
 	test("releases partial DSML sentinel when it becomes plain text", async () => {

@@ -1,5 +1,4 @@
 import { describe, test } from "vitest";
-import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import {
 	normalizeDSMLToolCallMarkup,
 	parseCanonicalDSMLToolCallsFast,
@@ -13,16 +12,7 @@ import {
 	unwrapToolArgumentMarkdown,
 } from "../../../src/toolcall/dsml";
 import { assert } from "../assertions.js";
-
-function required<T>(value: T | null | undefined): T {
-	if (value == null) throw new Error("expected a value");
-	return value;
-}
-
-function record(value: unknown): UnknownRecord {
-	if (!isRecord(value)) throw new Error("expected an object");
-	return value;
-}
+import { record, required } from "./_support/assertions.js";
 
 describe("toolcall", () => {
 	test("uses canonical DSML fast path for plain XML tool blocks", async () => {

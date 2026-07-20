@@ -14,11 +14,7 @@ import {
 	uniqueToolNames,
 } from "../../../src/toolcall/prompt-examples";
 import { assert } from "../assertions.js";
-
-function required<T>(value: T | null | undefined): T {
-	if (value == null) throw new Error("expected a value");
-	return value;
-}
+import { required } from "./_support/assertions.js";
 
 describe("toolcall", () => {
 	test("builds prompt examples only for known tool shapes", async () => {

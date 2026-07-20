@@ -1,7 +1,6 @@
 import { describe, test } from "vitest";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { messagesToPrompt } from "../../../src/promptcompat/messages";
-import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,
@@ -12,16 +11,7 @@ import {
 	toolsContextTranscriptFor,
 } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
-
-function required<T>(value: T | null | undefined): T {
-	if (value == null) throw new Error("expected a value");
-	return value;
-}
-
-function record(value: unknown): UnknownRecord {
-	if (!isRecord(value)) throw new Error("expected an object");
-	return value;
-}
+import { record, required } from "./_support/assertions.js";
 
 describe("toolcall", () => {
 	test("renders bundle artifacts through prompt and context consumers", async () => {

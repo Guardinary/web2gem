@@ -2,11 +2,7 @@ import { describe, test } from "vitest";
 import { finalizeOpenAICompletionResult } from "../../../src/completion/turn";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
-
-function required<T>(value: T | null | undefined): T {
-	if (value == null) throw new Error("expected a value");
-	return value;
-}
+import { required } from "./_support/assertions.js";
 
 describe("toolcall", () => {
 	test("finalizes OpenAI text into tool calls", async () => {

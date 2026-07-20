@@ -1,18 +1,8 @@
 import { describe, test } from "vitest";
-import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import { filterGoogleToolsByConfig } from "../../../src/toolcall/policy-google";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
-
-function required<T>(value: T | null | undefined): T {
-	if (value == null) throw new Error("expected a value");
-	return value;
-}
-
-function record(value: unknown): UnknownRecord {
-	if (!isRecord(value)) throw new Error("expected an object");
-	return value;
-}
+import { record, required } from "./_support/assertions.js";
 
 describe("Google tool metadata contract", () => {
 	test("normalizes supported tool shapes before policy filtering", async () => {

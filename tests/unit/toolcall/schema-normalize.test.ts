@@ -1,5 +1,4 @@
 import { describe, test } from "vitest";
-import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import { parseDSMLToolCallsDetailed } from "../../../src/toolcall/dsml";
 import {
 	buildToolSchemaIndex,
@@ -12,16 +11,7 @@ import {
 } from "../../../src/toolcall/schema-normalize";
 import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
-
-function required<T>(value: T | null | undefined): T {
-	if (value == null) throw new Error("expected a value");
-	return value;
-}
-
-function record(value: unknown): UnknownRecord {
-	if (!isRecord(value)) throw new Error("expected an object");
-	return value;
-}
+import { record, required } from "./_support/assertions.js";
 
 describe("toolcall", () => {
 	test("normalizes DSML arguments using top-level input_schema", async () => {

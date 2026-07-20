@@ -13,11 +13,7 @@ import {
 	skipCDATAAt,
 } from "../../../src/toolcall/xml";
 import { assert } from "../assertions.js";
-
-function required<T>(value: T | null | undefined): T {
-	if (value == null) throw new Error("expected a value");
-	return value;
-}
+import { required } from "./_support/assertions.js";
 
 describe("toolcall", () => {
 	test("parses CDATA entities nested tags and malformed XML boundaries", async () => {
