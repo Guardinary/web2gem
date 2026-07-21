@@ -194,22 +194,6 @@ export function isInsideMarkdownFence(text: unknown, index: number): boolean {
 	return !!fence;
 }
 
-export function isInsideMarkdownCodeSpan(
-	text: unknown,
-	index: number,
-): boolean {
-	const before = String(text || "").slice(0, Math.max(0, index));
-	let open = false;
-	for (let i = 0; i < before.length; i++) {
-		if (before[i] !== "`") continue;
-		let j = i;
-		while (j < before.length && before[j] === "`") j++;
-		if (j - i === 1) open = !open;
-		i = j - 1;
-	}
-	return open;
-}
-
 export function markdownProtectedRanges(text: unknown): MarkdownRange[] {
 	const source = String(text || "");
 	const ranges: MarkdownRange[] = [];

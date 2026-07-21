@@ -91,22 +91,6 @@ export function parseHttpChunkSizeLine(line: ByteChunk): number {
 	return digits > 0 ? size : -1;
 }
 
-export function chunkSizeLineForError(line: ByteChunk): string {
-	let start = 0;
-	let end = line.length;
-	while (start < end && isHttpWhitespace(line[start])) start += 1;
-	while (end > start && isHttpWhitespace(line[end - 1])) end -= 1;
-	const limit = Math.min(end, start + 80);
-	let out = "";
-	for (let i = start; i < limit; i++) {
-		const b = line[i];
-		if (b === 59) break;
-		out +=
-			b !== undefined && b >= 32 && b <= 126 ? String.fromCharCode(b) : "?";
-	}
-	return out;
-}
-
 export function parseSocketHeaderBlock(
 	headerBytes: ByteChunk,
 ): ParsedSocketHeaderBlock {

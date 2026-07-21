@@ -160,11 +160,6 @@ export function historyContentText(message: InternalMessage): string {
 	return projectMessageText(message, "history");
 }
 
-/** Compatibility reasoning projection. */
-export function messageReasoningText(message: InternalMessage): string {
-	return projectMessageText(message, "reasoning");
-}
-
 export type ParsedAssistantContent = {
 	text: string;
 	reasoning: string;
