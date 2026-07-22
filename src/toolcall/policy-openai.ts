@@ -2,7 +2,7 @@ import { isRecord } from "../shared/types";
 import type { ToolBundle } from "./tool-bundle";
 
 type NameSet = Record<string, boolean>;
-export type ToolChoiceMode = "auto" | "none" | "required" | "forced";
+type ToolChoiceMode = "auto" | "none" | "required" | "forced";
 export type ToolChoicePolicy = {
 	mode: ToolChoiceMode;
 	forcedName: string;
@@ -42,7 +42,7 @@ export function namesToSet(
 	return out;
 }
 
-export function allowedToolNameFromItem(item: unknown): string {
+function allowedToolNameFromItem(item: unknown): string {
 	if (typeof item === "string") return item;
 	if (!isRecord(item)) return "";
 	const fn = isRecord(item.function) ? item.function : null;
@@ -50,9 +50,7 @@ export function allowedToolNameFromItem(item: unknown): string {
 	return String(item.name || fn?.name || tool?.name || "");
 }
 
-export function parseAllowedToolNames(
-	raw: unknown,
-): AllowedToolNamesResult | null {
+function parseAllowedToolNames(raw: unknown): AllowedToolNamesResult | null {
 	if (raw == null) return null;
 	let value: unknown = raw;
 	if (isRecord(raw)) {
@@ -85,7 +83,7 @@ export function parseAllowedToolNames(
 	return { names: out };
 }
 
-export function parseForcedToolName(toolChoice: unknown): string {
+function parseForcedToolName(toolChoice: unknown): string {
 	if (!isRecord(toolChoice)) return "";
 	const fn = isRecord(toolChoice.function) ? toolChoice.function : null;
 	return String(toolChoice.name || fn?.name || "").trim();
@@ -202,7 +200,7 @@ export function parseOpenAIToolChoicePolicy(
 	return policy;
 }
 
-export function toolPolicyAllows(
+function toolPolicyAllows(
 	policy: ToolChoicePolicy | null | undefined,
 	name: unknown,
 ): boolean {

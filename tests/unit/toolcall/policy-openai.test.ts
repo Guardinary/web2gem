@@ -2,14 +2,10 @@ import { describe, test } from "vitest";
 import { isRecord } from "../../../src/shared/types";
 import type { ToolChoicePolicy } from "../../../src/toolcall/policy-openai";
 import {
-	allowedToolNameFromItem,
 	buildToolChoiceInstructionFromPolicy,
 	extractToolNames,
 	namesToSet,
-	parseAllowedToolNames,
-	parseForcedToolName,
 	parseOpenAIToolChoicePolicy,
-	toolPolicyAllows,
 	validateRequiredToolCalls,
 	validateToolPolicyCalls,
 } from "../../../src/toolcall/policy-openai";
@@ -135,7 +131,7 @@ describe("toolcall", () => {
 			/requires function\.name/,
 		);
 	});
-	test("extracts unique declared allowed and forced tool names", async () => {
+	test("extracts unique declared tool names for OpenAI and Google shapes", async () => {
 		const toolsBundle = policyTools();
 		const googleGroup = {
 			functionDeclarations: [{ name: "Lookup" }, { name: "Read" }],
@@ -149,42 +145,6 @@ describe("toolcall", () => {
 			Read: true,
 			Search: true,
 		});
-		assert.equal(allowedToolNameFromItem(" Read "), " Read ");
-		assert.equal(
-			allowedToolNameFromItem({ function: { name: "Search" } }),
-			"Search",
-		);
-		assert.equal(
-			allowedToolNameFromItem({ tool: { name: "Lookup" } }),
-			"Lookup",
-		);
-		assert.equal(allowedToolNameFromItem(5), "");
-
-		assert.equal(parseAllowedToolNames(null), null);
-		assert.deepEqual(parseAllowedToolNames("Read, Search"), {
-			names: ["Read", "Search"],
-		});
-		assert.deepEqual(
-			parseAllowedToolNames({
-				allowed_tools: [
-					{ function: { name: "Read" } },
-					{ tool: { name: "Search" } },
-					"Read",
-				],
-			}),
-			{ names: ["Read", "Search"] },
-		);
-		assert.match(required(parseAllowedToolNames([])).error, /non-empty array/);
-		assert.match(
-			required(parseAllowedToolNames([{}])).error,
-			/did not contain any valid tool names/,
-		);
-		assert.equal(parseForcedToolName({ name: "Read" }), "Read");
-		assert.equal(
-			parseForcedToolName({ function: { name: "Search" } }),
-			"Search",
-		);
-		assert.equal(parseForcedToolName("Read"), "");
 	});
 
 	test("parses none forced required and invalid OpenAI policy modes", async () => {
@@ -210,6 +170,21 @@ describe("toolcall", () => {
 				.error,
 			/allowed unknown tool/,
 		);
+		// allowed_tools aliases (comma string / nested containers) are exercised
+		// through parseOpenAIToolChoicePolicy rather than private helpers.
+		const aliased = parseOpenAIToolChoicePolicy(
+			{
+				type: "allowed_tools",
+				mode: "auto",
+				tools: "Read, Search",
+			},
+			toolsBundle,
+		);
+		assert.equal(aliased.error, "");
+		assert.deepEqual(Object.keys(required(aliased.allowed)), [
+			"Read",
+			"Search",
+		]);
 	});
 
 	test("filters tools according to allowed OpenAI policy", async () => {
@@ -218,11 +193,6 @@ describe("toolcall", () => {
 			{ type: "auto", name: "Read" },
 			toolsBundle,
 		);
-		const none = parseOpenAIToolChoicePolicy({ type: "none" }, toolsBundle);
-		assert.equal(toolPolicyAllows(null, "Anything"), true);
-		assert.equal(toolPolicyAllows(none, "Read"), false);
-		assert.equal(toolPolicyAllows(forced, "Read"), true);
-		assert.equal(toolPolicyAllows(forced, "Search"), false);
 
 		assert.equal(
 			filterToolBundleByPolicy(toolsBundle, completePolicy({ mode: "none" }))
@@ -321,6 +291,86 @@ describe("toolcall", () => {
 				forcedMessage: (name) => `missing ${name}`,
 			}),
 			{ message: "need call", code: "tool_choice_violation" },
+		);
+	});
+
+	test("enforces allowed and forced tools through public validation APIs", async () => {
+		const toolsBundle = policyTools();
+		const none = parseOpenAIToolChoicePolicy({ type: "none" }, toolsBundle);
+		const forced = parseOpenAIToolChoicePolicy(
+			{ type: "function", function: { name: "Read" } },
+			toolsBundle,
+		);
+		const allowed = parseOpenAIToolChoicePolicy(
+			{
+				type: "allowed_tools",
+				mode: "auto",
+				tools: [{ function: { name: "Read" } }, { tool: { name: "Search" } }],
+			},
+			toolsBundle,
+		);
+		assert.equal(allowed.error, "");
+		assert.deepEqual(Object.keys(required(allowed.allowed)), ["Read", "Search"]);
+
+		// none / empty allowed: any named call is rejected via validateToolPolicyCalls.
+		assert.match(
+			required(
+				validateToolPolicyCalls(none, [{ function: { name: "Read" } }], {
+					requiredMessage: "need call",
+					badMessage: (names) => `bad ${names}`,
+					forcedMessage: (name) => `missing ${name}`,
+				}),
+			).message,
+			/bad Read/,
+		);
+
+		// forced accepts the named tool; rejects a different tool even when present.
+		assert.equal(
+			validateRequiredToolCalls(forced, [{ function: { name: "Read" } }]),
+			null,
+		);
+		assert.match(
+			required(
+				validateRequiredToolCalls(forced, [{ function: { name: "Search" } }]),
+			).message,
+			/requires the tool Read|does not allow tool/,
+		);
+
+		// allowed_tools rejects empty containers through the public parser.
+		assert.match(
+			parseOpenAIToolChoicePolicy(
+				{ type: "allowed_tools", mode: "auto", tools: [] },
+				toolsBundle,
+			).error,
+			/non-empty array|did not contain any valid tool names/,
+		);
+		assert.match(
+			parseOpenAIToolChoicePolicy(
+				{ type: "allowed_tools", mode: "auto", allowed_tools: [{}] },
+				toolsBundle,
+			).error,
+			/did not contain any valid tool names/,
+		);
+
+		// Top-level forced name shapes still resolve through parseOpenAIToolChoicePolicy.
+		assert.equal(
+			parseOpenAIToolChoicePolicy({ name: "Search" }, toolsBundle).forcedName,
+			"Search",
+		);
+		assert.equal(
+			parseOpenAIToolChoicePolicy(
+				{ function: { name: "Read" } },
+				toolsBundle,
+			).forcedName,
+			"Read",
+		);
+		// tool.name is only for allowed_tools item extraction, not forced names.
+		assert.equal(
+			parseOpenAIToolChoicePolicy(
+				{ tool: { name: "Read" } },
+				toolsBundle,
+			).forcedName,
+			"",
 		);
 	});
 });

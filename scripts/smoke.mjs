@@ -52,10 +52,6 @@ const checks = [
 		"test.buildToolCallInstructions",
 		typeof testMod.buildToolCallInstructions === "function",
 	],
-	[
-		"test.normalizeResponsesInputAsMessages",
-		typeof testMod.normalizeResponsesInputAsMessages === "function",
-	],
 ];
 
 const failed = checks.filter(([, ok]) => !ok).map(([name]) => name);

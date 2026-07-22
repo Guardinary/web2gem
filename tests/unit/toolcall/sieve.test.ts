@@ -3,19 +3,14 @@ import { isRecord } from "../../../src/shared/types";
 import {
 	createToolSieveState,
 	flushToolSieve,
-	flushToolSievePlainPrefix,
-	hasToolCallCloseSyntax,
-	hasToolSieveSentinel,
 	processToolSieveChunk,
-	TOOL_SIEVE_PLAIN_TEXT_KEEP,
 } from "../../../src/toolcall/sieve";
 import { isPartialToolCallSyntaxPrefix } from "../../../src/toolcall/syntax-probe";
 import { assert } from "../assertions.js";
+import { required } from "./_support/assertions.js";
 
 const sieveState = (overrides = {}) =>
 	Object.assign(createToolSieveState(), overrides);
-
-import { required } from "./_support/assertions.js";
 
 describe("toolcall", () => {
 	test("releases partial DSML sentinel when it becomes plain text", async () => {
@@ -43,43 +38,42 @@ describe("toolcall", () => {
 		assert.equal(emitted.join("") + flushed.text, text);
 		assert.equal(flushed.toolCalls, null);
 	});
-	test("detects tool sieve sentinel and closing syntax", async () => {
-		assert.equal(hasToolSieveSentinel("plain text"), false);
-		assert.equal(hasToolSieveSentinel("before <tool_calls>"), true);
-		assert.equal(hasToolCallCloseSyntax("</tool_calls>"), true);
+
+	test("holds tool-call candidates that start after plain text", async () => {
+		const state = createToolSieveState();
+		const emitted = processToolSieveChunk(state, "before <tool_calls>");
+		assert.deepEqual(emitted, ["before "]);
+		assert.equal(state.holdingToolCandidate, true);
+		assert.match(state.buffer, /<tool_calls>/);
+		const flushed = flushToolSieve(state);
+		assert.match(flushed.text, /<tool_calls>/);
+		assert.equal(flushed.toolCalls, null);
 	});
 
-	test("flushes only safe plain-text prefixes", async () => {
-		assert.equal(flushToolSievePlainPrefix(null), null);
+	test("flushes long plain prefixes before holding a later tool-call candidate", async () => {
+		const state = createToolSieveState();
+		const plain = `intro ${"p".repeat(200)}`;
+		const first = processToolSieveChunk(state, plain);
+		assert.equal(first.join("").length > 0, true);
+		assert.equal(state.holdingToolCandidate, false);
+		assert.equal(state.buffer.length <= 64, true);
 
-		const holding = sieveState({
-			buffer: "x".repeat(100),
-			holdingToolCandidate: true,
-			sawToolClose: false,
-			parsedToolCandidate: false,
-		});
-		assert.equal(flushToolSievePlainPrefix(holding), null);
-		assert.equal(holding.buffer.length, 100);
+		// Keep the later candidate incomplete so flush cannot emit a tool call yet.
+		const candidate =
+			' <tool_calls><invoke name="Read"><parameter name="path">README';
+		const second = processToolSieveChunk(state, candidate);
+		// Any residual plain tail may emit, but the tool block itself stays held.
+		assert.equal(second.join("").includes("<tool_calls>"), false);
+		assert.equal(state.holdingToolCandidate, true);
+		assert.match(state.buffer + state.heldChunks.join(""), /<tool_calls>/);
 
-		const sentinel = sieveState({
-			buffer: "plain <tool_calls>",
-			holdingToolCandidate: false,
-			sawToolClose: false,
-			parsedToolCandidate: false,
-		});
-		assert.equal(flushToolSievePlainPrefix(sentinel), null);
-
-		const plain = sieveState({
-			buffer: "p".repeat(100),
-			holdingToolCandidate: false,
-			sawToolClose: false,
-			parsedToolCandidate: false,
-		});
-		const flushedPlain = flushToolSievePlainPrefix(plain);
-		assert.deepEqual(flushedPlain, [
-			"p".repeat(100 - TOOL_SIEVE_PLAIN_TEXT_KEEP),
-		]);
-		assert.equal(plain.buffer.length, TOOL_SIEVE_PLAIN_TEXT_KEEP);
+		const flushed = flushToolSieve(state);
+		assert.equal(flushed.toolCalls, null);
+		assert.match(flushed.text, /<tool_calls>/);
+		assert.equal(
+			first.join("") + second.join("") + flushed.text,
+			`${plain}${candidate}`,
+		);
 	});
 
 	test("keeps parsed and malformed tool candidates held across empty chunks", async () => {

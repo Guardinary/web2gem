@@ -26,7 +26,6 @@ export { streamGooglePlain } from "./http/google/stream";
 export { streamResponsesWithToolSieve } from "./http/openai/responses-stream";
 export { parseOpenAIMessages } from "./promptcompat/message-model";
 export { messagesToPrompt } from "./promptcompat/messages";
-export { normalizeResponsesInputAsMessages } from "./promptcompat/responses-input";
 export { randHex } from "./shared/crypto";
 export { parseToolCalls } from "./toolcall/dsml";
 export { maskMarkdownProtectedSpans } from "./toolcall/markdown";

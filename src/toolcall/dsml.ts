@@ -101,7 +101,7 @@ export function parseDSMLToolCallsDetailed(
 	};
 }
 
-export function parseCanonicalDSMLToolCallsFast(
+function parseCanonicalDSMLToolCallsFast(
 	text: unknown,
 ): DSMLToolCallParseResult | null {
 	const source = String(text || "").trim();
@@ -137,7 +137,7 @@ export function parseCanonicalDSMLToolCallsFast(
 	return { cleanText: "", calls, sawToolCallSyntax: true };
 }
 
-export function restoreToolCallProtectedMarkdown(
+function restoreToolCallProtectedMarkdown(
 	calls: ParsedToolCall[],
 	restore: MarkdownRestore,
 ): ParsedToolCall[] {
@@ -171,7 +171,7 @@ function restoreToolValueProtectedMarkdown(
 	return value;
 }
 
-export function unwrapToolArgumentMarkdown(value: unknown): string {
+function unwrapToolArgumentMarkdown(value: unknown): string {
 	const text = String(value || "");
 	const trimmed = text.trim();
 	const fence = /^```[A-Za-z0-9_-]*[ \t]*\r?\n([\s\S]*?)\r?\n?```$/.exec(
@@ -183,7 +183,7 @@ export function unwrapToolArgumentMarkdown(value: unknown): string {
 	return text;
 }
 
-export function stripFencedCodeBlocks(text: unknown): string {
+function stripFencedCodeBlocks(text: unknown): string {
 	const lines = String(text || "").split("\n");
 	const out: string[] = [];
 	let inFence = false;
@@ -210,14 +210,12 @@ export function stripFencedCodeBlocks(text: unknown): string {
 	return out.join("\n");
 }
 
-export function shouldSkipToolCallParsingForCodeFenceExample(
-	text: unknown,
-): boolean {
+function shouldSkipToolCallParsingForCodeFenceExample(text: unknown): boolean {
 	if (!containsToolMarkupSyntax(text)) return false;
 	return !containsToolMarkupSyntax(stripFencedCodeBlocks(text));
 }
 
-export function normalizeDSMLToolCallMarkup(text: unknown): string {
+function normalizeDSMLToolCallMarkup(text: unknown): string {
 	return normalizeToolMarkupConfusables(text)
 		.replace(/<<+/g, "<")
 		.replace(/<!\s*\[\s*CDATA\s*\[/gi, "<![CDATA[")
@@ -276,7 +274,7 @@ function parseMarkupSingleToolCall(
 	return { name, input };
 }
 
-export function parseMarkupValue(body: unknown): unknown {
+function parseMarkupValue(body: unknown): unknown {
 	const rawBody = String(body || "");
 	const raw = rawBody.trim();
 	if (!raw) return "";
@@ -304,7 +302,7 @@ export function parseMarkupValue(body: unknown): unknown {
 	return parseScalarValue(decoded);
 }
 
-export function parseScalarValue(text: unknown): unknown {
+function parseScalarValue(text: unknown): unknown {
 	const s = String(text || "").trim();
 	if (/^(true|false)$/i.test(s)) return /^true$/i.test(s);
 	if (/^null$/i.test(s)) return null;

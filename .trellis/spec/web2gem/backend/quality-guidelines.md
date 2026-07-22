@@ -161,8 +161,8 @@ suite.
   (tests assert through public APIs) rather than kept as public exports.
 - `*ForTest` / `_set*ForTest` hooks may remain on owner modules for unit
   isolation of module-level caches or connect injection. They must not appear on
-  production barrels, `public-exports.ts`, or the Worker default entry. The smoke
-  / bench harness may re-export symbols it actually calls.
+  production barrels or the Worker default entry (`src/worker-entry.ts`). The
+  smoke / bench harness may re-export symbols it actually calls.
 - Context attachment filenames (`message.txt`, `tools.txt`) are owner constants,
   not `CONFIG_SPEC` / Worker binding keys. Prefer constants over env knobs when
   the value has no operational product surface.

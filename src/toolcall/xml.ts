@@ -1,4 +1,4 @@
-export type XmlTagInfo = {
+type XmlTagInfo = {
 	name: string;
 	closing: boolean;
 	selfClosing: boolean;
@@ -166,7 +166,7 @@ export function findTopLevelXmlElementBlocks(text: unknown): XmlElementBlock[] {
 	return out;
 }
 
-export function findNextXmlTag(
+function findNextXmlTag(
 	text: string,
 	tag: unknown,
 	from: number,
@@ -193,7 +193,7 @@ export function findNextXmlTag(
 	return null;
 }
 
-export function findNextAnyXmlTag(
+function findNextAnyXmlTag(
 	text: string,
 	from: number,
 	closing: boolean | null,
@@ -214,13 +214,13 @@ export function findNextAnyXmlTag(
 	return null;
 }
 
-export function skipCDATAAt(text: string, i: number): number {
+function skipCDATAAt(text: string, i: number): number {
 	if (!text.startsWith("<![CDATA[", i)) return i;
 	const end = text.indexOf("]]>", i + 9);
 	return end < 0 ? i : end + 3;
 }
 
-export function scanXmlTagAt(text: string, i: number): XmlTagInfo | null {
+function scanXmlTagAt(text: string, i: number): XmlTagInfo | null {
 	if (text[i] !== "<") return null;
 	let p = i + 1;
 	let closing = false;
@@ -249,7 +249,7 @@ export function scanXmlTagAt(text: string, i: number): XmlTagInfo | null {
 	};
 }
 
-export function findXmlTagEnd(text: string, from: number): number {
+function findXmlTagEnd(text: string, from: number): number {
 	let quote = "";
 	for (let i = Math.max(0, from || 0); i < text.length; i++) {
 		const ch = text[i];

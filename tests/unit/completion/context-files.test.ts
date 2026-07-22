@@ -2,14 +2,9 @@ import { describe, test } from "vitest";
 import {
 	contextFilePromptByteCheck,
 	contextFileThreshold,
-	contextFileUploadFailure,
-	latestInputInlineLimit,
-	latestInputPromptForContextFile,
 	oversizedInlineContextFailure,
 	prepareContextFiles,
-	prepareContextFilesWithUploader,
 	shouldConsiderContextFiles,
-	shouldUseContextFiles,
 } from "../../../src/completion/context-files";
 import {
 	type ContextFileFailure,
@@ -84,42 +79,149 @@ describe("context-file policy", () => {
 		);
 		assert.equal(shouldConsiderContextFiles(cfg, "short"), false);
 		assert.equal(shouldConsiderContextFiles(cfg, "x".repeat(40), check), true);
+		// Eligibility without latest/history is exercised by prepareContextFiles
+		// returning null rather than a private shouldUse helper.
 		assert.equal(
-			shouldUseContextFiles(cfg, "history", "latest", "x".repeat(40), check),
-			true,
+			await prepareContextFiles(
+				cfg,
+				"",
+				null,
+				"",
+				"latest request",
+				"x".repeat(40),
+				undefined,
+				check,
+			),
+			null,
 		);
 		assert.equal(
-			shouldUseContextFiles(cfg, "", "latest", "x".repeat(40), check),
-			false,
-		);
-		assert.equal(
-			shouldUseContextFiles(cfg, "history", "   ", "x".repeat(40), check),
-			false,
+			await prepareContextFiles(
+				cfg,
+				"history",
+				null,
+				"",
+				"   ",
+				"x".repeat(40),
+				undefined,
+				check,
+			),
+			null,
 		);
 	});
 	test("formats latest context-file prompt around the inline byte limit", async () => {
 		const smallCfg = contextFileConfig({
 			current_input_file_min_bytes: 12,
 		});
-		const largeCfg = contextFileConfig({
-			current_input_file_min_bytes: 120000,
-		});
-		assert.equal(latestInputInlineLimit(smallCfg), 4000);
-		assert.equal(latestInputInlineLimit(largeCfg), 16000);
-		assert.equal(
-			latestInputPromptForContextFile(smallCfg, "  short latest  "),
-			"Latest user request:\nshort latest",
+		const uploads: RecordedUpload[] = [];
+		const shortResult = requireContextFileResult(
+			await prepareContextFiles(
+				smallCfg,
+				"prior conversation",
+				null,
+				"",
+				"  short latest  ",
+				"x".repeat(40),
+				async (text, filename) => {
+					uploads.push({ text, filename });
+					return { ref: `/uploaded/${filename}`, name: filename };
+				},
+			),
 		);
-		assert.equal(latestInputPromptForContextFile(smallCfg, "   "), "");
-		const longPrompt = latestInputPromptForContextFile(
-			smallCfg,
-			"x".repeat(5000),
+		assert.match(shortResult.prompt, /Latest user request:\nshort latest/);
+
+		const longUploads: RecordedUpload[] = [];
+		const longResult = requireContextFileResult(
+			await prepareContextFiles(
+				smallCfg,
+				"prior conversation",
+				null,
+				"",
+				"x".repeat(5000),
+				"x".repeat(40),
+				async (text, filename) => {
+					longUploads.push({ text, filename });
+					return { ref: `/uploaded/${filename}`, name: filename };
+				},
+			),
 		);
 		assert.match(
-			longPrompt,
+			longResult.prompt,
 			/latest user request is at the end of `message\.txt`/,
 		);
-		assert.doesNotMatch(longPrompt, /x{100}/);
+		assert.doesNotMatch(longResult.prompt, /x{100}/);
+	});
+
+	test("clamps latest-inline prompt style by context-file threshold", async () => {
+		// latestInputInlineLimit = max(4000, min(16000, floor(threshold/6)))
+		// threshold 24000 -> 4000; threshold 120000 -> 16000.
+		const lowThreshold = contextFileConfig({
+			current_input_file_min_bytes: 24000,
+		});
+		const highThreshold = contextFileConfig({
+			current_input_file_min_bytes: 120000,
+		});
+		const uploader = async (text: string, filename: string) => ({
+			ref: `/uploaded/${filename}`,
+			name: filename,
+		});
+
+		const underLow = requireContextFileResult(
+			await prepareContextFiles(
+				lowThreshold,
+				"history",
+				null,
+				"",
+				"x".repeat(3999),
+				"x".repeat(30000),
+				uploader,
+			),
+		);
+		assert.match(underLow.prompt, /Latest user request:\nx{10,}/);
+
+		const overLow = requireContextFileResult(
+			await prepareContextFiles(
+				lowThreshold,
+				"history",
+				null,
+				"",
+				"x".repeat(4001),
+				"x".repeat(30000),
+				uploader,
+			),
+		);
+		assert.match(
+			overLow.prompt,
+			/latest user request is at the end of `message\.txt`/,
+		);
+
+		const underHigh = requireContextFileResult(
+			await prepareContextFiles(
+				highThreshold,
+				"history",
+				null,
+				"",
+				"x".repeat(15999),
+				"x".repeat(130000),
+				uploader,
+			),
+		);
+		assert.match(underHigh.prompt, /Latest user request:\nx{10,}/);
+
+		const overHigh = requireContextFileResult(
+			await prepareContextFiles(
+				highThreshold,
+				"history",
+				null,
+				"",
+				"x".repeat(16001),
+				"x".repeat(130000),
+				uploader,
+			),
+		);
+		assert.match(
+			overHigh.prompt,
+			/latest user request is at the end of `message\.txt`/,
+		);
 	});
 	test("returns upload failure metadata when large context has no uploader", async () => {
 		const cfg = contextFileConfig();
@@ -144,17 +246,11 @@ describe("context-file policy", () => {
 			requireError(result.error.cause).message,
 			/text file uploader is not configured/,
 		);
-
-		const direct = contextFileUploadFailure("tools", "short", "network down");
-		assert.equal(direct.code, "large_context_file_upload_failed");
-		assert.equal(direct.promptBytes, 5);
-		assert.equal(direct.promptBytesExact, true);
-		assert.equal(direct.cause, "network down");
 	});
 	test("refuses oversized inline fallback when history context upload fails", async () => {
 		const cfg = contextFileConfig();
 		const result = requireContextFileFailure(
-			await prepareContextFilesWithUploader(
+			await prepareContextFiles(
 				cfg,
 				"prior conversation",
 				null,
@@ -180,7 +276,7 @@ describe("context-file policy", () => {
 		const cfg = contextFileConfig();
 		const uploads: RecordedUpload[] = [];
 		const result = requireContextFileFailure(
-			await prepareContextFilesWithUploader(
+			await prepareContextFiles(
 				cfg,
 				"prior conversation",
 				[
@@ -215,7 +311,7 @@ describe("context-file policy", () => {
 		const cfg = contextFileConfig();
 		const uploads: RecordedUpload[] = [];
 		const result = requireContextFileResult(
-			await prepareContextFilesWithUploader(
+			await prepareContextFiles(
 				cfg,
 				"user history with latest request",
 				[

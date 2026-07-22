@@ -3,7 +3,6 @@ import type { UnknownRecord } from "../shared/types";
 import type { ToolBundle } from "./tool-bundle";
 
 type ParsedToolCall = UnknownRecord & { name?: unknown; input?: unknown };
-type ToolSchemaIndex = Record<string, UnknownRecord>;
 type ArraySchemaRecord = UnknownRecord & { items?: unknown };
 
 export function normalizeParsedToolCallsForSchemas(
@@ -19,7 +18,7 @@ export function normalizeParsedToolCallsForSchemas(
 	tools: ToolBundle | null | undefined,
 ): unknown {
 	if (!Array.isArray(calls) || !calls.length) return calls;
-	const schemas = buildToolSchemaIndex(tools);
+	const schemas = tools ? tools.schemaIndex : null;
 	if (!schemas) return calls;
 	let changedAny = false;
 	const out = calls.map((call) => {
@@ -40,13 +39,7 @@ export function normalizeParsedToolCallsForSchemas(
 	return changedAny ? out : calls;
 }
 
-export function buildToolSchemaIndex(
-	tools: ToolBundle | null | undefined,
-): ToolSchemaIndex | null {
-	return tools ? tools.schemaIndex : null;
-}
-
-export function normalizeToolValueWithSchema(
+function normalizeToolValueWithSchema(
 	value: unknown,
 	schema: unknown,
 ): [unknown, boolean] {
@@ -98,7 +91,7 @@ export function normalizeToolValueWithSchema(
 	return [value, false];
 }
 
-export function shouldCoerceSchemaToString(schema: unknown): boolean {
+function shouldCoerceSchemaToString(schema: unknown): boolean {
 	if (!isRecord(schema)) return false;
 	if (typeof schema.const === "string") return true;
 	if (
@@ -122,7 +115,7 @@ export function shouldCoerceSchemaToString(schema: unknown): boolean {
 	return false;
 }
 
-export function looksLikeObjectSchema(schema: unknown): boolean {
+function looksLikeObjectSchema(schema: unknown): boolean {
 	return (
 		isRecord(schema) &&
 		((typeof schema.type === "string" &&
@@ -132,9 +125,7 @@ export function looksLikeObjectSchema(schema: unknown): boolean {
 	);
 }
 
-export function looksLikeArraySchema(
-	schema: unknown,
-): schema is ArraySchemaRecord {
+function looksLikeArraySchema(schema: unknown): schema is ArraySchemaRecord {
 	return (
 		isRecord(schema) &&
 		((typeof schema.type === "string" &&
@@ -143,7 +134,7 @@ export function looksLikeArraySchema(
 	);
 }
 
-export function stringifySchemaValue(value: unknown): [unknown, boolean] {
+function stringifySchemaValue(value: unknown): [unknown, boolean] {
 	if (value == null || typeof value === "string") return [value, false];
 	try {
 		return [JSON.stringify(value), true];

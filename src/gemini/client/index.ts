@@ -27,24 +27,54 @@ import { wrbResponseShapeSummary } from "./parse-envelope";
 import { buildHeaders, getUrl } from "./protocol";
 import {
 	CONTINUE_SAME_ACCOUNT_ATTEMPT,
+	type GeminiFileRef,
 	runSameAccountGenerateAttempts,
 	runSameAccountStreamAttempts,
 } from "./same-account-generate";
 import { consumeGeminiWrbStream } from "./stream-consumer";
 
-type GeminiFileRef =
-	| string
-	| {
-			ref?: unknown;
-			fileRef?: unknown;
-			id?: unknown;
-			name?: unknown;
-			filename?: unknown;
-	  };
-
 type GeminiStreamOptions = {
 	signal?: AbortSignal;
 };
+
+type EmptyUpstreamDecision =
+	| { kind: "throw"; error: Error }
+	| { kind: "continue" };
+
+/**
+ * Shared empty-upstream resolution for generate / generateRich / generateStream.
+ * Order is fixed: data-analysis → large-prompt → build-label continue → final error.
+ */
+async function resolveEmptyUpstream(args: {
+	cfg: RuntimeConfig;
+	prompt: string;
+	raw: string;
+	status: number;
+	fileRefs: GeminiFileRef[] | null | undefined;
+	rawLength: number | null;
+	tryRefreshBuildLabel: (label: string) => Promise<boolean>;
+	refreshLabel: string;
+	finalError: (status: number, rawLen: number | null) => Error;
+}): Promise<EmptyUpstreamDecision> {
+	const dataAnalysisErr = dataAnalysisEmptyResponseError(
+		args.raw,
+		args.fileRefs,
+	);
+	if (dataAnalysisErr) return { kind: "throw", error: dataAnalysisErr };
+	const largePromptErr = largePromptEmptyResponseError(
+		args.prompt,
+		args.status,
+		args.rawLength,
+		largePromptEmptyResponseThreshold(args.cfg),
+	);
+	if (largePromptErr) return { kind: "throw", error: largePromptErr };
+	if (await args.tryRefreshBuildLabel(args.refreshLabel))
+		return { kind: "continue" };
+	return {
+		kind: "throw",
+		error: args.finalError(args.status, args.rawLength),
+	};
+}
 
 type GeminiRichOptions = {
 	hydrateGeneratedImageBytes?: boolean;
@@ -137,18 +167,21 @@ export async function generate(
 				);
 			}
 			if (!text) {
-				const dataAnalysisErr = dataAnalysisEmptyResponseError(raw, fileRefs);
-				if (dataAnalysisErr) throw dataAnalysisErr;
-				const largePromptErr = largePromptEmptyResponseError(
+				const decision = await resolveEmptyUpstream({
+					cfg,
 					prompt,
-					resp.status,
-					raw.length,
-					largePromptEmptyResponseThreshold(cfg),
-				);
-				if (largePromptErr) throw largePromptErr;
-				if (await attemptState.tryRefreshBuildLabel(""))
-					return CONTINUE_SAME_ACCOUNT_ATTEMPT;
-				throw upstreamEmptyResponseError(resp.status, raw.length, "non-stream");
+					raw,
+					status: resp.status,
+					fileRefs,
+					rawLength: raw.length,
+					tryRefreshBuildLabel: (label) =>
+						attemptState.tryRefreshBuildLabel(label),
+					refreshLabel: "",
+					finalError: (status, rawLen) =>
+						upstreamEmptyResponseError(status, rawLen, "non-stream"),
+				});
+				if (decision.kind === "continue") return CONTINUE_SAME_ACCOUNT_ATTEMPT;
+				throw decision.error;
 			}
 			return text;
 		},
@@ -198,22 +231,21 @@ export async function generateRich(
 				);
 			}
 			if (!parts.text && !parts.images.length) {
-				const dataAnalysisErr = dataAnalysisEmptyResponseError(raw, fileRefs);
-				if (dataAnalysisErr) throw dataAnalysisErr;
-				const largePromptErr = largePromptEmptyResponseError(
+				const decision = await resolveEmptyUpstream({
+					cfg,
 					prompt,
-					resp.status,
-					raw.length,
-					largePromptEmptyResponseThreshold(cfg),
-				);
-				if (largePromptErr) throw largePromptErr;
-				if (await attemptState.tryRefreshBuildLabel(""))
-					return CONTINUE_SAME_ACCOUNT_ATTEMPT;
-				throw upstreamImageGenerationEmptyError(
-					resp.status,
-					raw.length,
-					"non-stream",
-				);
+					raw,
+					status: resp.status,
+					fileRefs,
+					rawLength: raw.length,
+					tryRefreshBuildLabel: (label) =>
+						attemptState.tryRefreshBuildLabel(label),
+					refreshLabel: "",
+					finalError: (status, rawLen) =>
+						upstreamImageGenerationEmptyError(status, rawLen, "non-stream"),
+				});
+				if (decision.kind === "continue") return CONTINUE_SAME_ACCOUNT_ATTEMPT;
+				throw decision.error;
 			}
 			const images =
 				options.hydrateGeneratedImageBytes === false
@@ -278,22 +310,22 @@ export async function* generateStream(
 						cfg,
 						`stream upstream produced no text without body (status=${resp.status}) rawLen=${raw.length}${shape}`,
 					);
-					const dataAnalysisErr = dataAnalysisEmptyResponseError(raw, fileRefs);
-					if (dataAnalysisErr) throw dataAnalysisErr;
-					const largePromptErr = largePromptEmptyResponseError(
+					const decision = await resolveEmptyUpstream({
+						cfg,
 						prompt,
-						resp.status,
-						raw.length,
-						largePromptEmptyResponseThreshold(cfg),
-					);
-					if (largePromptErr) throw largePromptErr;
-					if (await attemptState.tryRefreshBuildLabel("stream without body"))
+						raw,
+						status: resp.status,
+						fileRefs,
+						rawLength: raw.length,
+						tryRefreshBuildLabel: (label) =>
+							attemptState.tryRefreshBuildLabel(label),
+						refreshLabel: "stream without body",
+						finalError: (status, rawLen) =>
+							upstreamEmptyResponseError(status, rawLen, "stream without body"),
+					});
+					if (decision.kind === "continue")
 						return CONTINUE_SAME_ACCOUNT_ATTEMPT;
-					throw upstreamEmptyResponseError(
-						resp.status,
-						raw.length,
-						"stream without body",
-					);
+					throw decision.error;
 				}
 				return;
 			}
@@ -319,21 +351,21 @@ export async function* generateStream(
 					cfg,
 					`stream upstream produced no text (status=${resp.status}) rawLen=${rawLength}${shape}`,
 				);
-				const dataAnalysisErr = dataAnalysisEmptyResponseError(
-					rawSnippet,
-					fileRefs,
-				);
-				if (dataAnalysisErr) throw dataAnalysisErr;
-				const largePromptErr = largePromptEmptyResponseError(
+				const decision = await resolveEmptyUpstream({
+					cfg,
 					prompt,
-					resp.status,
-					null,
-					largePromptEmptyResponseThreshold(cfg),
-				);
-				if (largePromptErr) throw largePromptErr;
-				if (await attemptState.tryRefreshBuildLabel("stream"))
-					return CONTINUE_SAME_ACCOUNT_ATTEMPT;
-				throw upstreamEmptyResponseError(resp.status, rawLength, "stream");
+					raw: rawSnippet,
+					status: resp.status,
+					fileRefs,
+					rawLength: null,
+					tryRefreshBuildLabel: (label) =>
+						attemptState.tryRefreshBuildLabel(label),
+					refreshLabel: "stream",
+					finalError: (status, _rawLen) =>
+						upstreamEmptyResponseError(status, rawLength, "stream"),
+				});
+				if (decision.kind === "continue") return CONTINUE_SAME_ACCOUNT_ATTEMPT;
+				throw decision.error;
 			}
 			return undefined;
 		},

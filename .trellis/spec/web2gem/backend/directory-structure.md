@@ -4,15 +4,16 @@
 
 - The root `package.json` / `src/` tree is the default `web2gem` package. The Cloudflare Worker build and architecture guard are scoped to this root package unless a task explicitly expands the scope.
 - `src/app.ts` is the application composition root. It owns the declarative `APP_ROUTES` table (route matching, admin-exempt vs public ordering, per-route JSON body policy and error envelope, session requirements), CORS wrapping, the public auth gate, provider composition, and top-level error conversion using Web-standard `Request` / `Response` types. Adding a route means adding one table entry, not a new dispatch branch.
-- `src/index.ts` is the thin Cloudflare Worker entrypoint. It delegates `fetch` to `handleApplicationRequest` and exports only stable public helpers; protocol route branches must not be added there.
-- `src/worker-entry.ts` is the default-only production bundle entry used by Wrangler and Docker. Keep diagnostic/public helper exports in `src/index.ts` / `src/harness-exports.ts`; raw workerd entry bundles must not expose non-handler named exports.
+- `src/worker-entry.ts` is the default-only production bundle entry used by Wrangler and Docker. It exports only `default { fetch, assertRuntimeConfig }`; raw workerd entry bundles must not expose non-handler named exports.
+- `src/index.ts` is the thin default-only entry used by the harness re-export and local tests. It delegates `fetch` to `handleApplicationRequest` and must not re-export named helpers or protocol route branches.
+- Named smoke/bench helpers live only in `src/harness-exports.ts`; they are not part of the production Worker surface.
 - `src/http/` owns HTTP boundary concerns. Generic, protocol- and completion-neutral helpers live under `http/core/` (enforced by check:arch), stream framing helpers under `http/stream/`, protocol adapters under `http/openai/` and `http/google/`, and business-aware shared modules at the `src/http/` root: `route-body.ts` (completion-aware JSON body policy) and `generation.ts` (shared prepare/generate orchestration, stage logging, and the `GenerationProtocol` strategy consumed by both adapters).
 - `src/http/openai/images.ts` owns OpenAI image route orchestration and generation response flow. JSON and multipart image-edit input normalization, upload-size enforcement, and image-part coercion belong in `src/http/openai/images-input.ts`; keep provider calls and response formatting out of that input owner.
 - HTTP protocol adapters import `http/core/*`, `http/stream/*`, and `src/http/*` owner modules directly. There is no `src/http/index.ts` barrel; `src/app.ts` also imports owner modules directly. New generation endpoints run through `runPreparedCompletion`/`generateTextLogged`/`generateRichLogged` with their protocol's `*_GENERATION_PROTOCOL` constant instead of hand-rolling prepare/generate/log/error pipelines.
 - `src/completion/` owns provider-neutral completion contracts and shared business behavior: prompt/context preparation, provider text-generation ports, empty-output handling, stream/tool-sieve event generation, one `CompletionStreamLifecycle` reducer plus terminal outcome classifier, and completion turn finalization. Protocol adapters must not mirror reducer-owned issue/empty/tool-call/policy/count state, and callback-style stream consumption APIs are not part of the contract.
 - `src/promptcompat/` owns the typed `InternalMessage` boundary. `message-model.ts` owns canonical parts, the single raw content-part parser, and explicit prompt/history/latest-input/reasoning projections; `responses-input.ts` parses Responses items directly into that model; `attachment-inputs.ts` projects parsed messages plus request-level attachment channels into `AttachmentPlan`. HTTP adapters parse OpenAI Responses, OpenAI chat, and Google wire shapes once; prompt, history, attachment, and image-generation consumers receive the parsed model instead of re-walking raw content parts.
 - `src/toolcall/` owns tool-call prompt formatting, parsing, policy validation, schema normalization, and streamed sieve state. Import concrete owners such as `toolcall/sieve`, `toolcall/tool-bundle`, `toolcall/policy-openai`, `toolcall/policy-google`, `toolcall/dsml`, or `toolcall/openai-format`; there is no broad compatibility barrel.
-- `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. `gemini/client/index.ts` stays an orchestration layer; `client/same-account-attempt.ts` owns request-local active config, build-label/cookie recovery, retry classification, and the stream output-started gate; `client/same-account-generate.ts` owns the shared same-account attempt-loop shell for `generate` / `generateRich` / `generateStream` (payload/requestId, retry bound, recovery continue, final lastError) while mode-specific parse/empty/hydration/stream bodies stay in `index.ts`; `client/stream-consumer.ts` owns WRB reader pulls, streaming UTF-8 decode, line buffering, fatal-first parsing, and bounded diagnostics. Model headers live in `client/model-headers.ts`, WRB envelopes/parts/images/cumulative delta extraction live in concrete `client/parse-*.ts` owners, and no catch-all parser barrel exists.
+- `src/gemini/` owns Gemini Web protocol details, transport, and upload behavior. `gemini/client/index.ts` stays an orchestration layer; `client/same-account-attempt.ts` owns request-local active config, build-label/cookie recovery, retry classification, and the stream output-started gate; `client/same-account-generate.ts` owns the shared same-account attempt-loop shell for `generate` / `generateRich` / `generateStream` (payload/requestId, retry bound, recovery continue, final lastError) and the single `GeminiFileRef` type used by that shell and `client/index.ts`; mode-specific parse/hydration/stream bodies stay in `index.ts`, which also owns the private empty-upstream resolver shared by those three modes (fixed order: data-analysis empty → large-prompt empty → build-label continue → mode-specific final empty error); `client/stream-consumer.ts` owns WRB reader pulls, streaming UTF-8 decode, line buffering, fatal-first parsing, and bounded diagnostics. Model headers live in `client/model-headers.ts`, WRB envelopes/parts/images/cumulative delta extraction live in concrete `client/parse-*.ts` owners, and no catch-all parser barrel exists.
 - `src/gemini/client/generated-images.ts` owns generated-image URL candidates, browser/cookie download headers, byte hydration, supported output-format mapping, and URL fallback. It must reuse MIME detection from `src/attachments/mime.ts` and encoding from `src/attachments/base64.ts`.
 - `src/gemini/accounts/admin-input.ts` owns admin request normalization and validation. `admin.ts` owns account-admin use-case orchestration and depends on capability-specific admin/runtime store contracts.
 - `src/gemini/accounts/domain.ts` is the single owner for account issue/state
@@ -54,13 +55,14 @@ Use this contract when adding or moving routes, changing route-level authenticat
 ### 2. Signatures
 
 - `handleApplicationRequest(request, env, executionContext): Promise<Response>` in `src/app.ts` is the shared Web-standard application entrypoint.
-- `src/index.ts` exposes the Cloudflare default export with `fetch: handleApplicationRequest`.
+- `src/worker-entry.ts` exposes the production default export with `fetch: handleApplicationRequest` and `assertRuntimeConfig`.
+- `src/index.ts` exposes a default-only `{ fetch: handleApplicationRequest }` for harness/tests.
 - `handleDockerRequest(req, res, options)` translates Node HTTP to the Worker `fetch` contract and links disconnects to `Request.signal`.
 
 ### 3. Contracts
 
 - Route matching, CORS, configuration composition, public/admin auth ordering, JSON validation, account-runtime acquisition, protocol dispatch, and sanitized top-level errors have one owner: `src/app.ts`.
-- `src/index.ts` contains no protocol-specific route branches and exports only `src/public-exports.ts`.
+- `src/index.ts` and `src/worker-entry.ts` contain no protocol-specific route branches and expose only their default exports (no named public-helper barrel).
 - The Docker adapter delegates to the built Worker entrypoint and owns only platform translation, D1 binding injection, response streaming, and disconnect propagation.
 - Public authentication and request-body validation must finish before any account lease acquisition or D1 account read.
 
@@ -278,7 +280,7 @@ import { validateRequiredToolCalls, type ParsedToolCall } from "../toolcall";
 
 ## Generated Files
 
-Do not hand-edit `dist/worker.js`; it is generated from `src/index.ts` by `scripts/build.mjs`. The root `worker.js` is a legacy shim.
+Do not hand-edit `dist/worker.js`; it is generated from `src/worker-entry.ts` by `scripts/build.mjs`. The root `worker.js` is a legacy shim.
 
 ## Scenario: Gemini Upstream Transport Facade
 
@@ -292,7 +294,7 @@ Use this contract when changing `src/gemini/transport/http.ts`, `src/gemini/tran
 - `resolveConnect()` lazily resolves `cloudflare:sockets` and returns `SocketConnect | null`.
 - `socketHttp(connect, url, options)` performs one HTTP/1.1 request over a socket and returns `SocketHttpResponse`.
 - `createSocketPool()`, `getDefaultSocketPool()`, and `closeIdleSocketPool(pool?)` own keep-alive pool lifecycle.
-- `_setConnectForTest(connect)` and other `*ForTest` cache/connect hooks live on owner modules for unit isolation. Tests import them from the owner (`socket.ts`, `tokens.ts`, `retry.ts`, `cookies.ts`, etc.). They must never appear on production barrels (`transport/index.ts`, `uploads/index.ts`), `src/public-exports.ts`, or the Worker default entry.
+- `_setConnectForTest(connect)` and other `*ForTest` cache/connect hooks live on owner modules for unit isolation. Tests import them from the owner (`socket.ts`, `tokens.ts`, `retry.ts`, `cookies.ts`, etc.). They must never appear on production barrels (`transport/index.ts`, `uploads/index.ts`) or the Worker default entry.
 - Production transport consumers import `httpFetch` / `cancelResponseBody` from `src/gemini/transport` (or `http.ts`). They must not depend on the production barrel for pool/timeout/socket test helpers.
 
 ### 3. Contracts
@@ -389,10 +391,11 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
 
 ### 2. Signatures
 
-- `src/index.ts` is the production Worker entrypoint and exports only stable public helpers from `src/public-exports.ts`.
-- `src/harness-exports.ts` is the smoke/bench harness entrypoint. It re-exports the Worker default plus only the internal helpers `scripts/smoke.mjs` and `scripts/bench.mjs` consume; it is never imported by `src/index.ts`, unit tests, or production code.
+- `src/worker-entry.ts` is the production Worker entrypoint and exports only `default { fetch, assertRuntimeConfig }`.
+- `src/index.ts` is a default-only harness/test entry (`{ fetch }`) and must not re-export named helpers.
+- `src/harness-exports.ts` is the smoke/bench harness entrypoint. It re-exports the default fetch handler plus only the internal helpers `scripts/smoke.mjs` and `scripts/bench.mjs` consume; it is never imported by `src/index.ts`, unit tests, or production code.
 - `scripts/build.mjs` emits:
-  - `dist/worker.js` from `src/index.ts` (always)
+  - `dist/worker.js` from `src/worker-entry.ts` (always)
   - `dist/harness.js` from `src/harness-exports.ts` (only with `--harness-bundle` or `BUILD_HARNESS_BUNDLE`)
 - `pnpm check:size` builds `dist/worker.js` and gates its level-9 gzip size
   through `scripts/check-bundle-size.mjs`; the default gzip ceiling is 3 MiB and
@@ -404,8 +407,8 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
 ### 3. Contracts
 
 - Unit tests import internal helpers straight from their owner module (e.g. `import { buildPayload } from "../../src/gemini/client/protocol"`); there is no hand-maintained internal-export barrel. `pnpm unit` is plain `vitest run` with no pre-build.
-- A helper that only smoke/bench needs is added to `src/harness-exports.ts`, not to `src/public-exports.ts`. Keep that list minimal — it exists only so the two Node harness scripts can load one bundle.
-- Do not add `export * from "./harness-exports"` (or any test/harness surface) to `src/index.ts`.
+- A helper that only smoke/bench needs is added to `src/harness-exports.ts`. Keep that list minimal — it exists only so the two Node harness scripts can load one bundle.
+- Do not add named re-exports or `export * from "./harness-exports"` (or any test/harness surface) to `src/index.ts` or `src/worker-entry.ts`.
 - Smoke tests import the production bundle for public exports and health checks, and the harness bundle for internal compatibility checks, and must assert that representative internal helpers are absent from the production bundle.
 - Bundle-size output reports raw bytes, gzip bytes, the configured gzip ceiling,
   and remaining headroom. Raw bundle bytes are observational and are not the
@@ -423,9 +426,9 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
 ### 5. Good/Base/Bad Cases
 
 - Good: a unit test imports the helper it needs directly from the owner module under `src/`.
-- Base: add a stable user-facing helper to `src/public-exports.ts` only when it is intentionally part of the package surface.
+- Base: production package surface is the worker-entry default only; smoke/bench named helpers live only in harness-exports.
 - Bad: recreate a catch-all internal-export barrel so tests can import everything from one module.
-- Bad: import a harness/test surface from `src/index.ts` to make a test pass.
+- Bad: import a harness/test surface from `src/index.ts` or `src/worker-entry.ts` to make a test pass.
 - Bad: make smoke validate only the harness bundle; that misses production export leaks and route wiring regressions.
 - Bad: gate raw bundle bytes with the legacy `BUNDLE_SIZE_LIMIT_BYTES`; release
   size is the compressed artifact budget.
@@ -434,7 +437,7 @@ Use this contract when changing build outputs, public exports, smoke/bench harne
 
 - Run `pnpm build` after changing build entrypoints.
 - Run `pnpm unit` after changing any file under `tests/unit/` or a helper's exports.
-- Run `pnpm smoke` after changing `src/index.ts`, `src/public-exports.ts`, `src/harness-exports.ts`, `scripts/build.mjs`, or `scripts/smoke.mjs`.
+- Run `pnpm smoke` after changing `src/worker-entry.ts`, `src/index.ts`, `src/harness-exports.ts`, `scripts/build.mjs`, or `scripts/smoke.mjs`.
 - Run `pnpm check:arch` after adding imports between source layers.
 - Run `pnpm check:size` after changing build inputs or runtime dependencies.
 
@@ -669,11 +672,11 @@ Use this contract when changing test coverage commands, CI quality gates, or the
 ### 3. Contracts
 
 - Coverage instruments authored `src/**` directly; there is no coverage build and no sourcemap remapping.
-- The coverage `exclude` list covers the pure re-export barrels (`src/harness-exports.ts`, `src/public-exports.ts`), and the browser-only admin-ui view modules (`main.tsx`, `app.tsx`, `components/**`, `sections/**`, `icons.tsx`) whose behavior is validated by route/smoke assertions rather than the Node unit suite. Admin-ui logic modules (`logic.ts`, `state.ts`, `schemas.ts`, `api.ts`, `selectors.ts`) stay covered.
+- The coverage `exclude` list covers the pure re-export barrel (`src/harness-exports.ts`), and the browser-only admin-ui view modules (`main.tsx`, `app.tsx`, `components/**`, `sections/**`, `icons.tsx`) whose behavior is validated by route/smoke assertions rather than the Node unit suite. Admin-ui logic modules (`logic.ts`, `state.ts`, `schemas.ts`, `api.ts`, `selectors.ts`) stay covered.
 - Coverage thresholds are regression floors, not aspirational 100% targets. No directory or aggregate threshold should be 100%; stable areas should normally retain 2–5 percentage points of measured headroom.
 - The gate ledger is intentionally small: four global gates plus critical-path gates for high-risk owners (`src/completion`, `src/gemini/accounts`, `src/gemini/completion-provider.ts`, `src/gemini/transport`, `src/http/openai`, `src/http/google`, `src/promptcompat`, `src/toolcall`). Do not reintroduce a per-file gate for every module; the global gate is the default floor.
 - Generated coverage output belongs under `coverage/` and must stay git-ignored.
-- Do not change `src/index.ts`, `src/public-exports.ts`, or `wrangler.jsonc` to make coverage work.
+- Do not change `src/worker-entry.ts`, `src/index.ts`, or `wrangler.jsonc` to make coverage work.
 
 ### 4. Validation & Error Matrix
 

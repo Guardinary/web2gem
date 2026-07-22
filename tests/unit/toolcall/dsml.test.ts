@@ -1,29 +1,19 @@
 import { describe, test } from "vitest";
 import {
-	normalizeDSMLToolCallMarkup,
-	parseCanonicalDSMLToolCallsFast,
 	parseDSMLToolCallsDetailed,
-	parseMarkupValue,
-	parseScalarValue,
 	parseToolCalls,
-	restoreToolCallProtectedMarkdown,
-	shouldSkipToolCallParsingForCodeFenceExample,
-	stripFencedCodeBlocks,
-	unwrapToolArgumentMarkdown,
 } from "../../../src/toolcall/dsml";
 import { assert } from "../assertions.js";
-import { record, required } from "./_support/assertions.js";
+import { required } from "./_support/assertions.js";
 
 describe("toolcall", () => {
 	test("uses canonical DSML fast path for plain XML tool blocks", async () => {
 		const longPath = "x".repeat(16 * 1024);
 		const candidate = `<tool_calls><invoke name="Read"><parameter name="path"><![CDATA[${longPath}]]></parameter></invoke></tool_calls>`;
-		const fast = parseCanonicalDSMLToolCallsFast(candidate);
-		const fastResult = required(fast);
-		assert.equal(fastResult.cleanText, "");
-		assert.equal(fastResult.sawToolCallSyntax, true);
-		assert.equal(required(fastResult.calls[0]).name, "Read");
-		assert.equal(record(required(fastResult.calls[0]).input).path, longPath);
+		const detailed = parseDSMLToolCallsDetailed(candidate);
+		assert.equal(detailed.cleanText, "");
+		assert.equal(detailed.sawToolCallSyntax, true);
+		assert.equal(required(detailed.calls[0]).name, "Read");
 
 		const [clean, toolCalls] = parseToolCalls(candidate, [
 			{
@@ -35,32 +25,6 @@ describe("toolcall", () => {
 		assert.equal(
 			JSON.parse(required(toolCalls[0]).function.arguments).path,
 			longPath,
-		);
-	});
-	test("declines non-canonical DSML fast path inputs", async () => {
-		assert.equal(
-			parseCanonicalDSMLToolCallsFast(
-				'```xml\n<tool_calls><invoke name="Read"></invoke></tool_calls>\n```',
-			),
-			null,
-		);
-		assert.equal(
-			parseCanonicalDSMLToolCallsFast(
-				'<tool-calls><invoke name="Read"></invoke></tool-calls>',
-			),
-			null,
-		);
-		assert.equal(
-			parseCanonicalDSMLToolCallsFast(
-				"＜tool_calls＞＜invoke name＝＂Read＂＞＜/invoke＞＜/tool_calls＞",
-			),
-			null,
-		);
-		assert.equal(
-			parseCanonicalDSMLToolCallsFast(
-				'<tool_calls><invoke name="Read"><parameter name="path">`README.md`</parameter></invoke></tool_calls>',
-			),
-			null,
 		);
 	});
 	test("accepts fullwidth confusable DSML tool markup", async () => {
@@ -140,11 +104,9 @@ describe("toolcall", () => {
 	test("skips fenced DSML examples while retaining malformed syntax evidence", async () => {
 		const fencedExample =
 			'keep\n```xml\n<tool_calls><invoke name="Read"></invoke></tool_calls>\n```\nafter';
-		assert.equal(stripFencedCodeBlocks(fencedExample), "keep\nafter");
-		assert.equal(
-			shouldSkipToolCallParsingForCodeFenceExample(fencedExample),
-			true,
-		);
+		const [clean, toolCalls] = parseToolCalls(fencedExample);
+		assert.equal(clean, fencedExample.trim());
+		assert.deepEqual(toolCalls, []);
 		const detailed = parseDSMLToolCallsDetailed(
 			"<tool_calls><invoke></invoke></tool_calls>",
 		);
@@ -152,37 +114,94 @@ describe("toolcall", () => {
 		assert.deepEqual(detailed.calls, []);
 	});
 
-	test("unwraps markdown arguments and rejects invalid restoration inputs", async () => {
-		assert.deepEqual(
-			Reflect.apply(restoreToolCallProtectedMarkdown, undefined, [
-				null,
-				() => "",
-			]),
-			[],
+	test("does not invent tool calls from incomplete or example-like markup", async () => {
+		const tools = [
+			{
+				type: "function",
+				function: { name: "Read", parameters: { type: "object" } },
+			},
+		];
+
+		// Incomplete open candidate: syntax may be visible, but no executable call.
+		const incomplete =
+			'prefix <tool_calls><invoke name="Read"><parameter name="path">README.md';
+		const [incompleteClean, incompleteCalls] = parseToolCalls(
+			incomplete,
+			tools,
 		);
-		assert.deepEqual(
-			Reflect.apply(restoreToolCallProtectedMarkdown, undefined, [
-				[{ name: "Read", input: {} }],
-				null,
-			]),
-			[],
-		);
+		assert.deepEqual(incompleteCalls, []);
+		assert.match(incompleteClean, /prefix/);
+		assert.match(incompleteClean, /<tool_calls>/);
+
+		// Fenced XML remains documentation, not an executable tool call.
+		const fenced =
+			'note\n```xml\n<tool_calls><invoke name="Read"><parameter name="path">README.md</parameter></invoke></tool_calls>\n```\nend';
+		const [fencedClean, fencedCalls] = parseToolCalls(fenced, tools);
+		assert.deepEqual(fencedCalls, []);
+		assert.match(fencedClean, /```xml/);
+		assert.match(fencedClean, /README\.md/);
+
+		// Backtick-wrapped parameter values still parse through the public path.
+		const backticked =
+			'<tool_calls><invoke name="Read"><parameter name="path">`README.md`</parameter></invoke></tool_calls>';
+		const [btClean, btCalls] = parseToolCalls(backticked, tools);
+		assert.equal(btClean, "");
+		assert.equal(required(btCalls[0]).function.name, "Read");
 		assert.equal(
-			unwrapToolArgumentMarkdown('```json\n{"ok":true}\n```'),
-			'{"ok":true}',
+			JSON.parse(required(btCalls[0]).function.arguments).path,
+			"README.md",
 		);
-		assert.equal(unwrapToolArgumentMarkdown("plain text"), "plain text");
 	});
 
-	test("normalizes DSML aliases and escaped scalar markup", async () => {
-		const normalized = normalizeDSMLToolCallMarkup(
-			'<GeminiToolCalls><GeminiInvoke name="Read"></GeminiInvoke></GeminiToolCalls>',
+	test("parses markup parameter values through public tool-call entrypoints", async () => {
+		const tools = [
+			{
+				type: "function",
+				function: { name: "Write", parameters: { type: "object" } },
+			},
+		];
+
+		// Nested markup + CDATA + fenced markdown argument unwrap + scalars.
+		const nested = [
+			'<tool_calls><invoke name="Write">',
+			"<parameter name=\"payload\"><name>Read</name><count>2</count></parameter>",
+			"<parameter name=\"items\"><item>a</item><item><![CDATA[b&c]]></item></parameter>",
+			"<parameter name=\"doc\"><![CDATA[```json\n{\"ok\":true}\n```]]></parameter>",
+			"<parameter name=\"flag\">true</parameter>",
+			"<parameter name=\"none\">null</parameter>",
+			"<parameter name=\"huge\">1e999</parameter>",
+			"<parameter name=\"broken\">{not json}</parameter>",
+			"<parameter name=\"entities\">&lt;tag&gt;</parameter>",
+			"</invoke></tool_calls>",
+		].join("");
+		const [clean, calls] = parseToolCalls(nested, tools);
+		assert.equal(clean, "");
+		const args = JSON.parse(required(calls[0]).function.arguments);
+		assert.deepEqual(args.payload, { name: "Read", count: 2 });
+		assert.deepEqual(args.items, ["a", "b&c"]);
+		// CDATA-preserved fenced text is not unwrapped unless markdown restore runs.
+		assert.equal(args.doc, '```json\n{"ok":true}\n```');
+		assert.equal(args.flag, true);
+		assert.equal(args.none, null);
+		// Non-finite scientific notation stays a string.
+		assert.equal(args.huge, "1e999");
+		assert.equal(args.broken, "{not json}");
+		assert.equal(args.entities, "<tag>");
+
+		// Entity-encoded markup is decoded to text; only real XML children become objects.
+		const encoded =
+			'<tool_calls><invoke name="Write"><parameter name="blob">&lt;name&gt;Read&lt;/name&gt;&lt;count&gt;2&lt;/count&gt;</parameter></invoke></tool_calls>';
+		const [, encodedCalls] = parseToolCalls(encoded, tools);
+		const encodedArgs = JSON.parse(
+			required(encodedCalls[0]).function.arguments,
 		);
-		assert.equal(
-			normalized,
-			'<tool_calls><invoke name="Read"></invoke></tool_calls>',
-		);
-		const [clean, calls] = parseToolCalls(normalized, [
+		assert.equal(encodedArgs.blob, "<name>Read</name><count>2</count>");
+	});
+
+	test("normalizes Gemini-prefixed tool aliases through public parse", async () => {
+		const aliased =
+			'<GeminiToolCalls><GeminiInvoke name="Read"></GeminiInvoke></GeminiToolCalls>';
+		const [clean, calls] = parseToolCalls(aliased, [
 			{
 				type: "function",
 				function: { name: "Read", parameters: { type: "object" } },
@@ -190,19 +209,6 @@ describe("toolcall", () => {
 		]);
 		assert.equal(clean, "");
 		assert.equal(required(calls[0]).function.name, "Read");
-
-		assert.equal(
-			parseMarkupValue("&lt;item&gt;a&lt;/item&gt;&lt;item&gt;2&lt;/item&gt;"),
-			"<item>a</item><item>2</item>",
-		);
-		assert.equal(
-			parseMarkupValue(
-				"&lt;name&gt;Read&lt;/name&gt;&lt;count&gt;2&lt;/count&gt;",
-			),
-			"<name>Read</name><count>2</count>",
-		);
-		assert.equal(parseScalarValue("1e999"), "1e999");
-		assert.equal(parseScalarValue("{not json}"), "{not json}");
 	});
 	test("keeps legacy tool_call fences as plain text", async () => {
 		const legacy = [

@@ -12,7 +12,8 @@ export const CONTINUE_SAME_ACCOUNT_ATTEMPT = Symbol(
 );
 export type ContinueSameAccountAttempt = typeof CONTINUE_SAME_ACCOUNT_ATTEMPT;
 
-type GeminiFileRef =
+/** Shared Gemini file-ref shape for client generate / stream payloads. */
+export type GeminiFileRef =
 	| string
 	| {
 			ref?: unknown;

@@ -3,20 +3,15 @@ import {
 	appendMarkupValue,
 	decodeCDATA,
 	decodeXmlEntities,
-	findNextAnyXmlTag,
-	findNextXmlTag,
 	findTopLevelXmlElementBlocks,
 	findXmlElementBlocks,
-	findXmlTagEnd,
 	parseTagAttributes,
-	scanXmlTagAt,
-	skipCDATAAt,
 } from "../../../src/toolcall/xml";
 import { assert } from "../assertions.js";
 import { required } from "./_support/assertions.js";
 
 describe("toolcall", () => {
-	test("parses CDATA entities nested tags and malformed XML boundaries", async () => {
+	test("parses CDATA entities nested tags and top-level blocks", async () => {
 		assert.equal(decodeCDATA("<![CDATA[open"), "open");
 		assert.equal(decodeCDATA("<![CDATA[a]]><![CDATA[>b]]>"), "a>b");
 		assert.equal(
@@ -62,30 +57,5 @@ describe("toolcall", () => {
 			findTopLevelXmlElementBlocks("<root><child></root> trailing"),
 			[],
 		);
-
-		assert.equal(
-			required(findNextXmlTag("<a></a>", "a", 0, false)).closing,
-			false,
-		);
-		assert.equal(
-			required(findNextXmlTag("<a></a>", "a", 0, true)).closing,
-			true,
-		);
-		assert.equal(findNextXmlTag("<a></a>", "b", 0, null), null);
-		assert.equal(
-			required(findNextAnyXmlTag("x <![CDATA[<a>]]> <b/>", 0, false)).name,
-			"b",
-		);
-		assert.equal(skipCDATAAt("<![CDATA[x]]><a>", 0), 13);
-		assert.equal(skipCDATAAt("plain", 0), 0);
-
-		assert.equal(scanXmlTagAt("x<a>", 0), null);
-		assert.equal(scanXmlTagAt("<1bad>", 0), null);
-		assert.equal(
-			required(scanXmlTagAt('<bad:name attr="x>y">', 0)).attrs.trim(),
-			'attr="x>y"',
-		);
-		assert.equal(scanXmlTagAt('<bad:name attr="unterminated>', 0), null);
-		assert.equal(findXmlTagEnd('<a x="y>z"', 3), -1);
 	});
 });

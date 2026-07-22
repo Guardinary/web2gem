@@ -16,7 +16,6 @@ export default defineConfig({
 			include: ["src/**/*.ts", "src/**/*.tsx"],
 			exclude: [
 				"src/harness-exports.ts",
-				"src/public-exports.ts",
 				// Preact view modules ship in the browser admin-ui bundle and are
 				// exercised there; the unit suite covers admin-ui logic modules only
 				// (same scope the old test-bundle tree-shaking implied).

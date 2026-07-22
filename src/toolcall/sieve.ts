@@ -24,7 +24,7 @@ export type ToolSieveState = {
 	parsedToolCandidateLength: number;
 };
 
-export type ToolSieveFlushResult = {
+type ToolSieveFlushResult = {
 	text: string;
 	toolCalls: ParsedToolCall[] | null;
 };
@@ -44,22 +44,18 @@ export function createToolSieveState(): ToolSieveState {
 	};
 }
 
-export const TOOL_SIEVE_PLAIN_TEXT_KEEP = 64;
+const TOOL_SIEVE_PLAIN_TEXT_KEEP = 64;
 const TOOL_SIEVE_MAX_CANDIDATE_CHARS = 256 * 1024;
 const COMPLETE_TOOL_CANDIDATE_OPEN_RE =
 	/^\s*<\s*(?:\|DSML\|)?(?:tool_calls|tool-calls|toolcalls|invoke|parameter)\b[^>]*>/i;
 
-export function hasToolSieveSentinel(text: unknown): boolean {
-	return findToolCallSyntaxCandidateStart(text) >= 0;
-}
-
-export function flushToolSievePlainPrefix(
+function flushToolSievePlainPrefix(
 	state: ToolSieveState | null | undefined,
 ): string[] | null {
 	if (
 		!state ||
 		state.holdingToolCandidate ||
-		hasToolSieveSentinel(state.buffer)
+		findToolCallSyntaxCandidateStart(state.buffer) >= 0
 	)
 		return null;
 	if (state.buffer.length <= TOOL_SIEVE_PLAIN_TEXT_KEEP) return null;
@@ -67,10 +63,6 @@ export function flushToolSievePlainPrefix(
 	const out = state.buffer.slice(0, emitLen);
 	state.buffer = state.buffer.slice(emitLen);
 	return out ? [out] : null;
-}
-
-export function hasToolCallCloseSyntax(text: unknown): boolean {
-	return hasClosedToolCallsSyntax(text);
 }
 
 export function processToolSieveChunk(
@@ -84,7 +76,7 @@ export function processToolSieveChunk(
 			activeState.heldTail ||
 			(activeState.buffer ? activeState.buffer.slice(-128) : "");
 		appendHeldChunk(activeState, incoming);
-		if (hasToolCallCloseSyntax(tail + incoming))
+		if (hasClosedToolCallsSyntax(tail + incoming))
 			activeState.sawToolClose = true;
 		return processHeldToolCandidate(activeState);
 	}
@@ -97,7 +89,7 @@ export function processToolSieveChunk(
 	const start = findToolCallSyntaxCandidateStart(activeState.buffer);
 	if (start >= 0) {
 		activeState.holdingToolCandidate = true;
-		activeState.sawToolClose = hasToolCallCloseSyntax(
+		activeState.sawToolClose = hasClosedToolCallsSyntax(
 			activeState.buffer.slice(start),
 		);
 		activeState.parsedToolCandidate = false;

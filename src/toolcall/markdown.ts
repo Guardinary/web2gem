@@ -73,7 +73,7 @@ export function markdownProtectedTailStart(text: unknown): number {
 	return openMarkdownCodeSpanStart(source);
 }
 
-export function openMarkdownFenceStart(text: unknown): number {
+function openMarkdownFenceStart(text: unknown): number {
 	const source = String(text || "");
 	const state: { fence: MarkdownFenceState | null } = { fence: null };
 	forEachMarkdownLine(source, (line, lineStart) => {
@@ -116,7 +116,7 @@ export function parseMarkdownFenceLine(
 	};
 }
 
-export function openMarkdownCodeSpanStart(text: unknown): number {
+function openMarkdownCodeSpanStart(text: unknown): number {
 	const source = String(text || "");
 	const lineStart =
 		Math.max(source.lastIndexOf("\n"), source.lastIndexOf("\r")) + 1;
@@ -141,7 +141,7 @@ export function openMarkdownCodeSpanStart(text: unknown): number {
 	return openIndex;
 }
 
-export function markdownProtectedRanges(text: unknown): MarkdownRange[] {
+function markdownProtectedRanges(text: unknown): MarkdownRange[] {
 	const source = String(text || "");
 	const ranges: MarkdownRange[] = [];
 	const state: { fence: MarkdownFenceState | null } = { fence: null };

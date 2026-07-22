@@ -253,5 +253,3 @@ async function handleImageGenerationResponses(
 		},
 	});
 }
-
-// POST /v1beta/models/{model}:generateContent | :streamGenerateContent

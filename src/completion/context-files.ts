@@ -32,16 +32,12 @@ type ContextFileConfig = {
 	supports_authenticated_session?: unknown;
 	log_requests?: unknown;
 };
-export type TextFileUploader = (
-	text: string,
-	filename: string,
-) => Promise<FileRef>;
+type TextFileUploader = (text: string, filename: string) => Promise<FileRef>;
 export type ContextFilePromptByteCheck = PromptByteLengthBounded & {
 	thresholdBytes: number;
 };
 
-function currentInputFilePrompt(cfg: unknown, toolsAttached: unknown): string {
-	void cfg;
+function currentInputFilePrompt(toolsAttached: unknown): string {
 	let text = `Continue from the latest state in the attached \`${CURRENT_INPUT_FILE_NAME}\` context. Treat it as the current working state and answer the latest user request directly.`;
 	if (toolsAttached) {
 		text += ` Available tool descriptions and parameter schemas are attached in \`${CURRENT_TOOLS_FILE_NAME}\`; use only those tools and follow the tool-call format rules in this prompt.`;
@@ -96,7 +92,7 @@ export function shouldConsiderContextFiles(
 		.exceeded;
 }
 
-export function shouldUseContextFiles(
+function shouldUseContextFiles(
 	cfg: ContextFileConfig,
 	historyText: unknown,
 	latestInputText: unknown,
@@ -146,7 +142,7 @@ export function oversizedInlineContextFailure(
 	return err;
 }
 
-export function contextFileUploadFailure(
+function contextFileUploadFailure(
 	kind: unknown,
 	promptText: unknown,
 	cause: unknown,
@@ -164,14 +160,14 @@ export function contextFileUploadFailure(
 	return err;
 }
 
-export function latestInputInlineLimit(cfg: ContextFileConfig): number {
+function latestInputInlineLimit(cfg: ContextFileConfig): number {
 	return Math.max(
 		4000,
 		Math.min(16000, Math.floor(contextFileThreshold(cfg) / 6)),
 	);
 }
 
-export function latestInputPromptForContextFile(
+function latestInputPromptForContextFile(
 	cfg: ContextFileConfig,
 	latestInputText: unknown,
 ): string {
@@ -229,7 +225,7 @@ export async function prepareContextFiles(
 	);
 }
 
-export async function prepareContextFilesWithUploader(
+async function prepareContextFilesWithUploader(
 	cfg: ContextFileConfig,
 	historyText: string,
 	toolDefs: readonly ToolDef[] | null | undefined,
@@ -310,7 +306,7 @@ export async function prepareContextFilesWithUploader(
 		}
 	}
 	const livePrompt = [
-		currentInputFilePrompt(cfg, toolsAttached),
+		currentInputFilePrompt(toolsAttached),
 		latestInputPromptForContextFile(cfg, latestInputText),
 		toolsText.trim() && !toolsAttached ? toolsText : "",
 	]

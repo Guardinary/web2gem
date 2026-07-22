@@ -101,6 +101,7 @@ Use this contract when changing Gemini text, stream, or rich WRB parsing, same-a
 
 - `extractResponseFatalCode(raw)` returns known fatal code `1013|1037|1050|1052|1060` or `undefined`.
 - `createSameAccountAttemptState(cfg)` owns the active config, at-most-one applied build-label update, cookie rotation, retry classification, last error, and one output-started fact for a logical client call.
+- Empty upstream text/parts in `generate` / `generateRich` / `generateStream` share one private resolver in `src/gemini/client/index.ts` with fixed order: `dataAnalysisEmptyResponseError` → `largePromptEmptyResponseError` → `tryRefreshBuildLabel(refreshLabel)` continue → mode-specific final empty error. Call sites keep their own refresh labels and final error constructors (`upstreamEmptyResponseError` / `upstreamImageGenerationEmptyError` and stream labels).
 - `consumeGeminiWrbStream(body, signal)` emits non-empty delta events followed by one bounded diagnostic summary; fatal lines throw before their deltas are exposed.
 - Semantic errors carry internal `geminiSource: "stream_generate"`, `geminiCode`, and a stable sanitized `reason`.
 - `GeminiAccountOutcome.recoveryScope` is `none|retry_same_account|try_next_account` and is independent from the optional durable account `issue`.
