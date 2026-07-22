@@ -443,7 +443,7 @@ release workflows.
 ### 2. Signatures
 
 - `vitest.config.mjs` owns `test.include = ["tests/unit/**/*.test.ts"]`.
-- `pnpm unit` and `pnpm unit:quick` run `vitest run` directly against authored
+- `pnpm unit` runs `vitest run` directly against authored
   source imports.
 - `pnpm coverage` runs Vitest V8 coverage through `scripts/coverage.mjs`;
   `pnpm coverage:ci` additionally runs `scripts/check-coverage.mjs`.

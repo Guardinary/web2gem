@@ -4,22 +4,14 @@ import worker from "../../../src/index";
 import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import { withFetch } from "../_support/globals.js";
 import { assert } from "../assertions.js";
+import { errorBody, record } from "./_support/fixtures.js";
 
 const executionContext: ApplicationExecutionContext = { waitUntil() {} };
-
-function record(value: unknown, label: string): UnknownRecord {
-	if (!isRecord(value)) throw new Error(`expected ${label}`);
-	return value;
-}
 
 function firstRecord(value: unknown, label: string): UnknownRecord {
 	if (!Array.isArray(value) || !isRecord(value[0]))
 		throw new Error(`expected ${label}`);
 	return value[0];
-}
-
-function errorBody(value: unknown): UnknownRecord {
-	return record(record(value, "response body").error, "error body");
 }
 
 function geminiTextResponse(text: string): Response {

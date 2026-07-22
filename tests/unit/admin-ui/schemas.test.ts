@@ -1,6 +1,5 @@
 import { describe, test } from "vitest";
 import {
-	isAccount,
 	parseModelRoutingOverview,
 	parseMutation,
 	parseOverview,
@@ -16,16 +15,35 @@ import {
 describe("admin UI response schemas", () => {
 	test("accepts only slim account DTOs", () => {
 		const account = uiAccount();
-		assert.equal(isAccount(account), true);
-		assert.equal(isAccount({ ...account, cookie_hash: "secret" }), false);
-		assert.equal(
-			isAccount({
-				id: "legacy",
-				row_id: "legacy-row",
-				status: "active",
-				enabled: 1,
-			}),
-			false,
+		const overview = {
+			items: [account],
+			nextCursor: null,
+			limit: 200,
+			stats: emptyStats({ total: 1, available: 1 }),
+		};
+		assert.deepEqual(parseOverview(overview).items, [account]);
+		assert.throws(
+			() =>
+				parseOverview({
+					...overview,
+					items: [{ ...account, cookie_hash: "secret" }],
+				}),
+			/admin account overview response is invalid/,
+		);
+		assert.throws(
+			() =>
+				parseOverview({
+					...overview,
+					items: [
+						{
+							id: "legacy",
+							row_id: "legacy-row",
+							status: "active",
+							enabled: 1,
+						},
+					],
+				}),
+			/admin account overview response is invalid/,
 		);
 	});
 

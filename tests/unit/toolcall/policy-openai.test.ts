@@ -5,7 +5,6 @@ import {
 	allowedToolNameFromItem,
 	buildToolChoiceInstructionFromPolicy,
 	extractToolNames,
-	filterToolsByPolicy,
 	namesToSet,
 	parseAllowedToolNames,
 	parseForcedToolName,
@@ -15,7 +14,11 @@ import {
 	validateRequiredToolCalls,
 	validateToolPolicyCalls,
 } from "../../../src/toolcall/policy-openai";
-import { createToolBundle } from "../../../src/toolcall/tool-bundle";
+import {
+	createToolBundle,
+	filterToolBundleByPolicy,
+	nullableOpenAIFunctionTools,
+} from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 import { required } from "./_support/assertions.js";
 
@@ -234,20 +237,24 @@ describe("toolcall", () => {
 		assert.equal(toolPolicyAllows(forced, "Read"), true);
 		assert.equal(toolPolicyAllows(forced, "Search"), false);
 
-		assert.equal(filterToolsByPolicy(null, forced), null);
 		assert.equal(
-			filterToolsByPolicy(toolsBundle, completePolicy({ mode: "none" })),
+			nullableOpenAIFunctionTools(
+				filterToolBundleByPolicy(toolsBundle, completePolicy({ mode: "none" })),
+			),
 			null,
 		);
 		assert.equal(
-			filterToolsByPolicy(toolsBundle, null),
+			filterToolBundleByPolicy(toolsBundle, null).openAIFunctionTools,
 			toolsBundle.openAIFunctionTools,
 		);
 		assert.deepEqual(
-			required(filterToolsByPolicy(toolsBundle, forced)).map((tool) => {
-				if (!isRecord(tool.function)) throw new Error("expected function tool");
-				return tool.function.name;
-			}),
+			filterToolBundleByPolicy(toolsBundle, forced).openAIFunctionTools.map(
+				(tool) => {
+					if (!isRecord(tool.function))
+						throw new Error("expected function tool");
+					return tool.function.name;
+				},
+			),
 			["Read", "Read"],
 		);
 	});

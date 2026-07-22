@@ -115,10 +115,6 @@ export function parseOverview(value: unknown): AccountOverview {
 	return parsed.output;
 }
 
-export function isAccount(value: unknown): value is GeminiAccount {
-	return v.safeParse(accountSchema, value).success;
-}
-
 export function parseModelRoutingOverview(
 	value: unknown,
 ): ModelRoutingOverview {

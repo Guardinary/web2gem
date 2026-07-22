@@ -1,9 +1,9 @@
 import { describe, test } from "vitest";
 import type { ApplicationExecutionContext } from "../../../src/app";
 import worker from "../../../src/index";
-import { isRecord } from "../../../src/shared/types";
 import { withFetch } from "../_support/globals.js";
 import { assert } from "../assertions.js";
+import { errorBody } from "./_support/fixtures.js";
 
 const executionContext: ApplicationExecutionContext = { waitUntil() {} };
 
@@ -15,12 +15,6 @@ async function withNoUpstream<T>(run: () => T | PromiseLike<T>): Promise<T> {
 	}, run);
 	assert.equal(upstreamCalls, 0);
 	return result;
-}
-
-function errorBody(value: unknown): Record<string, unknown> {
-	if (!isRecord(value) || !isRecord(value.error))
-		throw new Error("expected error body");
-	return value.error;
 }
 
 function streamingRequest(url: string, init: RequestInit): Request {

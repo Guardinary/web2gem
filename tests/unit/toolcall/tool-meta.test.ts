@@ -3,7 +3,6 @@ import { createToolBundle } from "../../../src/toolcall/tool-bundle";
 import {
 	extractToolMeta,
 	firstNonNil,
-	toolDefsFromTools,
 	toolFunctionDeclarations,
 	toolItemsFromTools,
 	toolMetasFromTools,
@@ -98,7 +97,7 @@ describe("toolcall", () => {
 				parameters: schema,
 			},
 		]);
-		assert.deepEqual(toolDefsFromTools([{ name: "NoSchema" }]), [
+		assert.deepEqual(createToolBundle([{ name: "NoSchema" }]).defs, [
 			{
 				name: "NoSchema",
 				description: "",

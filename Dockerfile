@@ -9,7 +9,7 @@ RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
 
-COPY tsconfig.json vitest.config.mjs wrangler.jsonc ./
+COPY tsconfig.json ./
 COPY scripts ./scripts
 COPY server ./server
 COPY src ./src

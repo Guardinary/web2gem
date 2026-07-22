@@ -63,14 +63,6 @@ export function toolMetasFromTools(tools: unknown): ToolMeta[] {
 	return out;
 }
 
-export function toolDefsFromTools(tools: unknown): ToolMeta[] {
-	return toolMetasFromTools(tools).map((meta) => ({
-		name: meta.name,
-		description: meta.description,
-		parameters: meta.parameters || {},
-	}));
-}
-
 export function toolItemsFromTools(tools: unknown): UnknownRecord[] {
 	if (Array.isArray(tools)) return tools.filter(isRecord);
 	if (!isRecord(tools)) return [];

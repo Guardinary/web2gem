@@ -7,7 +7,7 @@ import { resetActiveGeminiCookieForTest } from "../../../../../src/gemini/cookie
 import { resetGeminiUploadCachesForTest } from "../../../../../src/gemini/uploads/tokens";
 import { assert } from "../../../assertions.js";
 
-export type UploadRequestInit = RequestInit & {
+type UploadRequestInit = RequestInit & {
 	headers: Record<string, string>;
 };
 type ExpectedMultipartRequest = {
@@ -61,7 +61,7 @@ export function resetUploadState() {
 	resetGeminiUploadCachesForTest();
 }
 
-export function pushIdCacheRequest(cfg: RuntimeConfig): Request {
+function pushIdCacheRequest(cfg: RuntimeConfig): Request {
 	const origin = (cfg.gemini_origin || "https://gemini.google.com").replace(
 		/\/$/,
 		"",

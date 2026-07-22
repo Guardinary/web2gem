@@ -1,6 +1,6 @@
 import { describe, test } from "vitest";
 import { createAttachmentPlan } from "../../../src/attachments/plan";
-import type { AttachmentUploadResult } from "../../../src/attachments/types";
+import { uploadedAttachmentResult as attachmentResult } from "../attachments/_support/result.js";
 import type { CompletionProvider } from "../../../src/completion/ports";
 import type { RuntimeConfig } from "../../../src/config";
 import type { GeminiAccountLease } from "../../../src/gemini/accounts/lease-types";
@@ -143,28 +143,6 @@ function createTestProvider(
 		throw new Error("expected complete Gemini provider contract");
 	}
 	return Object.assign(provider, { resolveModel, generateRich, dispose });
-}
-
-function attachmentResult(ref: string): AttachmentUploadResult {
-	const fileRef = { ref, name: "file.txt" };
-	return {
-		fileRefs: [fileRef],
-		imageFileRefs: null,
-		genericFileRefs: [fileRef],
-		promptText: "",
-		droppedNote: "",
-		supportsFileRefs: true,
-		usage: {
-			uploadedFiles: 1,
-			dedupedFiles: 0,
-			uploadedBytes: 1,
-			fileRefBytes: 1,
-			inlinedFiles: 0,
-			inlinedBytes: 0,
-			droppedFiles: 0,
-			multipartUploads: 1,
-		},
-	};
 }
 
 function requestScopedError(message: string) {

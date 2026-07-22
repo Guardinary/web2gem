@@ -40,7 +40,7 @@ export function wrbCandidateLine(candidate: unknown[]): string {
 	return wrbCandidatesLine([candidate]);
 }
 
-export type FatalWrbLocation = "inner" | "envelope";
+type FatalWrbLocation = "inner" | "envelope";
 
 export function fatalWrbLine(
 	code: number,

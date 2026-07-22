@@ -291,10 +291,3 @@ export function flushToolSieve(
 		toolCalls: parsed.calls.length ? parsed.calls : null,
 	};
 }
-
-export function toolSieveBufferedText(
-	state: ToolSieveState | null | undefined,
-): string {
-	if (!state) return "";
-	return heldText(state);
-}

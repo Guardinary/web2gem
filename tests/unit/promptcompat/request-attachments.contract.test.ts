@@ -1,9 +1,6 @@
 import { describe, test } from "vitest";
 import type { AttachmentSource } from "../../../src/attachments/types";
-import {
-	openAIAttachmentPlanFromRequest,
-	requestAttachmentPlanFromChannels,
-} from "../../../src/promptcompat/attachment-inputs";
+import { openAIAttachmentPlanFromRequest } from "../../../src/promptcompat/attachment-inputs";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { assert } from "../assertions.js";
 
@@ -147,41 +144,44 @@ describe("prompt compatibility request attachments", () => {
 		);
 	});
 	test("classifies OpenAI request-level image blocks without upload transport", async () => {
-		const plan = requestAttachmentPlanFromChannels({
-			attachments: [
-				{
-					type: "image_url",
-					image_url: { url: "data:image/png;base64,QUJDRA==" },
-					filename: "../outer.png",
-				},
-				{
-					type: "image_url",
-					url: "data:image/gif;base64,R0lGODlh",
-					filename: "direct.gif",
-				},
-			],
-			files: [
-				{
-					type: "input_image",
-					image_url: "data:;base64,BBBB",
-					mime_type: "image/jpeg",
-					filename: "inline.jpg",
-				},
-			],
-			messages: [
-				{
-					role: "user",
-					content: [
-						{
-							type: "image_url",
-							image_url: {
-								url: "data:image/png;base64,SHOULD_NOT_DUPLICATE==",
+		const plan = openAIAttachmentPlanFromRequest(
+			{
+				attachments: [
+					{
+						type: "image_url",
+						image_url: { url: "data:image/png;base64,QUJDRA==" },
+						filename: "../outer.png",
+					},
+					{
+						type: "image_url",
+						url: "data:image/gif;base64,R0lGODlh",
+						filename: "direct.gif",
+					},
+				],
+				files: [
+					{
+						type: "input_image",
+						image_url: "data:;base64,BBBB",
+						mime_type: "image/jpeg",
+						filename: "inline.jpg",
+					},
+				],
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "image_url",
+								image_url: {
+									url: "data:image/png;base64,SHOULD_NOT_DUPLICATE==",
+								},
 							},
-						},
-					],
-				},
-			],
-		});
+						],
+					},
+				],
+			},
+			[],
+		);
 		assert.equal(plan.candidates.length, 3);
 		assert.deepEqual(
 			plan.candidates.map((candidate) => ({
@@ -216,15 +216,18 @@ describe("prompt compatibility request attachments", () => {
 			],
 		);
 		assert.deepEqual(
-			requestAttachmentPlanFromChannels({
-				attachments: [
-					{
-						type: "image_url",
-						image_url: { url: "data:image/webp;base64,V0VCUA==" },
-						filename: "outer.webp",
-					},
-				],
-			}).candidates.map((candidate) => ({
+			openAIAttachmentPlanFromRequest(
+				{
+					attachments: [
+						{
+							type: "image_url",
+							image_url: { url: "data:image/webp;base64,V0VCUA==" },
+							filename: "outer.webp",
+						},
+					],
+				},
+				[],
+			).candidates.map((candidate) => ({
 				b64: base64Data(candidate.source),
 				mime: candidate.mime,
 				filename: candidate.filename,

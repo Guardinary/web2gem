@@ -30,10 +30,6 @@ export function imageGenerationMode(req: UnknownRecord): ImageGenerationMode {
 	return { enabled: false, forced: false, tool: null };
 }
 
-export function isImageGenerationRequest(req: UnknownRecord): boolean {
-	return imageGenerationMode(req).enabled;
-}
-
 // Shared runner for the chat and responses image-generation branches. Both
 // prepare identically and validate rich output identically; only the final
 // payload shaping differs, supplied by `format`.

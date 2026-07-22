@@ -4,15 +4,9 @@ import type { ToolChoicePolicy, ToolPolicyViolation } from "./policy-openai";
 import {
 	extractToolNames,
 	namesToSet,
-	policyHasAllowed,
 	validateToolPolicyCalls,
 } from "./policy-openai";
-import {
-	createToolBundle,
-	filterToolBundleByPolicy,
-	nullableOpenAIFunctionTools,
-	type ToolBundle,
-} from "./tool-bundle";
+import type { ToolBundle } from "./tool-bundle";
 
 export function googleFunctionCallingConfig(req: unknown): UnknownRecord {
 	const record = isRecord(req) ? req : {};
@@ -111,28 +105,6 @@ export function parseGoogleToolChoicePolicy(
 		policy.hasAllowed = true;
 	}
 	return policy;
-}
-
-export function validateGoogleToolChoiceConfig(
-	req: unknown,
-	tools: ToolBundle | null | undefined,
-): ToolPolicyViolation | null {
-	const policy = parseGoogleToolChoicePolicy(req, tools);
-	return policy.error
-		? { message: policy.error, code: "tool_choice_violation" }
-		: null;
-}
-
-export function filterGoogleToolsByConfig(
-	tools: unknown,
-	req: unknown,
-): UnknownRecord[] | null {
-	const bundle = createToolBundle(tools);
-	if (!bundle.openAIFunctionTools.length) return null;
-	const policy = parseGoogleToolChoicePolicy(req, bundle);
-	if (policy.mode === "none") return null;
-	if (!policyHasAllowed(policy)) return bundle.openAIFunctionTools;
-	return nullableOpenAIFunctionTools(filterToolBundleByPolicy(bundle, policy));
 }
 
 export function validateGoogleToolPolicyCalls(

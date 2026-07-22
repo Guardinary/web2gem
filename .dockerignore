@@ -8,7 +8,6 @@
 .wrangler
 node_modules
 dist
-dist-coverage
 coverage
 release-assets
 reports

@@ -12,15 +12,6 @@ export type MarkdownProtectionLookup = {
 };
 
 const MARKDOWN_FENCE_LINE_RE = /^(\s*)(```+|~~~+)([^\r\n]*)$/;
-const SIMPLE_CODE_SPAN_RE = /(`{1,2})([^`\r\n]*?)\1/g;
-
-export function isMarkdownProtectedPosition(
-	text: unknown,
-	index: number,
-): boolean {
-	const source = String(text || "");
-	return createMarkdownProtectionLookup(source).isProtected(index);
-}
 
 export function createMarkdownProtectionLookup(
 	text: unknown,
@@ -31,35 +22,6 @@ export function createMarkdownProtectionLookup(
 			return isIndexInRanges(ranges, Math.max(0, index));
 		},
 	};
-}
-
-export function isInsideSimpleMarkdownCodeSpan(
-	text: unknown,
-	index: number,
-): boolean {
-	const source = String(text || "");
-	const pos = Math.max(0, index);
-	const lineStart =
-		Math.max(
-			source.lastIndexOf("\n", pos - 1),
-			source.lastIndexOf("\r", pos - 1),
-		) + 1;
-	let lineEnd = source.indexOf("\n", pos);
-	const crEnd = source.indexOf("\r", pos);
-	if (lineEnd < 0 || (crEnd >= 0 && crEnd < lineEnd)) lineEnd = crEnd;
-	if (lineEnd < 0) lineEnd = source.length;
-	const line = source.slice(lineStart, lineEnd);
-	const rel = pos - lineStart;
-	SIMPLE_CODE_SPAN_RE.lastIndex = 0;
-	let m: RegExpExecArray | null = SIMPLE_CODE_SPAN_RE.exec(line);
-	while (m !== null) {
-		const start = m.index;
-		const end = m.index + m[0].length;
-		if (rel >= start && rel < end) return true;
-		SIMPLE_CODE_SPAN_RE.lastIndex = m.index + Math.max(1, m[0].length);
-		m = SIMPLE_CODE_SPAN_RE.exec(line);
-	}
-	return false;
 }
 
 export function markdownProtectedSpanStartAtCut(
@@ -177,21 +139,6 @@ export function openMarkdownCodeSpanStart(text: unknown): number {
 		i = j - 1;
 	}
 	return openIndex;
-}
-
-export function isInsideMarkdownFence(text: unknown, index: number): boolean {
-	const before = String(text || "").slice(0, Math.max(0, index));
-	const lines = before.split(/\r?\n/);
-	let fence: Omit<MarkdownFenceState, "index"> | null = null;
-	for (const line of lines) {
-		const parsed = parseMarkdownFenceLine(line);
-		if (!parsed) continue;
-		const cur = { ch: parsed.ch, len: parsed.len };
-		if (!fence) fence = cur;
-		else if (parsed.canClose && cur.ch === fence.ch && cur.len >= fence.len)
-			fence = null;
-	}
-	return !!fence;
 }
 
 export function markdownProtectedRanges(text: unknown): MarkdownRange[] {

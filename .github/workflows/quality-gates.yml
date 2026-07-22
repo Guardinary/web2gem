@@ -141,7 +141,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Required - Node Unit
-        run: pnpm unit:quick
+        run: pnpm unit
 
   docker-smoke:
     name: Release Required Gate - Docker Smoke

@@ -655,7 +655,7 @@ Use this contract when changing test coverage commands, CI quality gates, or the
 
 ### 2. Signatures
 
-- `pnpm unit` and `pnpm unit:quick` both run `vitest run` over authored sources (no build step).
+- `pnpm unit` runs `vitest run` over authored sources (no build step).
 - `pnpm coverage` runs `vitest run --coverage` via `scripts/coverage.mjs`.
 - `pnpm coverage:ci` uses the same execution path, then runs `node scripts/check-coverage.mjs`.
 - `vitest.config.mjs` owns the V8 coverage provider, report formats, and
@@ -667,7 +667,7 @@ Use this contract when changing test coverage commands, CI quality gates, or the
 ### 3. Contracts
 
 - Coverage instruments authored `src/**` directly; there is no coverage build and no sourcemap remapping.
-- The coverage `exclude` list covers `src/generated/**`, the pure re-export barrels (`src/harness-exports.ts`, `src/public-exports.ts`), and the browser-only admin-ui view modules (`main.tsx`, `app.tsx`, `components/**`, `sections/**`, `icons.tsx`) whose behavior is validated by route/smoke assertions rather than the Node unit suite. Admin-ui logic modules (`logic.ts`, `state.ts`, `schemas.ts`, `api.ts`, `selectors.ts`) stay covered.
+- The coverage `exclude` list covers the pure re-export barrels (`src/harness-exports.ts`, `src/public-exports.ts`), and the browser-only admin-ui view modules (`main.tsx`, `app.tsx`, `components/**`, `sections/**`, `icons.tsx`) whose behavior is validated by route/smoke assertions rather than the Node unit suite. Admin-ui logic modules (`logic.ts`, `state.ts`, `schemas.ts`, `api.ts`, `selectors.ts`) stay covered.
 - Coverage thresholds are regression floors, not aspirational 100% targets. No directory or aggregate threshold should be 100%; stable areas should normally retain 2–5 percentage points of measured headroom.
 - The gate ledger is intentionally small: four global gates plus critical-path gates for high-risk owners (`src/completion`, `src/gemini/accounts`, `src/gemini/completion-provider.ts`, `src/gemini/transport`, `src/http/openai`, `src/http/google`, `src/promptcompat`, `src/toolcall`). Do not reintroduce a per-file gate for every module; the global gate is the default floor.
 - Generated coverage output belongs under `coverage/` and must stay git-ignored.
@@ -809,7 +809,7 @@ Use this contract when changing OpenAI Chat, OpenAI Responses, or Google-compati
 
 ### 2. Signatures
 
-- `src/toolcall/tool-meta.ts` owns shared extraction helpers such as `extractToolMeta`, `toolDefsFromTools`, and protocol conversion helpers.
+- `src/toolcall/tool-meta.ts` owns shared extraction helpers such as `extractToolMeta` and protocol conversion helpers; production consumers use `createToolBundle(...).defs`.
 - `src/toolcall/tool-bundle.ts` owns request-scoped reuse through `createToolBundle(toolsRaw)` and `filterToolBundleByPolicy(bundle, policy)`.
 - Prompt builders receive compact tool definitions shaped as `{ name, description, parameters }`.
 - Google-compatible filtering may return normalized OpenAI-style function tools for downstream prompt/schema parsing.
@@ -866,7 +866,7 @@ for (const fn of googleFunctionDeclarations(group)) {
 #### Correct
 
 ```typescript
-const toolDefs = toolDefsFromTools(req.tools);
+const toolDefs = createToolBundle(req.tools).defs;
 ```
 
 #### Correct For Request Hot Paths

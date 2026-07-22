@@ -21,7 +21,6 @@
 		"check:size": "pnpm build && node scripts/check-bundle-size.mjs",
 		"check:bench": "node scripts/build.mjs --harness-bundle && node scripts/check-benchmark.mjs",
 		"check:release": "node scripts/check-release.mjs",
-		"unit:quick": "vitest run",
 		"unit": "vitest run",
 		"coverage": "node scripts/coverage.mjs",
 		"coverage:ci": "node scripts/coverage.mjs --ci",

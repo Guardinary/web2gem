@@ -600,8 +600,6 @@ describe("quality scripts", () => {
 			"pnpm-lock.yaml",
 			"pnpm-workspace.yaml",
 			"tsconfig.json",
-			"vitest.config.mjs",
-			"wrangler.jsonc",
 			"scripts",
 			"src",
 		]) {

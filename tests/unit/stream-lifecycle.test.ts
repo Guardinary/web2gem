@@ -12,7 +12,7 @@ import {
 import { tokenCountFromCounts } from "../../src/promptcompat/token-accounting";
 import { type ErrorWithMetadata, isRecord } from "../../src/shared/types";
 import type { ToolChoicePolicy } from "../../src/toolcall/policy-openai";
-import { toolSieveBufferedText } from "../../src/toolcall/sieve";
+import { flushToolSieve } from "../../src/toolcall/sieve";
 import { chunks } from "./_support/async-stream.js";
 import { assert } from "./assertions.js";
 import { resolvedModel, strictProvider } from "./http/_support/provider.js";
@@ -143,7 +143,7 @@ async function consumeSievedTextDeltas(
 		emittedText: ctx.emittedText,
 		streamErr: ctx.streamErr,
 		errMsg: ctx.streamErr ? errorMessage(ctx.streamErr) : "",
-		bufferedText: toolSieveBufferedText(ctx.state),
+		bufferedText: flushToolSieve(ctx.state).text,
 	};
 }
 
@@ -336,7 +336,7 @@ describe("completion stream lifecycle", () => {
 		);
 		assert.equal(
 			firstTextEvent(bufferedEvents).text +
-				toolSieveBufferedText(bufferedCtx.state),
+				flushToolSieve(bufferedCtx.state).text,
 			longText,
 		);
 
@@ -355,7 +355,7 @@ describe("completion stream lifecycle", () => {
 		);
 		assert.deepEqual(emptyBuffered, []);
 		assert.equal(emptyCtx.emittedText, false);
-		assert.equal(toolSieveBufferedText(emptyCtx.state), "");
+		assert.equal(flushToolSieve(emptyCtx.state).text, "");
 
 		const splitHeldCandidate = [
 			'<tool_calls><invoke name="Read"><parameter name="path">',
@@ -376,7 +376,7 @@ describe("completion stream lifecycle", () => {
 		);
 		assert.deepEqual(splitBufferedEvents, []);
 		assert.equal(
-			toolSieveBufferedText(splitCtx.state),
+			flushToolSieve(splitCtx.state).text,
 			splitHeldCandidate.join(""),
 		);
 	});

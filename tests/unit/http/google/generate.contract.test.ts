@@ -3,16 +3,14 @@ import type { ApplicationExecutionContext } from "../../../../src/app";
 import type { AttachmentPlan } from "../../../../src/attachments/types";
 import { EMPTY_UPSTREAM_MSG } from "../../../../src/completion/turn";
 import type { FileRef } from "../../../../src/completion/types";
-import {
-	createRuntimeConfig,
-	getConfig,
-	type RuntimeConfig,
-} from "../../../../src/config";
 import { invalidGeminiCookieError } from "../../../../src/gemini/client/errors";
-import { handleGoogleGenerate } from "../../../../src/http/google/handlers";
-import { parseGoogleGenerationPath } from "../../../../src/http/google/model-path";
 import worker from "../../../../src/index";
 import { isRecord, type UnknownRecord } from "../../../../src/shared/types";
+import {
+	googleConfig,
+	googleRoute,
+	handleGoogle,
+} from "./_support/fixtures.js";
 import { withConsoleLog } from "../../_support/globals.js";
 import { assert } from "../../assertions.js";
 import { attachmentResult } from "../../attachments/_support/result.js";
@@ -23,27 +21,6 @@ import {
 } from "../_support/provider.js";
 
 const execution: ApplicationExecutionContext = { waitUntil() {} };
-
-function googleConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
-	return { ...createRuntimeConfig(getConfig()), ...overrides };
-}
-
-function handleGoogle(
-	req: UnknownRecord,
-	cfg: Partial<RuntimeConfig>,
-	provider: Parameters<typeof handleGoogleGenerate>[2],
-	route: Parameters<typeof handleGoogleGenerate>[3],
-): ReturnType<typeof handleGoogleGenerate> {
-	return handleGoogleGenerate(req, googleConfig(cfg), provider, route);
-}
-
-function googleRoute(
-	path: string,
-): NonNullable<ReturnType<typeof parseGoogleGenerationPath>> {
-	const route = parseGoogleGenerationPath(path);
-	if (!route) throw new Error(`invalid Google route: ${path}`);
-	return route;
-}
 
 function responseRecord(value: unknown): UnknownRecord {
 	if (!isRecord(value)) throw new Error("expected response object");

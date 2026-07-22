@@ -1,10 +1,10 @@
 import { describe, test } from "vitest";
 import {
 	flattenText,
-	historyContentText,
 	parseMessageContent,
 	parseOpenAIMessages,
 	rawRecordReasoningText,
+	renderMessageBody,
 } from "../../../src/promptcompat/message-model";
 import { assert } from "../assertions.js";
 import {
@@ -44,7 +44,7 @@ describe("prompt compatibility", () => {
 			parseOpenAIMessages([{ role: "user", content: cyclic }]),
 			0,
 		);
-		assert.equal(historyContentText(message), "[object Object]");
+		assert.equal(renderMessageBody(message, "history"), "[object Object]");
 		assert.equal(
 			flattenText([
 				{ type: "text", text: "a" },

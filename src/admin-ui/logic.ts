@@ -81,10 +81,6 @@ export function relativeTime(
 		: tr("Relative past", params);
 }
 
-export function isCooling(account: GeminiAccount): boolean {
-	return account.state === "cooling";
-}
-
 export function resultSummary(action: string, result: MutationResult): string {
 	const params = {
 		action: localActionLabel(action, true),

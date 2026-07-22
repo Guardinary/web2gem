@@ -3,7 +3,6 @@ import {
 	chooseUploadMime,
 	cleanUploadMime,
 	detectUploadMimeFromBytes,
-	filenameFromUrl,
 	genericFilenameFromMime,
 	imageFilenameFromMime,
 	mimeFromFilename,
@@ -22,11 +21,6 @@ describe("attachment MIME and filenames", () => {
 		);
 		assert.equal(sanitizeUploadFilename(".."), "");
 		assert.equal(sanitizeUploadFilename("x".repeat(220)).length, 180);
-		assert.equal(
-			filenameFromUrl("https://example.com/a%20b.png?x=1"),
-			"a b.png",
-		);
-		assert.equal(filenameFromUrl("https://example.com/%E0%A4%A"), "%E0%A4%A");
 	});
 
 	test("maps known MIME types and filename extensions", () => {

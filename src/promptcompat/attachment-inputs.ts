@@ -73,12 +73,6 @@ export function openAIAttachmentPlanFromRequest(
 	);
 }
 
-export function requestAttachmentPlanFromChannels(
-	req: unknown,
-): AttachmentPlan {
-	return createAttachmentPlan(requestAttachmentInputs(req));
-}
-
 function attachmentRefsFromMessages(
 	messages: readonly InternalMessage[],
 ): AttachmentFileRef[] {

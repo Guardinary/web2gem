@@ -25,7 +25,7 @@ export type D1Expectation = {
 	columnName?: string;
 };
 
-export type RecordingD1Record = {
+type RecordingD1Record = {
 	sql: string;
 	binds: unknown[] | null;
 	operation: D1Operation | null;
@@ -407,7 +407,7 @@ function expectationEntries<K extends StoreMethod>(
 	return Array.isArray(value) ? value : [value];
 }
 
-export function normalizeSql(sql: string): string {
+function normalizeSql(sql: string): string {
 	return String(sql).replace(/\s+/g, " ").trim();
 }
 

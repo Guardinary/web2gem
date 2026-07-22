@@ -1,11 +1,9 @@
 import { describe, test } from "vitest";
 import {
-	createRuntimeConfig,
-	getConfig,
-	type RuntimeConfig,
-} from "../../../../src/config";
-import { handleGoogleGenerate } from "../../../../src/http/google/handlers";
-import { parseGoogleGenerationPath } from "../../../../src/http/google/model-path";
+	googleConfig,
+	googleRoute,
+	handleGoogle,
+} from "./_support/fixtures.js";
 import {
 	streamGooglePlain,
 	streamGoogleTools,
@@ -54,27 +52,6 @@ function candidateText(value: unknown): string {
 function requiredResponse(value: Response | null): Response {
 	if (!value) throw new Error("expected response");
 	return value;
-}
-
-function googleConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
-	return { ...createRuntimeConfig(getConfig()), ...overrides };
-}
-
-function handleGoogle(
-	req: Parameters<typeof handleGoogleGenerate>[0],
-	cfg: Partial<RuntimeConfig>,
-	provider: Parameters<typeof handleGoogleGenerate>[2],
-	route: Parameters<typeof handleGoogleGenerate>[3],
-): ReturnType<typeof handleGoogleGenerate> {
-	return handleGoogleGenerate(req, googleConfig(cfg), provider, route);
-}
-
-function googleRoute(
-	path: string,
-): NonNullable<ReturnType<typeof parseGoogleGenerationPath>> {
-	const route = parseGoogleGenerationPath(path);
-	if (!route) throw new Error(`invalid Google route: ${path}`);
-	return route;
 }
 
 describe("Google streaming", () => {

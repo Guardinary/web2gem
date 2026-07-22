@@ -1,20 +1,11 @@
 import { describe, test } from "vitest";
 import type { ApplicationExecutionContext } from "../../../src/app";
 import worker from "../../../src/index";
-import { isRecord, type UnknownRecord } from "../../../src/shared/types";
 import { withConsoleLog, withFetch } from "../_support/globals.js";
 import { assert } from "../assertions.js";
+import { errorBody } from "./_support/fixtures.js";
 
 const executionContext: ApplicationExecutionContext = { waitUntil() {} };
-
-function record(value: unknown, label: string): UnknownRecord {
-	if (!isRecord(value)) throw new Error(`expected ${label}`);
-	return value;
-}
-
-function errorBody(value: unknown): UnknownRecord {
-	return record(record(value, "response body").error, "error body");
-}
 
 async function withNoUpstream<T>(run: () => T | PromiseLike<T>): Promise<T> {
 	let upstreamCalls = 0;

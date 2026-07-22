@@ -155,11 +155,6 @@ function reasoningBlock(text: string): string {
 	return `[reasoning_content]\n${text}\n[/reasoning_content]`;
 }
 
-/** Compatibility projection for direct consumers; envelopes use renderMessageBody. */
-export function historyContentText(message: InternalMessage): string {
-	return projectMessageText(message, "history");
-}
-
 export type ParsedAssistantContent = {
 	text: string;
 	reasoning: string;

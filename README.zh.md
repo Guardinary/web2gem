@@ -485,7 +485,6 @@ pnpm smoke
 | `pnpm check:worker-types` | 检查生成的 Cloudflare Worker binding 类型是否为最新。                               |
 | `pnpm typecheck`    | 使用严格编译器设置运行 TypeScript 检查。                                                   |
 | `pnpm check:arch`   | 强制导入边界，并检测源码依赖环。                                                           |
-| `pnpm unit:quick`   | 用 Vitest 运行 `tests/unit/` 下的本地单元检查（`pnpm unit` 的别名）。                      |
 | `pnpm unit`         | 用 Vitest 直接针对 `src/` 源码运行 `tests/unit/` 下的本地单元检查，无需构建。              |
 | `pnpm coverage`     | 将 `src/**` 的 Vitest V8 lcov 和 JSON summary 报告写入 `coverage/`。                       |
 | `pnpm coverage:ci`  | 运行带全局阈值和关键路径行/分支覆盖率门禁的 Vitest V8 coverage。                           |

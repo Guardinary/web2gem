@@ -16,20 +16,6 @@ export function sanitizeUploadFilename(name: unknown): string {
 	return safeName.slice(0, 180);
 }
 
-export function filenameFromUrl(url: unknown): string {
-	if (!url || typeof url !== "string") return "";
-	try {
-		const parsed = new URL(url);
-		return sanitizeUploadFilename(
-			decodeURIComponent(
-				parsed.pathname.split("/").filter(Boolean).pop() || "",
-			),
-		);
-	} catch (_) {
-		return sanitizeUploadFilename(String(url).split(/[?#]/)[0]);
-	}
-}
-
 export function mimeFromFilename(name: unknown): string {
 	const safeName = sanitizeUploadFilename(name).toLowerCase();
 	const extension = safeName.includes(".")

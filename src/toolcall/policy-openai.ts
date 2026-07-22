@@ -1,8 +1,4 @@
-import { isRecord, type UnknownRecord } from "../shared/types";
-import {
-	filterToolBundleByPolicy,
-	nullableOpenAIFunctionTools,
-} from "./tool-bundle";
+import { isRecord } from "../shared/types";
 import type { ToolBundle } from "./tool-bundle";
 
 type NameSet = Record<string, boolean>;
@@ -223,14 +219,6 @@ export function toolPolicyAllows(
 	if (!allowed || (!policy.hasAllowed && Object.keys(allowed).length === 0))
 		return true;
 	return !!allowed[String(name || "").trim()];
-}
-
-export function filterToolsByPolicy(
-	tools: ToolBundle | null | undefined,
-	policy: ToolChoicePolicy | null | undefined,
-): UnknownRecord[] | null {
-	if (!tools) return null;
-	return nullableOpenAIFunctionTools(filterToolBundleByPolicy(tools, policy));
 }
 
 export function buildToolChoiceInstructionFromPolicy(

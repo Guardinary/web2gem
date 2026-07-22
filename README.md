@@ -489,7 +489,6 @@ The build script emits the production bundle plus an optional harness bundle:
 | `pnpm check:worker-types` | Verify generated Cloudflare Worker binding types are current.                                                            |
 | `pnpm typecheck`    | Run TypeScript with strict compiler settings.                                                                                   |
 | `pnpm check:arch`   | Enforce import boundaries and detect source dependency cycles.                                                                  |
-| `pnpm unit:quick`   | Run local unit checks under `tests/unit/` with Vitest (alias of `pnpm unit`).                                                    |
 | `pnpm unit`         | Run local unit checks under `tests/unit/` with Vitest directly against `src/` sources - no build step.                          |
 | `pnpm coverage`     | Write Vitest V8 lcov and JSON summary reports for `src/**` to `coverage/`.                                                       |
 | `pnpm coverage:ci`  | Run Vitest V8 coverage with global thresholds plus critical-path line and branch coverage gates.                                |

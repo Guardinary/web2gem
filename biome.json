@@ -40,19 +40,6 @@
 			}
 		},
 		{
-			"includes": ["src/generated/**"],
-			"formatter": {
-				"enabled": false
-			},
-			"linter": {
-				"rules": {
-					"suspicious": {
-						"noTemplateCurlyInString": "off"
-					}
-				}
-			}
-		},
-		{
 			"includes": ["src/admin-ui/**"],
 			"linter": {
 				"rules": {

@@ -1,8 +1,6 @@
 import { describe, test } from "vitest";
 import {
-	isInsideMarkdownFence,
-	isInsideSimpleMarkdownCodeSpan,
-	isMarkdownProtectedPosition,
+	createMarkdownProtectionLookup,
 	markdownProtectedRanges,
 	markdownProtectedSpanStartAtCut,
 	markdownProtectedTailStart,
@@ -57,28 +55,15 @@ describe("toolcall", () => {
 				end: "intro\r\n```ts\r\nconst x = 1;\r\n```\r\n".length,
 			},
 		]);
-		assert.equal(
-			isMarkdownProtectedPosition(crlfFence, crlfFence.indexOf("const")),
-			true,
-		);
-		assert.equal(
-			isMarkdownProtectedPosition(crlfFence, crlfFence.indexOf("outro")),
-			false,
-		);
+		const crlfLookup = createMarkdownProtectionLookup(crlfFence);
+		assert.equal(crlfLookup.isProtected(crlfFence.indexOf("const")), true);
+		assert.equal(crlfLookup.isProtected(crlfFence.indexOf("outro")), false);
 
 		const spans = "a ``two ticks`` and `one tick` done";
-		assert.equal(
-			isInsideSimpleMarkdownCodeSpan(spans, spans.indexOf("two")),
-			true,
-		);
-		assert.equal(
-			isInsideSimpleMarkdownCodeSpan(spans, spans.indexOf("one")),
-			true,
-		);
-		assert.equal(
-			isInsideSimpleMarkdownCodeSpan(spans, spans.indexOf("done")),
-			false,
-		);
+		const spanLookup = createMarkdownProtectionLookup(spans);
+		assert.equal(spanLookup.isProtected(spans.indexOf("two")), true);
+		assert.equal(spanLookup.isProtected(spans.indexOf("one")), true);
+		assert.equal(spanLookup.isProtected(spans.indexOf("done")), false);
 		assert.equal(
 			markdownProtectedSpanStartAtCut(
 				"prefix ``unterminated",
@@ -98,12 +83,11 @@ describe("toolcall", () => {
 		const inlineIndex = text.indexOf("<tool_calls>");
 		const fencedIndex = text.indexOf("<tool_calls>", inlineIndex + 1);
 		const realIndex = text.lastIndexOf("<tool_calls>");
+		const lookup = createMarkdownProtectionLookup(text);
 
-		assert.equal(isMarkdownProtectedPosition(text, inlineIndex), true);
-		assert.equal(isInsideSimpleMarkdownCodeSpan(text, inlineIndex), true);
-		assert.equal(isMarkdownProtectedPosition(text, fencedIndex), true);
-		assert.equal(isInsideMarkdownFence(text, fencedIndex), true);
-		assert.equal(isMarkdownProtectedPosition(text, realIndex), false);
+		assert.equal(lookup.isProtected(inlineIndex), true);
+		assert.equal(lookup.isProtected(fencedIndex), true);
+		assert.equal(lookup.isProtected(realIndex), false);
 		assert.equal(findToolCallSyntaxCandidateStart(text), realIndex);
 
 		const masked = maskMarkdownProtectedSpans(text);

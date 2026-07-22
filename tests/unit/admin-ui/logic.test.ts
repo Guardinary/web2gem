@@ -6,7 +6,6 @@ import {
 	destructiveConfirmationText,
 	identifier,
 	identifierKey,
-	isCooling,
 	parseBatchImport,
 	relativeTime,
 	resultSummary,
@@ -72,7 +71,6 @@ describe("admin UI logic", () => {
 		assert.equal(accountDisplayName(account), "Alpha");
 		assert.equal(accountBusyLabel(""), "");
 		assert.equal(accountBusyLabel("refresh"), "Refresh in progress");
-		assert.equal(isCooling(account), true);
 	});
 
 	test("formats destructive confirmation copy for singular and plural scopes", () => {

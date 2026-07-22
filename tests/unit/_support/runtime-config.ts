@@ -1,4 +1,4 @@
-export type TestRuntimeConfig = {
+type TestRuntimeConfig = {
 	default_model: string;
 	current_input_file_enabled: boolean;
 	current_input_file_min_bytes: number;

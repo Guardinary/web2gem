@@ -1,6 +1,9 @@
 import { describe, test } from "vitest";
-import { filterGoogleToolsByConfig } from "../../../src/toolcall/policy-google";
-import { createToolBundle } from "../../../src/toolcall/tool-bundle";
+import { parseGoogleToolChoicePolicy } from "../../../src/toolcall/policy-google";
+import {
+	createToolBundle,
+	filterToolBundleByPolicy,
+} from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 import { record, required } from "./_support/assertions.js";
 
@@ -82,9 +85,10 @@ describe("Google tool metadata contract", () => {
 				tools: [item.tool],
 				toolConfig: { functionCallingConfig: { mode: "ANY" } },
 			};
-			const filtered = filterGoogleToolsByConfig(request.tools, request);
-			const filteredTools = required(filtered);
-			const bundle = createToolBundle(filteredTools);
+			const requestBundle = createToolBundle(request.tools);
+			const policy = parseGoogleToolChoicePolicy(request, requestBundle);
+			const bundle = filterToolBundleByPolicy(requestBundle, policy);
+			const filteredTools = bundle.openAIFunctionTools;
 			assert.equal(filteredTools.length, 1, item.name);
 			assert.equal(
 				record(required(filteredTools[0]).function).name,

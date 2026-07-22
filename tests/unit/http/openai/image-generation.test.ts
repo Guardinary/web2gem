@@ -7,10 +7,7 @@ import type {
 	PreparedImageGenerationCompletion,
 } from "../../../../src/completion/image-generation";
 import { prepareOpenAIImageGenerationCompletion as prepareOpenAIImageGenerationFromMessages } from "../../../../src/completion/image-generation";
-import {
-	imageGenerationMode,
-	isImageGenerationRequest,
-} from "../../../../src/http/openai/image-generation";
+import { imageGenerationMode } from "../../../../src/http/openai/image-generation";
 import { parseOpenAIMessages } from "../../../../src/promptcompat/message-model";
 import { parseResponsesInput } from "../../../../src/promptcompat/responses-input";
 import type {
@@ -90,7 +87,7 @@ describe("OpenAI image generation preparation", () => {
 			false,
 		);
 		assert.equal(
-			isImageGenerationRequest({ input: "please generate an image" }),
+			imageGenerationMode({ input: "please generate an image" }).enabled,
 			false,
 		);
 	});
