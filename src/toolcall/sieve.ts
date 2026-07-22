@@ -45,7 +45,7 @@ export function createToolSieveState(): ToolSieveState {
 }
 
 export const TOOL_SIEVE_PLAIN_TEXT_KEEP = 64;
-export const TOOL_SIEVE_MAX_CANDIDATE_CHARS = 256 * 1024;
+const TOOL_SIEVE_MAX_CANDIDATE_CHARS = 256 * 1024;
 const COMPLETE_TOOL_CANDIDATE_OPEN_RE =
 	/^\s*<\s*(?:\|DSML\|)?(?:tool_calls|tool-calls|toolcalls|invoke|parameter)\b[^>]*>/i;
 

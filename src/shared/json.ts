@@ -12,7 +12,7 @@ export function tryParseJson(text: string): JsonParseResult {
 	}
 }
 
-export function parseJson<T = unknown>(
+function parseJson<T = unknown>(
 	text: string,
 	fallback: T | null = null,
 ): unknown | T | null {

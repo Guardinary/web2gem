@@ -25,7 +25,7 @@ type ErrorRecoveryOptions = {
 	signal?: AbortSignal | null | undefined;
 };
 
-type SameAccountAttemptState = {
+export type SameAccountAttemptState = {
 	readonly activeConfig: RuntimeConfig;
 	readonly lastError: unknown;
 	readonly outputStarted: boolean;

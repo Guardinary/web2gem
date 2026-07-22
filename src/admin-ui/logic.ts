@@ -95,11 +95,11 @@ export function resultSummary(action: string, result: MutationResult): string {
 		: tr("Mutation summary", params);
 }
 
-export function normalizeDecimalVersion(value: string): string {
+function normalizeDecimalVersion(value: string): string {
 	return value.replace(/^0+(?=\d)/, "");
 }
 
-export function compareDecimalVersions(left: string, right: string): number {
+function compareDecimalVersions(left: string, right: string): number {
 	const normalizedLeft = normalizeDecimalVersion(left);
 	const normalizedRight = normalizeDecimalVersion(right);
 	if (normalizedLeft.length !== normalizedRight.length)

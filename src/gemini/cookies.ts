@@ -32,7 +32,7 @@ export type CookieRotationRetryResult = {
 };
 
 export const COOKIE_ROTATE_MIN_INTERVAL_MS = 60 * 1000;
-export const COOKIE_ROTATE_STALE_MS = 10 * 60 * 1000;
+const COOKIE_ROTATE_STALE_MS = 10 * 60 * 1000;
 
 let activeCookieState: ActiveCookieState | null = null;
 let rotatePromise: Promise<ActiveCookieState | null> | null = null;

@@ -85,10 +85,7 @@ export function responsesToolResultCallID(item: UnknownRecord): string {
 	return String(item.call_id ?? item.tool_call_id ?? item.id ?? "");
 }
 
-export function appendResponsesReasoning(
-	pending: string,
-	next: string,
-): string {
+function appendResponsesReasoning(pending: string, next: string): string {
 	return pending ? `${pending}\n${next}` : next;
 }
 

@@ -36,7 +36,7 @@ export function markdownProtectedSpanStartAtCut(
 	return markdownCodeSpanStartAt(source, pos);
 }
 
-export function markdownCodeSpanStartAt(text: unknown, index: number): number {
+function markdownCodeSpanStartAt(text: unknown, index: number): number {
 	const source = String(text || "");
 	const pos = Math.max(0, Math.min(source.length, index));
 	const lineStart =

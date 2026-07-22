@@ -8,7 +8,7 @@ import {
 } from "./policy-openai";
 import type { ToolBundle } from "./tool-bundle";
 
-export function googleFunctionCallingConfig(req: unknown): UnknownRecord {
+function googleFunctionCallingConfig(req: unknown): UnknownRecord {
 	const record = isRecord(req) ? req : {};
 	const tc = firstRecord(record.toolConfig, record.tool_config) || {};
 	return (
@@ -16,7 +16,7 @@ export function googleFunctionCallingConfig(req: unknown): UnknownRecord {
 	);
 }
 
-export function googleAllowedFunctionNames(fc: unknown): string[] {
+function googleAllowedFunctionNames(fc: unknown): string[] {
 	const record = isRecord(fc) ? fc : {};
 	const raw =
 		record.allowedFunctionNames ||

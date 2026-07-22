@@ -8,7 +8,7 @@ import {
 } from "./normalize";
 import type { D1Result, GeminiAccountRow } from "./storage-types";
 
-export const ACCOUNT_INSERT_COLUMNS = [
+const ACCOUNT_INSERT_COLUMNS = [
 	"id",
 	"label",
 	"enabled",

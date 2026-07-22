@@ -12,7 +12,7 @@ export function buildReadToolCacheGuard(toolNames: unknown): string {
 	return "\nRead-tool cache guard: If a Read/read_file-style tool result says the file is unchanged, already available in history, should be referenced from previous context, or otherwise provides no file body, treat that result as missing content. Do not repeatedly call the same read request for that missing body. Request a full-content read if the tool supports it, or tell the user that the file contents need to be provided again.\n\n";
 }
 
-export function hasReadLikeTool(toolNames: unknown): boolean {
+function hasReadLikeTool(toolNames: unknown): boolean {
 	for (const name of asArray(toolNames)) {
 		const normalized = String(name || "")
 			.trim()
@@ -51,7 +51,7 @@ export function buildCorrectToolExamples(toolNames: unknown): string {
 		: "";
 }
 
-export function uniqueToolNames(toolNames: unknown): string[] {
+function uniqueToolNames(toolNames: unknown): string[] {
 	const names: string[] = [];
 	const seen = new Set<string>();
 	for (const raw of asArray(toolNames)) {
@@ -63,9 +63,7 @@ export function uniqueToolNames(toolNames: unknown): string[] {
 	return names;
 }
 
-export function firstBasicExample(
-	names: readonly string[],
-): ToolExample | null {
+function firstBasicExample(names: readonly string[]): ToolExample | null {
 	for (const name of names) {
 		const params = exampleBasicParams(name);
 		if (params != null) return { name, params };
@@ -73,7 +71,7 @@ export function firstBasicExample(
 	return null;
 }
 
-export function firstNBasicExamples(
+function firstNBasicExamples(
 	names: readonly string[],
 	count: number,
 ): ToolExample[] {
@@ -87,9 +85,7 @@ export function firstNBasicExamples(
 	return out;
 }
 
-export function firstNestedExample(
-	names: readonly string[],
-): ToolExample | null {
+function firstNestedExample(names: readonly string[]): ToolExample | null {
 	for (const name of names) {
 		const params = exampleNestedParams(name);
 		if (params != null) return { name, params };
@@ -97,9 +93,7 @@ export function firstNestedExample(
 	return null;
 }
 
-export function firstScriptExample(
-	names: readonly string[],
-): ToolExample | null {
+function firstScriptExample(names: readonly string[]): ToolExample | null {
 	for (const name of names) {
 		const params = exampleScriptParams(name);
 		if (params != null) return { name, params };
@@ -107,7 +101,7 @@ export function firstScriptExample(
 	return null;
 }
 
-export function renderToolExampleBlock(calls: readonly ToolExample[]): string {
+function renderToolExampleBlock(calls: readonly ToolExample[]): string {
 	let out = "<|DSML|tool_calls>\n";
 	for (const call of calls) {
 		out += `  <|DSML|invoke name="${xmlEscapeAttr(call.name)}">\n`;
@@ -117,7 +111,7 @@ export function renderToolExampleBlock(calls: readonly ToolExample[]): string {
 	return `${out}</|DSML|tool_calls>`;
 }
 
-export function exampleBasicParams(name: unknown): string | null {
+function exampleBasicParams(name: unknown): string | null {
 	switch (String(name || "").trim()) {
 		case "Read":
 			return wrapParameter("file_path", promptCDATA("README.md"));
@@ -146,7 +140,7 @@ export function exampleBasicParams(name: unknown): string | null {
 	return null;
 }
 
-export function exampleNestedParams(name: unknown): string | null {
+function exampleNestedParams(name: unknown): string | null {
 	switch (String(name || "").trim()) {
 		case "MultiEdit":
 			return `${wrapParameter("file_path", promptCDATA("README.md"))}\n<|DSML|parameter name="edits"><item><old_string>${promptCDATA("foo")}</old_string><new_string>${promptCDATA("bar")}</new_string></item></|DSML|parameter>`;
@@ -158,7 +152,7 @@ export function exampleNestedParams(name: unknown): string | null {
 	return null;
 }
 
-export function exampleScriptParams(name: unknown): string | null {
+function exampleScriptParams(name: unknown): string | null {
 	const scriptCommand =
 		"cat > /tmp/test_escape.sh <<'EOF'\n#!/bin/bash\necho 'single \"double\"'\necho \"literal dollar: \\$HOME\"\nEOF\nbash /tmp/test_escape.sh";
 	const scriptContent =

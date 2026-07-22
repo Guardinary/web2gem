@@ -17,7 +17,7 @@ const stateSchema = v.union([
 
 const nullableNumber = v.nullable(v.number());
 
-export const accountSchema = v.strictObject({
+const accountSchema = v.strictObject({
 	id: v.string(),
 	label: v.nullable(v.string()),
 	enabled: v.boolean(),

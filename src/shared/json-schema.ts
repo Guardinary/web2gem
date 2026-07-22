@@ -158,7 +158,7 @@ function schemaPatternRegExp(
 	return re;
 }
 
-export function validateSchemaAllOf(
+function validateSchemaAllOf(
 	value: unknown,
 	schema: UnknownRecord,
 	path: string,
@@ -171,7 +171,7 @@ export function validateSchemaAllOf(
 	return "";
 }
 
-export function validateSchemaAnyOf(
+function validateSchemaAnyOf(
 	value: unknown,
 	schema: UnknownRecord,
 	path: string,
@@ -186,7 +186,7 @@ export function validateSchemaAnyOf(
 	return `${path} must match at least one anyOf schema${errors[0] ? ` (${errors[0]})` : ""}`;
 }
 
-export function validateSchemaOneOf(
+function validateSchemaOneOf(
 	value: unknown,
 	schema: UnknownRecord,
 	path: string,
@@ -205,19 +205,16 @@ export function validateSchemaOneOf(
 	return `${path} must match exactly one oneOf schema${errors[0] ? ` (${errors[0]})` : ""}`;
 }
 
-export function schemaNumber(value: unknown): number | null {
+function schemaNumber(value: unknown): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-export function isJsonNumberMultipleOf(
-	value: number,
-	multipleOf: number,
-): boolean {
+function isJsonNumberMultipleOf(value: number, multipleOf: number): boolean {
 	const quotient = value / multipleOf;
 	return Math.abs(quotient - Math.round(quotient)) < 1e-12;
 }
 
-export function validateJsonSchemaType(
+function validateJsonSchemaType(
 	value: unknown,
 	typeSpec: unknown,
 	path: string,
@@ -242,7 +239,7 @@ export function validateJsonSchemaType(
 	return `${path} must be ${allowed.join(" or ")}, got ${actual}`;
 }
 
-export function inferJsonType(value: unknown): string {
+function inferJsonType(value: unknown): string {
 	if (value === null) return "null";
 	if (Array.isArray(value)) return "array";
 	if (typeof value === "number") return "number";

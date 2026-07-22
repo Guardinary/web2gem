@@ -1,7 +1,7 @@
 import { codePointLengthAtLeast } from "../../shared/text-metrics";
 
-export const MIN_DELTA_FLUSH_CHARS = 64;
-export const MAX_DELTA_FLUSH_WAIT_MS = 20;
+const MIN_DELTA_FLUSH_CHARS = 64;
+const MAX_DELTA_FLUSH_WAIT_MS = 20;
 
 export type DeltaCoalescerOptions = {
 	emitFirstImmediately?: boolean;

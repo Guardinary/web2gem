@@ -74,7 +74,7 @@ export function withGeminiNativeHiddenToolsPromptForPrepared(
 	);
 }
 
-export function promptWithHiddenToolsPrompt(
+function promptWithHiddenToolsPrompt(
 	prompt: unknown,
 	insertOffset?: number | null,
 ): string {

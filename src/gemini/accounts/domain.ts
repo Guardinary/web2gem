@@ -1,4 +1,4 @@
-export const GEMINI_ACCOUNT_ISSUES = [
+const GEMINI_ACCOUNT_ISSUES = [
 	"auth",
 	"rate_limit",
 	"user_action",
@@ -8,7 +8,7 @@ export const GEMINI_ACCOUNT_ISSUES = [
 
 export type GeminiAccountIssue = (typeof GEMINI_ACCOUNT_ISSUES)[number];
 
-export const GEMINI_ACCOUNT_STATES = [
+const GEMINI_ACCOUNT_STATES = [
 	"available",
 	"cooling",
 	"attention",

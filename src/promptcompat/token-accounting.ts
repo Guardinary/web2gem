@@ -44,7 +44,7 @@ export function tokenCharCounts(text: unknown): TokenCharCounts {
 	return { asciiChars, nonASCIIChars };
 }
 
-export function tokenCountFromCharCounts(
+function tokenCountFromCharCounts(
 	asciiChars: number,
 	nonASCIIChars: number,
 ): number {

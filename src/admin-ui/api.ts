@@ -195,7 +195,7 @@ export async function createAccount(
 	);
 }
 
-export async function createAccounts(
+async function createAccounts(
 	session: AdminApiSession,
 	input: CreateBatchInput,
 ): Promise<MutationResult> {

@@ -151,7 +151,7 @@ export function formatPromptParamValue(value: unknown): string {
 	return "";
 }
 
-export function formatPromptObjectField(key: unknown, value: unknown): string {
+function formatPromptObjectField(key: unknown, value: unknown): string {
 	const name = String(key == null ? "" : key);
 	const body = formatPromptParamValue(value);
 	if (isSafeXmlElementName(name)) return `<${name}>${body}</${name}>`;

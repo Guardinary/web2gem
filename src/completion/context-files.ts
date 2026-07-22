@@ -40,10 +40,7 @@ export type ContextFilePromptByteCheck = PromptByteLengthBounded & {
 	thresholdBytes: number;
 };
 
-export function currentInputFilePrompt(
-	cfg: unknown,
-	toolsAttached: unknown,
-): string {
+function currentInputFilePrompt(cfg: unknown, toolsAttached: unknown): string {
 	void cfg;
 	let text = `Continue from the latest state in the attached \`${CURRENT_INPUT_FILE_NAME}\` context. Treat it as the current working state and answer the latest user request directly.`;
 	if (toolsAttached) {

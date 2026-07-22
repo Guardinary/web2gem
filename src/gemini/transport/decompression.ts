@@ -25,7 +25,7 @@ export function resolveSocketCompression(
 	}
 }
 
-export function contentDecompressionFormat(
+function contentDecompressionFormat(
 	raw: string | null,
 ): SupportedCompressionFormat | null {
 	const value = String(raw || "")

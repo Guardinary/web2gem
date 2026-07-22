@@ -1,7 +1,6 @@
 import { describe, test } from "vitest";
 import {
 	createAccount,
-	createAccounts,
 	createAccountsWithLimitFallback,
 } from "../../../src/admin-ui/api";
 import { isRecord } from "../../../src/shared/types";
@@ -32,7 +31,7 @@ describe("admin UI import API", () => {
 					psid: "psid-one",
 					psidts: "psidts-one",
 				});
-				await createAccounts(session, {
+				await createAccountsWithLimitFallback(session, {
 					accounts: [
 						{ psid: "psid-two", psidts: "psidts-two", label: "Second" },
 					],

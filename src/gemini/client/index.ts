@@ -1,6 +1,5 @@
 import type { RuntimeConfig } from "../../config";
 import { throwIfAborted } from "../../shared/abort";
-import { uuid } from "../../shared/crypto";
 import { log } from "../../shared/logging";
 import { observeGeminiAccountResponseCookies } from "../cookies";
 import { cancelResponseBody, httpFetch } from "../transport";
@@ -25,8 +24,12 @@ import {
 	richResponseShapeSummary,
 } from "./parse-parts";
 import { wrbResponseShapeSummary } from "./parse-envelope";
-import { buildHeaders, buildPayload, getUrl } from "./protocol";
-import { createSameAccountAttemptState } from "./same-account-attempt";
+import { buildHeaders, getUrl } from "./protocol";
+import {
+	CONTINUE_SAME_ACCOUNT_ATTEMPT,
+	runSameAccountGenerateAttempts,
+	runSameAccountStreamAttempts,
+} from "./same-account-generate";
 import { consumeGeminiWrbStream } from "./stream-consumer";
 
 type GeminiFileRef =
@@ -100,17 +103,14 @@ export async function generate(
 	fileRefs: GeminiFileRef[] | null | undefined,
 	modelHeaders: Record<string, string> | null = null,
 ): Promise<string> {
-	const attemptState = await createSameAccountAttemptState(cfg);
-	const requestId = uuid().toUpperCase();
-	const body = buildPayload(
+	return runSameAccountGenerateAttempts({
+		cfg,
 		prompt,
 		modelNumber,
 		extended,
-		fileRefs || null,
-		requestId,
-	);
-	for (let attempt = 0; attempt < cfg.retry_attempts; attempt++) {
-		try {
+		fileRefs,
+		label: "Retry",
+		async execute({ attemptState, body, requestId }) {
 			const resp = await fetchGeminiStreamGenerate(
 				cfg,
 				attemptState.activeConfig,
@@ -146,17 +146,13 @@ export async function generate(
 					largePromptEmptyResponseThreshold(cfg),
 				);
 				if (largePromptErr) throw largePromptErr;
-				if (await attemptState.tryRefreshBuildLabel("")) continue;
+				if (await attemptState.tryRefreshBuildLabel(""))
+					return CONTINUE_SAME_ACCOUNT_ATTEMPT;
 				throw upstreamEmptyResponseError(resp.status, raw.length, "non-stream");
 			}
 			return text;
-		} catch (e) {
-			if (await attemptState.recoverFromError(e, { attempt, label: "Retry" }))
-				continue;
-			throw e;
-		}
-	}
-	throw attemptState.lastError;
+		},
+	});
 }
 
 export async function generateRich(
@@ -168,17 +164,14 @@ export async function generateRich(
 	modelHeaders: Record<string, string> | null = null,
 	options: GeminiRichOptions = {},
 ): Promise<GeminiRichOutput> {
-	const attemptState = await createSameAccountAttemptState(cfg);
-	const requestId = uuid().toUpperCase();
-	const body = buildPayload(
+	return runSameAccountGenerateAttempts({
+		cfg,
 		prompt,
 		modelNumber,
 		extended,
-		fileRefs || null,
-		requestId,
-	);
-	for (let attempt = 0; attempt < cfg.retry_attempts; attempt++) {
-		try {
+		fileRefs,
+		label: "Rich retry",
+		async execute({ attemptState, body, requestId }) {
 			const resp = await fetchGeminiStreamGenerate(
 				cfg,
 				attemptState.activeConfig,
@@ -214,7 +207,8 @@ export async function generateRich(
 					largePromptEmptyResponseThreshold(cfg),
 				);
 				if (largePromptErr) throw largePromptErr;
-				if (await attemptState.tryRefreshBuildLabel("")) continue;
+				if (await attemptState.tryRefreshBuildLabel(""))
+					return CONTINUE_SAME_ACCOUNT_ATTEMPT;
 				throw upstreamImageGenerationEmptyError(
 					resp.status,
 					raw.length,
@@ -230,18 +224,8 @@ export async function generateRich(
 							parts.images,
 						);
 			return { text: parts.text, images };
-		} catch (e) {
-			if (
-				await attemptState.recoverFromError(e, {
-					attempt,
-					label: "Rich retry",
-				})
-			)
-				continue;
-			throw e;
-		}
-	}
-	throw attemptState.lastError;
+		},
+	});
 }
 
 export async function* generateStream(
@@ -253,25 +237,22 @@ export async function* generateStream(
 	options: GeminiStreamOptions = {},
 	modelHeaders: Record<string, string> | null = null,
 ): AsyncIterable<string> {
-	const attemptState = await createSameAccountAttemptState(cfg);
-	const requestId = uuid().toUpperCase();
-	const body = buildPayload(
+	const signal = options?.signal;
+	yield* runSameAccountStreamAttempts({
+		cfg,
 		prompt,
 		modelNumber,
 		extended,
-		fileRefs || null,
-		requestId,
-	);
-	const signal = options?.signal;
-
-	for (let attempt = 0; attempt < cfg.retry_attempts; attempt++) {
-		try {
-			throwIfAborted(signal);
+		fileRefs,
+		label: "Stream retry",
+		signal,
+		async *execute({ attemptState, body, requestId, signal: attemptSignal }) {
+			throwIfAborted(attemptSignal);
 			const resp = await fetchGeminiStreamGenerate(
 				cfg,
 				attemptState.activeConfig,
 				body,
-				signal,
+				attemptSignal,
 				modelHeaders,
 				requestId,
 			);
@@ -307,7 +288,7 @@ export async function* generateStream(
 					);
 					if (largePromptErr) throw largePromptErr;
 					if (await attemptState.tryRefreshBuildLabel("stream without body"))
-						continue;
+						return CONTINUE_SAME_ACCOUNT_ATTEMPT;
 					throw upstreamEmptyResponseError(
 						resp.status,
 						raw.length,
@@ -318,7 +299,10 @@ export async function* generateStream(
 			}
 			let rawSnippet = "";
 			let rawLength = 0;
-			for await (const event of consumeGeminiWrbStream(resp.body, signal)) {
+			for await (const event of consumeGeminiWrbStream(
+				resp.body,
+				attemptSignal,
+			)) {
 				if (event.type === "delta") {
 					attemptState.markOutputStarted();
 					yield event.text;
@@ -347,21 +331,11 @@ export async function* generateStream(
 					largePromptEmptyResponseThreshold(cfg),
 				);
 				if (largePromptErr) throw largePromptErr;
-				if (await attemptState.tryRefreshBuildLabel("stream")) continue;
+				if (await attemptState.tryRefreshBuildLabel("stream"))
+					return CONTINUE_SAME_ACCOUNT_ATTEMPT;
 				throw upstreamEmptyResponseError(resp.status, rawLength, "stream");
 			}
-			return;
-		} catch (e) {
-			if (
-				await attemptState.recoverFromError(e, {
-					attempt,
-					label: "Stream retry",
-					signal,
-				})
-			)
-				continue;
-			throw e;
-		}
-	}
-	if (attemptState.lastError) throw attemptState.lastError;
+			return undefined;
+		},
+	});
 }

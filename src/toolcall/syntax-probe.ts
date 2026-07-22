@@ -63,7 +63,7 @@ export function findToolCallSyntaxCandidateStart(
 	);
 }
 
-export function findLastPartialToolCallSyntaxPrefix(
+function findLastPartialToolCallSyntaxPrefix(
 	text: unknown,
 	ignoreMarkdown = true,
 ): number {
@@ -135,7 +135,7 @@ export function normalizeToolMarkupConfusables(text: unknown): string {
 		.replace(/[\u200b\ufeff]/g, "");
 }
 
-export function normalizeMarkupTagShell(tag: unknown): string {
+function normalizeMarkupTagShell(tag: unknown): string {
 	return normalizeToolMarkupConfusables(tag);
 }
 

@@ -150,7 +150,7 @@ export function restoreToolCallProtectedMarkdown(
 	});
 }
 
-export function restoreToolValueProtectedMarkdown(
+function restoreToolValueProtectedMarkdown(
 	value: unknown,
 	restore: MarkdownRestore,
 ): unknown {
@@ -240,12 +240,12 @@ export function normalizeDSMLToolCallMarkup(text: unknown): string {
 		);
 }
 
-export function canonicalToolTagName(name: unknown): string {
+function canonicalToolTagName(name: unknown): string {
 	const n = String(name || "").toLowerCase();
 	return n === "tool-calls" || n === "toolcalls" ? "tool_calls" : n;
 }
 
-export function parseMarkupSingleToolCall(
+function parseMarkupSingleToolCall(
 	block: XmlElementBlock,
 ): ParsedToolCall | null {
 	const attrs = parseTagAttributes(block.attrs);

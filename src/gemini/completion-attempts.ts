@@ -429,7 +429,7 @@ export class GeminiAccountAttemptOrchestrator {
 	}
 }
 
-export function noAvailableAccountError(): ErrorWithMetadata {
+function noAvailableAccountError(): ErrorWithMetadata {
 	const error: ErrorWithMetadata = new Error("no available Gemini account");
 	error.code = "no_available_gemini_account";
 	error.status = 503;

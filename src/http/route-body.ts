@@ -183,7 +183,7 @@ function positiveIntegerOrNull(value: unknown): number | null {
 	return numberValue;
 }
 
-export function inlineContextBodyReadLimit(
+function inlineContextBodyReadLimit(
 	cfg: RouteJsonConfig,
 	threshold: number = contextFileThreshold(cfg),
 ): number {

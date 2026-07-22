@@ -62,7 +62,7 @@ export async function materializeAttachment(
 	}
 }
 
-export function attachmentMaterializeFailure(
+function attachmentMaterializeFailure(
 	candidate: AttachmentCandidate,
 	code: AttachmentDropReason,
 	message: string,

@@ -151,7 +151,7 @@ export function listFilterFromSearchParams(
 	return filter;
 }
 
-export const ADMIN_BULK_ACTION_MAX_IDS = 100;
+const ADMIN_BULK_ACTION_MAX_IDS = 100;
 
 export function normalizeBulkAction(body: UnknownRecord): {
 	action: GeminiAccountBulkAction;

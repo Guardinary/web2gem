@@ -4,7 +4,6 @@
 export { default } from "./index";
 export { VERSION, assertRuntimeConfig } from "./config";
 export { MODELS, resolveModel } from "./models";
-export { generate } from "./gemini/client";
 export { base64ToBytes } from "./attachments/base64";
 export { prepareOpenAIGeminiContext } from "./completion/context";
 export { getConfig } from "./config";

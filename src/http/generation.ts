@@ -32,7 +32,7 @@ export type StageLog = {
 	) => void;
 };
 
-export function createStageLog(cfg: RuntimeConfig): StageLog {
+function createStageLog(cfg: RuntimeConfig): StageLog {
 	const enabled = !!cfg.log_requests;
 	return {
 		enabled,

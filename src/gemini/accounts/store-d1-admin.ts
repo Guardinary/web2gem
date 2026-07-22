@@ -90,7 +90,7 @@ export function summaryFromSql(
 	};
 }
 
-export function numberOrZero(value: unknown): number {
+function numberOrZero(value: unknown): number {
 	const n = Number(value);
 	return Number.isFinite(n) ? n : 0;
 }

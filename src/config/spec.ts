@@ -35,7 +35,7 @@ function configEntry<K extends keyof StaticRuntimeConfig>(
 	return { key, field, defaultValue, parse };
 }
 
-export const CONFIG_SPEC = [
+const CONFIG_SPEC = [
 	configEntry(
 		"GEMINI_BL",
 		"gemini_bl",
