@@ -31,7 +31,7 @@ Use these defaults:
 Good existing helpers:
 
 - `src/shared/types.ts` exposes `UnknownRecord` and `isRecord`.
-- `src/shared/json.ts` exposes `tryParseJson`, `parseJson`, and `parseJsonObject`.
+- `src/shared/json.ts` exposes `tryParseJson` and `parseJsonObject`.
 
 ### Test imports from untyped JavaScript modules
 
