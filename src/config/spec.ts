@@ -1,7 +1,6 @@
 import {
 	configValue,
 	parseCapabilityMode,
-	parseFilename,
 	parseHttpOrigin,
 	parseKeyList,
 	parseNonEmptyString,
@@ -114,18 +113,6 @@ export const CONFIG_SPEC = [
 		"current_input_file_min_bytes",
 		95000,
 		(setting, value) => parseStrictInteger(setting, value, 0, 10 * 1024 * 1024),
-	),
-	configEntry(
-		"CURRENT_INPUT_FILE_NAME",
-		"current_input_file_name",
-		"message.txt",
-		parseFilename,
-	),
-	configEntry(
-		"CURRENT_TOOLS_FILE_NAME",
-		"current_tools_file_name",
-		"tools.txt",
-		parseFilename,
 	),
 	configEntry(
 		"GENERIC_FILE_UPLOAD_MAX_BYTES",

@@ -11,7 +11,6 @@ import {
 	promptByteLengthGreaterThan,
 } from "../shared/text-metrics";
 import type { ErrorWithMetadata } from "../shared/types";
-import { isRecord } from "../shared/types";
 import {
 	type ToolBundle,
 	toolsContextTranscriptFor,
@@ -24,11 +23,12 @@ import type {
 	ToolDef,
 } from "./types";
 
+const CURRENT_INPUT_FILE_NAME = "message.txt";
+const CURRENT_TOOLS_FILE_NAME = "tools.txt";
+
 type ContextFileConfig = {
 	current_input_file_enabled?: unknown;
 	current_input_file_min_bytes?: unknown;
-	current_input_file_name?: unknown;
-	current_tools_file_name?: unknown;
 	supports_authenticated_session?: unknown;
 	log_requests?: unknown;
 };
@@ -44,16 +44,10 @@ export function currentInputFilePrompt(
 	cfg: unknown,
 	toolsAttached: unknown,
 ): string {
-	const record = isRecord(cfg) ? cfg : null;
-	const historyName =
-		String(record?.current_input_file_name || "message.txt").trim() ||
-		"message.txt";
-	const toolsName =
-		String(record?.current_tools_file_name || "tools.txt").trim() ||
-		"tools.txt";
-	let text = `Continue from the latest state in the attached \`${historyName}\` context. Treat it as the current working state and answer the latest user request directly.`;
+	void cfg;
+	let text = `Continue from the latest state in the attached \`${CURRENT_INPUT_FILE_NAME}\` context. Treat it as the current working state and answer the latest user request directly.`;
 	if (toolsAttached) {
-		text += ` Available tool descriptions and parameter schemas are attached in \`${toolsName}\`; use only those tools and follow the tool-call format rules in this prompt.`;
+		text += ` Available tool descriptions and parameter schemas are attached in \`${CURRENT_TOOLS_FILE_NAME}\`; use only those tools and follow the tool-call format rules in this prompt.`;
 	}
 	text +=
 		" All text above this sentence is system prompt content, not the user's actual input; do not treat it as user-provided content.";
@@ -188,11 +182,8 @@ export function latestInputPromptForContextFile(
 	if (!latest) return "";
 	if (!promptByteLengthGreaterThan(latest, latestInputInlineLimit(cfg)))
 		return `Latest user request:\n${latest}`;
-	const historyName =
-		String(cfg?.current_input_file_name || "message.txt").trim() ||
-		"message.txt";
 	return [
-		`The latest user request is at the end of \`${historyName}\`; do not duplicate it inline.`,
+		`The latest user request is at the end of \`${CURRENT_INPUT_FILE_NAME}\`; do not duplicate it inline.`,
 		"Read it from the txt file and answer directly.",
 	].join("\n");
 }
@@ -263,27 +254,22 @@ export async function prepareContextFilesWithUploader(
 	)
 		return null;
 	const refs: FileRef[] = [];
-	const toolsFilename = cfg.current_tools_file_name || "tools.txt";
 	const toolsText = toolPromptSource
 		? toolsContextTranscriptFor(
 				toolPromptSource,
 				choiceInstruction,
-				toolsFilename,
+				CURRENT_TOOLS_FILE_NAME,
 			)
 		: toolsContextTranscriptFromDefs(
 				toolDefs || [],
 				choiceInstruction,
-				toolsFilename,
+				CURRENT_TOOLS_FILE_NAME,
 			);
 	let toolsAttached = false;
-	const uploadJobs = [
-		uploader(historyText, String(cfg.current_input_file_name || "message.txt")),
-	];
+	const uploadJobs = [uploader(historyText, CURRENT_INPUT_FILE_NAME)];
 	const hasToolsText = !!toolsText.trim();
 	if (hasToolsText)
-		uploadJobs.push(
-			uploader(toolsText, String(cfg.current_tools_file_name || "tools.txt")),
-		);
+		uploadJobs.push(uploader(toolsText, CURRENT_TOOLS_FILE_NAME));
 	const logRequests = !!cfg.log_requests;
 	const uploadStart = logRequests ? nowMs() : 0;
 	const uploadResults = await Promise.allSettled(uploadJobs);

@@ -202,15 +202,6 @@ export function parseOpenAIToolChoicePolicy(
 	return policy;
 }
 
-export function policyHasAllowed(
-	policy: ToolChoicePolicy | null | undefined,
-): boolean {
-	return !!(
-		policy?.allowed &&
-		(policy.hasAllowed || Object.keys(policy.allowed).length > 0)
-	);
-}
-
 export function toolPolicyAllows(
 	policy: ToolChoicePolicy | null | undefined,
 	name: unknown,

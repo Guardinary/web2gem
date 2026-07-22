@@ -1,2 +1,2 @@
 export { resolveAttachments, uploadTextFile } from "./execute";
-export { getPageTokens, resetGeminiUploadCachesForTest } from "./tokens";
+export { getPageTokens } from "./tokens";

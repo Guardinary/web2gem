@@ -224,8 +224,6 @@ describe("OpenAI request validation", () => {
 				default_model: "gemini-3.5-flash",
 				current_input_file_enabled: true,
 				current_input_file_min_bytes: 40,
-				current_input_file_name: "message.txt",
-				current_tools_file_name: "tools.txt",
 				cookie: "SID=ok",
 				supports_authenticated_session: true,
 				log_requests: false,

@@ -52,8 +52,6 @@ function promptConfig(): RuntimeConfig {
 		...createRuntimeConfig(getConfig()),
 		current_input_file_enabled: false,
 		current_input_file_min_bytes: 1000000,
-		current_input_file_name: "message.txt",
-		current_tools_file_name: "tools.txt",
 		cookie: "",
 		log_requests: false,
 	};

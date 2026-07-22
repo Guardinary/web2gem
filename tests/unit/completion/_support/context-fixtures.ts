@@ -13,8 +13,6 @@ export function contextFileConfig(
 		...createRuntimeConfig(getConfig()),
 		current_input_file_enabled: true,
 		current_input_file_min_bytes: 10,
-		current_input_file_name: "message.txt",
-		current_tools_file_name: "tools.txt",
 		cookie: "SID=ok",
 		supports_authenticated_session: true,
 		log_requests: false,

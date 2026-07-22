@@ -8,7 +8,6 @@ import {
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,
-	nullableOpenAIFunctionTools,
 } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 import { required } from "./_support/assertions.js";
@@ -45,9 +44,11 @@ describe("Google tool policy", () => {
 		const instruction = googleToolChoiceInstructionFromPolicy(policy);
 		assert.match(instruction, /MUST call one of these tools: "Read"/);
 		assert.doesNotMatch(instruction, /"Search"/);
-		const filtered = required(
-			nullableOpenAIFunctionTools(filterToolBundleByPolicy(bundle, policy)),
-		);
+		const filtered = filterToolBundleByPolicy(
+			bundle,
+			policy,
+		).openAIFunctionTools;
+		assert.equal(filtered.length, 1);
 		assert.deepEqual(
 			filtered.map((tool) => {
 				if (!isRecord(tool.function)) throw new Error("expected function tool");
@@ -120,10 +121,11 @@ describe("Google tool policy", () => {
 			{ toolConfig: { functionCallingConfig: { mode: "NONE" } } },
 			bundle,
 		);
-		const filtered = nullableOpenAIFunctionTools(
-			filterToolBundleByPolicy(bundle, policy),
-		);
-		assert.equal(filtered, null);
+		const filtered = filterToolBundleByPolicy(
+			bundle,
+			policy,
+		).openAIFunctionTools;
+		assert.equal(filtered.length, 0);
 		assert.match(
 			required(
 				validateGoogleToolPolicyCalls(policy, [{ name: "Read", args: {} }]),

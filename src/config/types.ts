@@ -24,8 +24,6 @@ export type StaticRuntimeConfig = Readonly<{
 	log_requests: boolean;
 	current_input_file_enabled: boolean;
 	current_input_file_min_bytes: number;
-	current_input_file_name: string;
-	current_tools_file_name: string;
 	generic_file_upload_max_bytes: number;
 	api_keys: readonly string[];
 	admin_key: string;

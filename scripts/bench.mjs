@@ -122,8 +122,6 @@ const CFG = {
 	log_requests: false,
 	current_input_file_enabled: true,
 	current_input_file_min_bytes: 95000,
-	current_input_file_name: "message.txt",
-	current_tools_file_name: "tools.txt",
 	api_keys: [],
 	cookie: "",
 	sapisid: "",

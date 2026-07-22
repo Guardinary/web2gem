@@ -9,7 +9,6 @@ import {
 	parseAllowedToolNames,
 	parseForcedToolName,
 	parseOpenAIToolChoicePolicy,
-	policyHasAllowed,
 	toolPolicyAllows,
 	validateRequiredToolCalls,
 	validateToolPolicyCalls,
@@ -17,7 +16,6 @@ import {
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,
-	nullableOpenAIFunctionTools,
 } from "../../../src/toolcall/tool-bundle";
 import { assert } from "../assertions.js";
 import { required } from "./_support/assertions.js";
@@ -221,27 +219,15 @@ describe("toolcall", () => {
 			toolsBundle,
 		);
 		const none = parseOpenAIToolChoicePolicy({ type: "none" }, toolsBundle);
-		assert.equal(policyHasAllowed(null), false);
-		assert.equal(
-			policyHasAllowed(completePolicy({ allowed: {}, hasAllowed: false })),
-			false,
-		);
-		assert.equal(
-			policyHasAllowed(
-				completePolicy({ allowed: { Read: true }, hasAllowed: false }),
-			),
-			true,
-		);
 		assert.equal(toolPolicyAllows(null, "Anything"), true);
 		assert.equal(toolPolicyAllows(none, "Read"), false);
 		assert.equal(toolPolicyAllows(forced, "Read"), true);
 		assert.equal(toolPolicyAllows(forced, "Search"), false);
 
 		assert.equal(
-			nullableOpenAIFunctionTools(
-				filterToolBundleByPolicy(toolsBundle, completePolicy({ mode: "none" })),
-			),
-			null,
+			filterToolBundleByPolicy(toolsBundle, completePolicy({ mode: "none" }))
+				.openAIFunctionTools.length,
+			0,
 		);
 		assert.equal(
 			filterToolBundleByPolicy(toolsBundle, null).openAIFunctionTools,

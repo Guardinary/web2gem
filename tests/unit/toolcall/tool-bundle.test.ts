@@ -4,7 +4,6 @@ import { messagesToPrompt } from "../../../src/promptcompat/messages";
 import {
 	createToolBundle,
 	filterToolBundleByPolicy,
-	nullableOpenAIFunctionTools,
 	toolCallInstructionsFor,
 	toolNamesForPromptSource,
 	toolPromptBlockFor,
@@ -142,21 +141,18 @@ describe("toolcall", () => {
 		assert.deepEqual(filtered.names, ["Read"]);
 		const readSchema = required(required(filtered.schemaIndex).read);
 		assert.equal(record(record(readSchema.properties).path).type, "string");
-		assert.equal(required(nullableOpenAIFunctionTools(filtered)).length, 1);
+		assert.equal(filtered.openAIFunctionTools.length, 1);
 		assert.equal(
-			nullableOpenAIFunctionTools(
-				filterToolBundleByPolicy(bundle, { mode: "none" }),
-			),
-			null,
+			filterToolBundleByPolicy(bundle, { mode: "none" }).openAIFunctionTools
+				.length,
+			0,
 		);
 		assert.equal(
-			nullableOpenAIFunctionTools(
-				filterToolBundleByPolicy(bundle, {
-					allowed: { Missing: true },
-					hasAllowed: true,
-				}),
-			),
-			null,
+			filterToolBundleByPolicy(bundle, {
+				allowed: { Missing: true },
+				hasAllowed: true,
+			}).openAIFunctionTools.length,
+			0,
 		);
 		assert.equal(filterToolBundleByPolicy(bundle, null), bundle);
 

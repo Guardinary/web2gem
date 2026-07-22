@@ -21,50 +21,6 @@ export function closeSocketQuietly(socket: unknown): void {
 	} catch (_) {}
 }
 
-export function withSocketTimeout<T>(
-	promise: PromiseLike<T> | T,
-	timeoutMs: unknown,
-	stage: unknown,
-	socket: unknown,
-	signal?: AbortSignal | null,
-): Promise<T> {
-	throwIfAborted(signal);
-	const n = Number(timeoutMs);
-	if (!Number.isFinite(n) || n <= 0) {
-		return Promise.resolve(promise).then((value: T) => {
-			throwIfAborted(signal);
-			return value;
-		});
-	}
-	let timer: ReturnType<typeof setTimeout> | null = null;
-	return new Promise<T>((resolve, reject) => {
-		timer = setTimeout(() => {
-			closeSocketQuietly(socket);
-			reject(socketTimeoutError(stage, n));
-		}, n);
-		Promise.resolve(promise).then(
-			(value: T) => {
-				if (timer) clearTimeout(timer);
-				try {
-					throwIfAborted(signal);
-					resolve(value);
-				} catch (e) {
-					reject(e);
-				}
-			},
-			(err: unknown) => {
-				if (timer) clearTimeout(timer);
-				try {
-					throwIfAborted(signal);
-					reject(err);
-				} catch (e) {
-					reject(e);
-				}
-			},
-		);
-	});
-}
-
 export function createSocketTimeoutScope(
 	timeoutMs: unknown,
 	socket: unknown,

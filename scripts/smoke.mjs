@@ -84,8 +84,7 @@ const preflight = await prod.default.fetch(
 		method: "OPTIONS",
 		headers: {
 			Origin: "https://client.example",
-			"Access-Control-Request-Headers":
-				"content-type, x-custom, x-ds2-internal-token",
+			"Access-Control-Request-Headers": "content-type, x-custom, x-extra",
 			"Access-Control-Request-Private-Network": "true",
 		},
 	}),
@@ -105,10 +104,7 @@ if (
 }
 const allowHeaders =
 	preflight.headers.get("Access-Control-Allow-Headers") || "";
-if (
-	!allowHeaders.includes("x-custom") ||
-	/x-ds2-internal-token/i.test(allowHeaders)
-) {
+if (!allowHeaders.includes("x-custom") || !allowHeaders.includes("x-extra")) {
 	errorLine("Smoke check failed: CORS allow headers filtering is incorrect");
 	process.exit(1);
 }

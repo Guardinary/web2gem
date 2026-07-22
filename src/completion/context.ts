@@ -163,10 +163,7 @@ async function prepareGeminiContext(
 		toolChoiceInstruction: params.toolContext?.choiceInstruction ?? "",
 		basePromptMetadata: promptResult.metadata,
 		buildHistoryText: () =>
-			buildOpenAIHistoryTranscript(
-				params.messages,
-				params.cfg.current_input_file_name || "message.txt",
-			),
+			buildOpenAIHistoryTranscript(params.messages, "message.txt"),
 		getLatestInputText: () =>
 			promptResult.latestInputText ||
 			latestOpenAIUserInputText(params.messages),

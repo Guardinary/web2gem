@@ -59,7 +59,7 @@ describe("context-file policy", () => {
 		assert.match(err.message, /at least 11 UTF-8 bytes > 10/);
 	});
 	test("decides context-file eligibility without requiring uploads", async () => {
-		const cfg = contextFileConfig({ current_input_file_name: "history.txt" });
+		const cfg = contextFileConfig();
 		const check = contextFilePromptByteCheck(cfg, "x".repeat(40));
 		assert.equal(contextFileThreshold({ current_input_file_min_bytes: -1 }), 0);
 		assert.equal(
@@ -100,11 +100,9 @@ describe("context-file policy", () => {
 	test("formats latest context-file prompt around the inline byte limit", async () => {
 		const smallCfg = contextFileConfig({
 			current_input_file_min_bytes: 12,
-			current_input_file_name: "conversation.txt",
 		});
 		const largeCfg = contextFileConfig({
 			current_input_file_min_bytes: 120000,
-			current_input_file_name: "conversation.txt",
 		});
 		assert.equal(latestInputInlineLimit(smallCfg), 4000);
 		assert.equal(latestInputInlineLimit(largeCfg), 16000);
@@ -119,7 +117,7 @@ describe("context-file policy", () => {
 		);
 		assert.match(
 			longPrompt,
-			/latest user request is at the end of `conversation\.txt`/,
+			/latest user request is at the end of `message\.txt`/,
 		);
 		assert.doesNotMatch(longPrompt, /x{100}/);
 	});

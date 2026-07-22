@@ -255,8 +255,6 @@ export function runtimeConfig(
 		log_requests: false,
 		current_input_file_enabled: false,
 		current_input_file_min_bytes: 1_000_000,
-		current_input_file_name: "message.txt",
-		current_tools_file_name: "tools.txt",
 		generic_file_upload_max_bytes: 20 * 1024 * 1024,
 		api_keys: [],
 		admin_key: "test-admin-key",

@@ -81,13 +81,14 @@ describe("application routing contract", () => {
 			defaultResp.headers.get("Access-Control-Allow-Headers") || "";
 		assert.match(defaultAllowHeaders, /Content-Type/);
 		assert.match(defaultAllowHeaders, /X-API-Key/);
+		assert.doesNotMatch(defaultAllowHeaders, /Anthropic/i);
 		const resp = await worker.fetch(
 			new Request("https://worker.example/v1/chat/completions", {
 				method: "OPTIONS",
 				headers: {
 					Origin: "https://app.example",
 					"Access-Control-Request-Headers":
-						"X-Custom, x-ds2-internal-token, Bad Header, X-Custom",
+						"X-Custom, X-Extra, Bad Header, X-Custom",
 					"Access-Control-Request-Private-Network": "true",
 				},
 			}),
@@ -105,7 +106,7 @@ describe("application routing contract", () => {
 		);
 		const allowHeaders = resp.headers.get("Access-Control-Allow-Headers") || "";
 		assert.match(allowHeaders, /X-Custom/);
-		assert.doesNotMatch(allowHeaders, /x-ds2-internal-token/i);
+		assert.match(allowHeaders, /X-Extra/);
 		assert.doesNotMatch(allowHeaders, /Bad Header/);
 		assert.equal((allowHeaders.match(/X-Custom/g) || []).length, 1);
 	});

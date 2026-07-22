@@ -98,12 +98,6 @@
 			"CURRENT_INPUT_FILE_MIN_BYTES": {
 				"description": "Inline prompt byte threshold before text attachment handling is attempted."
 			},
-			"CURRENT_INPUT_FILE_NAME": {
-				"description": "Filename used for large message context attachments."
-			},
-			"CURRENT_TOOLS_FILE_NAME": {
-				"description": "Filename used for large tool-definition context attachments."
-			},
 			"GENERIC_FILE_UPLOAD_MAX_BYTES": {
 				"description": "Maximum bytes per request-local attachment."
 			}

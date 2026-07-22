@@ -1,4 +1,4 @@
-export const DEFAULT_CORS_ALLOW_HEADERS = [
+const DEFAULT_CORS_ALLOW_HEADERS = [
 	"Content-Type",
 	"Authorization",
 	"OpenAI-Organization",
@@ -6,8 +6,6 @@ export const DEFAULT_CORS_ALLOW_HEADERS = [
 	"OpenAI-Beta",
 	"X-API-Key",
 	"X-Goog-Api-Key",
-	"Anthropic-Version",
-	"Anthropic-Beta",
 	"X-Stainless-OS",
 	"X-Stainless-Arch",
 	"X-Stainless-Lang",
@@ -20,7 +18,6 @@ export const DEFAULT_CORS_ALLOW_HEADERS = [
 	"X-Title",
 ];
 
-export const BLOCKED_CORS_REQUEST_HEADERS = new Set(["x-ds2-internal-token"]);
 const DEFAULT_CORS_ALLOW_HEADERS_VALUE = DEFAULT_CORS_ALLOW_HEADERS.join(", ");
 
 export function corsHeaders(request: Request): Record<string, string> {
@@ -44,7 +41,7 @@ export function corsHeaders(request: Request): Record<string, string> {
 	return headers;
 }
 
-export function buildCORSAllowHeaders(request: Request): string {
+function buildCORSAllowHeaders(request: Request): string {
 	const requested = request.headers.get("Access-Control-Request-Headers") || "";
 	if (!String(requested || "").trim()) return DEFAULT_CORS_ALLOW_HEADERS_VALUE;
 	const names: string[] = [];
@@ -53,7 +50,7 @@ export function buildCORSAllowHeaders(request: Request): string {
 		const headerName = String(name || "").trim();
 		if (!isValidCORSHeaderToken(headerName)) return;
 		const key = headerName.toLowerCase();
-		if (BLOCKED_CORS_REQUEST_HEADERS.has(key) || seen.has(key)) return;
+		if (seen.has(key)) return;
 		seen.add(key);
 		names.push(headerName);
 	};
@@ -62,7 +59,7 @@ export function buildCORSAllowHeaders(request: Request): string {
 	return names.join(", ");
 }
 
-export function splitCORSRequestHeaders(raw: unknown): string[] {
+function splitCORSRequestHeaders(raw: unknown): string[] {
 	if (!String(raw || "").trim()) return [];
 	return String(raw)
 		.split(",")
@@ -70,7 +67,7 @@ export function splitCORSRequestHeaders(raw: unknown): string[] {
 		.filter(Boolean);
 }
 
-export function isValidCORSHeaderToken(v: unknown): boolean {
+function isValidCORSHeaderToken(v: unknown): boolean {
 	return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(String(v || ""));
 }
 

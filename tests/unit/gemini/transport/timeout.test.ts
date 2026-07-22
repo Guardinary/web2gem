@@ -1,8 +1,8 @@
 import { afterEach, describe, test, vi } from "vitest";
 import {
 	closeSocketQuietly,
+	createSocketTimeoutScope,
 	socketTimeoutError,
-	withSocketTimeout,
 } from "../../../../src/gemini/transport/timeout";
 import { assert } from "../../assertions.js";
 
@@ -24,7 +24,8 @@ describe.sequential("socket timeout helpers", () => {
 				closeCount += 1;
 			},
 		};
-		const pending = withSocketTimeout(new Promise(() => {}), 1, "idle", socket);
+		const scope = createSocketTimeoutScope(1, socket);
+		const pending = scope.wait(new Promise(() => {}), "idle");
 		const rejection = assert.rejects(() => pending, /idle timed out/);
 		await vi.advanceTimersByTimeAsync(1);
 		await rejection;
@@ -45,56 +46,48 @@ describe.sequential("socket timeout helpers", () => {
 
 	test("bypasses disabled socket timeouts", async () => {
 		const socket = { close() {} };
-		assert.equal(
-			await withSocketTimeout(Promise.resolve("ok"), 0, "disabled", socket),
-			"ok",
-		);
+		const scope = createSocketTimeoutScope(0, socket);
+		assert.equal(await scope.wait(Promise.resolve("ok"), "disabled"), "ok");
 	});
 
 	test("preserves abort reasons around socket timeout settlement", async () => {
 		const socket = { close() {} };
 		const aborted = new AbortController();
 		aborted.abort("before start");
+		const abortedScope = createSocketTimeoutScope(10, socket, aborted.signal);
 		await assert.rejects(
-			() =>
-				withSocketTimeout(
-					Promise.resolve("unused"),
-					10,
-					"aborted",
-					socket,
-					aborted.signal,
-				),
+			() => abortedScope.wait(Promise.resolve("unused"), "aborted"),
 			/before start/,
 		);
 
 		const lateAbort = new AbortController();
+		const lateScope = createSocketTimeoutScope(10, socket, lateAbort.signal);
 		await assert.rejects(
 			() =>
-				withSocketTimeout(
+				lateScope.wait(
 					Promise.resolve().then(() => {
 						lateAbort.abort("after settle");
 						return "unused";
 					}),
-					10,
 					"late",
-					socket,
-					lateAbort.signal,
 				),
 			/after settle/,
 		);
 
 		const rejectAbort = new AbortController();
+		const rejectScope = createSocketTimeoutScope(
+			10,
+			socket,
+			rejectAbort.signal,
+		);
 		await assert.rejects(
 			() =>
-				withSocketTimeout(
+				rejectScope.wait(
 					Promise.resolve().then(() => {
 						rejectAbort.abort("reject abort");
 						throw new Error("original failure");
 					}),
-					10,
 					"reject",
-					socket,
-					rejectAbort.signal,
 				),
 			/reject abort/,
 		);

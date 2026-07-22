@@ -42,11 +42,7 @@ export {
 	socketPoolKey,
 	takeIdleSocket,
 } from "./pool";
-export {
-	closeSocketQuietly,
-	socketTimeoutError,
-	withSocketTimeout,
-} from "./timeout";
+export { closeSocketQuietly, socketTimeoutError } from "./timeout";
 
 let _connect: SocketConnect | null | undefined = undefined;
 

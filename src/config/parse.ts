@@ -118,17 +118,6 @@ export function parseHttpOrigin(setting: string, value: unknown): string {
 	return parsed.origin;
 }
 
-export function parseFilename(setting: string, value: unknown): string {
-	const parsed = parseNonEmptyString(setting, value, 255);
-	if (
-		/[/\\\u0000-\u001f\u007f]/.test(parsed) ||
-		parsed === "." ||
-		parsed === ".."
-	)
-		throw new RuntimeConfigError(setting, "must be a plain filename");
-	return parsed;
-}
-
 export function parseKeyList(setting: string, value: unknown): string[] {
 	let items: unknown[];
 	if (Array.isArray(value)) {

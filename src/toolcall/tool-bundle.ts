@@ -49,7 +49,7 @@ export type ToolBundle = {
 	readonly promptArtifact: ToolPromptArtifact;
 };
 
-export const emptyToolBundle: ToolBundle = {
+const emptyToolBundle: ToolBundle = {
 	__toolBundle: true,
 	source: null,
 	items: [],
@@ -62,7 +62,7 @@ export const emptyToolBundle: ToolBundle = {
 	promptArtifact: createToolPromptArtifact([], []),
 };
 
-export function isToolBundle(value: unknown): value is ToolBundle {
+function isToolBundle(value: unknown): value is ToolBundle {
 	return !!(
 		value &&
 		typeof value === "object" &&
@@ -182,12 +182,6 @@ export function filterToolBundleByPolicy(
 		schemaIndex: Object.keys(schemaIndex).length ? schemaIndex : null,
 		promptArtifact: createToolPromptArtifact(defs, names),
 	};
-}
-
-export function nullableOpenAIFunctionTools(
-	bundle: ToolBundle | null | undefined,
-): UnknownRecord[] | null {
-	return bundle?.openAIFunctionTools.length ? bundle.openAIFunctionTools : null;
 }
 
 export function toolNamesForPromptSource(

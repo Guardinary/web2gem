@@ -155,7 +155,6 @@ describe("runtime configuration", () => {
 			{ REQUEST_BODY_MAX_BYTES: "104857601" },
 			{ CURRENT_INPUT_FILE_MIN_BYTES: "01" },
 			{ GENERIC_FILE_UPLOAD_MAX_BYTES: "104857601" },
-			{ CURRENT_INPUT_FILE_NAME: "../message.txt" },
 			{ GEMINI_ORIGIN: "https://user:secret@example.test/path" },
 			{ API_KEYS: 123 },
 			{ API_KEYS: [null] },

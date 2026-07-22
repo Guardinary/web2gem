@@ -2,8 +2,6 @@ import { UTF8_FATAL_DECODER } from "../../shared/encoding";
 import { tryParseJson } from "../../shared/json";
 import type { UnknownRecord } from "../../shared/types";
 
-export { parseJson, parseJsonObject, tryParseJson } from "../../shared/json";
-
 export type ReadJsonRequestResult =
 	| {
 			value: UnknownRecord;
