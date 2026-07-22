@@ -858,7 +858,7 @@ Use this contract when a request may be too large to send inline to Gemini Web a
 - If a parsed prompt exceeds the threshold after prompt conversion has removed request-local attachment payloads from the live prompt, return 422 before provider generation when context-file attachments are unavailable. The client-facing message should include `<promptBytes> UTF-8 bytes > <threshold>`; bounded checks may say `at least <bytes>`.
 - HTTP 413 is reserved for the configured JSON request-body limit and uses `request_body_too_large`.
 - If conversion-time checks show the base prompt or estimated final inline prompt exceeds the threshold while text attachments are available, choose the context-file path before constructing the full hidden-tools/structured inline prompt string.
-- In the context-file path, upload `CURRENT_TOOLS_FILE_NAME` (default `tools.txt`) as the home for tool-use context. It must contain visible tool descriptions/schemas when present, DSML tool-call format instructions, the tool-choice policy text when present, and `GEMINI_NATIVE_HIDDEN_TOOLS_PROMPT`. The live prompt should only reference the attached tools file and must not duplicate DSML call-format instructions or the hidden native tool payload text.
+- In the context-file path, upload hard-coded `tools.txt` as the home for tool-use context (not an env-configurable filename). It must contain visible tool descriptions/schemas when present, DSML tool-call format instructions, the tool-choice policy text when present, and `GEMINI_NATIVE_HIDDEN_TOOLS_PROMPT`. The live prompt should only reference the attached tools file and must not duplicate DSML call-format instructions or the hidden native tool payload text.
 - If no client-visible tools are declared, still attach `tools.txt` for the hidden native tool prompt when the request uses context files. Token accounting for context-file prompts must include history text, `tools.txt`, and the short live prompt exactly once.
 - OpenAI-compatible routes return an OpenAI error envelope.
 - Google-compatible routes return `{ error: { message, code } }`.
@@ -926,6 +926,6 @@ const livePrompt = [
 #### Correct
 
 ```typescript
-const toolsText = toolsContextTranscriptFor(toolBundle, choiceInstruction, cfg.current_tools_file_name);
+const toolsText = toolsContextTranscriptFor(toolBundle, choiceInstruction, "tools.txt");
 const livePrompt = currentInputFilePrompt(cfg, true);
 ```

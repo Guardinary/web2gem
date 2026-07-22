@@ -148,6 +148,25 @@ ordered runtime scripts remain in each test. Bad: a universal request/router
 fake replaces visible status, frame, or payload assertions merely to shorten a
 suite.
 
+### Production export surface and test-only hooks
+
+- Production barrels re-export only what production modules import. Examples:
+  `src/gemini/transport/index.ts` exports `httpFetch` + `cancelResponseBody`;
+  `src/http/openai/index.ts` exports the route handlers `app.ts` needs;
+  `src/gemini/uploads/index.ts` exports production upload APIs only.
+- Do not re-export shared helpers through adapter/core barrels when consumers
+  already import the owner (`http/core/json` must not re-export `shared/json`).
+- Module-private helpers used only inside their defining file stay non-exported.
+  Production-unused helpers that exist only for unit tests should be deleted
+  (tests assert through public APIs) rather than kept as public exports.
+- `*ForTest` / `_set*ForTest` hooks may remain on owner modules for unit
+  isolation of module-level caches or connect injection. They must not appear on
+  production barrels, `public-exports.ts`, or the Worker default entry. The smoke
+  / bench harness may re-export symbols it actually calls.
+- Context attachment filenames (`message.txt`, `tools.txt`) are owner constants,
+  not `CONFIG_SPEC` / Worker binding keys. Prefer constants over env knobs when
+  the value has no operational product surface.
+
 ### Prompt and tool contract tests
 
 Prompt compatibility, completion, and tool-call tests must preserve the same

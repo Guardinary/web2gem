@@ -23,7 +23,8 @@
 - `src/gemini/accounts/routes.ts` owns capacity-aware route tuples, keys, parsing, capability projection, catalog projection, and priority reconciliation. `pool.ts` is the account facade; lease lifecycle, pure selection, catalog projection, and snapshot transitions live in focused `lease.ts` / `pool-*.ts` siblings.
 - `src/gemini/accounts/store-d1.ts` is the admin repository facade. Account-runtime/capability/route persistence lives in `store-d1-runtime.ts`, positional account insert SQL and row values live in `store-d1-codec.ts`, and admin projections live in `store-d1-admin.ts`; preserve SQL text and bind ordering across these owners.
 - `src/gemini/transport/http.ts` owns the unified upstream HTTP entry. It may choose `cloudflare:sockets` first and fall back to `fetch` only when request semantics are preserved.
-- `src/gemini/transport/socket.ts` is the public socket transport facade. If the socket implementation is decomposed, keep public exports compatible from this module and move internals into owner modules under `src/gemini/transport/`.
+- `src/gemini/transport/index.ts` is the production transport barrel and exports only `httpFetch` and `cancelResponseBody`. Production Gemini client/upload/account modules import that barrel (or `http.ts` equivalents); pool/socket/timeout/byte-queue helpers are not re-exported there.
+- `src/gemini/transport/socket.ts` is the socket transport owner module (not the production barrel). Tests and socket-internal callers import it (and sibling owners under `src/gemini/transport/`) directly.
 - `src/gemini/completion-provider.ts` is the thin Gemini adapter for `src/completion/ports.ts`. Cross-account acquisition/recovery/outcome ordering belongs in `completion-attempts.ts`; request-local upload recipes, aliases, replay, and opaque-reference detection belong in `upload-replay.ts`.
 - `src/promptcompat/token-accounting.ts` owns prompt/completion token estimates, counters, and prepared-text accounting. `src/shared/text-metrics.ts` owns only provider-neutral UTF-8 byte, code-point, and continuation-overlap primitives.
 - `src/shared/` must stay leaf-level and provider-neutral. Production code imports concrete owners such as `encoding.ts`, `logging.ts`, `abort.ts`, `errors.ts`, `crypto.ts`, `strings.ts`, `text-metrics.ts`, and `json-schema.ts`; broad `runtime.ts` / `tokens.ts` compatibility barrels do not exist. Generic string selection and JSON-Schema subset validation belong here, while completion-specific structured-output parsing belongs in `src/completion/structured-output.ts`. Gemini SAPISID hashing belongs to `src/gemini/auth.ts`.
@@ -291,7 +292,8 @@ Use this contract when changing `src/gemini/transport/http.ts`, `src/gemini/tran
 - `resolveConnect()` lazily resolves `cloudflare:sockets` and returns `SocketConnect | null`.
 - `socketHttp(connect, url, options)` performs one HTTP/1.1 request over a socket and returns `SocketHttpResponse`.
 - `createSocketPool()`, `getDefaultSocketPool()`, and `closeIdleSocketPool(pool?)` own keep-alive pool lifecycle.
-- `_setConnectForTest(connect)` resets socket state for unit tests; tests import it directly from `src/gemini/transport/socket.ts` and it must never be re-exported from `src/index.ts` or `src/public-exports.ts`.
+- `_setConnectForTest(connect)` and other `*ForTest` cache/connect hooks live on owner modules for unit isolation. Tests import them from the owner (`socket.ts`, `tokens.ts`, `retry.ts`, `cookies.ts`, etc.). They must never appear on production barrels (`transport/index.ts`, `uploads/index.ts`), `src/public-exports.ts`, or the Worker default entry.
+- Production transport consumers import `httpFetch` / `cancelResponseBody` from `src/gemini/transport` (or `http.ts`). They must not depend on the production barrel for pool/timeout/socket test helpers.
 
 ### 3. Contracts
 
@@ -306,7 +308,7 @@ Use this contract when changing `src/gemini/transport/http.ts`, `src/gemini/tran
   - optional gzip decompression when `DecompressionStream` supports it.
   - keep-alive reuse only when the response framing makes reuse safe.
 - Timeout and abort cleanup must close the socket and release stream locks where applicable.
-- `socket.ts` is the compatibility facade. Splitting implementation into `byte-queue.ts`, `pool.ts`, `timeout.ts`, `http-parse.ts`, `body-stream.ts`, or `decompression.ts` must not require callers to change imports outside `src/gemini/transport/`.
+- Socket implementation may split into `byte-queue.ts`, `pool.ts`, `timeout.ts`, `http-parse.ts`, `body-stream.ts`, or `decompression.ts`. Production code outside transport continues to import only `httpFetch` / `cancelResponseBody` through the production barrel; tests and transport-internal modules import owner files directly.
 - New socket submodules must stay inside `src/gemini/transport/` and must not import HTTP adapters, completion modules, prompt compatibility, tool-call modules, or uploads unless a spec update first defines a new boundary.
 
 ### 4. Validation & Error Matrix
