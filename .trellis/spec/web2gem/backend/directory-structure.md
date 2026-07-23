@@ -745,13 +745,13 @@ Use this contract when changing non-streaming tool-call parsing, streamed tool-c
 ### 2. Signatures
 
 - `src/toolcall/syntax-probe.ts` owns high-confidence syntax detection helpers:
-  - `hasToolCallSyntaxCandidate(text)`
-  - `hasToolCallMarkupSyntaxCandidate(text)`
+  - `containsToolMarkupSyntax(text)`
   - `findToolCallSyntaxCandidateStart(text)`
   - `isPartialToolCallSyntaxPrefix(text)`
   - `hasClosedToolCallsSyntax(text)`
   - `toolCallSieveSafeTailLength(text)`
-- `src/toolcall/dsml.ts` preserves legacy helper exports such as `mayContainToolCallSyntax`, `findToolSieveCandidateStart`, and `normalizeToolMarkupConfusables` by delegating to the syntax-probe owner.
+  - `normalizeToolMarkupConfusables(text)`
+- `src/toolcall/dsml.ts` imports `containsToolMarkupSyntax` / `findToolCallSyntaxCandidateStart` from the syntax-probe owner for non-streaming parse gating; it does not re-export legacy helper aliases.
 - `src/toolcall/sieve.ts` consumes `syntax-probe.ts` directly and owns stream buffer state transitions.
 
 ### 3. Contracts
@@ -802,7 +802,7 @@ if (text.includes("<") && /tool_calls|invoke|parameter/.test(text)) {
 #### Correct
 
 ```typescript
-if (!hasToolCallSyntaxCandidate(text)) return [String(text || "").trim(), []];
+if (!containsToolMarkupSyntax(text)) return [String(text || "").trim(), []];
 return parseDSMLToolCallsDetailed(text);
 ```
 

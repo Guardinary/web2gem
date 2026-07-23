@@ -159,6 +159,15 @@ suite.
 - Module-private helpers used only inside their defining file stay non-exported.
   Production-unused helpers that exist only for unit tests should be deleted
   (tests assert through public APIs) rather than kept as public exports.
+- A helper with **zero production importers outside its defining file** is not
+  automatically dead: if a same-file public API still calls it (for example
+  `resolveModelFromCatalog` calling private `dynamicProviderModelCandidates`),
+  demote the export and re-home unit tests onto the public caller. Delete only
+  when no production path remains.
+- When a public API always wraps values (for example top-level tool-call
+  parameters always become `<|DSML|parameter>` tags while nested object keys use
+  `<field>` / safe element names), tests that pin private naming helpers must
+  exercise the wrapper shape, not import the private helper.
 - `*ForTest` / `_set*ForTest` hooks may remain on owner modules for unit
   isolation of module-level caches or connect injection. They must not appear on
   production barrels or the Worker default entry (`src/worker-entry.ts`). The
