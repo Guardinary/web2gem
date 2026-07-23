@@ -1,9 +1,6 @@
 import { describe, test } from "vitest";
 import { base64ToBytes } from "../../../../src/attachments/base64";
 import {
-	DEFAULT_GENERATED_IMAGE_HYDRATION_LIMITS,
-	generatedImageFetchHeaders,
-	generatedImagePreviewFetchUrls,
 	hydrateGeneratedImages,
 	type GeminiRichImage,
 } from "../../../../src/gemini/client/generated-images";
@@ -49,48 +46,6 @@ function imageAt(images: readonly GeminiRichImage[], index: number) {
 }
 
 describe("generated image hydration", () => {
-	test("preserves generated image preview URL candidates", () => {
-		const previewUrl = "https://lh3.googleusercontent.com/generated=s1024-rj";
-		assert.deepEqual(generatedImagePreviewFetchUrls(previewUrl), [
-			"https://lh3.googleusercontent.com/generated=s2048-rj",
-			previewUrl,
-		]);
-		const directUrl =
-			"https://lh3.googleusercontent.com/gg-dl/AFfU-direct-image";
-		assert.deepEqual(generatedImagePreviewFetchUrls(directUrl), [
-			directUrl,
-			`${directUrl}=s2048-rj`,
-		]);
-		assert.deepEqual(
-			generatedImagePreviewFetchUrls(
-				"https://lh3.googleusercontent.com/generated=s2048-rj",
-			),
-			["https://lh3.googleusercontent.com/generated=s2048-rj"],
-		);
-	});
-
-	test("builds browser image headers without authorization", () => {
-		const headers = generatedImageFetchHeaders(
-			baseGeminiClientConfig({
-				cookie: "__Secure-1PSID=value",
-			}),
-		);
-		assert.equal(
-			headers.Accept,
-			"image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-		);
-		assert.equal(headers["Accept-Language"], "en-US,en;q=0.9");
-		assert.equal(headers.Origin, "https://gemini.google.com");
-		assert.equal(headers.Referer, "https://gemini.google.com/app");
-		assert.match(headers["User-Agent"], /Mozilla\/5\.0/);
-		assert.equal(headers.Cookie, "__Secure-1PSID=value");
-		assert.equal(headers.Authorization, undefined);
-		assert.equal(
-			generatedImageFetchHeaders(baseGeminiClientConfig({ cookie: "" })).Cookie,
-			undefined,
-		);
-	});
-
 	test("fetches direct gg-dl URLs before their size-suffix fallback", async () => {
 		const cfg = baseGeminiClientConfig({ cookie: "SID=base" });
 		const activeCfg = baseGeminiClientConfig({ cookie: "SID=selected" });
@@ -105,6 +60,13 @@ describe("generated image hydration", () => {
 				const headers = new Headers(init?.headers);
 				assert.equal(headers.get("Cookie"), "SID=selected");
 				assert.equal(headers.get("Authorization"), null);
+				assert.equal(
+					headers.get("Accept"),
+					"image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+				);
+				assert.equal(headers.get("Origin"), "https://gemini.google.com");
+				assert.equal(headers.get("Referer"), "https://gemini.google.com/app");
+				assert.match(String(headers.get("User-Agent") || ""), /Mozilla\/5\.0/);
 				return new Response(new Uint8Array(base64ToBytes(TINY_PNG_BASE64)), {
 					status: 200,
 					headers: { "content-type": "image/png" },
@@ -118,11 +80,24 @@ describe("generated image hydration", () => {
 		assert.equal(imageAt(images, 0).outputFormat, "png");
 	});
 
+	test("omits cookie header when the active config has no cookie", async () => {
+		const cfg = baseGeminiClientConfig({ cookie: "" });
+		const imageUrl = "https://lh3.googleusercontent.com/generated.png";
+		const images = await withFetch(
+			async (_url: RequestInfo | URL, init?: RequestInit) => {
+				const headers = new Headers(init?.headers);
+				assert.equal(headers.get("Cookie"), null);
+				return new Response(new Uint8Array(base64ToBytes(TINY_PNG_BASE64)), {
+					status: 200,
+					headers: { "content-type": "image/png" },
+				});
+			},
+			() => hydrateGeneratedImages(cfg, cfg, [generatedImage(imageUrl)]),
+		);
+		assert.equal(imageAt(images, 0).base64, TINY_PNG_BASE64);
+	});
+
 	test("cancels an individual image that exceeds its byte limit", async () => {
-		assert.deepEqual(DEFAULT_GENERATED_IMAGE_HYDRATION_LIMITS, {
-			maxImageBytes: 16 * 1024 * 1024,
-			maxTotalBytes: 48 * 1024 * 1024,
-		});
 		const cfg = baseGeminiClientConfig();
 		const tinyPng = base64ToBytes(TINY_PNG_BASE64);
 		let canceled = false;

@@ -20,7 +20,7 @@ export type GeneratedImageHydrationLimits = {
 	maxTotalBytes: number;
 };
 
-export const DEFAULT_GENERATED_IMAGE_HYDRATION_LIMITS = Object.freeze({
+const DEFAULT_GENERATED_IMAGE_HYDRATION_LIMITS = Object.freeze({
 	maxImageBytes: 16 * 1024 * 1024,
 	maxTotalBytes: 48 * 1024 * 1024,
 });
@@ -138,7 +138,7 @@ async function fetchGeneratedImageBytesFromUrl(
 	}
 }
 
-export function generatedImagePreviewFetchUrls(url: string): string[] {
+function generatedImagePreviewFetchUrls(url: string): string[] {
 	const upgraded = generatedImageFetchUpsizedUrl(url);
 	if (!upgraded || upgraded === url) return [url];
 	if (url.includes("=s1024-rj")) return [upgraded, url];
@@ -151,7 +151,7 @@ function generatedImageFetchUpsizedUrl(url: string): string {
 	return `${url}${url.includes("=") ? "" : "=s2048-rj"}`;
 }
 
-export function generatedImageFetchHeaders(
+function generatedImageFetchHeaders(
 	cfg: RuntimeConfig,
 ): Record<string, string> {
 	const headers: Record<string, string> = {

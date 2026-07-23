@@ -1,9 +1,5 @@
 import { describe, test } from "vitest";
-import {
-	formatPromptParamValue,
-	formatPromptToolCallBlock,
-	isSafeXmlElementName,
-} from "../../../src/toolcall/prompt-format";
+import { formatPromptToolCallBlock } from "../../../src/toolcall/prompt-format";
 import {
 	indentPromptParameters,
 	promptCDATA,
@@ -21,6 +17,7 @@ describe("toolcall", () => {
 				"bad key": ["x", null, 2, false, undefined],
 			},
 			empty: undefined,
+			skip: Symbol("skip"),
 		});
 		assert.match(block, /<\|DSML\|invoke name="Run&quot;Now">/);
 		assert.match(
@@ -36,9 +33,16 @@ describe("toolcall", () => {
 			block,
 			/<\|DSML\|parameter name="empty"><\/\|DSML\|parameter>/,
 		);
-		assert.equal(isSafeXmlElementName("a.b-c_1"), true);
-		assert.equal(isSafeXmlElementName("1bad"), false);
-		assert.equal(formatPromptParamValue(Symbol("skip")), "");
+		assert.match(block, /<\|DSML\|parameter name="skip"><\/\|DSML\|parameter>/);
+		// Nested object keys: safe names render as tags; unsafe names use <field>.
+		assert.match(
+			formatPromptToolCallBlock("x", { nested: { "1bad": "nope" } }),
+			/<field name="1bad"><!\[CDATA\[nope\]\]><\/field>/,
+		);
+		assert.match(
+			formatPromptToolCallBlock("x", { nested: { "a.b-c_1": true } }),
+			/<a\.b-c_1>true<\/a\.b-c_1>/,
+		);
 	});
 	test("formats prompt XML CDATA attributes and indentation", async () => {
 		assert.equal(promptCDATA(""), "");

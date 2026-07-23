@@ -1,6 +1,5 @@
 import { describe, test } from "vitest";
 import {
-	ensureStreamToolCallID,
 	formatOpenAIStreamToolCalls,
 	formatOpenAIToolCalls,
 } from "../../../src/toolcall/openai-format";
@@ -48,10 +47,16 @@ describe("toolcall", () => {
 		const streamCalls = formatOpenAIStreamToolCalls(calls, ids, bundle);
 		assert.equal(required(streamCalls[0]).index, 0);
 		assert.match(required(streamCalls[0]).id, /^call_[0-9a-f]{32}$/);
-		assert.equal(ensureStreamToolCallID(ids, 0), required(streamCalls[0]).id);
-		const fallbackId = ensureStreamToolCallID(null, 0);
-		assert.match(fallbackId, /^call_[0-9a-f]{32}$/);
-		const nonIntegerId = ensureStreamToolCallID(ids, "not-an-index");
-		assert.equal(nonIntegerId, required(streamCalls[0]).id);
+		// Reusing the same store must keep stream tool-call IDs stable.
+		const again = formatOpenAIStreamToolCalls(calls, ids, bundle);
+		assert.equal(required(again[0]).id, required(streamCalls[0]).id);
+		assert.equal(required(again[1]).id, required(streamCalls[1]).id);
+		// A fresh store (or null) allocates a new ID each time.
+		const fallback = formatOpenAIStreamToolCalls(calls, null, bundle);
+		assert.match(required(fallback[0]).id, /^call_[0-9a-f]{32}$/);
+		assert.equal(
+			required(fallback[0]).id === required(streamCalls[0]).id,
+			false,
+		);
 	});
 });

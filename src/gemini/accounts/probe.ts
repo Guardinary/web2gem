@@ -100,7 +100,7 @@ async function fetchGeminiAccountProbe(
 	);
 }
 
-export function decodeGeminiAccountProbe(raw: unknown): GeminiAccountProbe {
+function decodeGeminiAccountProbe(raw: unknown): GeminiAccountProbe {
 	for (const payload of extractWrbInnerPayloads(raw)) {
 		const statusCode = boundedInt(payload[14]);
 		if (statusCode === undefined) continue;
@@ -239,7 +239,7 @@ function boundedInt(value: unknown): number | undefined {
 		: undefined;
 }
 
-export async function readBoundedResponseText(
+async function readBoundedResponseText(
 	response: {
 		body?: ReadableStream<Uint8Array> | null;
 		text(): Promise<string>;

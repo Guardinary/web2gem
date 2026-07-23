@@ -1,7 +1,6 @@
 import { describe, test } from "vitest";
 import {
 	openAIErrorResponse,
-	openAIErrorType,
 	openAIUpstreamErrorResponse,
 } from "../../../../src/http/openai/errors";
 import {
@@ -24,6 +23,14 @@ function firstRecord(value: unknown, label: string): UnknownRecord {
 		throw new Error(`expected ${label}`);
 	const item = value[0];
 	return record(item, label);
+}
+
+async function errorTypeForStatus(status: number): Promise<string> {
+	const body = record(
+		await openAIErrorResponse("x", status).json(),
+		`error status ${status}`,
+	);
+	return String(record(body.error, `error body ${status}`).type);
 }
 
 describe("OpenAI response format", () => {
@@ -57,13 +64,13 @@ describe("OpenAI response format", () => {
 	});
 
 	test("formats OpenAI error status types envelopes and upstream failures", async () => {
-		assert.equal(openAIErrorType(400), "invalid_request_error");
-		assert.equal(openAIErrorType(401), "authentication_error");
-		assert.equal(openAIErrorType(403), "permission_error");
-		assert.equal(openAIErrorType(429), "rate_limit_error");
-		assert.equal(openAIErrorType(503), "service_unavailable_error");
-		assert.equal(openAIErrorType(500), "api_error");
-		assert.equal(openAIErrorType(418), "invalid_request_error");
+		assert.equal(await errorTypeForStatus(400), "invalid_request_error");
+		assert.equal(await errorTypeForStatus(401), "authentication_error");
+		assert.equal(await errorTypeForStatus(403), "permission_error");
+		assert.equal(await errorTypeForStatus(429), "rate_limit_error");
+		assert.equal(await errorTypeForStatus(503), "service_unavailable_error");
+		assert.equal(await errorTypeForStatus(500), "api_error");
+		assert.equal(await errorTypeForStatus(418), "invalid_request_error");
 
 		const forbidden = openAIErrorResponse("blocked", 403, "policy_blocked");
 		assert.equal(forbidden.status, 403);

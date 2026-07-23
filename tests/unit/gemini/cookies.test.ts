@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, test } from "vitest";
 import type { RuntimeConfig } from "../../../src/config";
 import {
-	configWithActiveGeminiCookie,
+	configWithFreshGeminiCookie,
 	mergeSetCookieHeaders,
 	observeGeminiAccountResponseCookies,
 	parseCookieHeader,
@@ -48,12 +48,12 @@ describe("Gemini cookies", () => {
 			"__Secure-1PSID=psid; __Secure-1PSIDTS=new; SAPISID=sapi; NID=x",
 		);
 	});
-	test("derives active Gemini cookie config without mutating input", () => {
+	test("derives active Gemini cookie config without mutating input", async () => {
 		const cfg = cookieConfig({
 			cookie: "__Secure-1PSID=psid; __Secure-1PSIDTS=old; SAPISID=sapi",
 			sapisid: "",
 		});
-		const active = configWithActiveGeminiCookie(cfg);
+		const active = await configWithFreshGeminiCookie(cfg);
 		assert.equal(
 			active.cookie,
 			"__Secure-1PSID=psid; __Secure-1PSIDTS=old; SAPISID=sapi",
@@ -287,8 +287,8 @@ describe("Gemini cookies", () => {
 			resetGeminiUploadCachesForTest();
 		}
 	});
-	test("deduplicates repeated active cookie names", () => {
-		const active = configWithActiveGeminiCookie(
+	test("deduplicates repeated active cookie names", async () => {
+		const active = await configWithFreshGeminiCookie(
 			cookieConfig({
 				cookie:
 					"__Secure-1PSID=psid; __Secure-1PSIDTS=old; __Secure-1PSIDTS=new; SAPISID=sapi",

@@ -35,7 +35,7 @@ const REFERENCE_NESTED_KEYS = [
 ] as const;
 const ATTACHMENT_NESTED_KEYS = [...REFERENCE_NESTED_KEYS, "image_url"] as const;
 
-export function attachmentInputsFromMessages(
+function attachmentInputsFromMessages(
 	messages: readonly InternalMessage[],
 ): MessageAttachmentInputs {
 	const images: MessageImageInput[] = [];

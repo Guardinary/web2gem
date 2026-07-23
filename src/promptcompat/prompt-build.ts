@@ -98,7 +98,7 @@ function validInsertOffset(text: string, insertOffset: unknown): number | null {
 	return offset;
 }
 
-export function appendStructuredOutputInstructionWithTokens(
+function appendStructuredOutputInstructionWithTokens(
 	prompt: unknown,
 	requirement: unknown,
 	keepText = true,

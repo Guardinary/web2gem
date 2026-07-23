@@ -106,9 +106,7 @@ export function observeGeminiAccountResponseCookies(
 	}
 }
 
-export function configWithActiveGeminiCookie(
-	cfg: RuntimeConfig,
-): RuntimeConfig {
+function configWithActiveGeminiCookie(cfg: RuntimeConfig): RuntimeConfig {
 	if (cfg.gemini_account) return cfg;
 	const state = ensureActiveCookieState(cfg);
 	if (!state) return cfg;

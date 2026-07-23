@@ -372,7 +372,7 @@ async function preparePromptWithAttachments(
 }
 
 /** Ordered de-duplicating merge of provider file-ref groups. */
-export function mergeFileRefs<T>(
+function mergeFileRefs<T>(
 	...groups: Array<readonly T[] | null | undefined>
 ): T[] | null {
 	const out: T[] = [];

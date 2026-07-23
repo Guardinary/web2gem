@@ -44,25 +44,6 @@ export function extractToolMeta(tool: unknown): ToolMeta | null {
 	};
 }
 
-export function toolMetasFromTools(tools: unknown): ToolMeta[] {
-	const items = toolItemsFromTools(tools);
-	if (!items.length) return [];
-	const out: ToolMeta[] = [];
-	for (const item of items) {
-		const declarations = toolFunctionDeclarations(item);
-		if (declarations.length) {
-			for (const declaration of declarations) {
-				const meta = extractToolMeta(declaration);
-				if (meta) out.push(meta);
-			}
-			continue;
-		}
-		const meta = extractToolMeta(item);
-		if (meta) out.push(meta);
-	}
-	return out;
-}
-
 export function toolItemsFromTools(tools: unknown): UnknownRecord[] {
 	if (Array.isArray(tools)) return tools.filter(isRecord);
 	if (!isRecord(tools)) return [];

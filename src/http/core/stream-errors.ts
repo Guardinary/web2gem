@@ -5,7 +5,7 @@ import {
 } from "../../shared/errors";
 import type { SSEWrite } from "./sse";
 
-export function streamErrorText(e: unknown, prefix = "upstream error"): string {
+function streamErrorText(e: unknown, prefix = "upstream error"): string {
 	const code = upstreamErrorCode(e);
 	return `⚠️ ${prefix}: ${upstreamErrorMessage(e)}${code ? ` [${code}]` : ""}`;
 }

@@ -4,7 +4,7 @@ export function base64DecodedByteLength(raw: string): number {
 	return Math.floor((compact.replace(/=+$/, "").length * 3) / 4);
 }
 
-export function validateBase64Shape(raw: unknown): string {
+function validateBase64Shape(raw: unknown): string {
 	const compact = String(raw || "").replace(/\s+/g, "");
 	if (
 		compact &&

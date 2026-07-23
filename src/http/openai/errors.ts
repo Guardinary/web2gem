@@ -7,7 +7,7 @@ import {
 	upstreamErrorStatus,
 } from "../../shared/errors";
 
-export function openAIErrorType(status: number): string {
+function openAIErrorType(status: number): string {
 	switch (status) {
 		case 400:
 			return "invalid_request_error";

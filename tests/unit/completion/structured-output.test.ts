@@ -1,12 +1,9 @@
 import { describe, test } from "vitest";
 import {
 	buildStructuredOutputRequirement,
-	canonicalizeStructuredOutputText,
 	extractFirstJsonDocument,
 	finalizeStructuredOutputText,
 	getStructuredResponseFormat,
-	parseStructuredJsonCandidate,
-	STRUCTURED_JSON_NOT_FOUND,
 	validateStructuredOutputValue,
 } from "../../../src/completion/structured-output";
 import { assert } from "../assertions.js";
@@ -74,19 +71,23 @@ describe("structured output", () => {
 		);
 		assert.equal(extractFirstJsonDocument('prefix {"a":] suffix'), "");
 		assert.equal(extractFirstJsonDocument("{{{{"), "");
+		// Public finalizer covers fenced / embedded JSON candidates.
 		assert.deepEqual(
-			parseStructuredJsonCandidate('prefix {"ok":true} suffix'),
-			{ ok: true },
+			finalizeStructuredOutputText('prefix {"ok":true} suffix', {
+				type: "json_object",
+			}),
+			{ text: '{"ok":true}' },
 		);
 		assert.deepEqual(
-			parseStructuredJsonCandidate('```json\n{"ok":true}\n```'),
-			{
-				ok: true,
-			},
+			finalizeStructuredOutputText('```json\n{"ok":true}\n```', {
+				type: "json_object",
+			}),
+			{ text: '{"ok":true}' },
 		);
 		assert.equal(
-			parseStructuredJsonCandidate("no json here"),
-			STRUCTURED_JSON_NOT_FOUND,
+			finalizeStructuredOutputText("no json here", { type: "json_object" })
+				.error,
+			"structured output was not valid JSON",
 		);
 	});
 
@@ -102,14 +103,10 @@ describe("structured output", () => {
 		}
 		assert.match(requirement.instruction, /Schema name: loose_result/);
 		assert.match(requirement.instruction, /Strict mode: false/);
-		assert.equal(canonicalizeStructuredOutputText(" raw ", null), " raw ");
-		assert.equal(
-			canonicalizeStructuredOutputText(
-				'prefix {"ok":true} suffix',
-				requirement,
-			),
-			'{"ok":true}',
-		);
+		// Without a requirement the finalizer returns the raw text unchanged.
+		assert.deepEqual(finalizeStructuredOutputText(" raw ", null), {
+			text: " raw ",
+		});
 		assert.deepEqual(
 			finalizeStructuredOutputText('prefix {"ok":true} suffix', requirement),
 			{ text: '{"ok":true}' },

@@ -94,7 +94,7 @@ export function buildStructuredOutputRequirement(
 	return { type, schemaName, schema, instruction: parts.join("\n") };
 }
 
-export function canonicalizeStructuredOutputText(
+function canonicalizeStructuredOutputText(
 	text: unknown,
 	requirement: unknown,
 ): string {
@@ -153,9 +153,9 @@ export function validateStructuredOutputValue(
 	return validateJsonSchemaSubset(value, requirement.schema, "$");
 }
 
-export const STRUCTURED_JSON_NOT_FOUND = Symbol("structured_json_not_found");
+const STRUCTURED_JSON_NOT_FOUND = Symbol("structured_json_not_found");
 
-export function parseStructuredJsonCandidate(
+function parseStructuredJsonCandidate(
 	text: unknown,
 ): JsonValue | typeof STRUCTURED_JSON_NOT_FOUND {
 	const raw = String(text || "").trim();

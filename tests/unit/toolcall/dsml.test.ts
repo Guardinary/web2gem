@@ -164,14 +164,14 @@ describe("toolcall", () => {
 		// Nested markup + CDATA + fenced markdown argument unwrap + scalars.
 		const nested = [
 			'<tool_calls><invoke name="Write">',
-			"<parameter name=\"payload\"><name>Read</name><count>2</count></parameter>",
-			"<parameter name=\"items\"><item>a</item><item><![CDATA[b&c]]></item></parameter>",
-			"<parameter name=\"doc\"><![CDATA[```json\n{\"ok\":true}\n```]]></parameter>",
-			"<parameter name=\"flag\">true</parameter>",
-			"<parameter name=\"none\">null</parameter>",
-			"<parameter name=\"huge\">1e999</parameter>",
-			"<parameter name=\"broken\">{not json}</parameter>",
-			"<parameter name=\"entities\">&lt;tag&gt;</parameter>",
+			'<parameter name="payload"><name>Read</name><count>2</count></parameter>',
+			'<parameter name="items"><item>a</item><item><![CDATA[b&c]]></item></parameter>',
+			'<parameter name="doc"><![CDATA[```json\n{"ok":true}\n```]]></parameter>',
+			'<parameter name="flag">true</parameter>',
+			'<parameter name="none">null</parameter>',
+			'<parameter name="huge">1e999</parameter>',
+			'<parameter name="broken">{not json}</parameter>',
+			'<parameter name="entities">&lt;tag&gt;</parameter>',
 			"</invoke></tool_calls>",
 		].join("");
 		const [clean, calls] = parseToolCalls(nested, tools);

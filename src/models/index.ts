@@ -204,7 +204,7 @@ export function isGeminiProviderModelId(value: unknown): value is string {
 	);
 }
 
-export function dynamicProviderModelCandidates(
+function dynamicProviderModelCandidates(
 	name: unknown,
 ): readonly { providerModelId: string; extended: boolean }[] {
 	if (typeof name !== "string" || !name) return [];

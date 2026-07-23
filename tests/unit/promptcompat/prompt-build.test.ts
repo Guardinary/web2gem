@@ -1,7 +1,6 @@
 import { describe, test } from "vitest";
 import {
 	appendStructuredOutputInstructionToPrepared,
-	appendStructuredOutputInstructionWithTokens,
 	appendTextToPreparedWithTokens,
 	withGeminiNativeHiddenToolsPromptForPrepared,
 	withGeminiNativeHiddenToolsPromptWithTokens,
@@ -84,17 +83,35 @@ describe("prompt compatibility", () => {
 		);
 	});
 	test("appends structured output instructions while preserving token counts", async () => {
-		const raw = appendStructuredOutputInstructionWithTokens("base  ", {
-			instruction: "Return JSON",
-		});
-		assert.equal(raw.text, "base\n\nReturn JSON");
-		const instructionOnly = appendStructuredOutputInstructionWithTokens("", {
-			instruction: "Return JSON",
-		});
+		// Public path: trailing-space prepared text routes through the demoted
+		// withTokens helper and trims the base prompt before appending.
+		const trailing = appendStructuredOutputInstructionToPrepared(
+			{
+				text: "base  ",
+				tokens: 1,
+				counts: { asciiChars: 6, nonASCIIChars: 0, hasText: true },
+			},
+			{ instruction: "Return JSON" },
+			true,
+		);
+		assert.equal(trailing.text, "base\n\nReturn JSON");
+
+		const instructionOnly = appendStructuredOutputInstructionToPrepared(
+			{
+				text: "",
+				tokens: 0,
+				counts: { asciiChars: 0, nonASCIIChars: 0, hasText: false },
+			},
+			{ instruction: "Return JSON" },
+			true,
+		);
 		assert.equal(instructionOnly.text, "Return JSON");
-		const malformed = appendStructuredOutputInstructionWithTokens("base", {
-			instruction: 123,
-		});
+
+		const malformed = appendStructuredOutputInstructionToPrepared(
+			buildTextWithTokens(["base"], true),
+			{ instruction: 123 },
+			true,
+		);
 		assert.equal(malformed.text, "base");
 
 		const prepared = buildTextWithTokens(["base"], true);

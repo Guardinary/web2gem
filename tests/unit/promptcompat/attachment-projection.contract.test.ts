@@ -1,9 +1,6 @@
 import { describe, test } from "vitest";
 import type { AttachmentSource } from "../../../src/attachments/types";
-import {
-	attachmentInputsFromMessages,
-	attachmentPlanFromMessages,
-} from "../../../src/promptcompat/attachment-inputs";
+import { attachmentPlanFromMessages } from "../../../src/promptcompat/attachment-inputs";
 import { parseGoogleRequest } from "../../../src/promptcompat/google";
 import { parseOpenAIMessages } from "../../../src/promptcompat/message-model";
 import { messagesToPrompt } from "../../../src/promptcompat/messages";
@@ -83,7 +80,7 @@ describe("prompt compatibility", () => {
 			},
 		]);
 		const text = messagesToPrompt(messages, null, 1000000).text;
-		const { images } = attachmentInputsFromMessages(messages);
+		const plan = attachmentPlanFromMessages(messages);
 		assert.match(text, /plain\nhello/);
 		assert.match(
 			text,
@@ -92,18 +89,27 @@ describe("prompt compatibility", () => {
 		assert.equal((text.match(/\[image input\]/g) || []).length, 3);
 		assert.match(text, /\[file input file_1\]/);
 		assert.match(text, /custom output/);
-		assert.deepEqual(images, [
-			{
-				b64: "AAAA",
-				mime: "image/jpeg",
-				filename: "nested.jpg",
-			},
-			{
-				b64: "BBBB",
-				mime: "image/webp",
-				filename: "data.webp",
-			},
-		]);
+		assert.deepEqual(
+			plan.candidates
+				.filter((c) => c.kind === "image")
+				.map((c) => ({
+					b64: base64Data(c.source),
+					mime: c.mime,
+					filename: c.filename,
+				})),
+			[
+				{
+					b64: "AAAA",
+					mime: "image/jpeg",
+					filename: "nested.jpg",
+				},
+				{
+					b64: "BBBB",
+					mime: "image/webp",
+					filename: "data.webp",
+				},
+			],
+		);
 	});
 	test("collects inline input_file parts and treats remote file URLs as missing payloads", async () => {
 		const messages = parseOpenAIMessages([
@@ -142,7 +148,7 @@ describe("prompt compatibility", () => {
 			},
 		]);
 		const text = messagesToPrompt(messages, null, 1000000).text;
-		const { files, images } = attachmentInputsFromMessages(messages);
+		const plan = attachmentPlanFromMessages(messages);
 		assert.match(text, /inspect code/);
 		assert.match(text, /\[file input main\.py\]/);
 		assert.match(text, /\[file input note\.txt\]/);
@@ -150,22 +156,33 @@ describe("prompt compatibility", () => {
 		assert.match(text, /\[file input app\.ts\]/);
 		assert.match(text, /\[file input missing\.txt\]/);
 		assert.match(text, /\[file input file_existing\]/);
-		assert.deepEqual(images, []);
-		assert.deepEqual(files, [
-			{ b64: "cHJpbnQoMSkK", mime: "text/x-python", filename: "main.py" },
-			{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" },
-			{ b64: "", mime: "text/plain", filename: "empty.txt" },
-			{
-				invalidReason: "missing generic file upload data",
-				mime: "text/typescript",
-				filename: "app.ts",
-			},
-			{
-				invalidReason: "missing generic file upload data",
-				mime: "text/plain",
-				filename: "missing.txt",
-			},
-		]);
+		assert.deepEqual(
+			plan.candidates.filter((c) => c.kind === "image"),
+			[],
+		);
+		assert.deepEqual(
+			plan.candidates
+				.filter((c) => c.kind === "file")
+				.map((c) => ({
+					b64: c.source.type === "base64" ? c.source.data : undefined,
+					mime: c.mime,
+					filename: c.filename,
+				})),
+			[
+				{ b64: "cHJpbnQoMSkK", mime: "text/x-python", filename: "main.py" },
+				{ b64: "aGVsbG8=", mime: "text/plain", filename: "note.txt" },
+				{ b64: "", mime: "text/plain", filename: "empty.txt" },
+			],
+		);
+		// Invalid remote / missing file payloads become drops, not candidates.
+		assert.equal(
+			plan.dropped.some((d) => d.filename === "app.ts"),
+			true,
+		);
+		assert.equal(
+			plan.dropped.some((d) => d.filename === "missing.txt"),
+			true,
+		);
 
 		const parsedFileMsg = parseOpenAIMessages([
 			{
@@ -200,11 +217,16 @@ describe("prompt compatibility", () => {
 			},
 		]);
 		const text = messagesToPrompt(messages, null, 1000000).text;
-		const { images } = attachmentInputsFromMessages(messages);
+		const plan = attachmentPlanFromMessages(messages);
 		assert.equal(text, "[image input]");
-		assert.deepEqual(images, [
-			{ b64: "AAAA", mime: "image/jpeg", filename: "photo.jpg" },
-		]);
+		assert.deepEqual(
+			plan.candidates.map((c) => ({
+				b64: base64Data(c.source),
+				mime: c.mime,
+				filename: c.filename,
+			})),
+			[{ b64: "AAAA", mime: "image/jpeg", filename: "photo.jpg" }],
+		);
 	});
 	test("uses top-level image_url data URL when image_url object is omitted", async () => {
 		const messages = parseOpenAIMessages([
@@ -220,11 +242,16 @@ describe("prompt compatibility", () => {
 			},
 		]);
 		const text = messagesToPrompt(messages, null, 1000000).text;
-		const { images } = attachmentInputsFromMessages(messages);
+		const plan = attachmentPlanFromMessages(messages);
 		assert.equal(text, "[image input]");
-		assert.deepEqual(images, [
-			{ b64: "R0lGODlh", mime: "image/gif", filename: "direct.gif" },
-		]);
+		assert.deepEqual(
+			plan.candidates.map((c) => ({
+				b64: base64Data(c.source),
+				mime: c.mime,
+				filename: c.filename,
+			})),
+			[{ b64: "R0lGODlh", mime: "image/gif", filename: "direct.gif" }],
+		);
 	});
 	test("projects normalized Google inline file parts into attachment plans", async () => {
 		const camelPlan = attachmentPlanFromMessages(

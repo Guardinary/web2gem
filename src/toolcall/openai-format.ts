@@ -44,7 +44,7 @@ export function formatOpenAIStreamToolCalls(
 	}));
 }
 
-export function ensureStreamToolCallID(
+function ensureStreamToolCallID(
 	idStore: Map<number, string> | null | undefined,
 	index: unknown,
 ): string {

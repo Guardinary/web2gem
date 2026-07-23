@@ -10,7 +10,6 @@ export { uploadFilenameFromObject } from "./metadata";
 
 export type ParsedUploadUrl = { b64: string; mime: string };
 export type ParsedImageUrl = ParsedUploadUrl;
-export type ParsedDataUrl = { b64: string; mime: string };
 export type UploadFileInput = {
 	b64?: unknown;
 	mime?: unknown;
@@ -19,7 +18,7 @@ export type UploadFileInput = {
 	invalidReason?: string;
 };
 
-export function parseDataUrl(url: unknown): ParsedDataUrl | null {
+export function parseUploadUrl(url: unknown): ParsedUploadUrl | null {
 	if (!url || typeof url !== "string") return null;
 	const trimmed = url.trim();
 	if (!isDataUrl(trimmed)) return null;
@@ -38,13 +37,6 @@ export function parseDataUrl(url: unknown): ParsedDataUrl | null {
 	} catch (_) {
 		return null;
 	}
-}
-
-export function parseUploadUrl(url: unknown): ParsedUploadUrl | null {
-	if (!url || typeof url !== "string") return null;
-	const data = parseDataUrl(url);
-	if (data) return data;
-	return null;
 }
 
 export function parseImageUrl(
@@ -188,7 +180,7 @@ export function normalizeUploadFileInput(
 	return null;
 }
 
-export function isDataUrl(raw: string): boolean {
+function isDataUrl(raw: string): boolean {
 	return /^data:/i.test(raw.trim());
 }
 

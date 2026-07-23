@@ -3,7 +3,6 @@ import {
 	base64DecodedByteLength,
 	base64ToBytes,
 	bytesToBase64,
-	validateBase64Shape,
 } from "../../../src/attachments/base64";
 import { assert } from "../assertions.js";
 
@@ -49,18 +48,21 @@ async function withoutTypedArrayEncodingMethods<T>(
 }
 
 describe("attachment base64", () => {
-	test("normalizes valid shapes and estimates decoded bytes", () => {
-		assert.equal(validateBase64Shape(" aG Vs\nbG8= "), "aGVsbG8=");
-		assert.equal(validateBase64Shape(""), "");
-		assert.equal(base64DecodedByteLength("aGVsbG8="), 5);
-		assert.equal(base64DecodedByteLength("-_8"), 2);
-		assert.equal(base64DecodedByteLength(""), 0);
-		for (const invalid of ["not base64!?", "a===", "aGV=sbG8", "A"]) {
-			assert.throws(
-				() => validateBase64Shape(invalid),
-				/invalid base64 payload/,
+	test("normalizes valid shapes and estimates decoded bytes", async () => {
+		await withoutTypedArrayEncodingMethods(async () => {
+			// Whitespace is stripped by the private shape validator used by base64ToBytes.
+			assert.deepEqual(
+				Array.from(base64ToBytes(" aG Vs\nbG8= ")),
+				[104, 101, 108, 108, 111],
 			);
-		}
+			assert.deepEqual(Array.from(base64ToBytes("")), []);
+			assert.equal(base64DecodedByteLength("aGVsbG8="), 5);
+			assert.equal(base64DecodedByteLength("-_8"), 2);
+			assert.equal(base64DecodedByteLength(""), 0);
+			for (const invalid of ["not base64!?", "a===", "aGV=sbG8", "A"]) {
+				assert.throws(() => base64ToBytes(invalid), /invalid base64 payload/);
+			}
+		});
 	});
 
 	test("decodes standard and URL-safe base64", () => {

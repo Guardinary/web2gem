@@ -5,7 +5,6 @@ import {
 	firstNonNil,
 	toolFunctionDeclarations,
 	toolItemsFromTools,
-	toolMetasFromTools,
 } from "../../../src/toolcall/tool-meta";
 import { assert } from "../assertions.js";
 import { required } from "./_support/assertions.js";
@@ -90,7 +89,7 @@ describe("toolcall", () => {
 			["List"],
 		);
 		assert.equal(toolItemsFromTools({ nope: true }).length, 0);
-		assert.deepEqual(toolMetasFromTools(grouped), [
+		assert.deepEqual(createToolBundle(grouped).defs, [
 			{
 				name: "GoogleSearch",
 				description: "Google style",

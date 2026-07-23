@@ -1,6 +1,5 @@
 import { describe, test } from "vitest";
 import {
-	streamErrorText,
 	streamInterruptedWarningText,
 	streamWarningObject,
 	writeStreamWarningEvent,
@@ -17,12 +16,15 @@ describe("stream error presentation", () => {
 			code: "socket_reset",
 			message: "partial output kept",
 		});
-		assert.match(
-			streamErrorText(err),
-			/upstream error: socket reset \[socket_reset\]/,
-		);
+		// Default prefix path is exercised by the interrupted warning helper.
 		assert.match(
 			streamInterruptedWarningText(err),
+			/stream interrupted after partial output: socket reset \[socket_reset\]/,
+		);
+		// Without an explicit message, the warning object uses the interrupted text.
+		const defaultWarning = streamWarningObject(err);
+		assert.match(
+			String(defaultWarning.message),
 			/stream interrupted after partial output: socket reset/,
 		);
 

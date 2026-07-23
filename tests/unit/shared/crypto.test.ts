@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { randHex, randomBytes, uuid } from "../../../src/shared/crypto";
+import { randHex, uuid } from "../../../src/shared/crypto";
 import { assert } from "../assertions.js";
 import { withPatchedGlobal } from "../_support/globals.js";
 
@@ -38,9 +38,9 @@ describe("shared crypto primitives", () => {
 				},
 			},
 			async () => {
-				assert.deepEqual(Array.from(randomBytes(3)), [0xab, 0xac, 0xad]);
 				await withoutTypedArrayHexMethod(async () => {
 					assert.equal(randHex(5), "abaca");
+					assert.equal(randHex(6), "abacad");
 				});
 				assert.equal(uuid(), "native-uuid");
 			},

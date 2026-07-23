@@ -135,7 +135,7 @@ export function formatPromptToolCallBlock(
 	return `${out}</|DSML|invoke></|DSML|tool_calls>`;
 }
 
-export function formatPromptParamValue(value: unknown): string {
+function formatPromptParamValue(value: unknown): string {
 	if (typeof value === "string") return promptCDATA(value);
 	if (value === null || typeof value === "number" || typeof value === "boolean")
 		return String(value);
@@ -158,6 +158,6 @@ function formatPromptObjectField(key: unknown, value: unknown): string {
 	return `<field name="${xmlEscapeAttr(name)}">${body}</field>`;
 }
 
-export function isSafeXmlElementName(name: unknown): boolean {
+function isSafeXmlElementName(name: unknown): boolean {
 	return /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(String(name || ""));
 }

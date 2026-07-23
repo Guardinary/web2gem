@@ -160,7 +160,7 @@ describe("context-file policy", () => {
 		const highThreshold = contextFileConfig({
 			current_input_file_min_bytes: 120000,
 		});
-		const uploader = async (text: string, filename: string) => ({
+		const uploader = async (_text: string, filename: string) => ({
 			ref: `/uploaded/${filename}`,
 			name: filename,
 		});

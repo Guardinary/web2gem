@@ -310,7 +310,10 @@ describe("toolcall", () => {
 			toolsBundle,
 		);
 		assert.equal(allowed.error, "");
-		assert.deepEqual(Object.keys(required(allowed.allowed)), ["Read", "Search"]);
+		assert.deepEqual(Object.keys(required(allowed.allowed)), [
+			"Read",
+			"Search",
+		]);
 
 		// none / empty allowed: any named call is rejected via validateToolPolicyCalls.
 		assert.match(
@@ -358,18 +361,14 @@ describe("toolcall", () => {
 			"Search",
 		);
 		assert.equal(
-			parseOpenAIToolChoicePolicy(
-				{ function: { name: "Read" } },
-				toolsBundle,
-			).forcedName,
+			parseOpenAIToolChoicePolicy({ function: { name: "Read" } }, toolsBundle)
+				.forcedName,
 			"Read",
 		);
 		// tool.name is only for allowed_tools item extraction, not forced names.
 		assert.equal(
-			parseOpenAIToolChoicePolicy(
-				{ tool: { name: "Read" } },
-				toolsBundle,
-			).forcedName,
+			parseOpenAIToolChoicePolicy({ tool: { name: "Read" } }, toolsBundle)
+				.forcedName,
 			"",
 		);
 	});
