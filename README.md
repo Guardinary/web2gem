@@ -192,15 +192,17 @@ For streaming, call `:streamGenerateContent` on the same model path.
 
 | Model ID                         | Description                                                 |
 | -------------------------------- | ----------------------------------------------------------- |
-| `gemini-3.5-flash`               | Fast general-purpose model.                                 |
-| `gemini-3.5-flash-thinking`      | Deep thinking mode with longer output.                      |
+| `gemini-3.8-flash`               | Latest all-around Flash (2026-09 GA).                        |
+| `gemini-3.7-flash` / `3.6` / `3.5`   | Legacy aliases; backend routes to current Flash.             |
+| `gemini-3.8-flash-thinking`      | 3.8 Flash deep thinking, ~20k char output.                   |
+| `gemini-3.5-flash-thinking`      | Legacy thinking-mode alias.                                  |
 | `gemini-3.1-pro`                 | Pro route; requires a valid Gemini cookie for real routing. |
 | `gemini-3.1-pro-enhanced`        | Experimental enhanced Pro output mode.                      |
 | `gemini-auto`                    | Gemini Web auto model selection.                            |
 | `gemini-3.5-flash-thinking-lite` | Dynamic thinking with adaptive depth.                       |
 | `gemini-flash-lite`              | Lightweight fast model.                                     |
 
-You can override thinking depth per request by appending `@think=N` to a known model ID, for example `gemini-3.5-flash@think=0`. Supported override values are `0`, `1`, `2`, `3`, and `4`.
+You can override thinking depth per request by appending `@think=N` to a known model ID, for example `gemini-3.8-flash@think=0`. Supported override values are `0`, `1`, `2`, `3`, and `4`.
 
 ## Quick Start
 
@@ -276,7 +278,7 @@ Configuration defaults live in `src/config/index.ts`. Cloudflare Worker environm
 | `GEMINI_BL`                     | bundled value               | Gemini Web build label used by upstream requests. Update if Gemini Web changes and upstream responses become empty.                                                                                              |
 | `GEMINI_ORIGIN`                 | `https://gemini.google.com` | Upstream origin. Can point to your own forwarding service or proxy endpoint while preserving expected request semantics.                                                                                         |
 | `UPSTREAM_SOCKET`               | `true`                      | Prefer `cloudflare:sockets` upstream transport when available.                                                                                                                                                   |
-| `DEFAULT_MODEL`                 | `gemini-3.5-flash`          | Model used when a request omits `model`.                                                                                                                                                                         |
+| `DEFAULT_MODEL`                 | `gemini-3.8-flash`          | Model used when a request omits `model`.                                                                                                                                                                         |
 | `RETRY_ATTEMPTS`                | `3`                         | Upstream retry attempts; minimum `1`.                                                                                                                                                                            |
 | `RETRY_DELAY_SEC`               | `2`                         | Delay between retry attempts; minimum `0`.                                                                                                                                                                       |
 | `REQUEST_TIMEOUT_SEC`           | `180`                       | Upstream request timeout; minimum `1`.                                                                                                                                                                           |

@@ -192,15 +192,17 @@ curl https://your-web2gem.example/v1beta/models/gemini-3.5-flash:generateContent
 
 | 模型 ID                          | 说明                                       |
 | -------------------------------- | ------------------------------------------ |
-| `gemini-3.5-flash`               | 快速通用模型。                             |
-| `gemini-3.5-flash-thinking`      | 深度思考模式，输出更长。                   |
+| `gemini-3.8-flash`               | 当前最新 Flash 通用模型 (2026-09 GA)。      |
+| `gemini-3.7-flash` / `3.6` / `3.5`   | 旧版本别名，自动路由到当前最新 Flash。   |
+| `gemini-3.8-flash-thinking`      | 3.8 Flash 深度思考模式，输出更长 (~20k 字)。 |
+| `gemini-3.5-flash-thinking`      | 深度思考模式兼容别名。                       |
 | `gemini-3.1-pro`                 | Pro 路由；真实路由需要有效 Gemini cookie。 |
 | `gemini-3.1-pro-enhanced`        | 实验性的增强 Pro 输出模式。                |
 | `gemini-auto`                    | Gemini Web 自动模型选择。                  |
 | `gemini-3.5-flash-thinking-lite` | 动态思考，自适应深度。                     |
 | `gemini-flash-lite`              | 轻量快速模型。                             |
 
-可以在请求模型 ID 后追加 `@think=N` 覆盖思考深度，例如 `gemini-3.5-flash@think=0`。支持的覆盖值为 `0`、`1`、`2`、`3`、`4`。
+可以在请求模型 ID 后追加 `@think=N` 覆盖思考深度，例如 `gemini-3.8-flash@think=0`。支持的覆盖值为 `0`、`1`、`2`、`3`、`4`。
 
 ## 快速开始
 
@@ -276,7 +278,7 @@ docker run --rm -p 52389:52389 --env-file .env web2gem:<tag>
 | `GEMINI_BL`                     | bundled value               | 上游请求使用的 Gemini Web build label。如果 Gemini Web 变化导致上游响应为空，需要更新它。                                                                                          |
 | `GEMINI_ORIGIN`                 | `https://gemini.google.com` | 上游源站。可指向你自己的转发服务或代理地址，并保留预期请求语义。                                                                                                                   |
 | `UPSTREAM_SOCKET`               | `true`                      | 可用时优先使用 `cloudflare:sockets` 作为上游传输。                                                                                                                                 |
-| `DEFAULT_MODEL`                 | `gemini-3.5-flash`          | 请求省略 `model` 时使用的模型。                                                                                                                                                    |
+| `DEFAULT_MODEL`                 | `gemini-3.8-flash`          | 请求省略 `model` 时使用的模型。                                                                                                                                                    |
 | `RETRY_ATTEMPTS`                | `3`                         | 上游重试次数；最小值为 `1`。                                                                                                                                                       |
 | `RETRY_DELAY_SEC`               | `2`                         | 重试间隔秒数；最小值为 `0`。                                                                                                                                                       |
 | `REQUEST_TIMEOUT_SEC`           | `180`                       | 上游请求超时秒数；最小值为 `1`。                                                                                                                                                   |

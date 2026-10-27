@@ -50,7 +50,7 @@ const DEFAULT_CONFIG = Object.freeze({
 	GEMINI_BL: "boq_assistant-bard-web-server_20260709.09_p0",
 	GEMINI_ORIGIN: "https://gemini.google.com",
 	UPSTREAM_SOCKET: true,
-	DEFAULT_MODEL: "gemini-3.5-flash",
+	DEFAULT_MODEL: "gemini-3.8-flash",
 	RETRY_ATTEMPTS: 3,
 	RETRY_DELAY_SEC: 2,
 	REQUEST_TIMEOUT_SEC: 180,

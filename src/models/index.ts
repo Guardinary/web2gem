@@ -1,6 +1,12 @@
 // ─── 模型 ────────────────────────────────────────────────────────────────
 // MODE_CATEGORY 枚举(来自 Gemini 前端 JS):
 //   1=FAST, 2=THINKING, 3=PRO, 4=AUTO, 5=FAST_DYNAMIC_THINKING, 6=FLASH_LITE
+//
+// 模型路由策略 (借鉴 goehou/gemini-web2api):
+//   Flash 系列只依赖 MODE_CATEGORY (mode=1) + payload field [79], 不发送
+//   x-goog-ext-525001261-jspb 这类 modelHeaders。Google 后端会把 mode=1
+//   自动路由到当前最新的 Flash 模型, 这样旧版本别名仍能正常响应。
+//   Pro / Thinking 模式因为需要显式路由, 继续使用 webModelHeaders。
 export type ModelConfig = {
 	mode: number;
 	think: number;
@@ -42,17 +48,37 @@ function webModelHeaders(
 }
 
 export const MODELS: Record<string, ModelConfig> = {
+	// 当前最新 Flash (2026-09-02 GA, 已取代 3.7 Flash)
+	"gemini-3.8-flash": {
+		mode: 1,
+		think: 4,
+		desc: "Latest all-around Flash model (2026-09)",
+	},
+	"gemini-3.8-flash-thinking": {
+		mode: 2,
+		think: 0,
+		desc: "3.8 Flash with deep thinking, long output (~20k chars)",
+	},
+	// 历史别名 —— 后端自动把 mode=1 路由到当前最新 Flash
+	"gemini-3.7-flash": {
+		mode: 1,
+		think: 4,
+		desc: "Deprecated alias, routes to current Flash",
+	},
+	"gemini-3.6-flash": {
+		mode: 1,
+		think: 4,
+		desc: "Deprecated alias, routes to current Flash",
+	},
 	"gemini-3.5-flash": {
 		mode: 1,
 		think: 4,
-		modelHeaders: webModelHeaders("fbb127bbb056c959", 1),
-		desc: "Fast general-purpose model",
+		desc: "Deprecated alias, routes to current Flash",
 	},
 	"gemini-3.5-flash-thinking": {
 		mode: 2,
 		think: 0,
-		modelHeaders: webModelHeaders("5bf011840784117a", 1),
-		desc: "Deep thinking mode, longest output (~20k chars)",
+		desc: "Thinking mode alias, long output (~20k chars)",
 	},
 	"gemini-3.1-pro": {
 		mode: 3,
