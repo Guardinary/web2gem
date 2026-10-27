@@ -23,3 +23,5 @@ AGENTS.md
 .trellis/worktrees/
 .trellis/tasks/
 .trellis/workspace/
+
+.pnpm-store/
